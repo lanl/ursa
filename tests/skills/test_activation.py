@@ -10,7 +10,6 @@ def catalog(*names):
         name: Skill(
             name=name,
             description=f"Does {name}",
-            instructions="Body",
             path=None,
             scope="project",
         )
@@ -46,7 +45,7 @@ def test_ignores_shell_variables_and_currency():
 
 
 def test_matches_a_shell_style_reference_when_it_names_a_skill():
-    assert requested_skill_names("echo $PATH", catalog("PATH")) == ["PATH"]
+    assert requested_skill_names("echo $path", catalog("path")) == ["path"]
 
 
 def test_trailing_sentence_punctuation_is_not_part_of_the_name():
@@ -72,3 +71,8 @@ def test_directive_is_appended_after_the_original_prompt():
 
     assert annotated.startswith("Do it $alpha")
     assert "explicitly requested these skills: alpha" in annotated
+
+
+def test_invalid_name_suffix_does_not_activate_a_prefix():
+    for prompt in ("$alpha_foo", "$alpha--beta", "$alpha-", "$alphaX"):
+        assert requested_skill_names(prompt, catalog("alpha")) == []

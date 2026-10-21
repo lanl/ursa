@@ -6,9 +6,9 @@ from langgraph.graph import END
 from langgraph.graph.message import add_messages
 from langgraph.runtime import Runtime
 
-from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
+from ursa.agents.base import AgentContext, BaseAgent
+from ursa.agents.skills import AgentWithSkills
 from ursa.prompt_library.chatter_prompts import get_chatter_system_prompt
-from ursa.skills import annotate_skill_requests, build_skill_tool
 from ursa.tools import (
     download_file_tool,
     edit_code,
@@ -85,7 +85,7 @@ def should_continue(state: ChatState) -> Literal["finish", "continue"]:
         return "continue"
 
 
-class ChatAgent(AgentWithTools, BasicChatAgent):
+class ChatAgent(AgentWithSkills, BasicChatAgent):
     """Chat Agent"""
 
     state_type = ChatState
@@ -115,24 +115,9 @@ class ChatAgent(AgentWithTools, BasicChatAgent):
                 run_osti_search,
                 run_arxiv_search,
             ])
-        # Skills (ursa.skills): one dispatcher tool whose description lists the
-        # skills discovered now, which is what lets the model activate one from
-        # the conversation. build_skill_tool returns None when no skills exist,
-        # so the tool is absent rather than empty. Discovery is relative to the
-        # process cwd, not the workspace; see skills.project_skills_root.
-        self.use_skills = use_skills
-        if use_skills and (skill_tool := build_skill_tool()) is not None:
-            default_tools.append(skill_tool)
-        super().__init__(llm=llm, tools=default_tools, **kwargs)
-
-    def format_query(self, prompt: str, state: ChatState | None = None):
-        # Skills: rewrite an explicit "$skill-name" reference into a directive
-        # to call the `skill` tool, so that explicit and automatic activation
-        # run through the same tool call. Overridden here rather than in
-        # BasicChatAgent because only this agent has the tool bound.
-        if self.use_skills:
-            prompt = annotate_skill_requests(prompt)
-        return super().format_query(prompt, state=state)
+        super().__init__(
+            llm=llm, tools=default_tools, use_skills=use_skills, **kwargs
+        )
 
     def _build_graph(self):
         # Bind tools to llm and context summarizer

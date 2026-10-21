@@ -11,12 +11,12 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 
-from ursa.skills.discovery import Skill, discover_skills
+from ursa.skills.discovery import Skill, get_skill_catalog
 from ursa.skills.tools import SKILL_TOOL_NAME
 
 # Requires a non-word character before the "$" so that shell-style "$VAR"
 # inside a code span still matches, but "US$5" does not.
-_REFERENCE = re.compile(r"(?<![\w$])\$([A-Za-z0-9][A-Za-z0-9._-]*)")
+_REFERENCE = re.compile(r"(?<![\w$])\$([a-z0-9]+(?:-[a-z0-9]+)*)(?![\w-])")
 
 
 def requested_skill_names(
@@ -32,14 +32,14 @@ def requested_skill_names(
     candidates = _REFERENCE.findall(prompt)
     if not candidates:
         return []
-    catalog = discover_skills(project_root) if skills is None else skills
+    catalog = (
+        get_skill_catalog(project_root).load() if skills is None else skills
+    )
     if not catalog:
         return []
 
     names: list[str] = []
-    for candidate in candidates:
-        # Trailing punctuation is part of the sentence, not of the name.
-        name = candidate.rstrip("._-")
+    for name in candidates:
         if name in catalog and name not in names:
             names.append(name)
     return names
@@ -61,5 +61,5 @@ def annotate_skill_requests(
         f"{prompt}\n\n"
         f"[The user explicitly requested these skills: {', '.join(names)}. "
         f"Call the `{SKILL_TOOL_NAME}` tool once for each of them, then follow "
-        "the instructions it returns.]"
+        "instructions relevant to the current request.]"
     )

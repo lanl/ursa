@@ -1,3 +1,4 @@
+
 """Plan generation and review event cards."""
 
 from collections.abc import Sequence

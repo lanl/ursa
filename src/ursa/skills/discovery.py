@@ -1,157 +1,214 @@
-"""Discovery and parsing of on-disk agent skills.
+"""Discover Agent Skills metadata; load instruction bodies only on activation."""
 
-A skill is a directory holding a ``SKILL.md`` file whose YAML frontmatter
-carries at least a ``description``. The markdown body after the frontmatter is
-the instruction text handed to the model.
-
-Skills are discovered from two roots, in ascending order of precedence:
-
-* ``~/.ursa/skills`` - user skills, available in every workspace.
-* ``<cwd>/.ursa/skills`` - project skills, which shadow user skills by name.
-"""
-
+import asyncio
 import logging
+import os
 import re
 from dataclasses import dataclass
+from enum import StrEnum
+from functools import cached_property, lru_cache
+from importlib.resources import files
 from pathlib import Path
+from threading import Lock
+from types import MappingProxyType
 
 import yaml
 
 logger = logging.getLogger(__name__)
 
-URSA_DIRNAME = ".ursa"
-SKILLS_SUBDIR = "skills"
 SKILL_FILENAME = "SKILL.md"
-
-PROJECT_SCOPE = "project"
-USER_SCOPE = "user"
-
-MAX_INSTRUCTION_CHARACTERS = 30000
-"""Cap on instruction text, aligned with ``AgentContext.tool_character_limit``."""
-
+_CLIENT_DIRS = (".claude", ".codex", ".agents", ".ursa")
 _FRONTMATTER = re.compile(
-    r"\A---[ \t]*\r?\n(?P<meta>.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.DOTALL
+    r"\A(?:\r?\n)?---[ \t]*\r?\n(.*?)^---[ \t]*(?:\r?\n|\Z)",
+    re.MULTILINE | re.DOTALL,
 )
-_VALID_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_VALID_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+
+class SkillScope(StrEnum):
+    BUNDLED = "bundled"
+    USER = "user"
+    PROJECT = "project"
 
 
 @dataclass(frozen=True)
 class Skill:
-    """One discovered skill."""
-
     name: str
     description: str
-    instructions: str
     path: Path
-    scope: str
+    scope: SkillScope
 
     @property
     def directory(self) -> Path:
-        """Directory holding ``SKILL.md`` and any supporting files."""
         return self.path.parent
+
+    @cached_property
+    def instructions(self) -> str:
+        _, body = split_frontmatter(
+            self.path.read_text(encoding="utf-8-sig", errors="replace")
+        )
+        return body.strip()
 
 
 def is_valid_skill_name(name: str) -> bool:
-    """Return whether a name is a safe, simple skill identifier.
-
-    Rejecting separators and ``..`` keeps a skill name from escaping its root
-    when it is used to build a path or looked up from model-supplied input.
-    """
-    return bool(_VALID_NAME.fullmatch(name)) and name not in {".", ".."}
+    return 1 <= len(name) <= 64 and bool(_VALID_NAME.fullmatch(name))
 
 
 def user_skills_root() -> Path:
-    """Return the user-wide skills root, ``~/.ursa/skills``."""
-    return Path.home() / URSA_DIRNAME / SKILLS_SUBDIR
+    return Path.home() / ".ursa" / "skills"
 
 
 def project_skills_root(project_root: Path | None = None) -> Path:
-    """Return ``<project_root>/.ursa/skills``, defaulting to the cwd.
-
-    The process working directory is used rather than the configured workspace
-    so that project skills are still found when the workspace is a throwaway
-    temporary directory.
-    """
-    base = Path.cwd() if project_root is None else Path(project_root)
-    return base / URSA_DIRNAME / SKILLS_SUBDIR
+    return Path(project_root or Path.cwd()) / ".ursa" / "skills"
 
 
-def split_frontmatter(text: str) -> tuple[dict, str]:
-    """Split leading YAML frontmatter from the markdown body.
-
-    Raises
-    ------
-    yaml.YAMLError
-        If the frontmatter block is present but not parseable.
-    """
-    match = _FRONTMATTER.match(text.lstrip("﻿"))
-    if match is None:
-        return {}, text
-    loaded = yaml.safe_load(match.group("meta"))
-    metadata = loaded if isinstance(loaded, dict) else {}
-    return metadata, text[match.end() :]
-
-
-def load_skill(directory: Path, scope: str) -> Skill | None:
-    """Load one skill directory, or return None when it is unusable."""
-    name = directory.name
-    if not is_valid_skill_name(name):
-        logger.warning("Ignoring skill with unusable name: %s", directory)
-        return None
-
-    path = directory / SKILL_FILENAME
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError as exc:
-        logger.warning("Could not read skill %s: %s", path, exc)
-        return None
-
-    try:
-        metadata, body = split_frontmatter(text)
-    except yaml.YAMLError as exc:
-        logger.warning("Malformed frontmatter in %s: %s", path, exc)
-        metadata, body = {}, text
-
-    description = " ".join(str(metadata.get("description") or "").split())
-    if not description:
-        description = f"Skill '{name}' (no description provided)"
-
-    instructions = body.strip()
-    if len(instructions) > MAX_INSTRUCTION_CHARACTERS:
-        instructions = (
-            instructions[:MAX_INSTRUCTION_CHARACTERS]
-            + f"\n\n[Truncated at {MAX_INSTRUCTION_CHARACTERS} characters."
-            + f" Read {path} for the full text.]"
-        )
-
-    return Skill(
-        name=name,
-        description=description,
-        instructions=instructions,
-        path=path,
-        scope=scope,
+def skill_roots(
+    project_root: Path | None = None,
+) -> tuple[tuple[Path, SkillScope], ...]:
+    home = Path.home()
+    project = Path(project_root or Path.cwd()).resolve()
+    xdg = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+    if not xdg.is_absolute():
+        xdg = home / ".config"
+    return (
+        (Path(str(files("ursa.skills"))), SkillScope.BUNDLED),
+        *(
+            (home / client / "skills", SkillScope.USER)
+            for client in _CLIENT_DIRS
+        ),
+        (xdg / "ursa" / "skills", SkillScope.USER),
+        *(
+            (project / client / "skills", SkillScope.PROJECT)
+            for client in _CLIENT_DIRS
+        ),
     )
 
 
-def discover_skills_in(root: Path, scope: str) -> dict[str, Skill]:
-    """Load every usable skill directly beneath one skills root."""
-    found: dict[str, Skill] = {}
+def split_frontmatter(text: str) -> tuple[dict, str]:
+    text = text.removeprefix("\ufeff")
+    match = _FRONTMATTER.match(text)
+    if match is None:
+        return {}, text
+    loaded = yaml.safe_load(match.group(1))
+    return loaded if isinstance(loaded, dict) else {}, text[match.end() :]
+
+
+def validate_metadata(metadata: dict, directory_name: str) -> None:
+    name = metadata.get("name")
+    if not isinstance(name, str) or not is_valid_skill_name(name):
+        raise ValueError(
+            "name must be 1–64 lowercase letters/digits separated by single hyphens"
+        )
+    if name != directory_name:
+        raise ValueError("name must match the skill directory")
+    description = metadata.get("description")
+    if (
+        not isinstance(description, str)
+        or not description.strip()
+        or len(description) > 1024
+    ):
+        raise ValueError(
+            "description must be a non-empty string of at most 1024 characters"
+        )
+    compatibility = metadata.get("compatibility")
+    if "compatibility" in metadata and (
+        not isinstance(compatibility, str) or not 1 <= len(compatibility) <= 500
+    ):
+        raise ValueError("compatibility must be a string of 1–500 characters")
+    for field in ("license", "allowed-tools"):
+        if field in metadata and not isinstance(metadata[field], str):
+            raise ValueError(f"{field} must be a string")
+    if "metadata" in metadata:
+        extra = metadata["metadata"]
+        if not isinstance(extra, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in extra.items()
+        ):
+            raise ValueError("metadata must map strings to strings")
+
+
+def load_skill(directory: Path, scope: SkillScope) -> Skill | None:
+    path = directory / SKILL_FILENAME
+    try:
+        # Stop at the closing delimiter, without reading instruction bodies.
+        with path.open(encoding="utf-8-sig", errors="replace") as stream:
+            opening = next(stream, "")
+            if opening in {"\n", "\r\n"}:
+                opening = next(stream, "")
+            if opening.rstrip(" \t\r\n") != "---":
+                raise ValueError("missing YAML frontmatter")
+            lines = [opening]
+            for line in stream:
+                lines.append(line)
+                if line.rstrip(" \t\r\n") == "---":
+                    break
+            else:
+                raise ValueError("unclosed YAML frontmatter")
+        metadata, _ = split_frontmatter("".join(lines))
+        validate_metadata(metadata, directory.name)
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        logger.warning("Ignoring invalid skill %s: %s", path, exc)
+        return None
+    return Skill(
+        metadata["name"], metadata["description"], path.absolute(), scope
+    )
+
+
+def discover_skills_in(root: Path, scope: SkillScope) -> dict[str, Skill]:
+    found = {}
     try:
         entries = sorted(root.iterdir())
     except OSError:
         return found
     for entry in entries:
-        if not (entry / SKILL_FILENAME).is_file():
-            continue
-        if (skill := load_skill(entry, scope)) is not None:
-            found[skill.name] = skill
+        if (entry / SKILL_FILENAME).is_file():
+            if (skill := load_skill(entry, scope)) is not None:
+                found[skill.name] = skill
     return found
 
 
+class SkillCatalog:
+    def __init__(self, roots: tuple[tuple[Path, SkillScope], ...]):
+        self.roots = roots
+        self._skills = None
+        self._lock = Lock()
+
+    def load(self) -> MappingProxyType[str, Skill]:
+        with self._lock:
+            if self._skills is None:
+                skills = {}
+                for root, scope in self.roots:
+                    for name, skill in discover_skills_in(root, scope).items():
+                        if name in skills and skill.path != skills[name].path:
+                            logger.warning(
+                                "Skill %s at %s shadows %s",
+                                name,
+                                skill.path,
+                                skills[name].path,
+                            )
+                        skills[name] = skill
+                self._skills = MappingProxyType(dict(sorted(skills.items())))
+            return self._skills
+
+    async def aload(self) -> MappingProxyType[str, Skill]:
+        return await asyncio.to_thread(self.load)
+
+
+@lru_cache(maxsize=32)
+def _catalog_for_roots(
+    roots: tuple[tuple[Path, SkillScope], ...],
+) -> SkillCatalog:
+    return SkillCatalog(roots)
+
+
+def get_skill_catalog(project_root: Path | None = None) -> SkillCatalog:
+    return _catalog_for_roots(skill_roots(project_root))
+
+
 def discover_skills(project_root: Path | None = None) -> dict[str, Skill]:
-    """Return every discovered skill by name, project skills winning."""
-    skills = discover_skills_in(user_skills_root(), USER_SCOPE)
-    skills.update(
-        discover_skills_in(project_skills_root(project_root), PROJECT_SCOPE)
-    )
-    return dict(sorted(skills.items()))
+    return dict(SkillCatalog(skill_roots(project_root)).load())
+
+
+async def adiscover_skills(
+    project_root: Path | None = None,
+) -> dict[str, Skill]:
+    return await asyncio.to_thread(discover_skills, project_root)

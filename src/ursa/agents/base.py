@@ -321,8 +321,10 @@ class BaseAgent(Generic[TState], ABC):
             and self.group != DEFAULT_GROUP_NAME
         ):
             raise ValueError(
-                f"Group '{self.group}' does not exist. "
-                f"Please use `ursa create-group {self.group} <group_config_file>` to create"
+                
+                    f"Group '{self.group}' does not exist. "
+                    f"Please use `ursa create-group {self.group} <group_config_file>` to create"
+                
             )
         set_checkpointer = True if checkpointer else False
         set_name = True if agent_name else False

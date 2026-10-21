@@ -66,9 +66,7 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
     llm = runtime.context.llm
     events = ToolEvents.from_runtime("run_command", runtime)
     if prompt_level.lower() in {"yolo", "none"}:
-        safety_result = SafetyAssessment(
-            is_safe=True, reason=f"User set safety level to {prompt_level}"
-        )
+        safety_result = SafetyAssessment(is_safe=True, reason=f"User set safety level to {prompt_level}")
     else:
         safety_result = invoke_structured(
             llm,

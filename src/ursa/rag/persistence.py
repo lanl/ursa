@@ -59,8 +59,10 @@ def rag_group_dir(group_name: str = "default") -> Path:
 
 def _missing_group_error(group_name: str) -> ValueError:
     return ValueError(
-        f"Group '{group_name}' does not exist. "
-        f"Please use `ursa create-group {group_name} <group_config_file>` to create"
+        
+            f"Group '{group_name}' does not exist. "
+            f"Please use `ursa create-group {group_name} <group_config_file>` to create"
+        
     )
 
 

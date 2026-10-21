@@ -145,7 +145,7 @@ def test_dashboard_patch_enforces_selected_group_not_config_file_group(
 def test_apply_dashboard_config_validates_group_before_persisting(
     tmp_path, monkeypatch
 ):
-    import ursa.security as security
+    from ursa import security
 
     groups_dir = tmp_path / "ursa"
     group_dir = groups_dir / "my_safety_group"

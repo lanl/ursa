@@ -281,7 +281,7 @@ emb_model:
 """
     )
     monkeypatch.setattr("ursa.cli.config.system_config_paths", lambda: [system])
-    monkeypatch.setattr("ursa.cli.config.user_config_paths", lambda: [])
+    monkeypatch.setattr("ursa.cli.config.user_config_paths", list)
 
     lines = configured_secret_lines(explicit)["Other"]
 
@@ -359,7 +359,6 @@ llm_model:
 
     def resolve(reference, default_username=None):
         calls.append((reference.env, default_username))
-        return None
 
     monkeypatch.setattr("ursa.cli.auth.SecretReference.resolve", resolve)
 

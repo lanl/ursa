@@ -1,167 +1,275 @@
+import asyncio
+import threading
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+import yaml
 
 from ursa.skills.discovery import (
-    MAX_INSTRUCTION_CHARACTERS,
+    SkillCatalog,
+    SkillScope,
+    adiscover_skills,
     discover_skills,
+    discover_skills_in,
+    get_skill_catalog,
     is_valid_skill_name,
-    project_skills_root,
+    load_skill,
+    skill_roots,
     split_frontmatter,
-    user_skills_root,
 )
 
 
-@pytest.fixture
-def home(monkeypatch, tmp_path):
-    root = tmp_path / "home"
-    monkeypatch.setattr(Path, "home", lambda: root)
-    return root
-
-
-def write_skill(root, name, description, body="Do the thing."):
-    path = root / ".ursa" / "skills" / name / "SKILL.md"
+def write_skill(
+    root,
+    name="example",
+    description="Example",
+    body="Instructions.",
+    **metadata,
+):
+    path = root / name / "SKILL.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    front = "---\n"
-    if description is not None:
-        front += f"description: {description}\n"
-    front += "---\n"
-    path.write_text(f"{front}\n{body}\n", encoding="utf-8")
+    front = yaml.safe_dump({
+        "name": name,
+        "description": description,
+        **metadata,
+    })
+    path.write_text(f"---\n{front}---\n\n{body}\n", encoding="utf-8")
     return path
 
 
-def test_roots_use_home_and_given_project_dir(home, tmp_path):
-    assert user_skills_root() == home / ".ursa" / "skills"
-    assert project_skills_root(tmp_path) == tmp_path / ".ursa" / "skills"
-
-
-def test_project_root_defaults_to_cwd(home, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    assert project_skills_root() == tmp_path / ".ursa" / "skills"
-
-
-def test_discovers_user_and_project_skills(home, tmp_path):
-    write_skill(home, "user-only", "A user skill")
-    write_skill(tmp_path, "project-only", "A project skill")
-
-    catalog = discover_skills(tmp_path)
-
-    assert {name: skill.scope for name, skill in catalog.items()} == {
-        "project-only": "project",
-        "user-only": "user",
-    }
-    assert catalog["user-only"].description == "A user skill"
-    assert catalog["user-only"].instructions == "Do the thing."
-
-
-def test_project_skill_shadows_user_skill_of_same_name(home, tmp_path):
-    write_skill(home, "shared", "User version", body="User body")
-    write_skill(tmp_path, "shared", "Project version", body="Project body")
-
-    skill = discover_skills(tmp_path)["shared"]
-
-    assert skill.scope == "project"
-    assert skill.description == "Project version"
-    assert skill.instructions == "Project body"
-
-
-def test_missing_roots_yield_no_skills(home, tmp_path):
-    assert discover_skills(tmp_path) == {}
-
-
-def test_directory_without_skill_file_is_ignored(home, tmp_path):
-    (tmp_path / ".ursa" / "skills" / "empty").mkdir(parents=True)
-    write_skill(tmp_path, "real", "Real skill")
-
-    assert list(discover_skills(tmp_path)) == ["real"]
-
-
-def test_malformed_frontmatter_still_loads_with_placeholder(home, tmp_path):
-    path = tmp_path / ".ursa" / "skills" / "broken" / "SKILL.md"
-    path.parent.mkdir(parents=True)
-    path.write_text("---\n: : not: yaml\n---\n\nBody text\n", encoding="utf-8")
-
-    skill = discover_skills(tmp_path)["broken"]
-
-    assert "no description provided" in skill.description
-
-
-def test_missing_description_gets_placeholder(home, tmp_path):
-    write_skill(tmp_path, "nodesc", None)
-
-    assert (
-        "no description provided"
-        in discover_skills(tmp_path)["nodesc"].description
-    )
-
-
-def test_file_without_frontmatter_is_all_instructions(home, tmp_path):
-    path = tmp_path / ".ursa" / "skills" / "bare" / "SKILL.md"
-    path.parent.mkdir(parents=True)
-    path.write_text("Just instructions.\n", encoding="utf-8")
-
-    skill = discover_skills(tmp_path)["bare"]
-
-    assert skill.instructions == "Just instructions."
-    assert "no description provided" in skill.description
-
-
-def test_description_is_collapsed_to_one_line(home, tmp_path):
-    write_skill(tmp_path, "wrapped", "First part\n  second part")
-
-    assert (
-        discover_skills(tmp_path)["wrapped"].description
-        == "First part second part"
-    )
-
-
-def test_oversized_instructions_are_truncated(home, tmp_path):
-    write_skill(tmp_path, "big", "Big", body="x" * (2 * 10**5))
-
-    instructions = discover_skills(tmp_path)["big"].instructions
-
-    assert len(instructions) < 2 * 10**5
-    assert instructions.startswith("x" * MAX_INSTRUCTION_CHARACTERS)
-    assert "Truncated" in instructions
-
-
-def test_non_utf8_bytes_do_not_break_discovery(home, tmp_path):
-    path = tmp_path / ".ursa" / "skills" / "binary" / "SKILL.md"
-    path.parent.mkdir(parents=True)
-    path.write_bytes(b"---\ndescription: Latin\n---\n\ncaf\xe9\n")
-
-    assert discover_skills(tmp_path)["binary"].description == "Latin"
-
-
-def test_skill_exposes_its_directory_for_supporting_files(home, tmp_path):
-    path = write_skill(tmp_path, "helper", "Has helpers")
-
-    assert discover_skills(tmp_path)["helper"].directory == path.parent
-
-
-@pytest.mark.parametrize(
-    "name", ["write-python", "a", "skill.v2", "under_score", "x1"]
-)
+@pytest.mark.parametrize("name", ["a", "x1", "1", "write-python", "a" * 64])
 def test_valid_skill_names(name):
     assert is_valid_skill_name(name)
 
 
 @pytest.mark.parametrize(
-    "name", ["", ".", "..", "-leading", "has space", "a/b", "a\\b", ".hidden"]
+    "name",
+    [
+        "",
+        ".",
+        "..",
+        "-a",
+        "a-",
+        "a--b",
+        "A",
+        "a_b",
+        "a.b",
+        "a/b",
+        "a\\b",
+        "a b",
+        "a" * 65,
+    ],
 )
 def test_invalid_skill_names(name):
     assert not is_valid_skill_name(name)
 
 
-def test_split_frontmatter_returns_metadata_and_body():
-    metadata, body = split_frontmatter("---\nname: a\n---\n\nBody\n")
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {},
+        {"name": "example"},
+        {"name": "wrong", "description": "ok"},
+        {"name": 12, "description": "ok"},
+        {"name": "example", "description": ""},
+        {"name": "example", "description": " \n "},
+        {"name": "example", "description": 123},
+        {"name": "example", "description": "a" * 1025},
+        {"name": "example", "description": "ok", "compatibility": "a" * 501},
+        {"name": "example", "description": "ok", "metadata": {"n": 1}},
+    ],
+)
+def test_invalid_metadata_is_skipped_with_diagnostic(
+    tmp_path, metadata, caplog
+):
+    path = tmp_path / "example" / "SKILL.md"
+    path.parent.mkdir()
+    path.write_text(f"---\n{yaml.safe_dump(metadata)}---\nBody")
+    assert discover_skills_in(tmp_path, SkillScope.PROJECT) == {}
+    assert str(path) in caplog.text
 
-    assert metadata == {"name": "a"}
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Just instructions.",
+        "---\n: : not: yaml\n---\nBody",
+        "---\nname: example\n",
+        "---\n- one\n- two\n---\nBody",
+    ],
+)
+def test_malformed_files_are_skipped(tmp_path, text):
+    path = tmp_path / "example" / "SKILL.md"
+    path.parent.mkdir()
+    path.write_text(text)
+    assert load_skill(path.parent, SkillScope.PROJECT) is None
+
+
+def test_description_is_preserved_and_body_is_lazy(tmp_path):
+    description = "First line\n  indented second line"
+    path = write_skill(tmp_path, description=description, body="original")
+    skill = load_skill(path.parent, SkillScope.PROJECT)
+    assert skill.description == description
+    assert "instructions" not in skill.__dict__
+    write_skill(
+        tmp_path, description=description, body="edited before activation"
+    )
+    assert skill.instructions == "edited before activation"
+    path.unlink()
+    assert skill.instructions == "edited before activation"
+
+
+def test_discovery_does_not_read_instruction_lines(tmp_path, monkeypatch):
+    path = write_skill(tmp_path)
+
+    class MetadataOnly:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            return next(self.lines)
+
+        lines = iter([
+            "---\n",
+            "name: example\n",
+            "description: Example\n",
+            "---\n",
+        ])
+
+    stream = MetadataOnly()
+    monkeypatch.setattr(Path, "open", lambda *args, **kwargs: stream)
+    assert load_skill(path.parent, SkillScope.PROJECT).name == "example"
+
+
+def test_long_description_and_instructions_are_not_truncated_on_discovery(
+    tmp_path,
+):
+    path = write_skill(tmp_path, description="x" * 1024, body="x" * 200_000)
+    skill = load_skill(path.parent, SkillScope.PROJECT)
+    assert len(skill.description) == 1024
+    assert len(skill.instructions) == 200_000
+
+
+@pytest.mark.parametrize(
+    "prefix,newline", [("", "\n"), ("\ufeff", "\n"), ("\n", "\n"), ("", "\r\n")]
+)
+def test_frontmatter_handles_bom_and_newlines(tmp_path, prefix, newline):
+    text = (
+        prefix
+        + "---\nname: example\ndescription: Example\n---\nBody\n".replace(
+            "\n", newline
+        )
+    )
+    path = tmp_path / "example" / "SKILL.md"
+    path.parent.mkdir()
+    path.write_bytes(text.encode())
+    metadata, body = split_frontmatter(text)
+    assert metadata["name"] == "example"
     assert body.strip() == "Body"
+    assert load_skill(path.parent, SkillScope.PROJECT).instructions == "Body"
 
 
-def test_split_frontmatter_ignores_non_mapping_metadata():
-    metadata, body = split_frontmatter("---\n- one\n- two\n---\nBody\n")
+def test_frontmatter_delimiters_must_be_at_the_start_and_on_their_own_lines():
+    assert split_frontmatter("Intro\n---\nname: a\n---")[0] == {}
+    metadata, body = split_frontmatter(
+        "---\nname: a\ndescription: |\n  ---example\n---\nBody"
+    )
+    assert metadata["description"] == "---example\n"
+    assert body == "Body"
 
-    assert metadata == {}
-    assert body.strip() == "Body"
+
+@pytest.mark.parametrize("client", [".claude", ".codex", ".agents", ".ursa"])
+def test_discovers_shared_and_client_roots(tmp_path, client):
+    write_skill(Path.home() / client / "skills", "user-skill")
+    write_skill(tmp_path / client / "skills", "project-skill")
+    skills = discover_skills(tmp_path)
+    assert skills["user-skill"].scope is SkillScope.USER
+    assert skills["project-skill"].scope is SkillScope.PROJECT
+    assert skills["project-skill"].path.is_absolute()
+
+
+@pytest.mark.parametrize("xdg", [None, "custom", "relative-is-invalid"])
+def test_xdg_config_root(tmp_path, monkeypatch, xdg):
+    root = Path.home() / ".config"
+    if xdg == "custom":
+        root = tmp_path / "config"
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(root))
+    elif xdg:
+        monkeypatch.setenv("XDG_CONFIG_HOME", xdg)
+    write_skill(root / "ursa" / "skills")
+    assert discover_skills(tmp_path)["example"].scope is SkillScope.USER
+
+
+def test_precedence_and_shadow_diagnostics(tmp_path, monkeypatch, caplog):
+    roots = skill_roots(tmp_path)[1:]
+    for i, (root, _) in enumerate(roots):
+        write_skill(root, description=f"Version {i}")
+    skills = discover_skills(tmp_path)
+    assert skills["example"].description == f"Version {len(roots) - 1}"
+    assert skills["example"].scope is SkillScope.PROJECT
+    assert "shadows" in caplog.text
+    assert str(roots[-1][0]) in caplog.text
+
+
+def test_discovery_uses_workspace_not_launch_directory(tmp_path, monkeypatch):
+    launch, workspace = tmp_path / "launch", tmp_path / "workspace"
+    write_skill(launch / ".ursa" / "skills", "launch-only")
+    write_skill(workspace / ".ursa" / "skills", "workspace-only")
+    monkeypatch.chdir(launch)
+    assert "launch-only" not in discover_skills(workspace)
+    assert "workspace-only" in discover_skills(workspace)
+    assert "launch-only" in discover_skills()
+
+
+def test_catalog_caches_discovery_and_isolates_workspaces(tmp_path):
+    write_skill(tmp_path / ".ursa" / "skills")
+    catalog = get_skill_catalog(tmp_path)
+    assert catalog is get_skill_catalog(tmp_path / ".")
+    with patch(
+        "ursa.skills.discovery.discover_skills_in", wraps=discover_skills_in
+    ) as scan:
+        first = catalog.load()
+        calls = scan.call_count
+        assert first is catalog.load()
+        assert scan.call_count == calls
+    assert "example" not in get_skill_catalog(tmp_path / "other").load()
+    with pytest.raises(TypeError):
+        first["x"] = first["example"]
+
+
+async def test_async_discovery_runs_off_the_event_loop(tmp_path, monkeypatch):
+    loop_thread = threading.get_ident()
+    threads = []
+
+    def scan(root, scope):
+        threads.append(threading.get_ident())
+        return {}
+
+    monkeypatch.setattr("ursa.skills.discovery.discover_skills_in", scan)
+    assert await adiscover_skills(tmp_path) == {}
+    catalog = SkillCatalog(((tmp_path, SkillScope.PROJECT),))
+    await asyncio.gather(catalog.aload(), catalog.aload())
+    assert threads and all(thread != loop_thread for thread in threads)
+
+
+def test_home_can_also_be_the_workspace():
+    write_skill(Path.home() / ".ursa" / "skills")
+    assert discover_skills(Path.home())["example"].scope is SkillScope.PROJECT
+
+
+def test_indented_yaml_delimiter_is_part_of_the_description(tmp_path):
+    path = tmp_path / "example" / "SKILL.md"
+    path.parent.mkdir()
+    path.write_text(
+        "---\nname: example\ndescription: |\n  First\n  ---\n  Second\n---\nBody"
+    )
+    skill = load_skill(path.parent, SkillScope.PROJECT)
+    assert skill.description == "First\n---\nSecond\n"
+    assert skill.instructions == "Body"

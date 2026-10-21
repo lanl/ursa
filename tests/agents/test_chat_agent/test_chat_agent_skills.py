@@ -8,7 +8,8 @@ def write_skill(root, name, description, body="Do the thing."):
     path = root / ".ursa" / "skills" / name / "SKILL.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        f"---\ndescription: {description}\n---\n\n{body}\n", encoding="utf-8"
+        f"---\nname: {name}\ndescription: {description}\n---\n\n{body}\n",
+        encoding="utf-8",
     )
 
 
@@ -30,10 +31,12 @@ def test_skill_tool_is_bound_when_skills_exist(chat_model, project):
     )
 
 
-def test_no_skill_tool_without_skills(chat_model, project):
+def test_bundled_skill_tool_is_available_without_user_skills(
+    chat_model, project
+):
     agent = ChatAgent(llm=chat_model, workspace=project)
 
-    assert SKILL_TOOL_NAME not in agent.tools
+    assert "skill-creation" in agent.tools[SKILL_TOOL_NAME].description
 
 
 def test_use_skills_false_disables_the_tool(chat_model, project):
@@ -83,3 +86,17 @@ async def test_skill_tool_returns_instructions_through_the_agent(
     result = agent.tools[SKILL_TOOL_NAME].invoke({"name": "write-python"})
 
     assert "Run with `uv run`." in result
+
+
+def test_workspace_skills_do_not_leak_from_cwd(chat_model, project):
+    write_skill(project, "launch-only", "Do not use")
+    workspace = project / "workspace"
+    write_skill(workspace, "workspace-only", "Use this")
+    agent = ChatAgent(llm=chat_model, workspace=workspace)
+    assert "launch-only" not in agent.tools[SKILL_TOOL_NAME].description
+    assert "workspace-only" in agent.tools[SKILL_TOOL_NAME].description
+    prompt = "$launch-only $workspace-only"
+    assert (
+        "these skills: workspace-only."
+        in agent.format_query(prompt)["messages"][-1].content
+    )

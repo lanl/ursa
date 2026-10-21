@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import ursa.tools.search_tools as search_tools
+from ursa.tools import search_tools
 
 
 async def test_web_search_dispatches_progress_asynchronously(

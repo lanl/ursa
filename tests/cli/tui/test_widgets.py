@@ -25,7 +25,6 @@ from textual.widgets import (
     TextArea,
 )
 
-import ursa.util.crossplatform as crossplatform
 from tests.cli._app_fakes import FakeHITL
 from tests.tui.utils import (
     await_dom,
@@ -52,6 +51,7 @@ from ursa.cli.tui.widgets import (
     ToolMessage,
     WelcomeBanner,
 )
+from ursa.util import crossplatform
 from ursa.util.inference_providers import ProviderModel
 
 

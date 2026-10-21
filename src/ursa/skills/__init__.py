@@ -9,9 +9,9 @@ from ursa.skills.activation import (
 from ursa.skills.activation import (
     requested_skill_names as requested_skill_names,
 )
-from ursa.skills.bundled import ensure_bundled_skills as ensure_bundled_skills
 from ursa.skills.discovery import Skill as Skill
 from ursa.skills.discovery import discover_skills as discover_skills
+from ursa.skills.discovery import get_skill_catalog as get_skill_catalog
 from ursa.skills.discovery import project_skills_root as project_skills_root
 from ursa.skills.discovery import user_skills_root as user_skills_root
 from ursa.skills.render import skills_markdown as skills_markdown

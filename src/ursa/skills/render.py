@@ -1,54 +1,38 @@
-"""Markdown rendering of the skill catalog for the TUI's ``/skills`` page."""
+"""Markdown rendering of the skill catalog for the TUI's /skills page."""
 
 from pathlib import Path
 
-from ursa.skills.discovery import discover_skills
+from ursa.skills.discovery import SkillCatalog, get_skill_catalog
 
 _INTRO = """
-Skills are loaded from `.ursa/skills/` in the directory URSA was \
-started in, and from `~/.ursa/skills/`. A project skill shadows a user \
-skill with the same name.
+Skills follow the [Agent Skills specification](https://agentskills.io/specification).
+Project skills come from the configured workspace and override user and bundled skills.
 """.strip()
 
 _USAGE = """
-Type `$` in the prompt to pick a skill, or write `$name` directly. You \
-can also just describe the task: URSA loads a matching skill on its own.
-""".strip()
-
-_EMPTY = """
-No skills found yet.
-
-Ask URSA to create one and it will use the bundled `skill-creation` skill to \
-write it for you.
+Type `$` in the prompt to pick a skill, or describe a matching task.
+Restart URSA after adding or editing skills to reload the catalog.
 """.strip()
 
 
-def _cell(text: str) -> str:
-    """Escape one markdown table cell."""
-    return " ".join(text.split()).replace("|", "\\|")
-
-
-def skills_markdown(project_root: Path | None = None) -> str:
-    """Render the discovered skills as a markdown page."""
-    catalog = discover_skills(project_root)
-    lines = [_INTRO, ""]
-
-    if not catalog:
-        lines.append(_EMPTY)
-        return "\n".join(lines)
-
-    lines += [
-        "| Skill | Scope | Description |",
-        "|---|---|---|",
-        *(
-            f"| `${skill.name}` | {skill.scope} | {_cell(skill.description)} |"
-            for skill in catalog.values()
-        ),
-        "",
-        _USAGE,
-        "",
-        "### Locations",
-        "",
-        *(f"- `${skill.name}` — `{skill.path}`" for skill in catalog.values()),
-    ]
+def skills_markdown(
+    project_root: Path | None = None, *, catalog: SkillCatalog | None = None
+) -> str:
+    catalog = get_skill_catalog(project_root) if catalog is None else catalog
+    skills = catalog.load()
+    lines = [_INTRO, "", _USAGE, ""]
+    if not skills:
+        lines.append("No skills found.")
+    for skill in skills.values():
+        # Paragraphs wrap naturally even with a 1024-character description.
+        lines += [
+            f"### ${skill.name}",
+            "",
+            skill.description,
+            "",
+            f"Scope: {skill.scope.value}. Source: `{skill.path}`",
+            "",
+        ]
+    lines += ["### Search locations (lowest to highest priority)", ""]
+    lines += [f"- {scope.value}: `{root}`" for root, scope in catalog.roots]
     return "\n".join(lines)

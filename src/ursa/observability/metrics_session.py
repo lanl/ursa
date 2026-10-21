@@ -83,7 +83,9 @@ def _parse_iso(ts: str | None) -> datetime | None:
     if not ts:
         return None
     try:
-        return datetime.fromisoformat(ISO_RE.sub("+00:00", ts)).astimezone(UTC)
+        return datetime.fromisoformat(ISO_RE.sub("+00:00", ts)).astimezone(
+            UTC
+        )
     except Exception:
         return None
 

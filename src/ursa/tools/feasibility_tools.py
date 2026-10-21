@@ -149,7 +149,9 @@ def _flatten_conjunction(expr: sp.Expr) -> tuple[list[sp.Expr], bool]:
     return [expr], True
 
 
-def _linear_relational(expr: sp.Expr, symbols: list[sp.Symbol]) -> bool | None:
+def _linear_relational(
+    expr: sp.Expr, symbols: list[sp.Symbol]
+) -> bool | None:
     """Check whether a relational constraint is linear in the given symbols.
 
     Args:

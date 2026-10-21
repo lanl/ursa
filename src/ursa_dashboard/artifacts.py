@@ -5,7 +5,6 @@ import mimetypes
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -52,7 +51,7 @@ def _sha256(path: Path, *, max_bytes: int) -> str | None:
 def scan_artifacts(
     base_dir: Path,
     *,
-    exclude_dirs: Optional[set[str]] = None,
+    exclude_dirs: set[str] | None = None,
     max_sha256_bytes: int = 50 * 1024 * 1024,
 ) -> list[dict]:
     """Scan base_dir recursively and return manifest entries.

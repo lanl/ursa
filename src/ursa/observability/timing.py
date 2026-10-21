@@ -1119,12 +1119,16 @@ class Telemetry:
                     getattr(self.runnable, "_starts", {})
                 ),
                 "agg": _as_dict(getattr(self.runnable, "agg", {})),
-                "buckets": list(getattr(self.runnable.agg, "buckets", list)()),
+                "buckets": list(
+                    getattr(self.runnable.agg, "buckets", list)()
+                ),
             },
             "tool": {
                 "_starts": _stringify_keys(getattr(self.tool, "_starts", {})),
                 "agg": _as_dict(getattr(self.tool, "agg", {})),
-                "buckets": list(getattr(self.tool.agg, "buckets", list)()),
+                "buckets": list(
+                    getattr(self.tool.agg, "buckets", list)()
+                ),
             },
             "llm": {
                 "_starts": _stringify_keys(getattr(self.llm, "_starts", {})),

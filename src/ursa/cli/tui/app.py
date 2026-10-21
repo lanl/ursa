@@ -52,7 +52,7 @@ from ursa.cli.tui.widgets import (
     ToolMessage,
     WelcomeBanner,
 )
-from ursa.skills import discover_skills, skills_markdown
+from ursa.skills import get_skill_catalog, skills_markdown
 from ursa.util import crossplatform
 from ursa.util import mcp as ursa_mcp
 from ursa.util.tqdm_lock import install_thread_only_tqdm_lock
@@ -161,6 +161,7 @@ class UrsaTextualApp(App[None]):
             self.register_theme(theme)
         self.theme = AVAILABLE_THEMES[0].name
         self.hitl = hitl
+        self.skill_catalog = get_skill_catalog(hitl.workspace)
         self.total_tokens = 0
         self.input_tokens = 0
         self.output_tokens = 0
@@ -410,6 +411,19 @@ class UrsaTextualApp(App[None]):
         prompt.scroll_cursor_visible(animate=False)
 
     def _open_hotlist(self, trigger: str) -> None:
+        if trigger == "$":
+            self.run_worker(
+                self._open_skill_hotlist(), group="skills", exclusive=True
+            )
+            return
+        self._show_hotlist(trigger)
+
+    async def _open_skill_hotlist(self) -> None:
+        await self.skill_catalog.aload()
+        if not self._exit:
+            self._show_hotlist("$")
+
+    def _show_hotlist(self, trigger: str) -> None:
         candidates = self._hotlist_candidates(trigger)
         title = {
             "#": "Agents",
@@ -518,8 +532,8 @@ class UrsaTextualApp(App[None]):
             ]
         if trigger == "$":
             return [
-                f"{name} — {skill.description}"
-                for name, skill in discover_skills().items()
+                f"{name} — {' '.join(skill.description.split())}"
+                for name, skill in self.skill_catalog.load().items()
             ]
         workspace = Path(self.hitl.workspace)
         ignored = {".git", ".venv", "__pycache__", "node_modules"}
@@ -576,12 +590,12 @@ class UrsaTextualApp(App[None]):
                 callback=self._select_theme,
             )
             return
+        if command == "skills":
+            self.run_worker(self._show_skills(), group="skills", exclusive=True)
+            return
         content = {
             "status": self._status_markdown,
             "keymap": self._keymap_markdown,
-            # Skills are read from disk on each open so newly added ones show up
-            # without restarting URSA.
-            "skills": skills_markdown,
         }.get(command)
         if content is None:
             self.query_one(PromptArea).focus()
@@ -598,6 +612,16 @@ class UrsaTextualApp(App[None]):
             ),
             callback=lambda _: self.query_one(PromptArea).focus(),
         )
+
+    async def _show_skills(self) -> None:
+        await self.skill_catalog.aload()
+        if not self._exit:
+            await self.push_screen(
+                InformationScreen(
+                    "Skills", skills_markdown(catalog=self.skill_catalog)
+                ),
+                callback=lambda _: self.query_one(PromptArea).focus(),
+            )
 
     def _resolved_config_yaml(self) -> str:
         """Serialize the active, already-resolved runtime configuration."""

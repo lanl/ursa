@@ -50,7 +50,7 @@ path, or `$` to activate a skill.
 | `/` | Browse application commands. Use `/keymap` for every keyboard shortcut, or `/skills` for the discovered [skills](../skills/index.md). |
 | `#` | Choose an agent and route the message to it. |
 | `@` | Insert a workspace file or directory into the message. |
-| `$` | Choose a [skill](../skills/index.md) to activate for this message. Typing `$write-python` by hand works too. |
+| `$` | Choose a [skill](../skills/index.md) to activate for this message. |
 | **Enter** | Submit the message. |
 | **Shift+Enter** or **Ctrl+J** | Insert a newline. Some terminals cannot distinguish Shift+Enter, so Ctrl+J is the portable option. |
 | **Ctrl+Q** or `/exit` | Exit gracefully, waiting for an active turn to finish. |
