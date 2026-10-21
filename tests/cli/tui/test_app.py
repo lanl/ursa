@@ -7,7 +7,6 @@ from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
 import ursa.cli.tui.app as app_module
-import ursa.util.crossplatform as crossplatform
 from tests.cli._app_fakes import FakeHITL, emit_event
 from tests.tui.utils import eventually
 from ursa.cli.tui.app import UrsaTextualApp
@@ -19,6 +18,7 @@ from ursa.cli.tui.widgets import (
     PromptArea,
     WelcomeBanner,
 )
+from ursa.util import crossplatform
 
 
 def test_copy_bindings_are_uniform_and_global():

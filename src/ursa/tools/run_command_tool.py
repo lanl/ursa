@@ -84,7 +84,7 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
             ),
             repair=1,
         )
-    
+
         if not safety_result.is_safe:
             tool_response = f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\nFor reason: {safety_result.reason}"
             events.emit(

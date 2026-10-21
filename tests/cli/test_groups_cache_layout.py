@@ -1,6 +1,6 @@
 import pytest
 
-import ursa.security as security
+from ursa import security
 from ursa.cli import groups, main
 
 

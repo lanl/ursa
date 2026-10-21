@@ -23,20 +23,20 @@ import pytest
 
 hypothesis = pytest.importorskip("hypothesis")
 
-from hypothesis import given, settings  # noqa: E402
-from hypothesis import strategies as st  # noqa: E402
-from langchain_core.messages import (  # noqa: E402
+from hypothesis import given, settings
+from hypothesis import strategies as st
+from langchain_core.messages import (
     AIMessage,
     HumanMessage,
     SystemMessage,
     ToolMessage,
 )
 
-from tests.agents.utils import (  # noqa: E402
+from tests.agents.utils import (
     RecordingChatModel,
     assert_requests_provider_valid,
 )
-from ursa.agents.chat_agent import BasicChatAgent, ChatAgent  # noqa: E402
+from ursa.agents.chat_agent import BasicChatAgent, ChatAgent
 
 _PAD = "pad " * 40
 

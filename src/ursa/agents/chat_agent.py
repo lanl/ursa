@@ -6,7 +6,8 @@ from langgraph.graph import END
 from langgraph.graph.message import add_messages
 from langgraph.runtime import Runtime
 
-from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
+from ursa.agents.base import AgentContext, BaseAgent
+from ursa.agents.skills import AgentWithSkills
 from ursa.prompt_library.chatter_prompts import get_chatter_system_prompt
 from ursa.tools import (
     download_file_tool,
@@ -84,7 +85,7 @@ def should_continue(state: ChatState) -> Literal["finish", "continue"]:
         return "continue"
 
 
-class ChatAgent(AgentWithTools, BasicChatAgent):
+class ChatAgent(AgentWithSkills, BasicChatAgent):
     """Chat Agent"""
 
     state_type = ChatState
@@ -93,6 +94,7 @@ class ChatAgent(AgentWithTools, BasicChatAgent):
         self,
         llm: BaseChatModel,
         use_web: bool = False,
+        use_skills: bool = True,
         **kwargs,
     ):
         default_tools = [
@@ -113,7 +115,9 @@ class ChatAgent(AgentWithTools, BasicChatAgent):
                 run_osti_search,
                 run_arxiv_search,
             ])
-        super().__init__(llm=llm, tools=default_tools, **kwargs)
+        super().__init__(
+            llm=llm, tools=default_tools, use_skills=use_skills, **kwargs
+        )
 
     def _build_graph(self):
         # Bind tools to llm and context summarizer

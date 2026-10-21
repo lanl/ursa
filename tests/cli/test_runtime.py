@@ -87,6 +87,13 @@ DOCS_ROOT = Path(__file__).resolve().parents[2]
 DOC_EXAMPLE_CONFIG = DOCS_ROOT / "configs" / "example.yaml"
 
 
+def test_launching_does_not_materialize_bundled_skills(ursa_config):
+    HITL(ursa_config)
+
+    skill = Path.home() / ".ursa" / "skills" / "skill-creation" / "SKILL.md"
+    assert not skill.exists()
+
+
 async def test_agents_use_configured_workspace(ursa_config, tmp_path):
     workspace = tmp_path / "custom-workspace"
     ursa_config.workspace = workspace

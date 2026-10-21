@@ -26,12 +26,12 @@ pytest.importorskip(
     exc_type=ImportError,
 )
 
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # noqa: E402
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
     OTLPSpanExporter,
 )
-from opentelemetry.trace import SpanKind, StatusCode  # noqa: E402
+from opentelemetry.trace import SpanKind, StatusCode
 
-import ursa.observability.timing as timing  # noqa: E402
+from ursa.observability import timing
 
 _EXPORTERS = []
 

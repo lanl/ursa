@@ -4,7 +4,7 @@ import asyncio
 import json
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -594,7 +594,7 @@ def test_prompts_share_task_criteria_and_preserve_lineage_guidance(elo_factory):
     surviving = env._member_prompt(member, task)
     assert "Favor refinement" in surviving
     env.players[member.name].parent = "ancestor"
-    deadline = datetime.now(timezone.utc) + timedelta(seconds=30)
+    deadline = datetime.now(UTC) + timedelta(seconds=30)
     descendant = env._member_prompt(member, task, deadline=deadline)
     assert "alternative approach" in descendant
     assert "terminated at this deadline" in descendant
@@ -639,7 +639,7 @@ def test_expired_deadline_captures_progress_without_invoking_member(
             member,
             "task",
             {},
-            deadline=datetime.now(timezone.utc) - timedelta(seconds=1),
+            deadline=datetime.now(UTC) - timedelta(seconds=1),
         )
     )
     assert run.timed_out
@@ -827,7 +827,7 @@ def test_member_result_preserves_execution_outcomes(
         monkeypatch.setattr(env, "_format_member_result", bad_formatter)
     deadline = None
     if outcome in {"timed_out", "expired"}:
-        deadline = datetime.now(timezone.utc) + timedelta(
+        deadline = datetime.now(UTC) + timedelta(
             seconds=0.05 if outcome == "timed_out" else -1
         )
     invocation = env._run_member(member, "task", {}, deadline=deadline)

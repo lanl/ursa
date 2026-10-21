@@ -371,7 +371,7 @@ async def test_environment_run_manager_marks_interrupted_run_failed(
 async def test_environment_worker_builds_team_and_restores_member_secrets(
     monkeypatch, tmp_path
 ):
-    import ursa.environments as environments
+    from ursa import environments
     from ursa_dashboard import environment_worker_main
 
     config_path = tmp_path / "environment.yaml"

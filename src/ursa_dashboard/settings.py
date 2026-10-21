@@ -334,7 +334,7 @@ def merge_global_settings_patch(
 
 
 def apply_dashboard_config(
-    settings_store: "SettingsStore", path: str | Path, *, group: str
+    settings_store: SettingsStore, path: str | Path, *, group: str
 ) -> GlobalSettings:
     """Apply a CLI-style YAML/JSON config to dashboard global settings.
 
@@ -399,7 +399,7 @@ class AuthConfig(BaseModel):
     cors_origins: list[str] = Field(default_factory=list)
 
     @classmethod
-    def from_env(cls) -> "AuthConfig":
+    def from_env(cls) -> AuthConfig:
         mode = os.environ.get("URSA_DASHBOARD_MODE")
         if not mode:
             mode = (
