@@ -27,9 +27,18 @@
 
     $uv = Find-Uv
     if (-not $uv) {
-        Write-Output "Installing uv..."
         [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-        Invoke-RestMethod "https://astral.sh/uv/install.ps1" | Invoke-Expression
+        $uvInstaller = [IO.Path]::GetTempFileName()
+        try {
+            Write-Output "Downloading the uv installer..."
+            Invoke-WebRequest "https://astral.sh/uv/install.ps1" -UseBasicParsing -OutFile $uvInstaller
+            Write-Output "uv installer path: $uvInstaller"
+            $confirmation = Read-Host "Install uv? [y/N]"
+            if ($confirmation -notmatch "^(?i:y(?:es)?)$") { Fail "uv installation declined" }
+            Write-Output "Installing uv..."
+            Invoke-Expression (Get-Content -LiteralPath $uvInstaller -Raw)
+        }
+        finally { Remove-Item -LiteralPath $uvInstaller -Force -ErrorAction SilentlyContinue }
         $uv = Find-Uv
         if (-not $uv) { Fail "uv installed, but its executable could not be found" }
     }
