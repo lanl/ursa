@@ -3,6 +3,11 @@ set -eu
 say() { printf '%s\n' "$*"; }
 fail() { printf 'URSA installer: %s\n' "$*" >&2; exit 1; }
 
+uv_installer=
+cleanup() { [ -z "$uv_installer" ] || rm -f "$uv_installer"; }
+trap cleanup 0
+trap 'exit 1' HUP INT TERM
+
 config=
 python=3.13
 source=
@@ -34,9 +39,23 @@ fi
 
 uv=$(command -v uv || true)
 if [ -z "$uv" ]; then
-    say "Installing uv…"
     command -v curl >/dev/null || fail "curl is required to download uv"
-    curl -LsSf https://astral.sh/uv/install.sh | sh
+    uv_installer=$(mktemp "${TMPDIR:-/tmp}/ursa-uv-installer.XXXXXX")
+    say "Downloading the uv installer…"
+    curl -LsSf https://astral.sh/uv/install.sh -o "$uv_installer"
+    say "uv installer path: $uv_installer"
+    printf 'Install uv? [y/N] '
+    case $input in
+    stdin) IFS= read -r answer || answer= ;;
+    tty) IFS= read -r answer </dev/tty || answer= ;;
+    *) say ""; fail "uv installation requires an interactive terminal" ;;
+    esac
+    case $answer in
+    y|Y|[yY][eE][sS]) ;;
+    *) fail "uv installation declined" ;;
+    esac
+    say "Installing uv…"
+    sh "$uv_installer"
     directory=${UV_UNMANAGED_INSTALL:-${UV_INSTALL_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}}
     uv=$directory/uv
     [ -x "$uv" ] || fail "uv installed, but its executable could not be found"
