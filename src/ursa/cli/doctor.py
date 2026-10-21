@@ -378,7 +378,7 @@ def check_llm_models(context: DoctorContext) -> CheckResult:
             (name, probe_chat_config, (capability,))
             for name, capability in (
                 ("Chat invocation", "chat"),
-                ("Forced tool use", "tool"),
+                ("Tool calling", "tool"),
                 ("Structured output", "structured"),
             )
         ),
