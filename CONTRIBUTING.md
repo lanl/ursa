@@ -1,5 +1,7 @@
 # Contributing
 
+Contributions are welcome. This page provides guidance for contributors on how to format code, report problems, raise issues, propose changes, build documentation, etc.
+
 ## Linting and Formatting
 
 You will need to lint and format your code using [`ruff`][2]. The easiest way
@@ -73,7 +75,7 @@ to do and what you have already tried. The
 
 ## Proposing changes
 
-1. For substantial changes, open an issue to discuss the approach with maintainers.
+1. For substantial changes, open an issue to discuss the approach with maintainers. Examples of substantial changes are introducing a new [agent](https://github.com/lanl/ursa/tree/main/src/ursa/agents), [workflow](https://github.com/lanl/ursa/tree/main/src/ursa/workflows), [environment](https://github.com/lanl/ursa/tree/main/src/ursa/environments), etc.
 2. Fork the repository and create a branch from `main` in your fork.
 3. Update relevant documentation and examples, and add
    or update tests when behavior changes.

@@ -70,12 +70,12 @@ in your activated environment, or
 | `fm` | Expose PyTorch models as MCP tools | Model weights and any model-specific dependencies; compatible accelerator drivers if using a GPU. CPU execution is also supported. |
 | `lammps` | Potential discovery and LAMMPS workflow support | Separately installed LAMMPS and MPI executables; network access for remote potential discovery. See [LAMMPS dependencies](../agents/lammps.md#dependencies). |
 | `office_readers` | Read Word and PowerPoint documents | No additional external executable for these readers. |
-| `opt` | OR-Tools optimization support | Other solvers used by a workflow may require separate installation and licenses. |
+| `opt` | Google's [OR (Operations Research)-Tools](https://developers.google.com/optimization) optimization support | Other solvers used by the Optimization Agent may require separate installation and licenses. |
 | `otel` | Export OpenTelemetry data over OTLP/HTTP | A configured, reachable OTLP collector or compatible service. |
-| `dsi` | Data Science Infrastructure integration | Data sources and any backend-specific dependencies required by the workflow. |
+| `dsi` | Data Science Infrastructure integration | Data sources and backend-specific dependencies required by the DSI workflow. |
 | `image` | Image handling with Pillow | A model with image support when sending images to an LLM. |
 | `mp` | Materials Project API access | A Materials Project API key and network access. |
-| `metric_plots` | Plot and analyze collected metrics | No additional external executable. |
+| `metric_plots` | Plot and analyze collected metrics such as execution times, LLM token usage, and tokens per second | No additional external executable. |
 
 Extras install Python dependencies; they do not install external simulation codes,
 MPI, or model weights. The LAMMPS Agent defaults to `lmp_mpi` and `mpirun`;
