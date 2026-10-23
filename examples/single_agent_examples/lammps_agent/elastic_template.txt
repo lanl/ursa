@@ -20,12 +20,17 @@ region         box block 0 ${nrep} 0 ${nrep} 0 ${nrep}
 create_box     xx box
 create_atoms   xx box
 
-# Example random equiatomic assignment across 5 types (1..5)
-# Adjust according to your needs
+# Example random, approximately equiatomic assignment across 5 types (1..5).
+# Start with all atoms as type 1. Use a distinct seed for each selection;
+# reusing a seed correlates the selections and biases the composition.
+# Check and report the realized atom counts for each type.
+variable seed3 equal v_seed+1
+variable seed4 equal v_seed+2
+variable seed5 equal v_seed+3
 set type 1 type/fraction 2 0.20 ${seed}
-set type 1 type/fraction 3 0.25 ${seed}
-set type 1 type/fraction 4 0.3333 ${seed}
-set type 1 type/fraction 5 0.5 ${seed}
+set type 1 type/fraction 3 0.25 ${seed3}
+set type 1 type/fraction 4 $(1.0/3.0) ${seed4}
+set type 1 type/fraction 5 0.5 ${seed5}
 
 # Masses 
 mass 1 xxxx
@@ -40,6 +45,11 @@ neighbor        2.0 bin
 neigh_modify    delay 0 every 1 check yes
 
 # ------------ MINIMIZATION TO 0 K ------------
+# This minimizes atomic positions at fixed cell dimensions. For zero-pressure
+# elastic constants, first equilibrate the cell with fix box/relax and verify
+# the residual stress. Remove that fix before applying the strains below.
+# For reported alloy results, check convergence with strain magnitude, cell
+# size, and multiple independent chemical configurations (different seeds).
 reset_timestep  0
 thermo          xxxxx
 thermo_style    custom step pe lx ly lz pxx pyy pzz pxy pxz pyz
@@ -284,7 +294,8 @@ change_box all ortho remap units box
 # ------------ BUILD THE 6x6 C MATRIX (GPa) ------------
 # Voigt: 1=xx,2=yy,3=zz,4=yz,5=xz,6=xy
 # Normal: epsilon = +/- delta
-# Shear:  epsilon4..6 = gamma/2 = +/- delta/2  -> divide by delta below
+# Shear: Voigt strains 4..6 are engineering strains gamma = +/- delta.
+# All columns use the central difference [stress(+delta)-stress(-delta)]/(2*delta).
 
 # j=1 (exx)
 variable C11 equal ( ${Sp1}-${Sm1} )/( 2*${delta} )
@@ -310,29 +321,29 @@ variable C43 equal ( ${Up4}-${Um4} )/( 2*${delta} )
 variable C53 equal ( ${Up5}-${Um5} )/( 2*${delta} )
 variable C63 equal ( ${Up6}-${Um6} )/( 2*${delta} )
 
-# j=6 (exy = gamma/2): divide by delta
-variable C16 equal ( ${Xp1}-${Xm1} )/( ${delta} )
-variable C26 equal ( ${Xp2}-${Xm2} )/( ${delta} )
-variable C36 equal ( ${Xp3}-${Xm3} )/( ${delta} )
-variable C46 equal ( ${Xp4}-${Xm4} )/( ${delta} )
-variable C56 equal ( ${Xp5}-${Xm5} )/( ${delta} )
-variable C66 equal ( ${Xp6}-${Xm6} )/( ${delta} )
+# j=6 (engineering shear gamma_xy)
+variable C16 equal ( ${Xp1}-${Xm1} )/( 2*${delta} )
+variable C26 equal ( ${Xp2}-${Xm2} )/( 2*${delta} )
+variable C36 equal ( ${Xp3}-${Xm3} )/( 2*${delta} )
+variable C46 equal ( ${Xp4}-${Xm4} )/( 2*${delta} )
+variable C56 equal ( ${Xp5}-${Xm5} )/( 2*${delta} )
+variable C66 equal ( ${Xp6}-${Xm6} )/( 2*${delta} )
 
-# j=5 (exz = gamma/2): divide by delta
-variable C15 equal ( ${Yp1}-${Ym1} )/( ${delta} )
-variable C25 equal ( ${Yp2}-${Ym2} )/( ${delta} )
-variable C35 equal ( ${Yp3}-${Ym3} )/( ${delta} )
-variable C45 equal ( ${Yp4}-${Ym4} )/( ${delta} )
-variable C55 equal ( ${Yp5}-${Ym5} )/( ${delta} )
-variable C65 equal ( ${Yp6}-${Ym6} )/( ${delta} )
+# j=5 (engineering shear gamma_xz)
+variable C15 equal ( ${Yp1}-${Ym1} )/( 2*${delta} )
+variable C25 equal ( ${Yp2}-${Ym2} )/( 2*${delta} )
+variable C35 equal ( ${Yp3}-${Ym3} )/( 2*${delta} )
+variable C45 equal ( ${Yp4}-${Ym4} )/( 2*${delta} )
+variable C55 equal ( ${Yp5}-${Ym5} )/( 2*${delta} )
+variable C65 equal ( ${Yp6}-${Ym6} )/( 2*${delta} )
 
-# j=4 (eyz = gamma/2): divide by delta
-variable C14 equal ( ${Zp1}-${Zm1} )/( ${delta} )
-variable C24 equal ( ${Zp2}-${Zm2} )/( ${delta} )
-variable C34 equal ( ${Zp3}-${Zm3} )/( ${delta} )
-variable C44 equal ( ${Zp4}-${Zm4} )/( ${delta} )
-variable C54 equal ( ${Zp5}-${Zm5} )/( ${delta} )
-variable C64 equal ( ${Zp6}-${Zm6} )/( ${delta} )
+# j=4 (engineering shear gamma_yz)
+variable C14 equal ( ${Zp1}-${Zm1} )/( 2*${delta} )
+variable C24 equal ( ${Zp2}-${Zm2} )/( 2*${delta} )
+variable C34 equal ( ${Zp3}-${Zm3} )/( 2*${delta} )
+variable C44 equal ( ${Zp4}-${Zm4} )/( 2*${delta} )
+variable C54 equal ( ${Zp5}-${Zm5} )/( 2*${delta} )
+variable C64 equal ( ${Zp6}-${Zm6} )/( 2*${delta} )
 
 # ------------ REPORT: raw, symmetrized, cubic averages, stability ------------
 print "Elastic stiffness matrix C_ij (GPa):"
