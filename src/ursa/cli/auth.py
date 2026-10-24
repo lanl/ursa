@@ -1,26 +1,27 @@
-"""Manage URSA credentials in the operating-system keyring."""
+"""Manage URSA credentials in the keyring."""
 
 from __future__ import annotations
 
 import getpass
 from argparse import SUPPRESS
 from collections import Counter
-from collections.abc import Iterator, Mapping, Sequence
 from os import environ
 from pathlib import Path
-from typing import Any
 
-import keyring
 from jsonargparse import ArgumentParser, Namespace
+from keyring.errors import KeyringError
 
 from ursa.cli.config import (
     config_layers,
     deep_merge_dicts,
     load_config_file,
 )
-from ursa.util.secrets import SecretReference, SecretTemplate
-
-KEYRING_SERVICE = "ursa"
+from ursa.util import get_keyring
+from ursa.util.secrets import (
+    KEYRING_SERVICE,
+    iter_secret_references,
+    keyring_usernames,
+)
 
 
 def add_auth_subcommands(subparsers) -> None:
@@ -29,7 +30,7 @@ def add_auth_subcommands(subparsers) -> None:
     subparsers.add_subcommand(
         "auth",
         auth_parser,
-        help="Manage credentials in the system keyring",
+        help="Manage credentials in the keyring",
         dest="subcommand",
     )
     auth_subparsers = auth_parser.add_subcommands(required=True)
@@ -53,7 +54,7 @@ def add_auth_subcommands(subparsers) -> None:
     )
     login_parser.add_argument("--handler", default=None, help=SUPPRESS)
     auth_subparsers.add_subcommand(
-        "login", login_parser, help="Store credentials in the system keyring"
+        "login", login_parser, help="Store credentials in the keyring"
     )
     login_parser.set_defaults(handler=login)
 
@@ -84,59 +85,13 @@ def add_auth_subcommands(subparsers) -> None:
 
 def config_keyring_usernames(path: Path) -> list[str]:
     """Return keyring usernames referenced anywhere in an URSA config."""
-    secrets = _iter_secrets(load_config_file(path))
-    return sorted({
-        reference.keyring
-        if isinstance(reference.keyring, str)
-        else default_username
-        for _, reference, default_username in secrets
-        if reference.keyring not in (None, False)
-    })
-
-
-def _iter_secrets(
-    value: Any,
-    path: tuple[str, ...] = (),
-    default_username: str | None = None,
-) -> Iterator[tuple[tuple[str, ...], SecretReference, str | None]]:
-    """Yield secrets found in a loaded config mapping."""
-    value = SecretTemplate.maybe_validate(value)
-    if isinstance(value, SecretReference):
-        yield path, value, default_username
-        return
-    if isinstance(value, Mapping):
-        if isinstance(value.get("inference_provider"), str):
-            default_username = value["inference_provider"]
-        elif isinstance(value.get("model"), str) and ":" in value["model"]:
-            default_username = value["model"].split(":", 1)[0]
-        for name, item in value.items():
-            if name == "api_key_env" and isinstance(item, str):
-                yield (
-                    (*path, "api_key"),
-                    SecretReference(env=item),
-                    default_username,
-                )
-                continue
-            child_default = default_username
-            if path in {("inference_providers",), ("mcp_servers",)}:
-                child_default = str(name)
-            elif child_default is None:
-                child_default = str(name)
-            yield from _iter_secrets(item, (*path, str(name)), child_default)
-        return
-    if isinstance(value, Sequence) and not isinstance(
-        value, (str, bytes, bytearray)
-    ):
-        for index, item in enumerate(value):
-            yield from _iter_secrets(
-                item, (*path, str(index)), default_username
-            )
+    return keyring_usernames(load_config_file(path))
 
 
 def _secret_lines(
     config: dict, show_secrets: bool = False
 ) -> dict[str, list[str]]:
-    secrets = list(_iter_secrets(config))
+    secrets = list(iter_secret_references(config))
     mcp_counts = Counter(
         path[1] for path, _, _ in secrets if path[:1] == ("mcp_servers",)
     )
@@ -166,7 +121,7 @@ def _secret_lines(
             name += f" ({reference.keyring})"
         try:
             resolved = reference.resolve(default_username)
-        except (ValueError, keyring.errors.KeyringError):
+        except (ValueError, KeyringError):
             resolved = None
         line = (
             f"  {name}: {source} {'ok' if resolved is not None else 'missing'}"
@@ -235,5 +190,5 @@ def login(
         password = env_password or getpass.getpass(f"Secret for {name}: ")
         if not password:
             raise ValueError(f"Secret for '{name}' cannot be empty")
-        keyring.set_password(KEYRING_SERVICE, name, password)
+        get_keyring().set_password(KEYRING_SERVICE, name, password)
         print(f"Stored credential: {name}")  # noqa: T201

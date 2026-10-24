@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from types import SimpleNamespace
 
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
@@ -558,8 +559,12 @@ def test_environment_config_defaults_use_group_cache(monkeypatch, tmp_path):
 def test_team_config_resolves_inference_provider_keyring(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(
-        "keyring.get_password",
-        lambda service, username: calls.append((service, username)) or "secret",
+        "ursa.util.secrets.get_keyring",
+        lambda: SimpleNamespace(
+            get_password=lambda service, username: (
+                calls.append((service, username)) or "secret"
+            )
+        ),
     )
     path = tmp_path / "team.yaml"
     path.write_text(
