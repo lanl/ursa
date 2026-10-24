@@ -46,13 +46,7 @@ def _doctor(args, *, cfg, env_overrides, cli_overrides) -> None:
     except (Exception, SystemExit) as exc:
         config = None
         config_error = exc
-    raise SystemExit(
-        run_doctor(
-            args,
-            config=config,
-            config_error=config_error,
-        )
-    )
+    raise SystemExit(run_doctor(args, config=config, config_error=config_error))
 
 
 def add_self_subcommands(subparsers) -> None:
@@ -70,6 +64,22 @@ def add_self_subcommands(subparsers) -> None:
         "self", parser, help=parser.description, dest="subcommand"
     ).default_env = False
     commands = parser.add_subcommands(required=True)
+    setup = _command(
+        commands,
+        "setup",
+        "Interactively configure providers, models, and MCP servers",
+        _setup,
+    )
+    setup.add_argument(
+        "--config",
+        type=Path,
+        help="Configuration path (default: platform user config path)",
+    )
+    setup.add_argument(
+        "--defaults-json",
+        type=Path,
+        help="Non-secret provider and MCP defaults from an installer payload",
+    )
     _command(commands, "status", "Show installation details", show_status)
     doctor = _command(
         commands,
@@ -86,50 +96,58 @@ def add_self_subcommands(subparsers) -> None:
         commands,
         "update",
         "Update URSA while preserving its recipe",
-        lambda _args: upgrade(),
+        upgrade,
     )
     modify = _command(
-        commands, "modify", "Modify the URSA installation", _modify
+        commands, "modify", "Modify the URSA installation", upgrade
     )
-    modify.add_argument("--extra", action="append", default=None)
-    modify.add_argument(
-        "--with", dest="with_packages", action="append", default=None
-    )
+    modify.add_argument("--extra", dest="extras", action="append")
+    modify.add_argument("--with", dest="with_packages", action="append")
     modify.add_argument("--clean", action="store_true")
     source = modify.add_mutually_exclusive_group()
     source.add_argument("--version", help="Install an exact registry version")
     source.add_argument("--ref", help="Install a Git branch, tag, or commit")
 
 
-def _modify(args) -> None:
-    upgrade(
-        extras=args.extra,
-        with_packages=args.with_packages,
-        version=args.version,
-        ref=args.ref,
-        clean=args.clean,
-    )
+def _setup(
+    config: Path | None = None, defaults_json: Path | None = None
+) -> None:
+    """Load Textual only when the interactive setup command is selected."""
+    from ursa.cli.setup import SetupAction, SetupError, run_setup
+
+    try:
+        action = run_setup(config, defaults_json)
+    except SetupError as exc:
+        raise SystemExit(f"Could not start guided setup: {exc}") from None
+
+    if executable := {
+        SetupAction.TERMINAL: "ursa",
+        SetupAction.DASHBOARD: "ursa-dashboard",
+    }.get(action):
+        try:
+            os.execvp(executable, [executable])
+        except OSError as exc:
+            raise SystemExit(f"Could not launch {executable}: {exc}") from None
 
 
-def _read_requirements(receipt: Path) -> list[dict]:
+def _read_receipt(receipt: Path) -> tuple[dict, list[dict]]:
     try:
         with receipt.open("rb") as stream:
             requirements = tomllib.load(stream)["tool"]["requirements"]
         if not isinstance(requirements, list):
             raise TypeError
-        return requirements
-    except (OSError, KeyError, TypeError, tomllib.TOMLDecodeError):
-        raise SystemExit(_INVALID_RECEIPT) from None
-
-
-def _read_requirement(receipt: Path) -> dict:
-    try:
-        return next(
-            item
-            for item in _read_requirements(receipt)
-            if item.get("name") == TOOL_PACKAGE
+        package = next(
+            item for item in requirements if item.get("name") == TOOL_PACKAGE
         )
-    except (AttributeError, StopIteration):
+        return package, requirements
+    except (
+        AttributeError,
+        OSError,
+        KeyError,
+        StopIteration,
+        TypeError,
+        tomllib.TOMLDecodeError,
+    ):
         raise SystemExit(_INVALID_RECEIPT) from None
 
 
@@ -138,7 +156,7 @@ def _running_uv_receipt(prefix: Path | None = None) -> Path | None:
     if not receipt.is_file():
         return None
     try:
-        _read_requirement(receipt)
+        _read_receipt(receipt)
         return receipt
     except SystemExit:
         return None
@@ -169,21 +187,20 @@ def _uv_install() -> tuple[Path, Path]:
         valid = False
     if not valid:
         raise SystemExit(_NOT_UV_TOOL)
-    _read_requirement(receipt)
+    _read_receipt(receipt)
     return uv, receipt
 
 
 def _source(requirement: dict) -> str:
     if git := requirement.get("git"):
-        ref = next(
-            (
-                requirement.get(key)
-                for key in ("branch", "tag", "rev")
-                if requirement.get(key)
-            ),
+        # uv stores a resolved Git revision as ``?rev=...`` in its receipt,
+        # while a direct requirement spells the same source as ``@REV``.
+        repository, _, receipt_ref = git.partition("?rev=")
+        ref = receipt_ref or next(
+            filter(None, map(requirement.get, ("branch", "tag", "rev"))),
             None,
         )
-        return f" @ git+{git}{f'@{ref}' if ref else ''}"
+        return f" @ git+{repository}{f'@{ref}' if ref else ''}"
     if url := requirement.get("url"):
         return f" @ {url}"
     if path := requirement.get("directory") or requirement.get("path"):
@@ -197,41 +214,33 @@ def _format_requirement(requirement: dict) -> str:
     return name + _source(requirement)
 
 
-def status_details() -> dict[str, str]:
-    """Return all details displayed by ``ursa self status``."""
+def show_status() -> None:
     try:
         installed = package_version(TOOL_PACKAGE)
     except PackageNotFoundError:
         installed = "unknown"
-    details = {
-        "Version": installed,
-        "Python": f"{sys.version.split()[0]} ({sys.implementation.name})",
-        "Python path": str(Path(sys.executable).resolve()),
-        "Platform": sys.platform,
-    }
+    print(f"Version: {installed}")  # noqa: T201
+    print(  # noqa: T201
+        f"Python: {sys.version.split()[0]} ({sys.implementation.name})"
+    )
+    print(f"Python path: {Path(sys.executable).resolve()}")  # noqa: T201
+    print(f"Platform: {sys.platform}")  # noqa: T201
     receipt = _running_uv_receipt()
     if receipt is None:
         unavailable = "unavailable (not a uv tool installation)"
-        details["Extras"] = unavailable
-        details["Additional packages"] = unavailable
-    else:
-        requirements = _read_requirements(receipt)
-        extras = _read_requirement(receipt).get("extras", [])
-        additional = [
-            _format_requirement(item)
-            for item in requirements
-            if item.get("name") != TOOL_PACKAGE
-        ]
-        details["Extras"] = ", ".join(extras) if extras else "none"
-        details["Additional packages"] = (
-            ", ".join(additional) if additional else "none"
-        )
-    return details
-
-
-def show_status(_args=None) -> None:
-    for name, value in status_details().items():
-        print(f"{name}: {value}")  # noqa: T201
+        print(f"Extras: {unavailable}")  # noqa: T201
+        print(f"Additional packages: {unavailable}")  # noqa: T201
+        return
+    package, requirements = _read_receipt(receipt)
+    extras = package.get("extras", [])
+    additional = [
+        _format_requirement(item)
+        for item in requirements
+        if item.get("name") != TOOL_PACKAGE
+    ]
+    print(f"Extras: {', '.join(extras) if extras else 'none'}")  # noqa: T201
+    value = ", ".join(additional) if additional else "none"
+    print(f"Additional packages: {value}")  # noqa: T201
 
 
 def _merge(
@@ -274,7 +283,7 @@ def build_upgrade_requirement(
     version: str | None = None,
     ref: str | None = None,
 ) -> str:
-    original = _read_requirement(receipt)
+    original, _ = _read_receipt(receipt)
     selected = original.get("extras", []) if extras is None else extras
     name = TOOL_PACKAGE + (f"[{','.join(selected)}]" if selected else "")
     if version is not None:
@@ -284,8 +293,25 @@ def build_upgrade_requirement(
     if ref is not None:
         if not ref.strip():
             raise SystemExit("Cannot update: ref cannot be empty.")
-        return f"{name} @ git+{original.get('git') or get_package_repository()}@{ref}"
+        repository = (
+            original.get("git") or get_package_repository()
+        ).partition("?rev=")[0]
+        return f"{name} @ git+{repository}@{ref}"
     return name + _source(original)
+
+
+def _uv_argv(
+    uv: Path, action: str, *args: str, force: bool = False
+) -> list[str]:
+    return [
+        str(uv),
+        "tool",
+        action,
+        *(["--force"] if force else []),
+        "--reinstall",
+        "--compile-bytecode",
+        *args,
+    ]
 
 
 def upgrade(
@@ -302,13 +328,12 @@ def upgrade(
         value is not None for value in (extras, with_packages, version, ref)
     )
     if changed:
-        selected = _merge(
-            _read_requirement(receipt).get("extras", []), extras, clean
-        )
+        original, requirements = _read_receipt(receipt)
+        selected = _merge(original.get("extras", []), extras, clean)
         packages = _merge(
             [
                 _format_requirement(item)
-                for item in _read_requirements(receipt)
+                for item in requirements
                 if item.get("name") != TOOL_PACKAGE
             ],
             with_packages,
@@ -320,28 +345,18 @@ def upgrade(
             version=version,
             ref=ref,
         )
-        argv = [
-            str(uv),
-            "tool",
+        argv = _uv_argv(
+            uv,
             "install",
-            "--force",
-            "--reinstall",
-            "--compile-bytecode",
             "--python",
             str(Path(sys.executable).resolve()),
-        ]
+            force=True,
+        )
         for package in packages:
             argv += ["--with", package]
         argv.append(requirement)
     else:
-        argv = [
-            str(uv),
-            "tool",
-            "upgrade",
-            "--reinstall",
-            "--compile-bytecode",
-            TOOL_PACKAGE,
-        ]
+        argv = _uv_argv(uv, "upgrade", TOOL_PACKAGE)
     try:
         sys.stdout.flush()
         sys.stderr.flush()

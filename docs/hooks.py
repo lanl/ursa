@@ -8,7 +8,6 @@ from urllib.parse import quote, unquote, urlsplit
 
 import yaml
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
-from mkdocs.structure.files import File, Files
 
 from ursa.util.http import inject_truststore_into_ssl
 
@@ -176,8 +175,13 @@ def _examples_index(examples: list[tuple[Path, dict]]) -> str:
     return readme.replace(marker, catalog) + "\n"
 
 
-def on_files(files: Files, config) -> Files:
-    """Expose example READMEs as virtual documentation pages."""
+def on_files(files, config):
+    """Expose generated example pages and installers in the docs site."""
+    from mkdocs.structure.files import File
+
+    for path in ("install.sh", "install.ps1"):
+        content = (REPOSITORY_ROOT / path).read_text(encoding="utf-8")
+        files.append(File.generated(config, path, content=content))
     examples = _examples()
     files.append(
         File.generated(

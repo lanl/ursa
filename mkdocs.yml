@@ -112,6 +112,7 @@ nav:
       - Contributing: best-practices/contributing.md
   - Reference:
       - CLI reference: reference/cli.md
+      - Managed setup defaults: reference/administration.md
       - MCP reference: reference/mcp.md
       - Event logging: reference/logging_events.md
       - Metrics: reference/metrics.md

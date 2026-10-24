@@ -1,0 +1,38 @@
+Screen { background: $background; }
+.compact-collapsible { width: 100%; height: auto; margin: 0; padding: 0; border: none; background: transparent; }
+.compact-collapsible > CollapsibleTitle { height: 1; padding: 0; color: $text-muted; background: transparent; }
+#setup-model-host, SetupModelEditor, .dynamic-entry-tabs, .entry-drafts, .entry-draft-editor { width: 100%; height: auto; }
+#setup-model-tabs, SetupModelEditor TabPane, .mcp-remote-fields, .mcp-local-fields { height: auto; }
+#setup-main, #setup-pages, .setup-page { width: 100%; height: 100%; }
+.setup-page { padding: 1 2; overflow-x: hidden; }
+.page-title { height: 3; color: $accent; text-style: bold; }
+.page-copy { width: 100%; height: auto; margin-bottom: 1; color: $text-muted; }
+.path-box, .review-box { width: 100%; height: auto; margin: 1 0; padding: 1 2; border: round $border; background: $surface; }
+#review-full, #review-validation { width: 100%; height: auto; margin: 1 0 0 0; }
+#review-validation-results { width: 100%; height: auto; max-height: 24; padding: 1 2; border: round $border; overflow-y: auto; }
+#review-full-config { height: 12; margin: 0; border: round $border; }
+#review-validation.doctor-warning > CollapsibleTitle { color: $warning; }
+#review-validation.doctor-error > CollapsibleTitle { color: $error; }
+Input, Select, SelectCurrent { width: 100%; }
+.setup-actions { width: 100%; height: 4; align-horizontal: right; padding-top: 1; margin-top: 1; }
+.setup-actions Button { min-width: 14; margin-left: 1; }
+.entry-tab-row { width: 100%; height: 3; margin-bottom: 0; }
+.entry-tabs { width: 1fr; }
+.entry-tab-row Button { width: auto; margin-left: 1; }
+.entry-add { width: 3; min-width: 3; max-width: 3; }
+.entry-tab-row Button.entry-remove { width: 10; min-width: 10; max-width: 10; }
+.entry-draft-editor > HelpLabel:first-child { height: 1; padding-top: 0; }
+.entry-empty { width: 100%; height: 3; padding: 1; color: $text-muted; }
+.api-key-entry { width: 100%; height: 5; }
+.credential-label-row { width: 100%; height: 2; }
+.credential-row, .provider-url-row { width: 100%; height: 3; }
+.credential-source-label, .credential-source { width: 22; }
+.credential-value-label, .provider-url-row .provider-url-custom { width: 1fr; margin-left: 1; }
+.credential-value { width: 1fr; height: 3; margin-left: 1; }
+.api-key-row Input { width: 1fr; }
+.api-key-row Checkbox { width: auto; margin: 0 0 0 1; }
+.provider-url-row.custom-url .provider-url { width: 40; }
+.form-message { width: 100%; min-height: 2; height: auto; margin-top: 1; color: $text-muted; }
+.form-message.error { color: $error; }
+.setup-page > * { margin-right: 1; }
+.hidden { display: none; }
