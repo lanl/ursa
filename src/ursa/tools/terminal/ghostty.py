@@ -15,10 +15,13 @@ import pty
 import shlex
 import signal
 import struct
+import time
 from contextlib import suppress
 from typing import Any
 
 from .base import (
+    TERM_SCROLLBACK_LINES,
+    OutputJournal,
     TerminalRenderSnapshot,
     TerminalSpan,
     TerminalStyle,
@@ -141,15 +144,16 @@ class GhosttyTerm(TermSession):
         cwd: str | os.PathLike[str] | None = None,
         rows: int = 24,
         cols: int = 80,
-        scrollback: int = 10_000,
+        scrollback: int = TERM_SCROLLBACK_LINES,
     ) -> None:
         super().__init__(term_id, shell, env=env, cwd=cwd)
         if PyGhosttyTerminal is None:
             raise RuntimeError(
                 "GhosttyTerm requires a working pyghostty installation"
             ) from _PYGHOSTTY_IMPORT_ERROR
-        if rows <= 0 or cols <= 0:
-            raise ValueError("rows and cols must be positive")
+        if rows <= 0 or cols <= 0 or scrollback <= 0:
+            raise ValueError("rows, cols, and scrollback must be positive")
+        scrollback = min(scrollback, TERM_SCROLLBACK_LINES)
 
         self._terminal: Any = PyGhosttyTerminal(
             cols=cols, rows=rows, scrollback=scrollback
@@ -169,8 +173,7 @@ class GhosttyTerm(TermSession):
         self._cached_text = ""
         self._cached_contents = ""
         self._cached_render_snapshot: TerminalRenderSnapshot | None = None
-        self._output_chunks: list[str] = []
-        self._output_length = 0
+        self._output_journal = OutputJournal(max_lines=scrollback)
         self._output_decoder = _VisibleOutputDecoder()
         self._mouse_encoder = None
         self._mouse_lock = asyncio.Lock()
@@ -245,8 +248,7 @@ class GhosttyTerm(TermSession):
                     async with self._io_lock:
                         decoded = self._output_decoder.decode(data)
                         if decoded:
-                            self._output_chunks.append(decoded)
-                            self._output_length += len(decoded)
+                            self._output_journal.append(decoded)
                         self._terminal.feed(data)
         except asyncio.CancelledError:
             raise
@@ -254,8 +256,7 @@ class GhosttyTerm(TermSession):
             async with self._io_lock:
                 decoded = self._output_decoder.decode(b"", final=True)
                 if decoded:
-                    self._output_chunks.append(decoded)
-                    self._output_length += len(decoded)
+                    self._output_journal.append(decoded)
             await asyncio.shield(self._close_master(fd))
 
     async def _close_master(self, fd: int) -> None:
@@ -350,22 +351,17 @@ class GhosttyTerm(TermSession):
 
     async def output_marker(self) -> int:
         async with self._io_lock:
-            return self._output_length
+            return self._output_journal.end_offset
 
     async def output_since(self, marker: int) -> str:
         if marker < 0:
             raise ValueError("output marker must be non-negative")
         async with self._io_lock:
-            if marker >= self._output_length:
-                return ""
-            skipped = 0
-            pieces: list[str] = []
-            for chunk in self._output_chunks:
-                chunk_end = skipped + len(chunk)
-                if chunk_end > marker:
-                    pieces.append(chunk[max(0, marker - skipped) :])
-                skipped = chunk_end
-            return "".join(pieces)
+            return self._output_journal.window_since(marker)[1]
+
+    async def output_window(self, marker: int) -> tuple[int, str, int]:
+        async with self._io_lock:
+            return self._output_journal.window_since(marker)
 
     async def text(self) -> str:
         """Return the plain text of the currently visible screen."""
@@ -726,6 +722,32 @@ class GhosttyTerm(TermSession):
                     with suppress(BaseException):
                         self._terminal.close()
                     self._terminal_closed = True
+
+    def terminate_at_exit(self) -> None:
+        """Best-effort synchronous cleanup after event loops stop accepting work."""
+        self._closed = True
+        pid = self._pid
+        if pid is not None and self._return_code is None:
+            with suppress(ProcessLookupError):
+                os.killpg(pid, signal.SIGTERM)
+            deadline = time.monotonic() + 0.5
+            while time.monotonic() < deadline:
+                try:
+                    os.killpg(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.01)
+            else:
+                with suppress(ProcessLookupError):
+                    os.killpg(pid, signal.SIGKILL)
+        if self._master_fd is not None:
+            with suppress(OSError):
+                os.close(self._master_fd)
+            self._master_fd = None
+        if not self._terminal_closed:
+            with suppress(BaseException):
+                self._terminal.close()
+            self._terminal_closed = True
 
     async def resize(self, rows: int, cols: int) -> None:
         if rows <= 0 or cols <= 0:

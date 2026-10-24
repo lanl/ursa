@@ -74,6 +74,25 @@ def test_ghostty_default_screen_is_80_columns_by_24_rows(fake_ghostty):
     terminal = ghostty.GhosttyTerm("ghost123", ["/bin/sh"])
 
     assert terminal._terminal.size == (80, 24)
+    assert terminal._terminal.scrollback == 2_000
+
+    oversized = ghostty.GhosttyTerm("ghostmax", ["/bin/sh"], scrollback=10_000)
+    assert oversized._terminal.scrollback == 2_000
+
+
+async def test_ghostty_output_journal_retains_only_configured_scrollback(
+    fake_ghostty,
+):
+    terminal = ghostty.GhosttyTerm("ghost123", ["/bin/sh"], scrollback=3)
+    terminal._output_journal.append("one\ntwo\nthree\nfour\n")
+
+    assert await terminal.output_marker() == len("one\ntwo\nthree\nfour\n")
+    assert await terminal.output_since(0) == "two\nthree\nfour\n"
+    assert await terminal.output_window(0) == (
+        len("one\n"),
+        "two\nthree\nfour\n",
+        len("one\ntwo\nthree\nfour\n"),
+    )
 
 
 def test_visible_output_decoder_strips_split_color_and_title_sequences():

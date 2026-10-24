@@ -17,18 +17,20 @@ import subprocess
 import tempfile
 import threading
 import time
+from contextlib import suppress
 from pathlib import Path
+from typing import BinaryIO
 
-from .base import TermSession
+from .base import TERM_CAPTURE_MAX_BYTES, OutputJournal, TermSession
 from .resources import capture_process_identity
 
 
 class ProcessTerm(TermSession):
     """A terminal-like shell backed by :class:`subprocess.Popen`.
 
-    Standard output and standard error share a named temporary file.  Opening
-    a fresh reader for each call to :meth:`read` avoids moving the descriptor
-    used by the child and works on platforms without ``os.pread``.
+    A dedicated thread drains combined standard output and standard error into
+    a file-backed circular buffer, keeping noisy sessions from filling the
+    temporary filesystem.
     """
 
     def __init__(
@@ -38,21 +40,28 @@ class ProcessTerm(TermSession):
         *,
         env: dict[str, str] | None = None,
         cwd: Path | str | None = None,
+        capture_max_bytes: int = TERM_CAPTURE_MAX_BYTES,
     ) -> None:
         super().__init__(term_id, shell, env=env, cwd=cwd)
+        if capture_max_bytes <= 0:
+            raise ValueError("capture_max_bytes must be positive")
+        self._capture_max_bytes = min(capture_max_bytes, TERM_CAPTURE_MAX_BYTES)
         self._process: subprocess.Popen[bytes] | None = None
         self._output_path: Path | None = None
-        self._output_writer = None
+        self._output_writer: BinaryIO | None = None
+        self._output_thread: threading.Thread | None = None
+        self._output_thread_error: BaseException | None = None
+        self._output_write_position = 0
+        self._output_size = 0
         self._state_lock = threading.RLock()
+        self._output_lock = threading.RLock()
         self._write_lock = threading.Lock()
         self._send_lock = asyncio.Lock()
         self._termination_task: asyncio.Task[None] | None = None
         self._output_decoder = codecs.getincrementaldecoder("utf-8")(
             errors="replace"
         )
-        self._output_byte_offset = 0
-        self._output_chunks: list[str] = []
-        self._output_length = 0
+        self._output_journal = OutputJournal()
         self._output_finalized = False
 
     async def start(self, command: str | list[str] | None = None) -> None:
@@ -136,7 +145,10 @@ class ProcessTerm(TermSession):
                 )
 
             output = tempfile.NamedTemporaryFile(
-                mode="w+b", prefix=f"ursa-term-{self.term_id}-", delete=False
+                mode="w+b",
+                buffering=0,
+                prefix=f"ursa-term-{self.term_id}-",
+                delete=False,
             )
             environment = os.environ.copy()
             environment.update(self.env)
@@ -161,7 +173,7 @@ class ProcessTerm(TermSession):
                 process = subprocess.Popen(
                     argv,
                     stdin=subprocess.PIPE,
-                    stdout=output,
+                    stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     cwd=self.cwd,
                     env=environment,
@@ -179,6 +191,62 @@ class ProcessTerm(TermSession):
             self._output_writer = output
             self._process = process
             self._process_identity = capture_process_identity(process.pid)
+            output_thread = threading.Thread(
+                target=self._pump_output,
+                name=f"ursa-term-output-{self.term_id}",
+                daemon=True,
+            )
+            self._output_thread = output_thread
+            output_thread.start()
+
+    def _pump_output(self) -> None:
+        process = self._require_started()
+        stream = getattr(process, "stdout", None)
+        if stream is None:
+            return
+        try:
+            while data := stream.read(65_536):
+                with self._output_lock:
+                    self._write_output_locked(data)
+                    decoded = self._output_decoder.decode(data)
+                    if decoded:
+                        self._output_journal.append(decoded)
+        except BaseException as exc:
+            self._output_thread_error = exc
+        finally:
+            with self._output_lock:
+                if not self._output_finalized:
+                    decoded = self._output_decoder.decode(b"", final=True)
+                    if decoded:
+                        self._output_journal.append(decoded)
+                    self._output_finalized = True
+            with suppress(OSError, ValueError):
+                stream.close()
+
+    def _write_output_locked(self, data: bytes) -> None:
+        output = self._output_writer
+        if output is None or not data:
+            return
+        if len(data) >= self._capture_max_bytes:
+            data = data[-self._capture_max_bytes :]
+            self._output_write_position = 0
+            self._output_size = 0
+
+        first_size = min(
+            len(data), self._capture_max_bytes - self._output_write_position
+        )
+        output.seek(self._output_write_position)
+        output.write(data[:first_size])
+        remainder = data[first_size:]
+        if remainder:
+            output.seek(0)
+            output.write(remainder)
+        self._output_write_position = (
+            self._output_write_position + len(data)
+        ) % self._capture_max_bytes
+        self._output_size = min(
+            self._capture_max_bytes, self._output_size + len(data)
+        )
 
     async def send_bytes(self, data: bytes) -> None:
         """Write raw bytes to the shell's standard input."""
@@ -223,55 +291,23 @@ class ProcessTerm(TermSession):
         return await asyncio.to_thread(self._read_sync, offset, lines)
 
     async def output_marker(self) -> int:
-        return await asyncio.to_thread(self._output_marker_sync)
-
-    def _output_marker_sync(self) -> int:
-        with self._state_lock:
-            self._update_output_journal_locked()
-            return self._output_length
+        with self._output_lock:
+            return self._output_journal.end_offset
 
     async def output_since(self, marker: int) -> str:
         if marker < 0:
             raise ValueError("output marker must be non-negative")
-        return await asyncio.to_thread(self._output_since_sync, marker)
+        with self._output_lock:
+            return self._output_journal.window_since(marker)[1]
 
-    def _output_since_sync(self, marker: int) -> str:
-        with self._state_lock:
-            self._update_output_journal_locked()
-            if marker >= self._output_length:
-                return ""
-            skipped = 0
-            pieces: list[str] = []
-            for chunk in self._output_chunks:
-                chunk_end = skipped + len(chunk)
-                if chunk_end > marker:
-                    pieces.append(chunk[max(0, marker - skipped) :])
-                skipped = chunk_end
-            return "".join(pieces)
-
-    def _update_output_journal_locked(self) -> None:
-        self._require_started()
-        assert self._output_path is not None
-        with self._output_path.open("rb") as stream:
-            stream.seek(self._output_byte_offset)
-            data = stream.read()
-        self._output_byte_offset += len(data)
-        process_done = self._require_started().poll() is not None
-        final = process_done and not self._output_finalized
-        if not data and not final:
-            return
-        decoded = self._output_decoder.decode(data, final=final)
-        self._output_finalized = self._output_finalized or final
-        if decoded:
-            self._output_chunks.append(decoded)
-            self._output_length += len(decoded)
+    async def output_window(self, marker: int) -> tuple[int, str, int]:
+        with self._output_lock:
+            return self._output_journal.window_since(marker)
 
     def _read_sync(self, offset: int, lines: int | None) -> str:
-        with self._state_lock:
-            self._require_started()
-            path = self._output_path
-        assert path is not None
-        data = path.read_bytes().decode(errors="replace")
+        self._require_started()
+        with self._output_lock:
+            data = self._read_output_locked().decode(errors="replace")
         if offset == 0 and lines is None:
             return data
 
@@ -279,6 +315,20 @@ class ProcessTerm(TermSession):
         end = len(output_lines) - offset if offset else len(output_lines)
         start = 0 if lines is None else max(0, end - lines)
         return "".join(output_lines[start:end])
+
+    def _read_output_locked(self) -> bytes:
+        output = self._output_writer
+        if output is None or self._output_size == 0:
+            return b""
+        if self._output_size < self._capture_max_bytes:
+            output.seek(0)
+            return output.read(self._output_size)
+        output.seek(self._output_write_position)
+        newest_tail = output.read(
+            self._capture_max_bytes - self._output_write_position
+        )
+        output.seek(0)
+        return newest_tail + output.read(self._output_write_position)
 
     async def is_alive(self) -> dict[str, bool | int]:
         """Return running state, or the process exit code once complete."""
@@ -293,9 +343,14 @@ class ProcessTerm(TermSession):
 
     async def wait(self) -> int:
         """Wait for the shell process to exit and return its exit code."""
-        with self._state_lock:
-            process = self._require_started()
-        return await asyncio.to_thread(process.wait)
+        return await asyncio.to_thread(self._wait_sync)
+
+    def _wait_sync(self) -> int:
+        process = self._require_started()
+        return_code = process.wait()
+        if self._join_output_thread(timeout=1.0):
+            self._raise_output_thread_error()
+        return return_code
 
     async def terminate(self) -> None:
         """Terminate the shell, escalating to a kill when it does not stop."""
@@ -308,19 +363,44 @@ class ProcessTerm(TermSession):
     def _terminate_sync(self) -> None:
         with self._state_lock:
             process = self._process
-            if process is not None:
-                self._stop_process(process)
-            if process is not None and process.stdin is not None:
+        if process is not None:
+            self._stop_process(process)
+        if process is not None and process.stdin is not None:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+        if not self._join_output_thread(timeout=2.0):
+            output_pipe = getattr(process, "stdout", None)
+            if output_pipe is not None:
                 try:
-                    process.stdin.close()
+                    output_pipe.close()
                 except OSError:
                     pass
+            self._join_output_thread(timeout=1.0)
+        with self._output_lock:
             if self._output_writer is not None:
                 self._output_writer.close()
                 self._output_writer = None
             if self._output_path is not None:
                 self._output_path.unlink(missing_ok=True)
                 self._output_path = None
+
+    def terminate_at_exit(self) -> None:
+        """Terminate without relying on asyncio's shutdown executor."""
+        self._terminate_sync()
+
+    def _join_output_thread(self, *, timeout: float) -> bool:
+        thread = self._output_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=timeout)
+        return thread is None or not thread.is_alive()
+
+    def _raise_output_thread_error(self) -> None:
+        if self._output_thread_error is not None:
+            raise RuntimeError("failed to capture terminal output") from (
+                self._output_thread_error
+            )
 
     @staticmethod
     def _stop_process(process: subprocess.Popen[bytes]) -> None:
@@ -377,6 +457,7 @@ class ProcessTerm(TermSession):
                         os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
+            self._join_output_thread(timeout=0.1)
             if self._output_writer is not None:
                 self._output_writer.close()
             if self._output_path is not None:

@@ -593,7 +593,15 @@ class HITL:
         async with self._agent_transition():
             if self._closed:
                 return
-            await self._close_instantiated_agents()
+            try:
+                await self._close_instantiated_agents()
+            finally:
+                from ursa.tools.terminal import term_manager
+
+                try:
+                    await term_manager.close_all()
+                except Exception:
+                    logging.exception("Failed to close terminal sessions")
             self._closed = True
             await asyncio.to_thread(self._remove_ephemeral_agent)
 

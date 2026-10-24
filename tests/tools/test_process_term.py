@@ -57,6 +57,35 @@ async def test_process_term_supports_argument_list_and_tail_slicing(tmp_path):
     await terminal.terminate()
 
 
+async def test_process_term_capture_is_a_file_backed_circular_buffer(tmp_path):
+    capacity = 64
+    output = "".join(str(number % 10) for number in range(200))
+    terminal = ProcessTerm(
+        "procring",
+        ["/bin/sh"],
+        cwd=tmp_path,
+        capture_max_bytes=capacity,
+    )
+    await terminal.start(["printf", "%s", output])
+    assert await terminal.wait() == 0
+
+    assert await terminal.read() == output[-capacity:]
+    assert terminal._output_path is not None
+    assert terminal._output_path.stat().st_size <= capacity
+    await terminal.terminate()
+
+
+async def test_process_wait_does_not_block_on_descendant_inheriting_output_pipe(
+    tmp_path,
+):
+    terminal = ProcessTerm("procpipe", ["/bin/sh"], cwd=tmp_path)
+    await terminal.start("sleep 30 & printf ready")
+
+    assert await asyncio.wait_for(terminal.wait(), timeout=2.0) == 0
+    assert await terminal.read() == "ready"
+    await terminal.terminate()
+
+
 def test_process_command_formatting_and_shell_detection():
     assert ProcessTerm._format_command(["echo", "a b", "x'y"]) == (
         "echo 'a b' 'x'\"'\"'y'"
