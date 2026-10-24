@@ -92,6 +92,16 @@ ursa-dashboard --host 127.0.0.1 --port 8080
 
 This requires installing with the optional `[dashboard]` dependencies.
 
+## Contributing and support
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and the pull-request
+process. Report bugs or ask usage questions through
+[GitHub Issues](https://github.com/lanl/ursa/issues).
+
+URSA can execute code and modify files on your system. Read
+[SECURITY.md](SECURITY.md) for execution risks and isolation guidance before
+running agent workflows.
+
 ## Development Team
 
 URSA has been developed at Los Alamos National Laboratory as part of the ArtIMis project.

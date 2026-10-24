@@ -76,7 +76,7 @@ defaults.
 
 === "Ollama"
 
-    Install [Ollama](https://ollama.com/), run `ollama pull gpt-oss-20b`, and
+    Install [Ollama](https://ollama.com/), run `ollama pull gpt-oss:20b`, and
     use:
 
     ```yaml
@@ -84,7 +84,7 @@ defaults.
       local_ollama:
         base_url: http://localhost:11434
     llm_model:
-      model: ollama:gpt-oss-20b
+      model: ollama:gpt-oss:20b
       inference_provider: local_ollama
     emb_model:
       model: ollama:nomic-embed-text:latest
@@ -209,7 +209,7 @@ checkpoint backends, use `langgraph-*` packages.
         uv tool install --force \
           --python 3.13 \
           --with langgraph-checkpoint-postgres \
-          'ursa[dashboard]'
+          'ursa-ai[dashboard]'
         ```
 
     === "Windows PowerShell"
@@ -218,7 +218,7 @@ checkpoint backends, use `langgraph-*` packages.
         uv tool install --force `
           --python 3.13 `
           --with langgraph-checkpoint-postgres `
-          'ursa[dashboard]'
+          'ursa-ai[dashboard]'
         ```
 
     For an additional model provider, replace the `langgraph-*` package with
