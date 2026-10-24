@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import os
 import re
 import secrets
@@ -17,6 +18,7 @@ from pathlib import Path
 from .base import (
     TERM_ID_LENGTH,
     TERM_MAX_BYTES,
+    TERM_MAX_SESSIONS,
     TERM_TIMEOUT,
     TerminalRenderSnapshot,
     TermSession,
@@ -249,6 +251,7 @@ class TermManager:
         with self._sessions_lock:
             if self._closing:
                 raise RuntimeError("terminal manager is closing")
+            self._ensure_capacity_locked()
             term_id = self.new_id()
             self._creation_counter += 1
             reservation = _CreationReservation(
@@ -268,6 +271,14 @@ class TermManager:
                 session_factory=session_factory,
             )
         )
+
+    def _ensure_capacity_locked(self) -> None:
+        active = len(self._sessions) + len(self._reserved_ids)
+        if active >= TERM_MAX_SESSIONS:
+            raise RuntimeError(
+                f"terminal limit reached ({TERM_MAX_SESSIONS}); "
+                "close a terminal before opening another"
+            )
 
     async def _create(
         self,
@@ -492,6 +503,7 @@ class TermManager:
                 raise ValueError(
                     f"terminal already registered: {terminal.term_id}"
                 )
+            self._ensure_capacity_locked()
             self._sessions[terminal.term_id] = terminal
             self._record_info(terminal)
 
@@ -709,6 +721,37 @@ class TermManager:
             with self._sessions_lock:
                 self._closing = False
 
+    def close_all_sync(self, *, timeout: float = 10.0) -> None:
+        """Synchronously close sessions during interpreter shutdown."""
+        with self._sessions_lock:
+            if not self._sessions and not self._reserved_ids:
+                return
+            if self._closing:
+                return
+            self._closing = True
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self._close_all(), self._owner_loop
+            )
+            future.result(timeout=timeout)
+        finally:
+            with self._sessions_lock:
+                self._closing = False
+
+    def terminate_all_at_exit(self) -> None:
+        """Best-effort cleanup that does not schedule new async or thread work."""
+        with self._sessions_lock:
+            terminals = tuple(self._sessions.values())
+        for terminal in terminals:
+            try:
+                terminal.terminate_at_exit()
+            except BaseException:
+                continue
+            with self._sessions_lock:
+                if self._sessions.get(terminal.term_id) is terminal:
+                    del self._sessions[terminal.term_id]
+                    self._session_info.pop(terminal.term_id, None)
+
     async def _close_all(self) -> None:
         # Creates admitted before close_all set the gate may still be queued on
         # the owner loop or awaiting backend startup.  Yield until each has
@@ -788,16 +831,19 @@ class TermManager:
             if remaining <= 0:
                 return "Pattern not found"
             try:
-                chunk = await asyncio.wait_for(
-                    terminal.output_since(cursor), timeout=remaining
+                chunk_start, chunk, chunk_end = await asyncio.wait_for(
+                    terminal.output_window(cursor), timeout=remaining
                 )
             except TimeoutError:
                 return "Pattern not found"
             if loop.time() >= deadline:
                 return "Pattern not found"
             match = None
+            if chunk_start > cursor:
+                contents = ""
+                content_offset = chunk_start
+            cursor = chunk_end
             if chunk:
-                cursor += len(chunk)
                 contents += chunk
                 if len(contents) > TERM_MAX_BYTES:
                     removed = len(contents) - TERM_MAX_BYTES
@@ -964,3 +1010,15 @@ def _screen_timeout_result(condition: str) -> str:
 
 
 term_manager = TermManager()
+
+
+def _close_terminals_at_exit() -> None:
+    try:
+        term_manager.terminate_all_at_exit()
+    except BaseException:
+        # Interpreter teardown may already have dismantled backend modules.
+        # Backend destructors remain as the final best-effort fallback.
+        pass
+
+
+atexit.register(_close_terminals_at_exit)

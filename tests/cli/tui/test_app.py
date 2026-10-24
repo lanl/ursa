@@ -36,6 +36,25 @@ def test_copy_bindings_are_uniform_and_global():
         assert bindings[key].priority
 
 
+async def test_app_shutdown_closes_all_terminals(tmp_path, monkeypatch):
+    closed = False
+
+    class Manager:
+        async def close_all(self):
+            nonlocal closed
+            closed = True
+
+    monkeypatch.setattr(app_module, "term_manager", Manager())
+    hitl = FakeHITL(tmp_path)
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test():
+        pass
+
+    assert closed
+    assert hitl.closed
+
+
 async def test_welcome_banner_starts_at_top_of_conversation(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 

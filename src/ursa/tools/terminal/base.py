@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -13,7 +14,102 @@ from .resources import ProcessIdentity
 TERM_TIMEOUT: Final[float] = float(os.getenv("URSA_TERM_TIMEOUT", "10"))
 TERM_MAX_BYTES: Final[int] = int(os.getenv("URSA_TERM_MAX_BYTES", "20000"))
 TERM_MAX_LINES: Final[int] = int(os.getenv("URSA_TERM_MAX_LINES", "200"))
+TERM_SCROLLBACK_LINES: Final[int] = 2_000
+TERM_CAPTURE_MAX_BYTES: Final[int] = 100 * 1024 * 1024
+TERM_OUTPUT_JOURNAL_MAX_CHARS: Final[int] = 8 * 1024 * 1024
+TERM_MAX_SESSIONS: Final[int] = 16
 TERM_ID_LENGTH: Final[int] = 8
+
+
+class OutputJournal:
+    """Bounded decoded output with monotonic absolute character offsets."""
+
+    def __init__(
+        self,
+        *,
+        max_lines: int = TERM_SCROLLBACK_LINES,
+        max_chars: int = TERM_OUTPUT_JOURNAL_MAX_CHARS,
+    ) -> None:
+        if max_lines <= 0 or max_chars <= 0:
+            raise ValueError("journal limits must be positive")
+        self._max_lines = max_lines
+        self._max_chars = max_chars
+        self._lines: deque[str] = deque()
+        self._partial = ""
+        self._retained_chars = 0
+        self._end_offset = 0
+
+    @property
+    def end_offset(self) -> int:
+        """Return the total decoded character count, including evicted text."""
+        return self._end_offset
+
+    @property
+    def start_offset(self) -> int:
+        """Return the absolute offset of the oldest retained character."""
+        return self._end_offset - self._retained_chars
+
+    @property
+    def retained_lines(self) -> int:
+        """Return the number of complete or partial retained lines."""
+        return len(self._lines) + bool(self._partial)
+
+    @property
+    def retained_chars(self) -> int:
+        return self._retained_chars
+
+    def append(self, text: str) -> None:
+        """Append decoded text and evict the oldest excess output."""
+        if not text:
+            return
+        combined = self._partial + text
+        pieces = combined.split("\n")
+        self._partial = pieces.pop()
+        self._lines.extend(f"{piece}\n" for piece in pieces)
+        self._retained_chars += len(text)
+        self._end_offset += len(text)
+        self._trim_lines()
+        self._trim_chars()
+
+    def window_since(self, marker: int) -> tuple[int, str, int]:
+        """Return retained output at or after *marker* and absolute bounds."""
+        if marker < 0:
+            raise ValueError("output marker must be non-negative")
+        start = max(marker, self.start_offset)
+        end = self._end_offset
+        if start >= end:
+            return end, "", end
+
+        skip = start - self.start_offset
+        chunks: list[str] = []
+        for piece in (*self._lines, self._partial):
+            if skip >= len(piece):
+                skip -= len(piece)
+                continue
+            chunks.append(piece[skip:])
+            skip = 0
+        return start, "".join(chunks), end
+
+    def _trim_lines(self) -> None:
+        while self.retained_lines > self._max_lines and self._lines:
+            removed = self._lines.popleft()
+            self._retained_chars -= len(removed)
+
+    def _trim_chars(self) -> None:
+        excess = self._retained_chars - self._max_chars
+        while excess > 0 and self._lines:
+            first = self._lines[0]
+            if len(first) <= excess:
+                self._lines.popleft()
+                removed = len(first)
+            else:
+                self._lines[0] = first[excess:]
+                removed = excess
+            self._retained_chars -= removed
+            excess -= removed
+        if excess > 0:
+            self._partial = self._partial[excess:]
+            self._retained_chars -= excess
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +224,11 @@ class TermSession(ABC):
             raise ValueError("output marker must be non-negative")
         return (await self.contents())[marker:]
 
+    async def output_window(self, marker: int) -> tuple[int, str, int]:
+        """Return new output and its absolute start and end offsets."""
+        output = await self.output_since(marker)
+        return marker, output, marker + len(output)
+
     async def render_snapshot(self) -> TerminalRenderSnapshot:
         """Return immutable display data for a view-only renderer."""
         return TerminalRenderSnapshot(
@@ -146,6 +247,10 @@ class TermSession(ABC):
     @abstractmethod
     async def terminate(self) -> None:
         """Terminate the shell and release backend-owned resources."""
+
+    def terminate_at_exit(self) -> None:
+        """Synchronously terminate during interpreter teardown, if supported."""
+        raise NotImplementedError
 
     async def resize(self, rows: int, cols: int) -> None:
         """Resize the terminal, if supported by the backend."""

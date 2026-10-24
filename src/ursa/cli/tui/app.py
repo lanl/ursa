@@ -53,6 +53,7 @@ from ursa.cli.tui.widgets import (
     ToolMessage,
     WelcomeBanner,
 )
+from ursa.tools.terminal import term_manager
 from ursa.util import crossplatform
 from ursa.util import mcp as ursa_mcp
 from ursa.util.tqdm_lock import install_thread_only_tqdm_lock
@@ -211,7 +212,10 @@ class UrsaTextualApp(App[None]):
 
     async def on_unmount(self) -> None:
         """Release runtime resources on every graceful Textual shutdown."""
-        await self.hitl.aclose()
+        try:
+            await term_manager.close_all()
+        finally:
+            await self.hitl.aclose()
 
     @property
     def is_ui_thread(self) -> bool:

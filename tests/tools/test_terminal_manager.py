@@ -9,12 +9,14 @@ import pytest
 
 from ursa.tools.terminal import (
     TERM_ID_LENGTH,
+    TERM_MAX_SESSIONS,
     TerminalRenderSnapshot,
     TerminalSpan,
     TerminalStyle,
     TermManager,
     TermSession,
 )
+from ursa.tools.terminal.base import OutputJournal
 
 
 class FakeTerm(TermSession):
@@ -129,6 +131,18 @@ async def test_session_convenience_sends():
     await terminal.send_text("é")
     await terminal.send_line("hello")
     assert terminal.writes == ["é".encode(), b"hello\n"]
+
+
+def test_output_journal_bounds_lines_chars_and_preserves_absolute_offsets():
+    journal = OutputJournal(max_lines=3, max_chars=10)
+    journal.append("one\ntwo\nthree\nfour\n")
+
+    assert journal.retained_lines <= 3
+    assert journal.retained_chars <= 10
+    start, output, end = journal.window_since(0)
+    assert output == "hree\nfour\n"
+    assert start == len("one\ntwo\nt")
+    assert end == len("one\ntwo\nthree\nfour\n")
 
 
 async def test_manager_mouse_input_checks_screen_bounds_and_forwards_bytes(
@@ -276,6 +290,19 @@ def test_terminal_metadata_is_immutable_and_oldest_to_newest(manager):
         infos[0].backend = "changed"
 
 
+def test_manager_limits_registered_and_starting_terminals(manager):
+    for index in range(TERM_MAX_SESSIONS):
+        manager.register(FakeTerm(f"term{index:04}", ["bash"]))
+
+    with pytest.raises(RuntimeError, match=r"terminal limit reached \(16\)"):
+        manager.register(FakeTerm("overflow", ["bash"]))
+
+    manager._reserved_ids.add("reserved")
+    manager._sessions.pop("term0000")
+    with pytest.raises(RuntimeError, match=r"terminal limit reached \(16\)"):
+        manager.register(FakeTerm("stillfull", ["bash"]))
+
+
 def test_terminal_metadata_detects_screen_backend_and_removal(manager):
     class ScreenTerm(FakeTerm):
         async def resize(self, rows, cols):
@@ -412,6 +439,31 @@ async def test_registry_remove_close_and_unknown_errors(manager):
         manager.get("missing")
     with pytest.raises(KeyError, match="unknown terminal"):
         await manager.remove("missing")
+
+
+def test_synchronous_shutdown_terminates_registered_sessions(real_manager):
+    terminal = FakeTerm("shutdown", ["bash"])
+    real_manager.register(terminal)
+
+    real_manager.close_all_sync()
+
+    assert terminal.terminated is True
+    assert real_manager.ids() == ()
+
+
+def test_interpreter_shutdown_uses_synchronous_backend_cleanup(manager):
+    class ExitTerm(FakeTerm):
+        def terminate_at_exit(self):
+            self.terminated = True
+            self.running = False
+
+    terminal = ExitTerm("shutdown", ["bash"])
+    manager.register(terminal)
+
+    manager.terminate_all_at_exit()
+
+    assert terminal.terminated is True
+    assert manager.ids() == ()
 
 
 async def test_close_all_drains_admitted_create_and_gates_new_ones(

@@ -59,9 +59,11 @@ order to use the runtime `ProcessTerm` fallback.
 
 `ProcessTerm` is the fallback when `pyghostty` is unavailable, including on
 Windows and unsupported architectures. It captures combined standard output
-and standard error in a private temporary file. It supports command execution,
-input, status, waiting, and line-based reads, but it does not emulate a
-terminal screen; cursor, size, and resize operations are therefore unavailable.
+and standard error in a private, file-backed 100 MiB circular buffer. Once the
+buffer is full, new output replaces the oldest output. It supports command
+execution, input, status, waiting, and line-based reads, but it does not emulate
+a terminal screen; cursor, size, and resize operations are therefore
+unavailable.
 
 Set `URSA_TERM_BACKEND=process` before starting URSA to force the portable
 fallback, even when Ghostty is installed. This is useful for testing the exact
@@ -165,6 +167,12 @@ input only when the terminal application has enabled mouse tracking. New
 Ghostty sessions default to 120 columns by 40 rows.
 
 ## Limits
+
+Ghostty retains at most 2,000 scrollback lines. ProcessTerm retains at most
+100 MiB of combined output. URSA permits at most 16 registered or starting
+terminal sessions at once; close a session before opening another after that
+limit is reached. Graceful runtime shutdown terminates every registered
+terminal, with an interpreter-shutdown hook providing a final cleanup fallback.
 
 The defaults can be changed before starting URSA:
 

@@ -1,9 +1,12 @@
 """Asynchronous persistent terminal support."""
 
 from .base import (
+    TERM_CAPTURE_MAX_BYTES,
     TERM_ID_LENGTH,
     TERM_MAX_BYTES,
     TERM_MAX_LINES,
+    TERM_MAX_SESSIONS,
+    TERM_SCROLLBACK_LINES,
     TERM_TIMEOUT,
     TerminalRenderSnapshot,
     TerminalSpan,
@@ -18,9 +21,12 @@ from .screenshot import (
 )
 
 __all__ = [
+    "TERM_CAPTURE_MAX_BYTES",
     "TERM_ID_LENGTH",
     "TERM_MAX_BYTES",
     "TERM_MAX_LINES",
+    "TERM_MAX_SESSIONS",
+    "TERM_SCROLLBACK_LINES",
     "TERM_TIMEOUT",
     "TermManager",
     "TermInfo",
