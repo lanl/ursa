@@ -18,8 +18,8 @@ def test_simulator_agent_import():
     "config,expected_path",
     [
         ({}, "../simulator_docs"),
-        ({"database_path": "custom_docs"}, "custom_docs"),
-        ({"database_path": Path("custom_docs")}, Path("custom_docs")),
+        ({"docs_path": "custom_docs"}, "custom_docs"),
+        ({"docs_path": Path("custom_docs")}, Path("custom_docs")),
     ],
 )
 def test_simulator_rag_documentation_path(
@@ -69,7 +69,7 @@ def test_simulator_without_embeddings_does_not_initialize_rag(
         workspace=tmp_path,
         thread_id="simulation-test",
         checkpointer=None,
-        database_path="custom_docs",
+        docs_path="custom_docs",
     )
 
     rag_class.assert_not_called()
