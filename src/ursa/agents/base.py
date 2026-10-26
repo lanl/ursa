@@ -834,20 +834,23 @@ class BaseAgent(Generic[TState], ABC):
             paired.append(m)
         msgs = paired
 
+        # A leading system prompt is not part of the conversation tail.
+        head = msgs[:1] if msgs and isinstance(msgs[0], SystemMessage) else []
+        body = msgs[len(head) :]
         last_reply = max(
             (
                 i
-                for i, m in enumerate(msgs)
+                for i, m in enumerate(body)
                 if isinstance(m, (AIMessage, ToolMessage))
             ),
             default=-1,
         )
-        tail = msgs[last_reply + 1 :]
+        tail = body[last_reply + 1 :]
         if tail:
             keep = []
             if keep_last_human:
                 keep = [m for m in tail if isinstance(m, HumanMessage)][-1:]
-            msgs = msgs[: last_reply + 1] + keep
+            msgs = head + body[: last_reply + 1] + keep
 
         if len(msgs) != len(original):
             events.emit(
