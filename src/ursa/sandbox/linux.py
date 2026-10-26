@@ -93,9 +93,12 @@ class LinuxBwrapSandbox(BaseSandbox):
         if self.sbx_path is None:
             raise SandboxError(f"bwrap not on path. {_disable_sbx_suggestion}")
 
+        # Decode leniently: output may be binary/non-UTF-8 (e.g. cat on a data file).
         result = subprocess.run(
             [self.sbx_path, *self.args, self.shell, "-c", cmd],
             text=True,
+            encoding="utf-8",
+            errors="replace",
             shell=False,
             capture_output=True,
             timeout=self.timeout,
