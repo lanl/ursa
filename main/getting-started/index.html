@@ -359,6 +359,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#optional-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      Optional dependencies
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#start-with-the-built-in-openai-configuration" class="md-nav__link">
     <span class="md-ellipsis">
       Start with the built-in OpenAI configuration
@@ -1989,6 +1998,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#optional-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      Optional dependencies
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#start-with-the-built-in-openai-configuration" class="md-nav__link">
     <span class="md-ellipsis">
       Start with the built-in OpenAI configuration
@@ -2101,6 +2119,77 @@ needed, then install URSA and the dashboard in an isolated tool environment:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ursa<span class="w"> </span>--help
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>ursa-dashboard<span class="w"> </span>--help
 </code></pre></div>
+<h2 id="optional-dependencies">Optional dependencies<a class="headerlink" href="#optional-dependencies" title="Permanent link">&para;</a></h2>
+<p>Install optional features using extras on the <code>ursa-ai</code> package. Multiple extras
+can be combined, for example, <code>python -m pip install 'ursa-ai[dashboard,lammps]'</code>
+in your activated environment, or
+<code>uv tool install --python 3.13 'ursa-ai[dashboard,lammps]'</code> for a new tool installation.</p>
+<table>
+<thead>
+<tr>
+<th>Extra</th>
+<th>Purpose</th>
+<th>Additional requirements</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dashboard</code></td>
+<td>Browser dashboard (FastAPI and Uvicorn)</td>
+<td>A web browser.</td>
+</tr>
+<tr>
+<td><code>fm</code></td>
+<td>Expose PyTorch models as MCP tools</td>
+<td>Model weights and any model-specific dependencies; compatible accelerator drivers if using a GPU. CPU execution is also supported.</td>
+</tr>
+<tr>
+<td><code>lammps</code></td>
+<td>Potential discovery and LAMMPS workflow support</td>
+<td>Separately installed LAMMPS and MPI executables; network access for remote potential discovery. See <a href="../agents/lammps/#dependencies">LAMMPS dependencies</a>.</td>
+</tr>
+<tr>
+<td><code>office_readers</code></td>
+<td>Read Word and PowerPoint documents</td>
+<td>No additional external executable for these readers.</td>
+</tr>
+<tr>
+<td><code>opt</code></td>
+<td>Google's <a href="https://developers.google.com/optimization">OR (Operations Research)-Tools</a> optimization support</td>
+<td>Other solvers used by the Optimization Agent may require separate installation and licenses.</td>
+</tr>
+<tr>
+<td><code>otel</code></td>
+<td>Export OpenTelemetry data over OTLP/HTTP</td>
+<td>A configured, reachable OTLP collector or compatible service.</td>
+</tr>
+<tr>
+<td><code>dsi</code></td>
+<td>Data Science Infrastructure integration</td>
+<td>Data sources and backend-specific dependencies required by the DSI workflow.</td>
+</tr>
+<tr>
+<td><code>image</code></td>
+<td>Image handling with Pillow</td>
+<td>A model with image support when sending images to an LLM.</td>
+</tr>
+<tr>
+<td><code>mp</code></td>
+<td>Materials Project API access</td>
+<td>A Materials Project API key and network access.</td>
+</tr>
+<tr>
+<td><code>metric_plots</code></td>
+<td>Plot and analyze collected metrics such as execution times, LLM token usage, and tokens per second</td>
+<td>No additional external executable.</td>
+</tr>
+</tbody>
+</table>
+<p>Extras install Python dependencies; they do not install external simulation codes,
+MPI, or model weights. The LAMMPS Agent defaults to <code>lmp_mpi</code> and <code>mpirun</code>;
+configure its <code>lammps_cmd</code> and <code>mpirun_cmd</code> arguments if your executables have
+different names or paths. Your LAMMPS build must include the packages required by
+the selected potential and simulation.</p>
 <h2 id="start-with-the-built-in-openai-configuration">Start with the built-in OpenAI configuration<a class="headerlink" href="#start-with-the-built-in-openai-configuration" title="Permanent link">&para;</a></h2>
 <p>Set your OpenAI API key and launch URSA:</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="3:2"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio" /><input id="__tabbed_3_2" name="__tabbed_3" type="radio" /><div class="tabbed-labels"><label for="__tabbed_3_1">macOS/Linux</label><label for="__tabbed_3_2">Windows PowerShell</label></div>

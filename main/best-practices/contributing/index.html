@@ -1407,19 +1407,6 @@
         
       
       
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    Contributing
-    
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
       <a href="./" class="md-nav__link md-nav__link--active">
         
   
@@ -1431,61 +1418,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#development-setup" class="md-nav__link">
-    <span class="md-ellipsis">
-      Development setup
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#run-tests-and-checks" class="md-nav__link">
-    <span class="md-ellipsis">
-      Run tests and checks
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#build-documentation-locally" class="md-nav__link">
-    <span class="md-ellipsis">
-      Build documentation locally
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#documentation-style" class="md-nav__link">
-    <span class="md-ellipsis">
-      Documentation style
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
       
     </li>
   
@@ -1955,50 +1887,6 @@
     
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#development-setup" class="md-nav__link">
-    <span class="md-ellipsis">
-      Development setup
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#run-tests-and-checks" class="md-nav__link">
-    <span class="md-ellipsis">
-      Run tests and checks
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#build-documentation-locally" class="md-nav__link">
-    <span class="md-ellipsis">
-      Build documentation locally
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#documentation-style" class="md-nav__link">
-    <span class="md-ellipsis">
-      Documentation style
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -2017,44 +1905,11 @@
 
 
 <h1 id="contributing">Contributing<a class="headerlink" href="#contributing" title="Permanent link">&para;</a></h1>
-<p>Contributions are welcome. This page summarizes the documentation and development workflow; see the repository's contribution files for project-specific policy details.</p>
-<h2 id="development-setup">Development setup<a class="headerlink" href="#development-setup" title="Permanent link">&para;</a></h2>
-<p>Install development dependencies in a clean environment. If the project defines dependency groups for development and documentation, prefer <code>uv</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>sync
-</code></pre></div>
-<p>If additional groups are defined in your checkout, include them as needed, for example:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>sync<span class="w"> </span>--group<span class="w"> </span>dev<span class="w"> </span>--group<span class="w"> </span>docs
-</code></pre></div>
-<h2 id="run-tests-and-checks">Run tests and checks<a class="headerlink" href="#run-tests-and-checks" title="Permanent link">&para;</a></h2>
-<p>Common commands include:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>uv<span class="w"> </span>run<span class="w"> </span>pytest
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>uv<span class="w"> </span>run<span class="w"> </span>ruff<span class="w"> </span>check
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>uv<span class="w"> </span>run<span class="w"> </span>ruff<span class="w"> </span>format
-</code></pre></div>
-<p>Adjust commands to match the current project configuration.</p>
-<h2 id="build-documentation-locally">Build documentation locally<a class="headerlink" href="#build-documentation-locally" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>just<span class="w"> </span>docs
-</code></pre></div>
-<p>Then open the local URL printed by MkDocs.</p>
-<p>To build once:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uv<span class="w"> </span>run<span class="w"> </span>mkdocs<span class="w"> </span>build
-</code></pre></div>
-<p>Published documentation is versioned with Mike. To preview the versions already
-present on the local <code>gh-pages</code> branch, run:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>uv<span class="w"> </span>run<span class="w"> </span>mike<span class="w"> </span>serve
-</code></pre></div>
-<p>The documentation workflow publishes <code>main</code> after documentation changes land on
-the main branch. Stable <code>v*</code> tags publish a version without the leading <code>v</code>, move
-the <code>latest</code> alias to that release, and make <code>latest</code> the default site version.
-Pre-release tags are not published.</p>
-<h2 id="documentation-style">Documentation style<a class="headerlink" href="#documentation-style" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Prefer short, runnable examples.</li>
-<li>Use YAML config files as the primary configuration path.</li>
-<li>Keep Getting Started pages step-by-step.</li>
-<li>Put exhaustive command lists in Reference or Persistence pages.</li>
-<li>Include warnings for execution, web access, MCP servers, and secrets where relevant.</li>
-</ul>
+<p>See the repository's <a href="https://github.com/lanl/ursa/blob/main/CONTRIBUTING.md">contribution guide</a>
+for development setup, tests, documentation builds, and the pull-request process.
+It also explains how to report problems and ask for help.</p>
+<p>For execution risks and precautions, see
+<a href="https://github.com/lanl/ursa/blob/main/SECURITY.md">Security and execution safety</a>.</p>
 
 
 

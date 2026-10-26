@@ -2277,8 +2277,14 @@ the simplest way to install LAMMPS is often via
 <a href="https://anaconda.org/channels/conda-forge/packages/lammps/overview">Conda</a>, in
 the same conda environment where <code>ursa</code> is installed.</p>
 <p>The dependencies for <code>LammpsAgent</code> are not included with the basic <code>ursa</code>
-installation, but can be installed via <code>pip install 'ursa[lammps]'</code> or <code>uv add
-'ursa[lammps]'</code>.</p>
+installation, but can be installed via <code>pip install 'ursa-ai[lammps]'</code> or <code>uv add
+'ursa-ai[lammps]'</code>.</p>
+<p>This extra installs Python dependencies, not LAMMPS or MPI. The agent defaults to
+<code>lmp_mpi</code> and <code>mpirun</code>; install compatible executables separately and ensure they
+are on <code>PATH</code>, or set the agent's <code>lammps_cmd</code> and <code>mpirun_cmd</code> arguments. The
+LAMMPS build must include the packages needed by your potential and simulation.
+See the <a href="../../getting-started/#optional-dependencies">optional-dependencies table</a>
+for other extras.</p>
 <hr />
 <h2 id="basic-usage">Basic Usage<a class="headerlink" href="#basic-usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">LammpsAgent</span>

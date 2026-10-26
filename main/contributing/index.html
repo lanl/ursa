@@ -1871,32 +1871,6 @@
     
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#linting-and-formatting" class="md-nav__link">
-    <span class="md-ellipsis">
-      Linting and Formatting
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#building-documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Building Documentation
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -1915,48 +1889,11 @@
 
 
 <h1 id="contributing">Contributing<a class="headerlink" href="#contributing" title="Permanent link">&para;</a></h1>
-<h2 id="linting-and-formatting">Linting and Formatting<a class="headerlink" href="#linting-and-formatting" title="Permanent link">&para;</a></h2>
-<p>You will need to lint and format your code using <a href="https://github.com/astral-sh/ruff"><code>ruff</code></a>. The easiest way
-to automate linting/formatting of code prior to each commit is via the
-<a href="https://pre-commit.com"><code>pre-commit</code></a> package, which simplifies management of git hooks.</p>
-<p>If using pip, <code>pre-commit</code> will be installed when you install <code>ursa</code> in
-editable mode via</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.<span class="o">[</span>dev<span class="o">]</span>
-</code></pre></div>
-<p>If using <code>uv</code>, <code>pre-commit</code> will be installed in your default (dev)
-environment.</p>
-<p>To install the ruff git hook to your local <code>.git/hooks</code> folder, run
-the following in the current directory:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># If using pip with venv, first activate your environment, then</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>pre-commit<span class="w"> </span>install
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># If using uv</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>uv<span class="w"> </span>run<span class="w"> </span>pre-commit<span class="w"> </span>install
-</code></pre></div>
-<p>Prior to subsequent <code>git commit</code> calls, <code>ruff</code> will first lint/format code.</p>
-<p>Instead of running git hooks, you can lint/format code manually via running the
-following in the current directory:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Lint</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>ruff<span class="w"> </span>check<span class="w"> </span>--fix
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Format</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>ruff<span class="w"> </span>format
-</code></pre></div>
-<p>To continually lint while developing, you can
-run the following in your terminal</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>ruff<span class="w"> </span>check<span class="w"> </span>--watch
-</code></pre></div>
-<p>For editor (e.g., vim, VSCode) integration, see <a href="https://docs.astral.sh/ruff/editors/setup">here</a>.</p>
-<p>(You can install via ruff following instructions <a href="https://docs.astral.sh/ruff/installation">here</a>.)</p>
-<p>If code is not linted/formatted, PRs will be blocked.</p>
-<h2 id="building-documentation">Building Documentation<a class="headerlink" href="#building-documentation" title="Permanent link">&para;</a></h2>
-<p>If you want to edit and build documentation locally, you need to install <a href="https://www.mkdocs.org/"><code>mkdocs</code></a> and some dependencies:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>pip<span class="w"> </span>install<span class="w"> </span>mkdocs<span class="w"> </span>mkdocs-autorefs<span class="w"> </span>mkdocs-material<span class="w"> </span>mkdocstrings-python
-</code></pre></div>
-<p>To prototype documentation locally you can run:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>mkdocs<span class="w"> </span>serve
-</code></pre></div>
-<p>and view the built docs at <code>http://127.0.0.1:8000</code>.</p>
+<p>See the repository's <a href="https://github.com/lanl/ursa/blob/main/CONTRIBUTING.md">contribution guide</a>
+for development setup, tests, documentation builds, and the pull-request process.
+It also explains how to report problems and ask for help.</p>
+<p>For execution risks and precautions, see
+<a href="https://github.com/lanl/ursa/blob/main/SECURITY.md">Security and execution safety</a>.</p>
 
 
 
