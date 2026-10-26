@@ -4,17 +4,25 @@ dynamic = ["version"]
 description = "Agents for science at LANL"
 readme = "README.md"
 authors = [
-    { name = "Mike Grosskopf", email = "mikegros@lanl.gov" },
-    { name = "Nathan Debardeleben", email = "ndebard@lanl.gov" },
-    { name = "Rahul Somasundaram", email = "rsomasundaram@lanl.gov" },
+    { name = "Michael Grosskopf", email = "mikegros@lanl.gov" },
+    { name = "Russell Bent", email = "rbent@lanl.gov" },
+    { name = "Tristan Brennan",email="tristan8@stanford.edu" },
+    { name = "Nathan DeBardeleben", email = "ndebard@lanl.gov" },
+    { name = "Warren D. Graham",email="wdgraham@lanl.gov" },
+    { name = "Pascal Grosset", email = "pascalgrosset@lanl.gov" },
+    { name = "Adela Habib",email="ahabib@lanl.gov" },
+    { name = "Earl Lawrence", email = "earl@lanl.gov" },
+    { name = "Arthur Lui", email = "alui@lanl.gov" },
     { name = "Isaac Michaud", email = "imichaud@lanl.gov" },
     { name = "Avanish Mishra", email = "avanish@lanl.gov" },
-    { name = "Pascal Grosset", email = "pascalgrosset@lanl.gov" },
-    { name = "Arthur Lui", email = "alui@lanl.gov" },
-    { name = "Russell Bent", email = "rbent@lanl.gov" },
-    { name = "Alex Wadell", email = "awadell@lanl.gov" },
+    { name = "Jamal Mohd-Yusof",email="jamal@lanl.gov" },
+    { name = "Harsha Nagarajan",email="harsha@lanl.gov" },
+    { name = "Sachin Shivakumar",email="sshivakumar@lanl.gov" },
+    { name = "Rahul Somasundaram", email = "rsomasundaram@lanl.gov" },
     { name = "Jemma Stachelek", email = "jsta@lanl.gov" },
-    { name = "Earl Lawrence", email = "earl@lanl.gov" }
+    { name = "Joan Vendrell Gallart",email="joanven@lanl.gov" },
+    { name = "Alexius Wadell", email = "awadell@lanl.gov" },
+    { name = "Golo A. Wimmer",email="gwimmer@lanl.gov" }
 ]
 license = "BSD-3-Clause"
 license-files = [ "LICENSE" ]
