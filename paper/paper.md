@@ -210,7 +210,7 @@ The simulation results shown in this figure were generated using the example scr
 # AI usage disclosure
 
 This work is on AI-driven agentic workflows, so LLMs are invoked at multiple instances within URSA. For example, LLMs were involved in the generation of \autoref{fig:helios} and \autoref{fig:lammps}.
-During the development of URSA, generative AI tools such as Codex and URSA itself were used to assist with implementing specific portions of the source code, including its documentation. While all major design and architectural decisions were made by the authors, generative AI tools were used to prototype new features, debug code, and write tests. 
+During the development of URSA, generative AI tools such as Codex and URSA itself were used to assist with implementing specific portions of the source code, including its documentation. While all major design and architectural decisions were made by the authors, generative AI tools were used for tasks such as prototyping new features, debugging code, and writing tests. 
 For the writing of the manuscript, including its updates during the review process, generative AI tools were used for grammar and spell checks, cutting down the length of the manuscript, and for checking consistency of the manuscript with reviewer comments. All LLM-generated text, code, and documentation were critically reviewed by the authors for accuracy.
 
 # Acknowledgements
