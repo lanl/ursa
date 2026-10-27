@@ -17245,22 +17245,22 @@ using .stream(...) or .invoke(...).</p>
 <a id="__codelineno-0-310" name="__codelineno-0-310"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExecutionState</span><span class="p">:</span>
 <a id="__codelineno-0-311" name="__codelineno-0-311"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Prepare workspace, handle optional symlinks, and invoke the executor LLM.</span>
 <a id="__codelineno-0-312" name="__codelineno-0-312"></a>
-<a id="__codelineno-0-313" name="__codelineno-0-313"></a><span class="sd">        This method copies the incoming state, ensures a workspace directory exists</span>
-<a id="__codelineno-0-314" name="__codelineno-0-314"></a><span class="sd">        (creating one with a default name when absent), optionally creates a symlink</span>
-<a id="__codelineno-0-315" name="__codelineno-0-315"></a><span class="sd">        described by state[&quot;symlinkdir&quot;], sets or injects the executor system prompt</span>
-<a id="__codelineno-0-316" name="__codelineno-0-316"></a><span class="sd">        as the first message, and invokes the bound LLM. When logging is enabled,</span>
-<a id="__codelineno-0-317" name="__codelineno-0-317"></a><span class="sd">        it persists the pre-invocation state to disk.</span>
-<a id="__codelineno-0-318" name="__codelineno-0-318"></a>
-<a id="__codelineno-0-319" name="__codelineno-0-319"></a><span class="sd">        Args:</span>
-<a id="__codelineno-0-320" name="__codelineno-0-320"></a><span class="sd">            state: The current execution state. Expected keys include:</span>
-<a id="__codelineno-0-321" name="__codelineno-0-321"></a><span class="sd">                - &quot;messages&quot;: Ordered list of System/Human/AI/Tool messages.</span>
-<a id="__codelineno-0-322" name="__codelineno-0-322"></a><span class="sd">                - &quot;workspace&quot;: Optional path to the working directory.</span>
-<a id="__codelineno-0-323" name="__codelineno-0-323"></a><span class="sd">                - &quot;symlinkdir&quot;: Optional dict with &quot;source&quot; and &quot;dest&quot; keys.</span>
-<a id="__codelineno-0-324" name="__codelineno-0-324"></a>
-<a id="__codelineno-0-325" name="__codelineno-0-325"></a><span class="sd">        Returns:</span>
-<a id="__codelineno-0-326" name="__codelineno-0-326"></a><span class="sd">            ExecutionState: Partial state update containing:</span>
-<a id="__codelineno-0-327" name="__codelineno-0-327"></a><span class="sd">                - &quot;messages&quot;: A list with the model&#39;s response as the latest entry.</span>
-<a id="__codelineno-0-328" name="__codelineno-0-328"></a><span class="sd">                - &quot;workspace&quot;: The resolved workspace path.</span>
+<a id="__codelineno-0-313" name="__codelineno-0-313"></a><span class="sd">        This method copies the incoming state, optionally creates a symlink</span>
+<a id="__codelineno-0-314" name="__codelineno-0-314"></a><span class="sd">        described by state[&quot;symlinkdir&quot;], sets or injects the executor system prompt</span>
+<a id="__codelineno-0-315" name="__codelineno-0-315"></a><span class="sd">        as the first message, and invokes the bound LLM. When logging is enabled,</span>
+<a id="__codelineno-0-316" name="__codelineno-0-316"></a><span class="sd">        it persists the pre-invocation state to disk.</span>
+<a id="__codelineno-0-317" name="__codelineno-0-317"></a>
+<a id="__codelineno-0-318" name="__codelineno-0-318"></a><span class="sd">        Configure the working directory with the agent constructor&#39;s ``workspace``</span>
+<a id="__codelineno-0-319" name="__codelineno-0-319"></a><span class="sd">        argument, for example, ``ExecutionAgent(llm=llm, workspace=&quot;./work&quot;)``.</span>
+<a id="__codelineno-0-320" name="__codelineno-0-320"></a><span class="sd">        The workspace is available through ``runtime.context.workspace``.</span>
+<a id="__codelineno-0-321" name="__codelineno-0-321"></a>
+<a id="__codelineno-0-322" name="__codelineno-0-322"></a><span class="sd">        Args:</span>
+<a id="__codelineno-0-323" name="__codelineno-0-323"></a><span class="sd">            state: The current execution state. Expected keys include:</span>
+<a id="__codelineno-0-324" name="__codelineno-0-324"></a><span class="sd">                - &quot;messages&quot;: Ordered list of System/Human/AI/Tool messages.</span>
+<a id="__codelineno-0-325" name="__codelineno-0-325"></a><span class="sd">                - &quot;symlinkdir&quot;: Optional dict with &quot;source&quot; and &quot;dest&quot; keys.</span>
+<a id="__codelineno-0-326" name="__codelineno-0-326"></a>
+<a id="__codelineno-0-327" name="__codelineno-0-327"></a><span class="sd">        Returns:</span>
+<a id="__codelineno-0-328" name="__codelineno-0-328"></a><span class="sd">            Partial update to ExecutionState</span>
 <a id="__codelineno-0-329" name="__codelineno-0-329"></a><span class="sd">        &quot;&quot;&quot;</span>
 <a id="__codelineno-0-330" name="__codelineno-0-330"></a>        <span class="c1"># Add model to the state so it can be passed to tools like the URSA Arxiv or OSTI tools</span>
 <a id="__codelineno-0-331" name="__codelineno-0-331"></a>        <span class="n">new_state</span> <span class="o">=</span> <span class="n">deepcopy</span><span class="p">(</span><span class="n">state</span><span class="p">)</span>
@@ -17575,11 +17575,13 @@ using .stream(...) or .invoke(...).</p>
     <div class="doc doc-contents ">
 
         <p>Prepare workspace, handle optional symlinks, and invoke the executor LLM.</p>
-<p>This method copies the incoming state, ensures a workspace directory exists
-(creating one with a default name when absent), optionally creates a symlink
+<p>This method copies the incoming state, optionally creates a symlink
 described by state["symlinkdir"], sets or injects the executor system prompt
 as the first message, and invokes the bound LLM. When logging is enabled,
 it persists the pre-invocation state to disk.</p>
+<p>Configure the working directory with the agent constructor's <code>workspace</code>
+argument, for example, <code>ExecutionAgent(llm=llm, workspace="./work")</code>.
+The workspace is available through <code>runtime.context.workspace</code>.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -17604,7 +17606,6 @@ it persists the pre-invocation state to disk.</p>
               <div class="doc-md-description">
                 <p>The current execution state. Expected keys include:
 - "messages": Ordered list of System/Human/AI/Tool messages.
-- "workspace": Optional path to the working directory.
 - "symlinkdir": Optional dict with "source" and "dest" keys.</p>
               </div>
             </td>
@@ -17620,20 +17621,18 @@ it persists the pre-invocation state to disk.</p>
     <table>
       <thead>
         <tr>
-<th>Name</th>          <th>Type</th>
+          <th>Type</th>
           <th>Description</th>
         </tr>
       </thead>
       <tbody>
           <tr class="doc-section-item">
-<td><code>ExecutionState</code></td>            <td>
+            <td>
                   <code><a class="autorefs autorefs-internal" title="ExecutionState (ursa.agents.execution_agent.ExecutionState)" href="#ursa.agents.execution_agent.ExecutionState">ExecutionState</a></code>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Partial state update containing:
-- "messages": A list with the model's response as the latest entry.
-- "workspace": The resolved workspace path.</p>
+                <p>Partial update to ExecutionState</p>
               </div>
             </td>
           </tr>
@@ -17749,22 +17748,22 @@ it persists the pre-invocation state to disk.</p>
 <a id="__codelineno-0-310" name="__codelineno-0-310"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExecutionState</span><span class="p">:</span>
 <a id="__codelineno-0-311" name="__codelineno-0-311"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Prepare workspace, handle optional symlinks, and invoke the executor LLM.</span>
 <a id="__codelineno-0-312" name="__codelineno-0-312"></a>
-<a id="__codelineno-0-313" name="__codelineno-0-313"></a><span class="sd">    This method copies the incoming state, ensures a workspace directory exists</span>
-<a id="__codelineno-0-314" name="__codelineno-0-314"></a><span class="sd">    (creating one with a default name when absent), optionally creates a symlink</span>
-<a id="__codelineno-0-315" name="__codelineno-0-315"></a><span class="sd">    described by state[&quot;symlinkdir&quot;], sets or injects the executor system prompt</span>
-<a id="__codelineno-0-316" name="__codelineno-0-316"></a><span class="sd">    as the first message, and invokes the bound LLM. When logging is enabled,</span>
-<a id="__codelineno-0-317" name="__codelineno-0-317"></a><span class="sd">    it persists the pre-invocation state to disk.</span>
-<a id="__codelineno-0-318" name="__codelineno-0-318"></a>
-<a id="__codelineno-0-319" name="__codelineno-0-319"></a><span class="sd">    Args:</span>
-<a id="__codelineno-0-320" name="__codelineno-0-320"></a><span class="sd">        state: The current execution state. Expected keys include:</span>
-<a id="__codelineno-0-321" name="__codelineno-0-321"></a><span class="sd">            - &quot;messages&quot;: Ordered list of System/Human/AI/Tool messages.</span>
-<a id="__codelineno-0-322" name="__codelineno-0-322"></a><span class="sd">            - &quot;workspace&quot;: Optional path to the working directory.</span>
-<a id="__codelineno-0-323" name="__codelineno-0-323"></a><span class="sd">            - &quot;symlinkdir&quot;: Optional dict with &quot;source&quot; and &quot;dest&quot; keys.</span>
-<a id="__codelineno-0-324" name="__codelineno-0-324"></a>
-<a id="__codelineno-0-325" name="__codelineno-0-325"></a><span class="sd">    Returns:</span>
-<a id="__codelineno-0-326" name="__codelineno-0-326"></a><span class="sd">        ExecutionState: Partial state update containing:</span>
-<a id="__codelineno-0-327" name="__codelineno-0-327"></a><span class="sd">            - &quot;messages&quot;: A list with the model&#39;s response as the latest entry.</span>
-<a id="__codelineno-0-328" name="__codelineno-0-328"></a><span class="sd">            - &quot;workspace&quot;: The resolved workspace path.</span>
+<a id="__codelineno-0-313" name="__codelineno-0-313"></a><span class="sd">    This method copies the incoming state, optionally creates a symlink</span>
+<a id="__codelineno-0-314" name="__codelineno-0-314"></a><span class="sd">    described by state[&quot;symlinkdir&quot;], sets or injects the executor system prompt</span>
+<a id="__codelineno-0-315" name="__codelineno-0-315"></a><span class="sd">    as the first message, and invokes the bound LLM. When logging is enabled,</span>
+<a id="__codelineno-0-316" name="__codelineno-0-316"></a><span class="sd">    it persists the pre-invocation state to disk.</span>
+<a id="__codelineno-0-317" name="__codelineno-0-317"></a>
+<a id="__codelineno-0-318" name="__codelineno-0-318"></a><span class="sd">    Configure the working directory with the agent constructor&#39;s ``workspace``</span>
+<a id="__codelineno-0-319" name="__codelineno-0-319"></a><span class="sd">    argument, for example, ``ExecutionAgent(llm=llm, workspace=&quot;./work&quot;)``.</span>
+<a id="__codelineno-0-320" name="__codelineno-0-320"></a><span class="sd">    The workspace is available through ``runtime.context.workspace``.</span>
+<a id="__codelineno-0-321" name="__codelineno-0-321"></a>
+<a id="__codelineno-0-322" name="__codelineno-0-322"></a><span class="sd">    Args:</span>
+<a id="__codelineno-0-323" name="__codelineno-0-323"></a><span class="sd">        state: The current execution state. Expected keys include:</span>
+<a id="__codelineno-0-324" name="__codelineno-0-324"></a><span class="sd">            - &quot;messages&quot;: Ordered list of System/Human/AI/Tool messages.</span>
+<a id="__codelineno-0-325" name="__codelineno-0-325"></a><span class="sd">            - &quot;symlinkdir&quot;: Optional dict with &quot;source&quot; and &quot;dest&quot; keys.</span>
+<a id="__codelineno-0-326" name="__codelineno-0-326"></a>
+<a id="__codelineno-0-327" name="__codelineno-0-327"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-0-328" name="__codelineno-0-328"></a><span class="sd">        Partial update to ExecutionState</span>
 <a id="__codelineno-0-329" name="__codelineno-0-329"></a><span class="sd">    &quot;&quot;&quot;</span>
 <a id="__codelineno-0-330" name="__codelineno-0-330"></a>    <span class="c1"># Add model to the state so it can be passed to tools like the URSA Arxiv or OSTI tools</span>
 <a id="__codelineno-0-331" name="__codelineno-0-331"></a>    <span class="n">new_state</span> <span class="o">=</span> <span class="n">deepcopy</span><span class="p">(</span><span class="n">state</span><span class="p">)</span>
