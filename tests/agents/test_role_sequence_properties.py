@@ -8,13 +8,13 @@ because agents receive input through ``format_query`` after a user
 turn; a caller-supplied assistant-final history flows straight through
 ``_normalize_inputs`` and tests caller error, not agent logic.
 
-Known-bug configurations are pinned as deterministic strict xfails
-rather than silently avoided: summarization with a plain ``BaseAgent``
-crashes on the missing ``tool_llm`` (upstream #295). The
-``messages_to_keep=0`` and summarized-away tool-tail cases (upstream
-#296) are now fixed on main -- the summary lands as a human-role
-message -- so they are asserted as passing regression guards instead.
-The properties therefore explore the remaining healthy space.
+Formerly known-bug configurations are asserted as passing regression
+guards rather than silently avoided: summarization with a plain
+``BaseAgent`` (upstream #295, the summarizer now falls back to ``llm``
+when an agent has no ``tool_llm``), and the ``messages_to_keep=0`` and
+summarized-away tool-tail cases (upstream #296, the summary lands as a
+human-role message). The properties therefore explore the remaining
+healthy space.
 """
 
 import tempfile
@@ -91,16 +91,9 @@ def test_property_summarization_healthy_space(history, messages_to_keep):
         assert_requests_provider_valid(llm.calls)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "summarization uses self.tool_llm, which only AgentWithTools "
-        "assigns, so plain BaseAgent subclasses crash when history "
-        "crosses tokens_before_summarize; see upstream issue #295"
-    ),
-    strict=True,
-    raises=AttributeError,
-)
-async def test_pin_summarization_crashes_non_tool_agents(tmp_path):
+async def test_summarization_runs_on_non_tool_agents(tmp_path):
+    # Regression guard for upstream #295: this was a strict xfail pinning
+    # the AttributeError on the missing tool_llm.
     llm = RecordingChatModel()
     agent = BasicChatAgent(
         llm=llm,

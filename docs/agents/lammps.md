@@ -24,8 +24,15 @@ the simplest way to install LAMMPS is often via
 the same conda environment where `ursa` is installed.
 
 The dependencies for `LammpsAgent` are not included with the basic `ursa`
-installation, but can be installed via `pip install 'ursa[lammps]'` or `uv add
-'ursa[lammps]'`.
+installation, but can be installed via `pip install 'ursa-ai[lammps]'` or `uv add
+'ursa-ai[lammps]'`.
+
+This extra installs Python dependencies, not LAMMPS or MPI. The agent defaults to
+`lmp_mpi` and `mpirun`; install compatible executables separately and ensure they
+are on `PATH`, or set the agent's `lammps_cmd` and `mpirun_cmd` arguments. The
+LAMMPS build must include the packages needed by your potential and simulation.
+See the [optional-dependencies table](../getting-started/index.md#optional-dependencies)
+for other extras.
 
 ---
 
