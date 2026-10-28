@@ -38,6 +38,7 @@ BEAR_FACTS = (
     "A Kodiak brown bear can be up to 10 feet tall when standing upright.",  # https://www.fws.gov/species/kodiak-brown-bear-ursus-arctos-middendorffi
     "A black bear can run as fast as 35 miles per hour.",  # https://www.nps.gov/glac/learn/nature/bears.htm
     "The Andean bear, also known as the spectacled bear, is the only bear native to South America.",  # https://nationalzoo.si.edu/animals/andean-bear
+    "Smokey Bear's living mascot was a black bear cub rescued from a New Mexico wildfire in 1950.",  # https://en.wikipedia.org/wiki/Smokey_Bear#Living_symbol
 )
 
 

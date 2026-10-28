@@ -1,6 +1,5 @@
 import asyncio
 import threading
-import time
 from types import SimpleNamespace
 
 from ursa.cli.tui.agent_info import load_agent_details, load_agent_tools
@@ -116,12 +115,15 @@ def test_initialized_agent_snapshot_does_not_generate_tool_schemas():
 async def test_agent_tool_schema_conversion_runs_off_event_loop():
     event_loop_thread = threading.get_ident()
     schema_threads = []
+    schema_started = threading.Event()
+    schema_release = threading.Event()
 
     class SlowSchema:
         @classmethod
         def model_json_schema(cls):
             schema_threads.append(threading.get_ident())
-            time.sleep(0.05)
+            schema_started.set()
+            assert schema_release.wait(timeout=15)
             return {"properties": {}}
 
     tool = Tool()
@@ -141,10 +143,18 @@ async def test_agent_tool_schema_conversion_runs_off_event_loop():
         nonlocal ticks
         while loading:
             ticks += 1
-            await asyncio.sleep(0.005)
+            await asyncio.sleep(0)
 
     ticker_task = asyncio.create_task(ticker())
-    await load_agent_tools(SimpleNamespace(get_agent=get_agent), "execute")
+    load_task = asyncio.create_task(
+        load_agent_tools(SimpleNamespace(get_agent=get_agent), "execute")
+    )
+    assert await asyncio.to_thread(schema_started.wait, 15)
+    async with asyncio.timeout(15):
+        while ticks <= 1:
+            await asyncio.sleep(0)
+    schema_release.set()
+    await load_task
     loading = False
     await ticker_task
 

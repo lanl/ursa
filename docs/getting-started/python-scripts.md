@@ -53,7 +53,10 @@ from ursa.cli.config import UrsaConfig
 
 config = UrsaConfig().resolve()
 llm = config.llm_model.init_chat_model()
-agent = ExecutionAgent(llm=llm)
+agent = ExecutionAgent(
+    llm=llm,
+    workspace="./ursa-script-workspace",
+)
 
 result = agent.invoke({
     "messages": [
@@ -61,7 +64,6 @@ result = agent.invoke({
             content="Write and run a Python script that prints the first 10 prime numbers."
         )
     ],
-    "workspace": "./ursa-script-workspace",
 })
 
 print(result["messages"][-1].content)

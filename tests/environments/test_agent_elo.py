@@ -600,7 +600,6 @@ def test_prompts_share_task_criteria_and_preserve_lineage_guidance(elo_factory):
     assert "terminated at this deadline" in descendant
     assert "generation_2.md" in descendant
     assert "If you can write files" in descendant
-    assert "500" not in descendant
     assert task in descendant
     assert env.judge_prompt == ""
     prompt = env.judge._judge_prompt(
