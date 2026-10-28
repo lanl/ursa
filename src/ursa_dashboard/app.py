@@ -1472,7 +1472,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     async def get_events(
         run_id: str,
         after_seq: int = Query(default=0, ge=0),
-        limit: int = Query(default=1000, ge=1, le=5000),
+        limit: int = Query(default=8000, ge=1, le=5000),
     ) -> RunEventListResponse:
         try:
             await rm.get_run(run_id)
@@ -6577,7 +6577,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
     async def get_environment_run_events(
         run_id: str,
         after_seq: int = Query(default=0, ge=0),
-        limit: int = Query(default=1000, ge=1, le=10000),
+        limit: int = Query(default=8000, ge=1, le=10000),
     ) -> dict[str, Any]:
         try:
             read_environment_run_manifest(dashboard_group, run_id)
