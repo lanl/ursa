@@ -123,23 +123,26 @@ async def test_page_validation_checks_all_transactionally(
         })
     checked = []
 
-    def probe(_probe, entry, *_args, **_kwargs):
-        name = (
-            entry
-            if kind == "mcp"
-            else str(entry.base_url).split("//", 1)[1].split(".", 1)[0]
-        )
+    def probe(name, entry, **kwargs):
         checked.append(name)
         if kind == "mcp" and name == "first":
-            runtime = _args[0]
+            runtime = entry
             assert (
-                runtime["headers"]["Authorization"] == "Token <runtime-secret>"
+                runtime.headers["Authorization"].get_secret_value("first")
+                == "Token <runtime-secret>"
             )
-            assert runtime["timeout"].total_seconds() == 17
+            assert runtime.timeout.total_seconds() == 17
+            assert kwargs["timeout"] == 15
+        if kind == "provider":
+            assert kwargs["require_models"] is True
         if name == "broken":
-            raise RuntimeError("connection refused")
+            return CheckResult(name, CheckStatus.ERROR, "connection refused")
+        return CheckResult(name, CheckStatus.OK, "Connected")
 
-    monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", probe)
+    monkeypatch.setattr(
+        f"ursa.cli.setup.check_{'inference_provider' if kind == 'provider' else 'mcp_server'}",
+        probe,
+    )
     async with app.run_test(size=(120, 42)) as pilot:
         app._begin_entry(kind, names[0])
         await app.workers.wait_for_complete()
@@ -167,6 +170,34 @@ async def test_page_validation_checks_all_transactionally(
             "could not connect"
             in str(query(broken, ".draft-message", Static).content).lower()
         )
+
+
+async def test_non_mcp_endpoint_is_a_validation_error(monkeypatch, app):
+    app.config = UrsaConfig.model_validate({
+        "mcp_servers": {
+            "not-mcp": {
+                "transport": "streamable_http",
+                "url": "https://google.com",
+            }
+        }
+    })
+    message = (
+        "The endpoint does not accept MCP requests. Check that the URL "
+        "points to an MCP server."
+    )
+    monkeypatch.setattr(
+        "ursa.cli.setup.check_mcp_server",
+        lambda name, _server, **_kwargs: CheckResult(
+            name, CheckStatus.ERROR, message
+        ),
+    )
+    async with app.run_test(size=(120, 42)):
+        app._begin_entry("mcp", "not-mcp")
+        await app.workers.wait_for_complete()
+        assert not await app._validate_entry_page("mcp")
+        editor = app.mcp_tabs.editors()[0]
+        assert message in str(query(editor, ".draft-message", Static).content)
+        assert app.page == "mcp"
 
 
 async def test_model_page_validates_both_models(monkeypatch, app):

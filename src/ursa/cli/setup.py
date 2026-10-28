@@ -23,8 +23,11 @@ from textual.widgets import (
 
 from ursa.cli.config import ChatModelConfig, InferenceProviderConfig
 from ursa.cli.doctor import (
+    CheckResult,
     CheckStatus,
     build_report_from_path,
+    check_inference_provider,
+    check_mcp_server,
     render_report,
     report_counts,
 )
@@ -46,8 +49,6 @@ from ursa.util.crossplatform import default_user_config_path
 from ursa.util.health import (
     probe_chat_config,
     probe_embedding_model,
-    probe_inference_provider,
-    probe_mcp_server,
     run_probe_with_deadline,
 )
 from ursa.util.http import inject_truststore_into_ssl
@@ -60,11 +61,15 @@ _load_config = load_setup_config
 _save = save_setup_config
 
 
-def _friendly(exc: Exception, mcp: bool = False) -> str:
-    messages, current = [], exc
-    while current:
-        messages.append(str(current).strip())
-        current = current.__cause__ or current.__context__
+def _friendly(error: BaseException | str, mcp: bool = False) -> str:
+    messages = []
+    if isinstance(error, str):
+        messages.append(error.strip())
+    else:
+        current: BaseException | None = error
+        while current:
+            messages.append(str(current).strip())
+            current = current.__cause__ or current.__context__
     messages = list(dict.fromkeys(filter(None, messages)))
     joined = " ".join(messages).lower()
     if any(word in joined for word in ("401", "403", "unauthorized")):
@@ -79,21 +84,28 @@ def _friendly(exc: Exception, mcp: bool = False) -> str:
         return "The connection timed out. Check that the service is reachable."
     if any(word in joined for word in ("connection refused", "connecterror")):
         return "URSA could not connect. Check the address, network, and VPN."
-    return messages[0] if messages else type(exc).__name__
+    return messages[0] if messages else type(error).__name__
 
 
-def _probe_entry(candidate: EntryCandidate) -> Exception | None:
+def _probe_entry(candidate: EntryCandidate) -> CheckResult:
+    secrets = (
+        (candidate.credential.pending,)
+        if candidate.credential.pending is not None
+        else ()
+    )
     if candidate.kind == "provider":
-        args = (probe_inference_provider, candidate.runtime, True)
-        kwargs = {}
-    else:
-        args = (probe_mcp_server, candidate.name, candidate.runtime)
-        kwargs = {"timeout": 15}
-    try:
-        run_probe_with_deadline(*args, **kwargs)
-    except Exception as exc:
-        return exc
-    return None
+        return check_inference_provider(
+            candidate.name,
+            candidate.runtime,
+            require_models=True,
+            secrets=secrets,
+        )
+    return check_mcp_server(
+        candidate.name,
+        candidate.runtime,
+        secrets=secrets,
+        timeout=15,
+    )
 
 
 # fmt: off
@@ -321,8 +333,9 @@ class SetupApp(App[SetupAction]):
         results = await asyncio.gather(*(asyncio.to_thread(_probe_entry, item) for item in candidates))
         failures: list[EntryCandidate] = []
         for candidate, result in zip(candidates, results, strict=True):
-            failed = result is not None
-            tabs.set_draft_status(candidate.draft_id, _friendly(result, not provider) if failed else "✓ Connected", marker="✗ " if failed else "✓ ", failed=failed)
+            failed = result.status is CheckStatus.ERROR
+            message = str(result.message or "Validation failed")
+            tabs.set_draft_status(candidate.draft_id, _friendly(message, not provider) if failed else "✓ Connected", marker="✗ " if failed else "✓ ", failed=failed)
             if failed:
                 failures.append(candidate)
         if failures:
