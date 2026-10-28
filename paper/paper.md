@@ -9,7 +9,6 @@ authors:
     affiliation: 1
 
   - name: Tristan Brennan
-    orcid: xxx-xxx-xxx-xxx
     affiliation: 2
 
   - name: Nathan DeBardeleben
