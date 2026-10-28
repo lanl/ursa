@@ -24,6 +24,7 @@ from ursa.util.health import (
     PROBE_TIMEOUT_SECONDS,
     probe_chat_config,
     probe_embedding_model,
+    probe_failure_message,
     probe_inference_provider,
     probe_mcp_server,
     run_probe_with_deadline,
@@ -58,10 +59,7 @@ def _exception_message(exc: BaseException) -> str:
         return "Configuration validation failed at " + ", ".join(
             sorted(locations)
         )
-    try:
-        return str(exc).strip() or type(exc).__name__
-    except BaseException:
-        return type(exc).__name__
+    return probe_failure_message(exc)
 
 
 @dataclass(frozen=True)
@@ -135,14 +133,75 @@ def _attempt(
     probe: Callable[..., Any],
     *args: Any,
     secrets: Sequence[str] = (),
+    timeout: float = PROBE_TIMEOUT_SECONDS,
+    failure_message: Callable[[str], str] | None = None,
 ) -> CheckResult:
     try:
-        message = run_probe_with_deadline(
-            probe, *args, timeout=PROBE_TIMEOUT_SECONDS
-        )
+        message = run_probe_with_deadline(probe, *args, timeout=timeout)
         return CheckResult(name, CheckStatus.OK, message, secrets=secrets)
     except _FAILURES as exc:
-        return CheckResult(name, CheckStatus.ERROR, exc, secrets=secrets)
+        message = _exception_message(exc)
+        if failure_message is not None:
+            message = failure_message(message)
+        return CheckResult(name, CheckStatus.ERROR, message, secrets=secrets)
+
+
+def _mcp_failure_message(message: str) -> str:
+    detail = message.lower()
+    if any(marker in detail for marker in ("401", "403", "unauthorized")):
+        return "The MCP server rejected authentication. Check its credential."
+    if "404" in detail or "not found" in detail:
+        return "The MCP endpoint was not found. Check the URL."
+    if "405" in detail or "method not allowed" in detail:
+        return (
+            "The endpoint does not accept MCP requests. Check that the URL "
+            "points to an MCP server."
+        )
+    if "timed out" in detail:
+        return "The MCP connection timed out. Check the address and network."
+    if any(
+        marker in detail for marker in ("connection refused", "connecterror")
+    ):
+        return "URSA could not connect. Check the address, network, and VPN."
+    return message
+
+
+def check_inference_provider(
+    name: str,
+    config: Any,
+    *,
+    require_models: bool = False,
+    secrets: Sequence[str] = (),
+    timeout: float = PROBE_TIMEOUT_SECONDS,
+) -> CheckResult:
+    """Check one resolved inference-provider configuration."""
+    return _attempt(
+        name,
+        probe_inference_provider,
+        config,
+        require_models,
+        secrets=secrets,
+        timeout=timeout,
+    )
+
+
+def check_mcp_server(
+    name: str,
+    server: Any,
+    *,
+    secrets: Sequence[str] = (),
+    timeout: float = PROBE_TIMEOUT_SECONDS,
+) -> CheckResult:
+    """Check one resolved MCP-server configuration."""
+    return _attempt(
+        name,
+        probe_mcp_server,
+        name,
+        server,
+        secrets=secrets,
+        timeout=timeout,
+        failure_message=_mcp_failure_message,
+    )
 
 
 def _resolve_secret(
@@ -237,6 +296,7 @@ def _check_entries(
     empty: tuple[CheckStatus, str],
     *,
     named: bool = False,
+    failure_message: Callable[[str], str] | None = None,
 ) -> CheckResult:
     if not entries:
         return CheckResult(title, *empty)
@@ -245,7 +305,13 @@ def _check_entries(
         try:
             value, secrets = resolve(context, name, value)
             args = (name, value) if named else (value,)
-            result = _attempt(name, probe, *args, secrets=secrets)
+            result = _attempt(
+                name,
+                probe,
+                *args,
+                secrets=secrets,
+                failure_message=failure_message,
+            )
         except _FAILURES as exc:
             result = CheckResult(name, CheckStatus.ERROR, exc)
         checks.append(result)
@@ -347,6 +413,7 @@ def check_mcp_servers(context: DoctorContext) -> CheckResult:
         probe_mcp_server,
         (CheckStatus.OK, "No MCP servers are configured"),
         named=True,
+        failure_message=_mcp_failure_message,
     )
 
 

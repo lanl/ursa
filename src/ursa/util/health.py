@@ -32,6 +32,18 @@ PROBE_TIMEOUT_SECONDS = 30.0
 _PROBE_START_LOCK = Lock()
 
 
+def probe_failure_message(exc: BaseException) -> str:
+    """Return useful leaf messages from failures raised by async task groups."""
+    if isinstance(exc, BaseExceptionGroup):
+        messages = [probe_failure_message(child) for child in exc.exceptions]
+        unique = list(dict.fromkeys(filter(None, messages)))
+        return "; ".join(unique) or type(exc).__name__
+    try:
+        return str(exc).strip() or type(exc).__name__
+    except BaseException:
+        return type(exc).__name__
+
+
 def _probe_worker(connection: Any, probe: Any, args: tuple[Any, ...]) -> None:
     if os.name == "posix":
         with suppress(OSError):
@@ -42,11 +54,7 @@ def _probe_worker(connection: Any, probe: Any, args: tuple[Any, ...]) -> None:
             result = asyncio.run(result)
         connection.send((True, result))
     except (Exception, SystemExit, asyncio.CancelledError) as exc:
-        try:
-            message = str(exc).strip()
-        except BaseException:
-            message = ""
-        connection.send((False, message or type(exc).__name__))
+        connection.send((False, probe_failure_message(exc)))
     finally:
         connection.close()
 

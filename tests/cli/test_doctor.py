@@ -13,6 +13,7 @@ from ursa.cli.doctor import (
     DoctorContext,
     check_inference_providers,
     check_llm_models,
+    check_mcp_server,
     check_mcp_servers,
 )
 
@@ -90,6 +91,29 @@ def test_external_probes_are_bounded(monkeypatch):
     )
     assert check_inference_providers(context).status is CheckStatus.ERROR
     assert calls == [("probe_inference_provider", 30.0)]
+
+
+def test_non_mcp_http_endpoint_is_a_normal_check_failure(monkeypatch):
+    class Client:
+        async def get_tools(self, *, server_name):
+            assert server_name == "not-mcp"
+            raise ExceptionGroup(
+                "unhandled errors in a TaskGroup",
+                [RuntimeError("405 Method Not Allowed")],
+            )
+
+    monkeypatch.setattr(
+        "ursa.util.mcp.start_mcp_client", lambda _servers: Client()
+    )
+    result = check_mcp_server(
+        "not-mcp",
+        {"transport": "streamable_http", "url": "https://google.com"},
+    )
+    assert result.status is CheckStatus.ERROR
+    assert result.message == (
+        "The endpoint does not accept MCP requests. Check that the URL "
+        "points to an MCP server."
+    )
 
 
 def test_complete_report_checks_every_section(monkeypatch):

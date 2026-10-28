@@ -18,12 +18,24 @@ async def _block_async():
     await asyncio.sleep(60)
 
 
+def _grouped_failure():
+    raise ExceptionGroup(
+        "unhandled errors in a TaskGroup",
+        [RuntimeError("405 Method Not Allowed")],
+    )
+
+
 @pytest.mark.parametrize("probe", [_block, _block_async])
 def test_probe_deadline_terminates_blocked_work(probe):
     started = time.monotonic()
     with pytest.raises(TimeoutError, match="timed out after 0.05 seconds"):
         run_probe_with_deadline(probe, timeout=0.05)
     assert time.monotonic() - started < 3
+
+
+def test_probe_reports_exception_group_leaf_message():
+    with pytest.raises(RuntimeError, match="^405 Method Not Allowed$"):
+        run_probe_with_deadline(_grouped_failure, timeout=5)
 
 
 def _embedding_failure(error):
