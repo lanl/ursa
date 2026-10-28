@@ -46,7 +46,7 @@ def isolated_uv_tool(monkeypatch, tmp_path):
 def test_self_setup_routes_paths(monkeypatch, tmp_path, option):
     called = MagicMock(return_value=True)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
-    monkeypatch.setattr("ursa.cli.setup.run_setup", called)
+    monkeypatch.setattr("ursa.cli.setup.setup.run_setup", called)
     path = tmp_path / "input"
     main(["self", "setup", option, str(path)])
     called.assert_called_once_with(
@@ -56,11 +56,11 @@ def test_self_setup_routes_paths(monkeypatch, tmp_path, option):
 
 
 def test_self_setup_launches_selected_action(monkeypatch):
-    from ursa.cli.setup import SetupAction
+    from ursa.cli.setup.setup import SetupAction
 
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
     monkeypatch.setattr(
-        "ursa.cli.setup.run_setup",
+        "ursa.cli.setup.setup.run_setup",
         MagicMock(return_value=SetupAction.TERMINAL),
     )
     execvp = MagicMock(side_effect=SystemExit(0))

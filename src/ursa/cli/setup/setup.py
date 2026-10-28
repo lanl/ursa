@@ -31,7 +31,7 @@ from ursa.cli.doctor import (
     render_report,
     report_counts,
 )
-from ursa.cli.setup_config import (
+from ursa.cli.setup.config import (
     SetupError,
     apply_setup_defaults,
     format_setup_config_yaml,
@@ -43,8 +43,8 @@ from ursa.cli.setup_config import (
     replace_models,
     save_setup_config,
 )
-from ursa.cli.setup_entries import DynamicEntryTabs, EntryCandidate
-from ursa.cli.setup_models import SetupModelEditor, SetupModelSelection
+from ursa.cli.setup.entries import DynamicEntryTabs, EntryCandidate
+from ursa.cli.setup.models import SetupModelEditor, SetupModelSelection
 from ursa.util.crossplatform import default_user_config_path
 from ursa.util.health import (
     probe_chat_config,
@@ -153,13 +153,13 @@ class SetupApp(App[SetupAction]):
         name: str,
         title: str,
         *content: Any,
-        copy: str = "",
+        description: str = "",
         actions: tuple = (),
         status: str | None = None,
     ) -> VerticalScroll:
         children = [Static(title, classes="page-title"), *content]
-        if copy:
-            children.insert(1, Static(copy, classes="page-copy"))
+        if description:
+            children.insert(1, Static(description, classes="page-copy"))
         if status:
             children.append(Static("", id=status, classes="form-message"))
             actions = (
@@ -188,9 +188,13 @@ class SetupApp(App[SetupAction]):
                 "welcome",
                 "Welcome to URSA",
                 Static(f"Configuration: {self.path}", classes="path-box"),
-                copy="URSA found your existing user configuration. This guide will preserve unrelated settings while you review each setup step."
+                description=(
+                    "URSA found your existing user configuration. "
+                    "This wizard will help you update it, while preserving your current settings. "
+                    "Nothing is modifed until the final Save button."
+                )
                 if self.path.is_file()
-                else "This guide will connect URSA to a model provider, choose your models, and optionally add MCP tools. Nothing is written until the final Save button.",
+                else "This wizard will guide you through setting up URSA.",
                 actions=(("Begin setup", "welcome-next", "primary"),),
             ),
             self._page(
@@ -198,21 +202,28 @@ class SetupApp(App[SetupAction]):
                 "Connect an inference provider",
                 self.provider_tabs,
                 status="provider-error",
-                copy="URSA verifies the API key by asking the provider for its model list. The key is hidden and is not written to YAML.",
+                description=(
+                    "URSA accesses AI models via Inference providers, such as OpenAI, Anthropic or Ollama. "
+                    "You must connect at least one inference provider."
+                ),
             ),
             self._page(
                 "models",
                 "Choose default models",
                 Vertical(id="setup-model-host"),
                 status="model-validation-status",
-                copy="Choose the language model URSA will use. Embeddings are optional and may use a different inference provider.",
+                description="Choose the large language model URSA will use. Embeddings are optional and may use a different inference provider.",
             ),
             self._page(
                 "mcp",
-                "Configure an MCP server",
+                "Configure Model Context Protocol (MCP) servers",
                 self.mcp_tabs,
                 status="mcp-validation-status",
-                copy="MCP servers add tools and data sources to URSA. Choose a remote server URL or a local command.",
+                description=(
+                    "URSA can connect to remote or local MCP servers. "
+                    "MCP servers add tools and data sources to URSA. "
+                    "\nVist https://modelcontextprotocol.io to learn more."
+                ),
             ),
             self._page(
                 "review",
@@ -246,7 +257,7 @@ class SetupApp(App[SetupAction]):
                     ("Recheck", "review-recheck", "primary"),
                     ("Continue", "review-continue", "success"),
                 ),
-                copy="API keys and tokens will go to your URSA keyring. The YAML file stores only keyring references.",
+                description="API keys and tokens will go to your URSA keyring. The YAML file stores only keyring references.",
             ),
             self._page(
                 "done",

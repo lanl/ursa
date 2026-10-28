@@ -6,11 +6,12 @@ import yaml
 from textual.widgets import Button, Collapsible, Select, Static, TextArea
 
 from tests.tui.utils import eventually
-from ursa.cli import setup_config
 from ursa.cli.config import InferenceProviderConfig, UrsaConfig
 from ursa.cli.doctor import CheckResult, CheckStatus
-from ursa.cli.setup import SetupApp, apply_setup_defaults
-from ursa.cli.setup_models import SetupModelEditor, SetupModelSelection
+from ursa.cli.setup import config as setup_config
+from ursa.cli.setup.config import apply_setup_defaults
+from ursa.cli.setup.models import SetupModelEditor, SetupModelSelection
+from ursa.cli.setup.setup import SetupApp
 from ursa.cli.tui.widgets import FuzzySelect
 from ursa.util.inference_providers import ProviderModel
 from ursa.util.secrets import SecretReference
@@ -20,8 +21,10 @@ from ursa.util.secrets import SecretReference
 def setup_keyring(monkeypatch):
     store = MagicMock()
     store.get_password.return_value = None
-    for module in ("setup_config", "setup_entries"):
-        monkeypatch.setattr(f"ursa.cli.{module}.get_keyring", lambda: store)
+    for module in ("config", "entries"):
+        monkeypatch.setattr(
+            f"ursa.cli.setup.{module}.get_keyring", lambda: store
+        )
     return store
 
 
@@ -113,7 +116,7 @@ async def test_page_validation_checks_all_transactionally(
         app.config.inference_providers.clear()
         app.config.inference_providers.update(providers)
         monkeypatch.setattr(
-            "ursa.cli.setup_models.list_provider_models", lambda _: []
+            "ursa.cli.setup.models.list_provider_models", lambda _: []
         )
     else:
         monkeypatch.setenv("MCP_TOKEN", "runtime-secret")
@@ -155,7 +158,7 @@ async def test_page_validation_checks_all_transactionally(
         return CheckResult(name, CheckStatus.OK, "Connected")
 
     monkeypatch.setattr(
-        f"ursa.cli.setup.check_{'inference_provider' if kind == 'provider' else 'mcp_server'}",
+        f"ursa.cli.setup.setup.check_{'inference_provider' if kind == 'provider' else 'mcp_server'}",
         probe,
     )
     async with app.run_test(size=(120, 42)) as pilot:
@@ -203,7 +206,7 @@ async def test_non_mcp_endpoint_is_a_validation_error(monkeypatch, app):
         "points to an MCP server."
     )
     monkeypatch.setattr(
-        "ursa.cli.setup.check_mcp_server",
+        "ursa.cli.setup.setup.check_mcp_server",
         lambda name, _server, **_kwargs: CheckResult(
             name, CheckStatus.ERROR, message
         ),
@@ -225,11 +228,11 @@ async def test_model_page_validates_both_models(monkeypatch, app):
     app.pending["chat"] = "pending-secret"
     checked = []
     monkeypatch.setattr(
-        "ursa.cli.setup_models.list_provider_models",
+        "ursa.cli.setup.models.list_provider_models",
         lambda _: [ProviderModel("catalog-model", "openai")],
     )
     monkeypatch.setattr(
-        "ursa.cli.setup._probe_model",
+        "ursa.cli.setup.setup._probe_model",
         lambda model, providers: checked.append((
             model.model,
             model.inference_provider,
@@ -276,7 +279,7 @@ async def test_back_cancels_model_validation(monkeypatch, app):
         started.set()
         release.wait(2)
 
-    monkeypatch.setattr("ursa.cli.setup._probe_model", probe)
+    monkeypatch.setattr("ursa.cli.setup.setup._probe_model", probe)
     async with app.run_test(size=(120, 42)) as pilot:
         app.page = "models"
         app._models_selected(SetupModelSelection(app.config.llm_model, None))
@@ -295,8 +298,8 @@ async def test_doctor_recheck_continue_and_stale_state(monkeypatch, app):
     reports = iter(
         report(s) for s in (CheckStatus.OK, CheckStatus.WARN, CheckStatus.OK)
     )
-    monkeypatch.setattr("ursa.cli.setup._save", lambda *_: app.path)
-    monkeypatch.setattr("ursa.cli.setup._doctor", lambda _: next(reports))
+    monkeypatch.setattr("ursa.cli.setup.setup._save", lambda *_: app.path)
+    monkeypatch.setattr("ursa.cli.setup.setup._doctor", lambda _: next(reports))
     async with app.run_test(size=(120, 42)) as pilot:
         app._show("review")
         await app._save_config()

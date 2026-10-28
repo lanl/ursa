@@ -113,7 +113,8 @@ def _setup(
     config: Path | None = None, defaults_json: Path | None = None
 ) -> None:
     """Load Textual only when the interactive setup command is selected."""
-    from ursa.cli.setup import SetupAction, SetupError, run_setup
+    from ursa.cli.setup.config import SetupError
+    from ursa.cli.setup.setup import SetupAction, run_setup
 
     try:
         action = run_setup(config, defaults_json)

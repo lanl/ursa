@@ -32,7 +32,7 @@ from textual.widgets import (
 )
 
 from ursa.cli.config import InferenceProviderConfig, interpolate_mcp_server
-from ursa.cli.setup_config import (
+from ursa.cli.setup.config import (
     SetupError,
     reject_literal_secrets,
     validate_setup_name,

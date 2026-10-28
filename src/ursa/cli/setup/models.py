@@ -22,7 +22,7 @@ from ursa.cli.config import (
     ModelConfig,
     dict_diff,
 )
-from ursa.cli.setup_config import SetupError, parse_setup_model_yaml
+from ursa.cli.setup.config import SetupError, parse_setup_model_yaml
 from ursa.cli.tui.widgets import (
     MODEL_CUSTOM,
     MODEL_NONE,
