@@ -1,5 +1,76 @@
 # Change Log
 
+## v0.17.1
+
+Changes since `v0.17.0`:
+
+### Agents and tool reliability
+
+- Hardened message-history preparation and summarization for broader provider
+  compatibility: URSA now removes invalid mid-history system messages, orphaned
+  tool results, and crashed-step prompt tails before model calls; keeps the
+  system prompt first; and summarizes older tool-call transcripts as plain text
+  instead of sending provider-invalid tool-call slices (#339).
+- Fixed unregistered typed state declarations for Materials Project, RAG, and
+  recall agents so state registration warnings/errors reflect real issues
+  instead of agent implementation mismatches (#341).
+- Added an async implementation for persisted RAG tools, skipped empty RAG
+  progress bars, and installed a thread-only `tqdm` lock in the TUI path to avoid
+  Textual stderr/resource-tracker `bad value(s) in fds_to_keep` failures and
+  follow-on deadlocks during RAG use (#330, #337).
+- Made `URSA_SAFETY_LEVEL=none` and `URSA_SAFETY_LEVEL=yolo` bypass the command
+  safety LLM check entirely; the previous permissive prompt behavior is now the
+  `trusted` safety level (#343).
+- Closed async SQLite resources more completely by joining their worker threads,
+  preventing lingering non-daemon threads from blocking shutdown (#339).
+
+### Dashboard
+
+- Returned HTTP 400 responses for invalid named-agent inputs and added matching
+  browser-side validation/alerts for creating, saving, copying, and deleting
+  named agents (#322).
+- Added dashboard `--use-web` / `URSA_DASHBOARD_USE_WEB` support so
+  dashboard-created agents, including Deep Review, can opt in to web, arXiv, and
+  OSTI tools consistently with the CLI (#334).
+- Fixed dashboard environment credential handling so safe secret references such
+  as `api_key: {env: ...}` are accepted while literal API keys remain rejected in
+  persisted or worker configuration (#327, #346).
+- Initialized dashboard worker OpenAI chat and embedding clients with URSA's
+  explicit HTTPX/truststore clients to avoid connection errors seen by some
+  users on OpenAI endpoints (#346).
+
+### Configuration, TUI, and inference providers
+
+- Corrected chat and embedding model parsing so only known provider prefixes are
+  split from `provider:model` strings, colon-containing model names are
+  preserved, and users get clearer provider-inference errors with supported
+  provider hints (#337).
+- Fixed layered configuration merging for model settings, including sparse
+  overrides, nested model objects, and the precedence between `base_url` and
+  `inference_provider` (#337).
+- Improved inference-provider validation errors by listing known models for a
+  provider and separating endpoint/credential guidance from the underlying
+  validation failure (#337).
+- Fixed TUI prompt scrolling after multi-line edits and formatted total token
+  counts with thousands separators (#337).
+
+### Image handling and provider compatibility
+
+- Converted SVG files passed to `read_image_tool` into PNG image payloads while
+  preserving the original filename as a separate text block (#329).
+- Stopped placing local workspace paths in `ImageContentBlock.file_id`, which is
+  reserved for provider-side file references and could break providers such as
+  Gemini that prioritize `file_id` over embedded image bytes (#340).
+
+### Dependencies, documentation, and maintenance
+
+- Capped `aiosqlite` below 0.22 pending upstream compatibility (#344),
+  relaxed `langchain-mcp-adapters` to the 0.2 series, allowed `justext` 3.0.1
+  through the 3.x series, and updated `uv.lock` accordingly.
+- Updated docs and examples for dashboard web-tool opt-in and fixed several
+  documentation typos (#333, #334).
+- Updated the Ruff workflow to run the current lint-check target (#337).
+
 ## v0.17.0
 
 Changes since `v0.16.4`:

@@ -80,16 +80,19 @@ def get_model_base_url(model: object) -> str | None:
 
 
 def _load_group_allowed_base_urls(group: str) -> list[str] | None:
-    if group == DEFAULT_GROUP_NAME:
-        return None
-
     group_dir = group_root_dir(group)
+    if group == DEFAULT_GROUP_NAME and not group_dir.exists():
+        return None
     if not group_dir.exists() or not group_dir.is_dir():
         raise GroupBaseURLPolicyError(
             f"Group '{group}' does not exist. Please create it before use."
         )
 
     config_file = group_config_file(group)
+    # The default group is unrestricted only when no policy is configured.
+    # An existing policy must pass the same validation as any other group's.
+    if group == DEFAULT_GROUP_NAME and not config_file.exists():
+        return None
     if not config_file.exists() or not config_file.is_file():
         raise GroupBaseURLPolicyError(
             f"Group '{group}' is missing required config file '{GROUP_CONFIG_FILENAME}'."
@@ -132,15 +135,14 @@ def _same_origin(url_a: str, url_b: str) -> bool:
 
 def is_base_url_allowed(base_url: str | None, group: str | None) -> bool:
     effective_group = validate_group_name(group)
-    if effective_group == DEFAULT_GROUP_NAME:
+    allowed = _load_group_allowed_base_urls(effective_group)
+    if allowed is None:
         return True
 
     normalized = normalize_base_url(base_url)
     if not normalized:
         return False
 
-    allowed = _load_group_allowed_base_urls(effective_group)
-    assert allowed is not None
     return any(
         normalized == candidate or _same_origin(normalized, candidate)
         for candidate in allowed
@@ -151,9 +153,6 @@ def enforce_group_base_url_policy(
     base_url: str | None, group: str | None
 ) -> None:
     effective_group = validate_group_name(group)
-    if effective_group == DEFAULT_GROUP_NAME:
-        return
-
     normalized = normalize_base_url(base_url)
     if is_base_url_allowed(normalized, effective_group):
         return

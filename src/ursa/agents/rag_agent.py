@@ -74,7 +74,7 @@ def _maybe_tqdm(iterable, *, total: int, **tqdm_kwargs):
 
 
 class RAGAgent(BaseAgent[RAGState]):
-    agent_state = RAGState
+    state_type = RAGState
 
     def __init__(
         self,

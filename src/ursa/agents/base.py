@@ -15,6 +15,8 @@ Agents built on this base class benefit from consistent behavior, observability,
 integration capabilities while only needing to implement the core _invoke method.
 """
 
+from __future__ import annotations
+
 import asyncio
 import importlib.metadata
 import inspect
@@ -43,6 +45,7 @@ from langchain.embeddings import Embeddings
 from langchain.tools import BaseTool, ToolException
 from langchain_core.load import dumps
 from langchain_core.messages import (
+    AIMessage,
     BaseMessage,
     HumanMessage,
     SystemMessage,
@@ -152,6 +155,47 @@ def _to_snake(s: str) -> str:
     s = re.sub(r"(?<!^)(?=[A-Z])", "_", s)  # CamelCase -> snake_case
     s = s.replace("-", "_").replace(" ", "_")
     return s.lower()
+
+
+_SUMMARIZE_INSTRUCTIONS = (
+    "Your only task is to provide a detailed, comprehensive summary of the "
+    "following conversation.\n\n"
+    "Your summary will be the only information retained from the conversation, "
+    "so ensure it contains all details that need to be remembered to meet the "
+    "goals of the work: decisions made, files created or modified (with paths), "
+    "results obtained, open questions, and the current step."
+)
+
+
+def _message_text(m: BaseMessage) -> str:
+    text = getattr(m, "text", None)
+    if isinstance(text, str) and text:
+        return text
+    if isinstance(m.content, str):
+        return m.content
+    parts = []
+    for block in m.content or []:
+        if isinstance(block, dict) and block.get("type") == "text":
+            parts.append(block.get("text", ""))
+        else:
+            parts.append(str(block))
+    return "\n".join(p for p in parts if p)
+
+
+def _render_for_summary(msgs: Sequence[BaseMessage]) -> str:
+    out: list[str] = []
+    for m in msgs:
+        if isinstance(m, ToolMessage):
+            out.append(f"[tool result {m.tool_call_id}]\n{_message_text(m)}")
+            continue
+        role = type(m).__name__.removesuffix("Message").lower()
+        if text := _message_text(m):
+            out.append(f"[{role}]\n{text}")
+        for tc in getattr(m, "tool_calls", None) or []:
+            out.append(
+                f"[tool call {tc.get('id')}] {tc.get('name')}({tc.get('args')})"
+            )
+    return "\n\n".join(out)
 
 
 class UnregisteredAgentStateWarning(UserWarning):
@@ -755,6 +799,82 @@ class BaseAgent(Generic[TState], ABC):
             if "id" in call
         ]
 
+    def _sanitize_history(
+        self,
+        state: Mapping[str, Any],
+        summarized: bool = False,
+        config: RunnableConfig | None = None,
+        *,
+        keep_last_human: bool = True,
+    ) -> tuple[Mapping[str, Any], bool]:
+        """Drop mid-list system messages, orphan tool results, and unanswered
+        trailing prompts left behind by crashed steps. Dangling *tool calls*
+        are left for ``_patch_dangling``."""
+        if "messages" not in state:
+            return state, summarized
+
+        new_state = deepcopy(state)
+        events = self.events(config)
+        original = list(new_state["messages"])
+
+        msgs = [
+            m
+            for i, m in enumerate(original)
+            if not (isinstance(m, SystemMessage) and i != 0)
+        ]
+
+        seen_calls: set[str] = set()
+        paired: list[BaseMessage] = []
+        for m in msgs:
+            if isinstance(m, ToolMessage):
+                if m.tool_call_id in seen_calls:
+                    paired.append(m)
+                continue
+            seen_calls.update(self._message_tool_call_ids(m))
+            paired.append(m)
+        msgs = paired
+
+        last_reply = max(
+            (
+                i
+                for i, m in enumerate(msgs)
+                if isinstance(m, (AIMessage, ToolMessage))
+            ),
+            default=-1,
+        )
+        tail = msgs[last_reply + 1 :]
+        if tail:
+            keep = []
+            if keep_last_human:
+                keep = [m for m in tail if isinstance(m, HumanMessage)][-1:]
+            msgs = msgs[: last_reply + 1] + keep
+
+        if len(msgs) != len(original):
+            events.emit(
+                "Sanitized message history",
+                stage="sanitize_history",
+                removed=len(original) - len(msgs),
+            )
+            new_state["messages"] = msgs
+            summarized = True
+        return new_state, summarized
+
+    def _ensure_system_first(
+        self,
+        messages: Sequence[BaseMessage],
+        system_prompt: str | None,
+        *,
+        replace: bool = False,
+    ) -> list[BaseMessage]:
+        msgs = list(messages)
+        if system_prompt is None:
+            return msgs
+        if msgs and isinstance(msgs[0], SystemMessage):
+            if replace and msgs[0].content != system_prompt:
+                msgs[0] = SystemMessage(content=system_prompt, id=msgs[0].id)
+            return msgs
+        return [SystemMessage(content=system_prompt)] + msgs
+
     def _patch_dangling(
         self,
         state: Mapping[str, Any],
@@ -858,7 +978,12 @@ class BaseAgent(Generic[TState], ABC):
         if len(messages) <= 1:
             return new_state, False
 
-        tokens_before = count_tokens_approximately(messages[1:])
+        if isinstance(messages[0], SystemMessage):
+            head, body = [messages[0]], messages[1:]
+        else:
+            head, body = [], messages
+
+        tokens_before = count_tokens_approximately(body)
         if tokens_before <= self.tokens_before_summarize:
             return new_state, False
 
@@ -867,71 +992,51 @@ class BaseAgent(Generic[TState], ABC):
             stage="summarize_context",
         )
         keep_count = max(0, int(self.messages_to_keep or 0))
-        body_messages = messages[1:]
         if keep_count == 0:
-            conversation_to_summarize = body_messages
-            conversation_to_keep = []
-        elif len(body_messages) > keep_count:
-            conversation_to_summarize = body_messages[:-keep_count]
-            conversation_to_keep = body_messages[-keep_count:]
+            to_summarize, to_keep = body, []
+        elif len(body) > keep_count:
+            to_summarize, to_keep = body[:-keep_count], body[-keep_count:]
         else:
             # Nothing can be summarized while still preserving the requested tail.
             return new_state, False
 
-        tool_ids: list[str] = []
-        for msg in conversation_to_summarize:
-            tool_ids.extend(self._message_tool_call_ids(msg))
+        open_ids: set[str] = set()
+        for msg in to_summarize:
+            open_ids.update(self._message_tool_call_ids(msg))
             if isinstance(msg, ToolMessage):
-                try:
-                    tool_ids.remove(msg.tool_call_id)
-                except ValueError:
-                    pass
-
-        if tool_ids:
-            events.emit(
-                "Preserving tool responses during summarization",
-                stage="summarize_context",
-                tool_call_ids=list(tool_ids),
-            )
-            keep_copy = list(conversation_to_keep)
-            for msg in keep_copy:
-                if (
-                    isinstance(msg, ToolMessage)
-                    and msg.tool_call_id in tool_ids
-                ):
-                    conversation_to_summarize.append(msg)
-                    conversation_to_keep.remove(msg)
-                    tool_ids.remove(msg.tool_call_id)
-
-        if tool_ids:
+                open_ids.discard(msg.tool_call_id)
+        while (
+            to_keep
+            and isinstance(to_keep[0], ToolMessage)
+            and to_keep[0].tool_call_id in open_ids
+        ):
+            moved = to_keep.pop(0)
+            to_summarize.append(moved)
+            open_ids.discard(moved.tool_call_id)
+        if open_ids:
             events.emit(
                 "Dangling tool calls found during summarization",
                 stage="summarize_context",
-                tool_call_ids=list(tool_ids),
+                tool_call_ids=list(open_ids),
             )
 
-        summarize_system_message = SystemMessage(
-            content="""
-        Your only tasks is to provide a detailed, comprehensive summary of the following
-        conversation.
-
-        Your summary will be the only information retained from the conversation, so ensure
-        it contains all details that need to be remembered to meet the goals of the work.
-
-        The conversation to summarize is:
-        """
-        )
-        to_summarize = [summarize_system_message] + conversation_to_summarize
-        to_summarize += [
+        # Transcript goes over as plain text in one user turn, so no
+        # tool-call structure crosses the wire and slice boundaries can't
+        # violate any provider's turn-ordering rules.
+        request = [
+            SystemMessage(content=summary_prompt or _SUMMARIZE_INSTRUCTIONS),
             HumanMessage(
-                content="Summarize that conversation per your instruction."
-            )
+                content=(
+                    "The conversation to summarize is below.\n\n<conversation>\n"
+                    + _render_for_summary(to_summarize)
+                    + "\n</conversation>\n\nSummarize that conversation per your instruction."
+                )
+            ),
         ]
-        summary = self.tool_llm.invoke(to_summarize)
+        summary = self.tool_llm.invoke(request)
 
-        first_message = messages[0]
         if system_prompt is not None:
-            first_message = SystemMessage(content=system_prompt)
+            head = [SystemMessage(content=system_prompt)]
 
         # The summary lands as human-role context rather than as the raw
         # assistant message: with messages_to_keep=0 (and in the absorbed
@@ -940,17 +1045,10 @@ class BaseAgent(Generic[TState], ABC):
         # newer reject (issue 296).
         summary_message = HumanMessage(
             content="[Summary of the earlier conversation]\n"
-            + (
-                summary.text
-                if isinstance(summary.text, str)
-                else str(summary.content)
-            ),
+            + _message_text(summary),
             id=summary.id,
         )
-        new_state["messages"] = [
-            first_message,
-            summary_message,
-        ] + conversation_to_keep
+        new_state["messages"] = head + [summary_message] + to_keep
         return new_state, True
 
     def prepare_messages_context(
@@ -961,6 +1059,7 @@ class BaseAgent(Generic[TState], ABC):
         summary_prompt: str | None = None,
         patch_dangling: bool = True,
         summarize: bool = True,
+        sanitize: bool = True,
     ) -> tuple[Mapping[str, Any], bool]:
         """Apply standard message-history maintenance before an LLM call.
 
@@ -971,6 +1070,19 @@ class BaseAgent(Generic[TState], ABC):
         """
         new_state = deepcopy(state)
         full_overwrite = False
+        if sanitize:
+            new_state, full_overwrite = self._sanitize_history(
+                new_state, full_overwrite
+            )
+        if system_prompt is not None and "messages" in new_state:
+            fixed = self._ensure_system_first(
+                new_state["messages"], system_prompt
+            )
+            if fixed is not new_state["messages"] and len(fixed) != len(
+                new_state["messages"]
+            ):
+                new_state["messages"] = fixed
+                full_overwrite = True
         if summarize:
             new_state, full_overwrite = self._summarize_context(
                 new_state,

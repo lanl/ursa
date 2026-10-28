@@ -114,7 +114,7 @@ def test_deep_review_agent_participates_in_web_opt_in():
 
     source = re.search(
         r"web_opt_in_agent_ids = \{(.*?)\}",
-        open(app_module.__file__).read(),
+        open(app_module.__file__, encoding="utf-8").read(),
         re.S,
     )
     assert source is not None, "web_opt_in_agent_ids not found"
