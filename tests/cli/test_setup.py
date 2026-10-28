@@ -59,25 +59,40 @@ llm_model: {model: chat, inference_provider: company, template: hello}
     assert values["template"] == "hello" and "keyring" not in values
 
 
-# fmt: off
 def test_config_boundary(monkeypatch, tmp_path, setup_keyring):
     path = tmp_path / "config.yaml"
     path.write_text(
         'inference_providers: {company: {base_url: "${MODEL_URL}", api_key: {keyring: true}}}\n'
-        'llm_model: {model: chat, inference_provider: company}\n'
-        'mcp_servers: {tools: {transport: stdio, command: tool, env: {KEY: "${MCP_SECRET}"}}}\n')
+        "llm_model: {model: chat, inference_provider: company}\n"
+        'mcp_servers: {tools: {transport: stdio, command: tool, env: {KEY: "${MCP_SECRET}"}}}\n'
+    )
     config, _ = setup_config.load_setup_config(path)
-    with pytest.raises(setup_config.SetupError, match="must not contain API keys"):
-        apply_setup_defaults(config, {"mcp_servers": {"bad": {"env": {"API_KEY": "secret"}}}})
+    with pytest.raises(
+        setup_config.SetupError, match="must not contain API keys"
+    ):
+        apply_setup_defaults(
+            config, {"mcp_servers": {"bad": {"env": {"API_KEY": "secret"}}}}
+        )
     setup_config.save_setup_config(path, config, {})
-    assert all(value in path.read_text() for value in ("${MODEL_URL}", "${MCP_SECRET}"))
+    assert all(
+        value in path.read_text() for value in ("${MODEL_URL}", "${MCP_SECRET}")
+    )
     setup_keyring.get_password.side_effect = ["old", None]
-    monkeypatch.setattr(setup_config, "save_config_file", MagicMock(side_effect=OSError("disk full")))
+    monkeypatch.setattr(
+        setup_config,
+        "save_config_file",
+        MagicMock(side_effect=OSError("disk full")),
+    )
     with pytest.raises(OSError, match="disk full"):
-        setup_config.save_setup_config(path, config, {"company": "new", "tools": "new"})
-    assert setup_keyring.set_password.call_args.args == ("ursa", "company", "old")
+        setup_config.save_setup_config(
+            path, config, {"company": "new", "tools": "new"}
+        )
+    assert setup_keyring.set_password.call_args.args == (
+        "ursa",
+        "company",
+        "old",
+    )
     setup_keyring.delete_password.assert_called_once_with("ursa", "tools")
-# fmt: on
 
 
 @pytest.mark.parametrize("kind", ["provider", "mcp"])
@@ -150,8 +165,10 @@ async def test_page_validation_checks_all_transactionally(
             app.query_one("#provider-add", Button).press()
             await eventually(
                 pilot,
-                lambda: app.provider_tabs.active_editor() is not None
-                and app.provider_tabs.active_editor().raw_name() == "",
+                lambda: (
+                    app.provider_tabs.active_editor() is not None
+                    and app.provider_tabs.active_editor().raw_name() == ""
+                ),
             )
             app.query_one("#provider-remove", Button).press()
             await eventually(

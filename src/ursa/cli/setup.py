@@ -108,13 +108,21 @@ def _probe_entry(candidate: EntryCandidate) -> CheckResult:
     )
 
 
-# fmt: off
-SetupAction = Enum("SetupAction", {"EXIT": "exit", "TERMINAL": "terminal", "DASHBOARD": "dashboard"})
-_DONE_ACTIONS = (("Launch URSA - Terminal", "terminal", "success"), ("Launch URSA - Dashboard", "dashboard", "success"), ("Exit", "exit", "default"))
-_ENTRY_PAGE = {"provider": ("#provider-error", "providers", "Provider"), "mcp": ("#mcp-validation-status", "MCP servers", "MCP")}
+SetupAction = Enum(
+    "SetupAction",
+    {"EXIT": "exit", "TERMINAL": "terminal", "DASHBOARD": "dashboard"},
+)
+_DONE_ACTIONS = (
+    ("Launch URSA - Terminal", "terminal", "success"),
+    ("Launch URSA - Dashboard", "dashboard", "success"),
+    ("Exit", "exit", "default"),
+)
+_ENTRY_PAGE = {
+    "provider": ("#provider-error", "providers", "Provider"),
+    "mcp": ("#mcp-validation-status", "MCP servers", "MCP"),
+}
 _REVIEW_ACTIONS = ("back", "save", "recheck", "continue")
 _PAGE_ORDER = ("welcome", "provider", "models", "mcp", "review", "done")
-# fmt: on
 
 
 class SetupApp(App[SetupAction]):
@@ -175,24 +183,78 @@ class SetupApp(App[SetupAction]):
         self.mcp_tabs = DynamicEntryTabs(
             "mcp", self.config.mcp_servers, self._keys()
         )
-        # fmt: off
         pages = (
-            self._page("welcome", "Welcome to URSA", Static(f"Configuration: {self.path}", classes="path-box"), copy="URSA found your existing user configuration. This guide will preserve unrelated settings while you review each setup step." if self.path.is_file() else "This guide will connect URSA to a model provider, choose your models, and optionally add MCP tools. Nothing is written until the final Save button.", actions=(("Begin setup", "welcome-next", "primary"),)),
-            self._page("provider", "Connect an inference provider", self.provider_tabs, status="provider-error", copy="URSA verifies the API key by asking the provider for its model list. The key is hidden and is not written to YAML."),
-            self._page("models", "Choose default models", Vertical(id="setup-model-host"), status="model-validation-status", copy="Choose the language model URSA will use. Embeddings are optional and may use a different inference provider."),
-            self._page("mcp", "Configure an MCP server", self.mcp_tabs, status="mcp-validation-status", copy="MCP servers add tools and data sources to URSA. Choose a remote server URL or a local command."),
             self._page(
-                "review", "Write configuration",
+                "welcome",
+                "Welcome to URSA",
+                Static(f"Configuration: {self.path}", classes="path-box"),
+                copy="URSA found your existing user configuration. This guide will preserve unrelated settings while you review each setup step."
+                if self.path.is_file()
+                else "This guide will connect URSA to a model provider, choose your models, and optionally add MCP tools. Nothing is written until the final Save button.",
+                actions=(("Begin setup", "welcome-next", "primary"),),
+            ),
+            self._page(
+                "provider",
+                "Connect an inference provider",
+                self.provider_tabs,
+                status="provider-error",
+                copy="URSA verifies the API key by asking the provider for its model list. The key is hidden and is not written to YAML.",
+            ),
+            self._page(
+                "models",
+                "Choose default models",
+                Vertical(id="setup-model-host"),
+                status="model-validation-status",
+                copy="Choose the language model URSA will use. Embeddings are optional and may use a different inference provider.",
+            ),
+            self._page(
+                "mcp",
+                "Configure an MCP server",
+                self.mcp_tabs,
+                status="mcp-validation-status",
+                copy="MCP servers add tools and data sources to URSA. Choose a remote server URL or a local command.",
+            ),
+            self._page(
+                "review",
+                "Write configuration",
                 Static("", id="review-summary", classes="review-box"),
-                Collapsible(TextArea(language="yaml", show_line_numbers=True, read_only=True, id="review-full-config"), title="Full config", id="review-full", classes="compact-collapsible"),
-                Collapsible(Static("Validation has not run.", id="review-validation-results", markup=False), title="URSA Doctor — not run", id="review-validation", classes="compact-collapsible"),
+                Collapsible(
+                    TextArea(
+                        language="yaml",
+                        show_line_numbers=True,
+                        read_only=True,
+                        id="review-full-config",
+                    ),
+                    title="Full config",
+                    id="review-full",
+                    classes="compact-collapsible",
+                ),
+                Collapsible(
+                    Static(
+                        "Validation has not run.",
+                        id="review-validation-results",
+                        markup=False,
+                    ),
+                    title="URSA Doctor — not run",
+                    id="review-validation",
+                    classes="compact-collapsible",
+                ),
                 Static("", id="review-error", classes="form-message"),
-                actions=(("Back", "review-back", "default"), ("Write and validate", "review-save", "success"), ("Recheck", "review-recheck", "primary"), ("Continue", "review-continue", "success")),
+                actions=(
+                    ("Back", "review-back", "default"),
+                    ("Write and validate", "review-save", "success"),
+                    ("Recheck", "review-recheck", "primary"),
+                    ("Continue", "review-continue", "success"),
+                ),
                 copy="API keys and tokens will go to your URSA keyring. The YAML file stores only keyring references.",
             ),
-            self._page("done", "URSA is ready", Static("", id="done-copy"), actions=_DONE_ACTIONS),
+            self._page(
+                "done",
+                "URSA is ready",
+                Static("", id="done-copy"),
+                actions=_DONE_ACTIONS,
+            ),
         )
-        # fmt: on
         yield Vertical(
             ContentSwitcher(*pages, initial="welcome-page", id="setup-pages"),
             id="setup-main",
@@ -224,9 +286,11 @@ class SetupApp(App[SetupAction]):
         widget.update(text)
         widget.set_class(failed, "error")
 
-    # fmt: off
     def _keys(self) -> list[str]:
-        return keyring_usernames({"inference_providers": self.config.inference_providers, "mcp_servers": self.config.mcp_servers})
+        return keyring_usernames({
+            "inference_providers": self.config.inference_providers,
+            "mcp_servers": self.config.mcp_servers,
+        })
 
     def _discard_unused_pending(self, usernames) -> None:
         for username in set(usernames).difference(self._keys()):
@@ -235,24 +299,39 @@ class SetupApp(App[SetupAction]):
     def _providers(self) -> dict[str, InferenceProviderConfig]:
         providers = {}
         for name, provider in self.config.inference_providers.items():
-            username = provider.api_key.keyring_username(name) if isinstance(provider.api_key, SecretReference) else None
+            username = (
+                provider.api_key.keyring_username(name)
+                if isinstance(provider.api_key, SecretReference)
+                else None
+            )
             secret = self.pending.get(username) if username else None
-            providers[name] = prepare_provider_probe(self.config, name, SecretStr(secret) if secret else None)
+            providers[name] = prepare_provider_probe(
+                self.config, name, SecretStr(secret) if secret else None
+            )
         return providers
 
     def _begin_entry(self, kind: str, name: str | None = None) -> None:
         self._show(kind)
-        (self.provider_tabs if kind == "provider" else self.mcp_tabs).select_name(name)
+        (
+            self.provider_tabs if kind == "provider" else self.mcp_tabs
+        ).select_name(name)
         self._status(_ENTRY_PAGE[kind][0], "")
 
     async def _prepare_models(self) -> None:
         providers = self._providers()
-        chat = self.config.llm_model if self.llm_configured else ChatModelConfig(model="", inference_provider=next(iter(providers), None))
+        chat = (
+            self.config.llm_model
+            if self.llm_configured
+            else ChatModelConfig(
+                model="", inference_provider=next(iter(providers), None)
+            )
+        )
         host = self.query_one("#setup-model-host", Vertical)
         await host.remove_children()
         if self.page == "models":
-            await host.mount(SetupModelEditor(providers, chat, self.config.emb_model))
-    # fmt: on
+            await host.mount(
+                SetupModelEditor(providers, chat, self.config.emb_model)
+            )
 
     @on(SetupModelEditor.Submitted)
     def setup_models_submitted(self, event: SetupModelEditor.Submitted) -> None:
@@ -309,7 +388,6 @@ class SetupApp(App[SetupAction]):
         else:
             await self._prepare_models()
 
-    # fmt: off
     async def _validate_entry_page(self, kind: str) -> bool:
         provider = kind == "provider"
         tabs = self.provider_tabs if provider else self.mcp_tabs
@@ -321,7 +399,11 @@ class SetupApp(App[SetupAction]):
         old_users = set(self._keys())
         if not candidates:
             if provider:
-                self._status(selector, "At least one inference provider is required.", True)
+                self._status(
+                    selector,
+                    "At least one inference provider is required.",
+                    True,
+                )
                 return False
             self.config = replace_mcp_servers(self.config, {})
             self.doctor_summary = ""
@@ -330,24 +412,41 @@ class SetupApp(App[SetupAction]):
             return True
 
         self._status(selector, f"Validating {label}...")
-        results = await asyncio.gather(*(asyncio.to_thread(_probe_entry, item) for item in candidates))
+        results = await asyncio.gather(
+            *(asyncio.to_thread(_probe_entry, item) for item in candidates)
+        )
         failures: list[EntryCandidate] = []
         for candidate, result in zip(candidates, results, strict=True):
             failed = result.status is CheckStatus.ERROR
             message = str(result.message or "Validation failed")
-            tabs.set_draft_status(candidate.draft_id, _friendly(message, not provider) if failed else "✓ Connected", marker="✗ " if failed else "✓ ", failed=failed)
+            tabs.set_draft_status(
+                candidate.draft_id,
+                _friendly(message, not provider) if failed else "✓ Connected",
+                marker="✗ " if failed else "✓ ",
+                failed=failed,
+            )
             if failed:
                 failures.append(candidate)
         if failures:
             tabs.focus_error(failures[0].draft_id)
             names = ", ".join(candidate.name for candidate in failures)
-            self._status(selector, f"{subject} validation failed: {names}", True)
+            self._status(
+                selector, f"{subject} validation failed: {names}", True
+            )
             return False
 
         stored = {item.name: item.stored for item in candidates}
-        renamed = {item.original_name: item.name for item in candidates if item.original_name is not None}
-        replace: Any = replace_inference_providers if provider else replace_mcp_servers
-        self.config = replace(self.config, stored, **({"renamed": renamed} if provider else {}))
+        renamed = {
+            item.original_name: item.name
+            for item in candidates
+            if item.original_name is not None
+        }
+        replace: Any = (
+            replace_inference_providers if provider else replace_mcp_servers
+        )
+        self.config = replace(
+            self.config, stored, **({"renamed": renamed} if provider else {})
+        )
         self.doctor_summary = ""
         self._discard_unused_pending(old_users)
         for item in candidates:
@@ -365,7 +464,9 @@ class SetupApp(App[SetupAction]):
             f"Embedding model: {emb.model if emb else 'none'}\n"
             f"MCP servers: {', '.join(self.config.mcp_servers) or 'none'}"
         )
-        self.query_one("#review-full-config", TextArea).text = format_setup_config_yaml(self.config)
+        self.query_one(
+            "#review-full-config", TextArea
+        ).text = format_setup_config_yaml(self.config)
         valid = bool(self.config.inference_providers and self.models_valid)
         if not self.doctor_summary:
             self._status("#review-error", "")
@@ -394,12 +495,16 @@ class SetupApp(App[SetupAction]):
         await self._run_doctor(auto_advance=True)
 
     def _review_actions(self, state: str, valid: bool = True) -> None:
-        visible = {"ready": {"back", "save"}, "checked": {"recheck", "continue"}}.get(state, set())
+        visible = {
+            "ready": {"back", "save"},
+            "checked": {"recheck", "continue"},
+        }.get(state, set())
         for action in _REVIEW_ACTIONS:
             button = self.query_one(f"#review-{action}", Button)
             button.set_class(action not in visible, "hidden")
-            button.disabled = state == "running" or action == "save" and not valid
-    # fmt: on
+            button.disabled = (
+                state == "running" or action == "save" and not valid
+            )
 
     async def _run_doctor(self, *, auto_advance: bool = False) -> None:
         self._review_actions("running")
