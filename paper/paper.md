@@ -112,7 +112,7 @@ URSA builds on LangGraph by packaging reusable research agents, agents for runni
 # Software design
 
 URSA uses LangGraph [@langgraph] to express agent workflows through explicit states, nodes, and transitions, and to support checkpointing. This makes stages such as planning, review, execution, and error recovery independently configurable. 
-Reusing this infrastructure reduces the orchestration code maintained within URSA, takes advantage of LangGraph's state model, and provides support for multiple LLM endpoint providers. 
+Reusing this infrastructure reduces the orchestration code maintained within URSA and allows it to take advantage of LangGraph's state model. However this dependence on LangGraph's stateful graph-based workflows does require URSA to express state transitions and control flows within LangGraph's abstractions, potentially making it more difficult to integrate agents that do not naturally fit this model. URSA provides support for multiple LLM endpoint providers through LangChain's chat-model interface.
 
 ## Agent Framework
 
