@@ -274,7 +274,7 @@ async def _ensure_async_checkpointer(agent: Any) -> list[Any]:
     checkpoint_path = Path(den) / "db" / "checkpointer.db"
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     conn = await aiosqlite.connect(str(checkpoint_path))
-    setattr(agent, "checkpointer", AsyncSqliteSaver(conn))
+    agent.checkpointer = AsyncSqliteSaver(conn)
 
     # If a compiled_graph cached property was materialized with the old saver,
     # discard it so the subsequent ainvoke uses the async saver.

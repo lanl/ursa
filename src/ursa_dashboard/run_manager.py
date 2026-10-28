@@ -787,7 +787,7 @@ class RunManager:
                 await asyncio.wait_for(proc.wait(), timeout=timeout)
             else:
                 await proc.wait()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Timeout: terminate then kill.
             async with self._lock:
                 rec = self._read_run(run_id)
@@ -800,7 +800,7 @@ class RunManager:
                 proc.send_signal(signal.SIGTERM)
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 with contextlib.suppress(ProcessLookupError):
                     proc.kill()
                 await proc.wait()
@@ -1032,4 +1032,4 @@ class RunManager:
 
 
 # Missing import fix: contextlib is only used in cancel/timeout sections.
-import contextlib  # noqa: E402
+import contextlib

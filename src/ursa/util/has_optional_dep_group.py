@@ -1,5 +1,5 @@
 import importlib
-from typing import Iterable
+from collections.abc import Iterable
 
 
 def has_optional_dep_group(dep: str | list[str]) -> bool:

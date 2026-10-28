@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from dotenv import load_dotenv
 from langchain_core.embeddings import FakeEmbeddings
@@ -10,6 +12,13 @@ from pydantic import BaseModel
 @pytest.fixture(scope="session", autouse=True)
 def _load_dotenv():
     load_dotenv()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(monkeypatch, tmp_path_factory):
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
 
 
 def _message_stream(content: str):

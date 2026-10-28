@@ -7,9 +7,10 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
+from collections.abc import Callable, Mapping
 from io import StringIO
 from pathlib import Path
-from typing import Any, Callable, Mapping, NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from pygments.util import ClassNotFound
 from rich.console import Console, RenderableType

@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-import ursa_dashboard.worker_main as worker_main
+from ursa_dashboard import worker_main
 from ursa_dashboard.worker_main import _init_embedding, _init_llm
 
 

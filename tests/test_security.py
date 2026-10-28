@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import ursa.security as security
+from ursa import security
 from ursa.security import GroupBaseURLPolicyError
 
 

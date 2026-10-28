@@ -6,12 +6,13 @@ import logging
 import random
 import shutil
 import sqlite3
+from collections.abc import Mapping
 from contextlib import closing
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Mapping
+from typing import Any
 
 from langchain.chat_models import BaseChatModel
 
@@ -283,7 +284,7 @@ class AgentEloEnvironment(BaseEnvironment):
         *,
         llm: BaseChatModel,
         **kwargs: Any,
-    ) -> "AgentEloEnvironment":
+    ) -> AgentEloEnvironment:
         return cls(
             llm=llm,
             config=path,
@@ -1035,7 +1036,7 @@ class AgentEloEnvironment(BaseEnvironment):
 
             else:
                 remaining_seconds = (
-                    deadline - datetime.now(timezone.utc)
+                    deadline - datetime.now(UTC)
                 ).total_seconds()
 
                 if remaining_seconds <= 0:
@@ -1588,7 +1589,7 @@ class AgentEloEnvironment(BaseEnvironment):
         generation_deadline: datetime | None = None
 
         if self.member_timeout_seconds is not None:
-            generation_deadline = datetime.now(timezone.utc) + timedelta(
+            generation_deadline = datetime.now(UTC) + timedelta(
                 seconds=self.member_timeout_seconds
             )
 

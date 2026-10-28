@@ -1,4 +1,4 @@
-import ursa.util.crossplatform as crossplatform
+from ursa.util import crossplatform
 
 
 def test_kitty_keyboard_support_uses_terminal_identity(monkeypatch):

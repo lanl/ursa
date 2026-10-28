@@ -7,9 +7,10 @@ import os
 import re
 import signal
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
 import yaml
 
@@ -768,13 +769,13 @@ class EnvironmentRunManager:
                 await asyncio.wait_for(proc.wait(), timeout=float(timeout))
             else:
                 await proc.wait()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             timed_out = True
             with contextlib.suppress(ProcessLookupError, OSError):
                 proc.terminate()
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 await proc.wait()
         finally:

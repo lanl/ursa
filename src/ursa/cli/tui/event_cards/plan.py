@@ -1,4 +1,3 @@
-# ruff: noqa: TID251
 
 """Plan generation and review event cards."""
 

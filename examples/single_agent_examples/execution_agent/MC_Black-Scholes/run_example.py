@@ -140,11 +140,11 @@ def _verify_outputs(
     required = [outputs_dir / "results.csv", outputs_dir / "report.md"]
 
     plotting_enabled = bool(
-        (
+        
             ((preflight_details or {}).get("optional") or {}).get(
                 "plotting_enabled"
             )
-        )
+        
     )
 
     missing_or_empty: list[str] = []

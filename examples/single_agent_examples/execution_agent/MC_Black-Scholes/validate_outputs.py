@@ -159,7 +159,7 @@ def validate(*, here: Path, outputs_dir: Path) -> ValidationResult:
     preflight_path = outputs_dir / "preflight.json"
     preflight = _read_json(preflight_path) if preflight_path.exists() else None
     plotting_enabled = bool(
-        (((preflight or {}).get("optional") or {}).get("plotting_enabled"))
+        ((preflight or {}).get("optional") or {}).get("plotting_enabled")
     )
     details["plotting_enabled"] = plotting_enabled
 
