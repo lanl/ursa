@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import subprocess
 import sys
@@ -25,6 +26,13 @@ def _grouped_failure():
     )
 
 
+def _noisy_failure():
+    print("probe stdout noise")
+    print("probe stderr noise", file=sys.stderr)
+    logging.getLogger("probe-noise").error("probe log noise")
+    raise RuntimeError("expected probe failure")
+
+
 @pytest.mark.parametrize("probe", [_block, _block_async])
 def test_probe_deadline_terminates_blocked_work(probe):
     started = time.monotonic()
@@ -36,6 +44,14 @@ def test_probe_deadline_terminates_blocked_work(probe):
 def test_probe_reports_exception_group_leaf_message():
     with pytest.raises(RuntimeError, match="^405 Method Not Allowed$"):
         run_probe_with_deadline(_grouped_failure, timeout=5)
+
+
+def test_probe_suppresses_child_process_output(capfd):
+    with pytest.raises(RuntimeError, match="expected probe failure"):
+        run_probe_with_deadline(_noisy_failure, timeout=5)
+    captured = capfd.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
 
 
 def _embedding_failure(error):

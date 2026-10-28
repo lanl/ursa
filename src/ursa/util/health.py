@@ -10,7 +10,7 @@ import signal
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
-from contextlib import redirect_stderr, suppress
+from contextlib import redirect_stderr, redirect_stdout, suppress
 from threading import Lock
 from typing import Any
 
@@ -49,12 +49,18 @@ def _probe_worker(connection: Any, probe: Any, args: tuple[Any, ...]) -> None:
         with suppress(OSError):
             os.setsid()
     try:
-        result = probe(*args)
-        if inspect.isawaitable(result):
-            result = asyncio.run(result)
-        connection.send((True, result))
-    except (Exception, SystemExit, asyncio.CancelledError) as exc:
-        connection.send((False, probe_failure_message(exc)))
+        with (
+            open(os.devnull, "w", encoding="utf-8") as output,
+            redirect_stdout(output),
+            redirect_stderr(output),
+        ):
+            try:
+                result = probe(*args)
+                if inspect.isawaitable(result):
+                    result = asyncio.run(result)
+                connection.send((True, result))
+            except (Exception, SystemExit, asyncio.CancelledError) as exc:
+                connection.send((False, probe_failure_message(exc)))
     finally:
         connection.close()
 
