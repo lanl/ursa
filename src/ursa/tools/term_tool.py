@@ -20,7 +20,7 @@ from langchain_core.tools import BaseTool, ToolException, tool
 from pydantic import AfterValidator, Field, ValidationError
 
 from ursa.agents.base import AgentContext
-from ursa.tools.run_command_tool import assess_command_safety
+from ursa.tools.run_command_tool import assess_command_safety, SafetyAssessment
 from ursa.tools.terminal import (
     TERM_MAX_BYTES,
     TERM_MAX_LINES,
@@ -97,7 +97,13 @@ _ESC = bytes((27,))
 
 
 NonEmptyStr = Annotated[str, Field(min_length=1)]
-TermId = Annotated[str, Field(pattern=r"^[A-Za-z0-9]{8}$")]
+TermId = Annotated[
+    str,
+    Field(
+        pattern=r"^[A-Za-z0-9]{8}$",
+        description="Terminal ID returned by the `term` tool",
+    ),
+]
 NonNegativeInt = Annotated[int, Field(ge=0, strict=True)]
 PositiveInt = Annotated[int, Field(gt=0, strict=True)]
 ByteValue = Annotated[int, Field(ge=0, le=255, strict=True)]
@@ -127,8 +133,7 @@ def _canonical_modifiers(
     """Validate modifier names and return their canonical forms."""
     canonical: set[str] = set()
     for modifier in modifiers or ():
-        if not isinstance(modifier, str):
-            raise ValueError("modifiers must be strings")
+        assert isinstance(modifier, str), "modifiers must be strings"
         normalized = _MODIFIER_ALIASES.get(modifier.casefold())
         if normalized is None:
             raise ValueError(f"unknown modifier: {modifier!r}")
@@ -334,12 +339,13 @@ async def term(
     env: dict[str, str] | None = None,
     session: bool = False,
     shell: ShellArgv = None,
-) -> str:
+) -> str | TermId | SafetyAssessment:
     """Run a command, returning its output or a persistent terminal ID.
 
     Set ``session`` for interactive or long-running work. Short commands return
     their output directly when they finish within the configured time and size
-    limits; otherwise they remain available through the other terminal tools.
+    limits; otherwise returns a `term_id` within `<term-id>...</term-id>`
+    braces.
 
     Args:
         cmd: Command text, an argument list to execute, or None to launch just the shell.
@@ -371,24 +377,24 @@ async def term(
             # Deliver cancellation requested during creation before disclosing
             # the session ID, so ownership cannot be lost between those steps.
             await asyncio.sleep(0)
-            return f"Terminal ID: {terminal.term_id}"
+            return f"<term-id>{terminal.term_id}</term-id>"
 
         try:
             await asyncio.wait_for(
                 term_manager.wait(terminal.term_id), timeout=TERM_TIMEOUT
             )
         except TimeoutError:
-            return f"Terminal ID: {terminal.term_id}"
+            return f"<term-id>{terminal.term_id}</term-id>"
 
         contents = await term_manager.contents(terminal.term_id)
         if (
             len(contents.encode("utf-8")) >= TERM_MAX_BYTES
             or len(contents.splitlines()) >= TERM_MAX_LINES
         ):
-            return f"Terminal ID: {terminal.term_id}"
+            return f"<term-id>{terminal.term_id}</term-id>"
 
         await term_manager.remove(terminal.term_id, terminate=True)
-        return f"Terminal contents:\n{contents}"
+        return contents
     except asyncio.CancelledError:
         cleanup = asyncio.create_task(
             term_manager.remove(terminal.term_id, terminate=True)
