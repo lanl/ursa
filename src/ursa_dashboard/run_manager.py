@@ -12,10 +12,13 @@ from typing import Any
 from .artifacts import scan_artifacts
 from .credentials import (
     CredentialConfigurationError,
+    CredentialKind,
     CredentialStore,
     KeyringCredentialStore,
     assert_no_raw_api_key,
+    credential_id,
     resolve_api_key,
+    session_credential_id,
 )
 from .events import make_event
 from .retention import RetentionPolicy, enforce_retention
@@ -303,10 +306,16 @@ class RunManager:
         return rec
 
     def validate_credentials(
-        self, *, llm: dict[str, Any], embedding: dict[str, Any]
+        self,
+        *,
+        llm: dict[str, Any],
+        embedding: dict[str, Any],
+        session_id: str | None = None,
     ) -> None:
         """Fail before run creation when required credentials are unavailable."""
-        self._resolve_credentials(llm=llm, embedding=embedding)
+        self._resolve_credentials(
+            llm=llm, embedding=embedding, session_id=session_id
+        )
 
     async def get_run(self, run_id: str) -> dict[str, Any]:
         return self._read_run(run_id)
@@ -387,8 +396,24 @@ class RunManager:
     # ----------------------------
 
     def _resolve_credentials(
-        self, *, llm: dict[str, Any], embedding: dict[str, Any]
+        self,
+        *,
+        llm: dict[str, Any],
+        embedding: dict[str, Any],
+        session_id: str | None = None,
     ) -> dict[str, str | None]:
+        def scoped_credential_id(
+            config: dict[str, Any], kind: CredentialKind
+        ) -> str | None:
+            if not session_id:
+                return None
+            global_id = credential_id(self.dashboard_group, kind)
+            if config.get("credential_id") == global_id:
+                return global_id
+            return session_credential_id(self.dashboard_group, session_id, kind)
+
+        llm_credential_id = scoped_credential_id(llm, "llm")
+        embedding_credential_id = scoped_credential_id(embedding, "embedding")
         llm_disabled = bool(llm.get("disabled")) or str(
             llm.get("model") or ""
         ).strip().lower() in {"none", "disabled"}
@@ -399,6 +424,7 @@ class RunManager:
                 group=self.dashboard_group,
                 kind="llm",
                 store=self.credential_store,
+                stored_credential_id=llm_credential_id,
             )
 
         embedding_key = None
@@ -412,6 +438,8 @@ class RunManager:
                 group=self.dashboard_group,
                 kind="embedding",
                 store=self.credential_store,
+                stored_credential_id=embedding_credential_id,
+                llm_stored_credential_id=llm_credential_id,
             )
         return {
             "llm_api_key": llm_key,
@@ -599,6 +627,7 @@ class RunManager:
                 self._resolve_credentials,
                 llm=rec.get("llm") or {},
                 embedding=rec.get("embedding") or {},
+                session_id=rec.get("session_id"),
             )
         except (CredentialConfigurationError, RuntimeError) as e:
             await self._fail_before_spawn(run_id, error=e)

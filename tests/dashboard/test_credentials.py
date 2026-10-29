@@ -15,6 +15,7 @@ from ursa_dashboard.credentials import (
     credential_id,
     credential_target,
     resolve_api_key,
+    session_credential_id,
     store_api_key,
 )
 from ursa_dashboard.run_manager import RunManager
@@ -202,6 +203,109 @@ def test_credential_api_never_persists_or_returns_raw_key(
             assert secret not in path.read_text(
                 encoding="utf-8", errors="ignore"
             )
+
+
+def test_session_credentials_are_isolated_from_global_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "ursa")
+    monkeypatch.setenv("URSA_DASHBOARD_GROUP", "default")
+    store = MemoryCredentialStore()
+    secret = "session-only-secret"
+
+    with TestClient(create_app(credential_store=store)) as client:
+        created = client.post(
+            "/sessions",
+            json={"agent_id": "chat_agent", "workspace_mode": "temporary"},
+        )
+        assert created.status_code == 200
+        session_id = created.json()["session"]["session_id"]
+        patched = client.patch(
+            f"/sessions/{session_id}",
+            json={
+                "llm": {
+                    "model": "openai:session-model",
+                    "base_url": "https://session-models.example/v1",
+                    "credential_source": "none",
+                }
+            },
+        )
+        assert patched.status_code == 200
+
+        saved = client.put(
+            f"/sessions/{session_id}/credentials/llm",
+            json={"api_key": secret},
+        )
+        assert saved.status_code == 200
+        assert saved.json()["source"] == "stored"
+        assert saved.json()["usable"] is True
+        assert secret not in saved.text
+        assert (
+            client.get("/credentials/status").json()["llm"]["configured"]
+            is False
+        )
+
+        session = client.get(f"/sessions/{session_id}").json()["session"]
+        assert session["llm"]["credential_id"] == session_credential_id(
+            "default", session_id, "llm"
+        )
+        assert secret not in json.dumps(session)
+        assert store.get_secret(credential_id("default", "llm")) is None
+        assert store.get_secret(
+            session_credential_id("default", session_id, "llm")
+        )
+
+        deleted = client.delete(f"/sessions/{session_id}")
+        assert deleted.status_code == 204
+        assert (
+            store.get_secret(
+                session_credential_id("default", session_id, "llm")
+            )
+            is None
+        )
+
+
+def test_new_session_can_inherit_global_stored_credential(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "ursa")
+    monkeypatch.setenv("URSA_DASHBOARD_GROUP", "default")
+    store = MemoryCredentialStore()
+
+    with TestClient(create_app(credential_store=store)) as client:
+        configured = client.patch(
+            "/settings",
+            json={
+                "patch": {
+                    "llm": {
+                        "base_url": "https://global-models.example/v1",
+                        "credential_source": "none",
+                    }
+                }
+            },
+        )
+        assert configured.status_code == 200
+        assert (
+            client.put(
+                "/credentials/llm", json={"api_key": "global-secret"}
+            ).status_code
+            == 200
+        )
+        created = client.post(
+            "/sessions",
+            json={"agent_id": "chat_agent", "workspace_mode": "temporary"},
+        )
+        assert created.status_code == 200
+        session = created.json()["session"]
+
+        assert session["llm"]["credential_id"] == credential_id(
+            "default", "llm"
+        )
+        status = client.get(
+            f"/sessions/{session['session_id']}/credentials/status"
+        )
+        assert status.status_code == 200
+        assert status.json()["llm"]["usable"] is True
 
 
 @pytest.mark.parametrize(
