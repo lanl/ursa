@@ -287,7 +287,7 @@ def render_environment_runs_page(
       return data;
     }}
     function payload() {{ return {{environment_type:environmentType, config_yaml:yamlInput.value, prompt:promptInput.value, run_id:runIdInput.value.trim() || null, replace_existing:document.getElementById('replaceExisting').checked}}; }}
-    function openModal(type) {{
+    function openModal(type, template=null) {{
       environmentType = type;
       priorFocus = document.activeElement;
       if (modal.hidden) priorFocus = document.activeElement;

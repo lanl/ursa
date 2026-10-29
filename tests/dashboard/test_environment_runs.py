@@ -118,6 +118,9 @@ def test_environment_run_api_routes(monkeypatch, tmp_path):
     assert "Open work replay" in ui_response.text
     assert "Run again" in ui_response.text
     assert "data-rerun='run-1'" in ui_response.text
+    # New-environment buttons invoke openModal with one argument; the optional
+    # rerun template must therefore be declared with a null default.
+    assert "function openModal(type, template=null)" in ui_response.text
 
     detail_ui_response = client.get("/ui/environment-runs/run-1")
     assert detail_ui_response.status_code == 200
