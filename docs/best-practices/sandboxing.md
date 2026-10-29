@@ -117,8 +117,8 @@ MCP servers can expose powerful external tools. Only connect MCP servers that yo
 ## Protect secrets
 
 - Prefer `api_key` environment references rather than literal API keys in YAML files.
-- In the desktop dashboard, prefer **Secure system storage** so keys are kept
-  in the operating system credential manager instead of configuration files.
+- In the desktop dashboard, prefer **Keyring** so keys are kept out of
+  configuration files.
 - Do not store API keys in persistent agent names or prompts.
 - Review shared agent archives before distributing them.
 - Avoid committing project-specific config files that contain endpoint secrets.
