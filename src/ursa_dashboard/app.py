@@ -5247,7 +5247,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
       state.credentialStatuses = {};
       for (const kind of ['llm', 'embedding']) {
         const el = $(`#set_${kind}_credential_status`);
-        if (el) el.textContent = 'Credential store unavailable: ' + e.message;
+        if (el) el.textContent = 'Keyring unavailable: ' + e.message;
       }
       return;
     }
@@ -7161,7 +7161,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_base_url" placeholder="Model Provider Default" /></div>
             <div class="fieldRow"><div class="label">Model</div><div class="modelPickerRow"><input class="input" id="set_model" list="set_llm_model_options" placeholder="openai:gpt-5.4-mini" /><datalist id="set_llm_model_options"></datalist><button class="btn modelRefreshBtn" id="refresh_llm_models" type="button" title="Refresh models from this provider">Refresh</button></div></div>
             <div class="globalCredentialOnly">
-              <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_llm_credential_source"><option value="stored">Secure system storage</option><option value="keyring">URSA config key</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
+              <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_llm_credential_source"><option value="stored">Keyring</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
               <div id="set_llm_stored_fields">
                 <div class="fieldRow"><div class="label">API key</div><input class="input" id="set_llm_api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Enter to save or replace" /></div>
                 <div class="fieldRow"><div></div><div class="row" style="justify-content:flex-start"><button class="btn danger" id="set_llm_remove_key" type="button">Remove saved key</button></div></div>
@@ -7183,7 +7183,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_embedding_base_url" placeholder="Model Provider Default" /></div>
             <div class="fieldRow"><div class="label">Model</div><div class="modelPickerRow"><input class="input" id="set_embedding_model" list="set_embedding_model_options" placeholder="openai:text-embedding-3-large" /><datalist id="set_embedding_model_options"></datalist><button class="btn modelRefreshBtn" id="refresh_embedding_models" type="button" title="Refresh models from this provider">Refresh</button></div></div>
             <div class="globalCredentialOnly">
-              <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_embedding_credential_source"><option value="stored">Secure system storage</option><option value="keyring">URSA config key</option><option value="llm">Reuse saved LLM key</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
+              <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_embedding_credential_source"><option value="stored">Keyring</option><option value="llm">Reuse saved LLM key</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
               <div id="set_embedding_stored_fields">
                 <div class="fieldRow"><div class="label">API key</div><input class="input" id="set_embedding_api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Enter to save or replace" /></div>
                 <div class="fieldRow"><div></div><div class="row" style="justify-content:flex-start"><button class="btn danger" id="set_embedding_remove_key" type="button">Remove saved key</button></div></div>

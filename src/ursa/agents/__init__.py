@@ -22,6 +22,7 @@ _lazy_attrs: dict[str, tuple[str, str]] = {
     "PromptingAgent": (".prompting_agent", "PromptingAgent"),
     "RAGAgent": (".rag_agent", "RAGAgent"),
     "RecallAgent": (".recall_agent", "RecallAgent"),
+    "SimulatorAgent": (".simulator_agent", "SimulatorAgent"),
 }
 
 __all__ = list(_lazy_attrs.keys())

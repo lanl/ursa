@@ -128,10 +128,9 @@ previous credential; old entries are not automatically deleted.
 
 Open **Model and Agent Settings → LLM** and choose an API-key source:
 
-- **Secure system storage** stores the key in macOS Keychain, Windows
-  Credential Manager, or the available Linux keyring service. The key field is
-  always blank when Settings opens; the dashboard reports only whether a usable
-  key is configured.
+- **Keyring** stores the key using URSA's [keyring
+  support](../configuration/secrets.md). The key field is always blank when
+  Settings opens; the dashboard reports only whether a usable key is configured.
 - **Environment variable** retains the existing headless and automation
   workflow. Enter the variable name, not its value.
 - **No API key** is appropriate for endpoints that do not require one.
@@ -181,9 +180,9 @@ refer to API-key environment variable names, but literal API keys are rejected
 and never stored in YAML or run metadata.
 
 !!! note "Headless Linux"
-    Secure system storage requires an available desktop keyring service.
-    Headless deployments should continue to use environment variables or a
-    deployment-managed secret provider.
+    When no native keyring is available, URSA uses its file-backed keyring.
+    Environment variables and deployment-managed secret providers remain
+    available when preferred.
 
 ## Where next?
 
