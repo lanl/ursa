@@ -66,6 +66,60 @@ threshold. This checks metadata without generating a response. For an unloaded
 Ollama model, the allocated context may be unavailable; configure `num_ctx` or
 check again once the model is running.
 
+## Log previews and full captured output
+
+The Run logs panel keeps a recent preview rather than rendering entire archives:
+up to 128 Ki characters per stream, within the configured line limit. It loads
+bounded tails from the last five completed runs in a session, and bounds initial
+live-event replay. Select any session run in **Full logs** to download its captured
+**stdout** or **stderr** without loading the full file into the browser's log panel.
+Environment run replay pages also provide full stdout/stderr download links.
+Timeline redraws are batched, ordinary events preserve graph layout, and timeline
+cards and large event-content previews are limited while playback remains available.
+
+Authenticated API downloads are available at:
+
+- `/runs/{run_id}/logs/stdout` and `/runs/{run_id}/logs/stderr`
+- `/environment-runs/{run_id}/logs/stdout` and
+  `/environment-runs/{run_id}/logs/stderr`
+
+Adding `?tail_bytes=131072` requests a bounded preview (maximum: 262144 bytes).
+Without that parameter, the server sends the captured file as an attachment.
+Downloads use the dashboard's existing authentication and path-jail checks.
+
+To free disk space, select a finished run under **Full logs** and click **Delete
+stored logs**. Environment run pages offer the same action next to their log
+downloads. A confirmation warns that deletion is permanent; download anything
+needed for provenance first. Only the selected run's captured `stdout.log` and
+`stderr.log` are removed. Structured event history (which can also contain log
+excerpts), results, artifacts, and checkpoints are retained. Active runs cannot
+have their stored logs deleted. **Clear preview** only clears the visible buffer
+and does not remove files from disk.
+
+Authenticated `DELETE /runs/{run_id}/logs` and
+`DELETE /environment-runs/{run_id}/logs` provide the same per-run operation.
+Repeating a deletion is safe; missing captures are treated as already deleted.
+
+New dashboard runs retain the full captured worker stdout/stderr on disk by
+default, independently of browser-preview and event-log limits. Programmatic
+`RunConfig` and `EnvironmentRunManagerConfig` still accept finite
+`stdout_cap_bytes` / `stderr_cap_bytes` limits when disk budgets require them;
+those explicitly capped captures are not complete archives. Output already lost
+under earlier capture limits cannot be recovered. Tool-level output truncation
+is unchanged; these downloads contain the worker process streams, not an
+additional archive of every tool's subprocess output.
+
+Full capture can use significant disk space. Ordinary agent runs remain subject
+to dashboard retention (by default seven days, 100 runs per agent, and a 2 GiB
+completed-run disk budget). That cleanup runs after completion, not as an active
+run's disk quota. Environment-run directories do not currently have automatic
+retention; archive or remove them explicitly as needed. Save provenance downloads
+before deleting runs or retention removes them.
+
+This is a bounded-preview optimization, not a fully virtualized environment replay
+or indexed event store. Environment event data still grows in browser memory during
+long live sessions, and historical/resume API scans can still grow with the archive.
+
 ## Configure API credentials
 
 Open **Settings -> LLM** and choose an API-key source:

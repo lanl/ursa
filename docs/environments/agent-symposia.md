@@ -62,6 +62,14 @@ A symposium run has four phases:
 4. **Synthesis.** The organizer receives final writeups and peer reviews, then
    produces the final symposium report.
 
+Each dispatch ends with an explicit current-phase instruction. Earlier writeups,
+reviews, and internal recaps remain historical context, not continuing commands.
+Review-only restrictions end when revision begins; members may then implement and
+check improvements to their own artifacts within the original task's permissions.
+The organizer's synthesis does not authorize new implementation work. These are
+prompt-level scope reminders, not a filesystem sandbox, and member history and
+checkpoints are retained.
+
 Initial work, reviews, and revisions are run asynchronously across members when
 using the environment's async implementation. Synchronous callers can still use
 `invoke(...)`; async callers should use `await ainvoke(...)`.

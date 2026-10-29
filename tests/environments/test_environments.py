@@ -358,6 +358,30 @@ def test_symposium_runs_independent_review_revision_and_synthesis(tmp_path):
     assert "Work independently" in alpha_prompts[0]
     assert "Do not change, edit, overwrite, or reorganize" in alpha_prompts[1]
     assert "You may change only your own work/artifacts" in alpha_prompts[2]
+    for prompt, phase in zip(
+        alpha_prompts,
+        [
+            "independent work",
+            "peer review",
+            "revision (round 1)",
+            "peer review",
+            "revision (round 2)",
+        ],
+        strict=True,
+    ):
+        footer = prompt.rsplit("Current symposium phase:", 1)[1]
+        assert footer.startswith(f" {phase}.")
+        assert "historical context, not active instructions" in footer
+        assert (
+            "original task's permissions and safety constraints still apply"
+            in footer
+        )
+    assert "The peer-review-only phase is over" in alpha_prompts[2]
+    assert "do not merely summarize earlier work" in alpha_prompts[4]
+    assert (
+        "Current symposium phase: synthesis."
+        in symposium.organizer.invocations[0]
+    )
 
 
 def test_symposium_uses_stable_names_parent_workspace_and_reviewer_flag(

@@ -102,8 +102,9 @@ class ValidatedEnvironmentLaunch:
 @dataclass
 class EnvironmentRunManagerConfig:
     concurrency: int = 2
-    stdout_cap_bytes: int = 25 * 1024 * 1024
-    stderr_cap_bytes: int = 25 * 1024 * 1024
+    # Keep provenance on disk; the browser uses bounded previews separately.
+    stdout_cap_bytes: int | None = None
+    stderr_cap_bytes: int | None = None
 
 
 @dataclass
@@ -848,7 +849,7 @@ class EnvironmentRunManager:
     async def _drain(
         stream: asyncio.StreamReader | None,
         path: Path,
-        cap_bytes: int,
+        cap_bytes: int | None,
     ) -> None:
         if stream is None:
             return
@@ -858,8 +859,12 @@ class EnvironmentRunManager:
                 chunk = await stream.read(4096)
                 if not chunk:
                     break
-                if written < cap_bytes:
-                    payload = chunk[: cap_bytes - written]
+                if cap_bytes is None or written < cap_bytes:
+                    payload = (
+                        chunk
+                        if cap_bytes is None
+                        else chunk[: cap_bytes - written]
+                    )
                     handle.write(payload)
                     handle.flush()
                     written += len(payload)

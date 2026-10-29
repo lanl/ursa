@@ -37,8 +37,9 @@ TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
 @dataclass
 class RunConfig:
     concurrency: int = 5
-    stdout_cap_bytes: int = 25 * 1024 * 1024
-    stderr_cap_bytes: int = 25 * 1024 * 1024
+    # Full raw logs by default; explicit finite caps remain supported.
+    stdout_cap_bytes: int | None = None
+    stderr_cap_bytes: int | None = None
     events_cap_bytes: int = 50 * 1024 * 1024
     poll_interval_s: float = 0.25
 
@@ -944,7 +945,7 @@ class RunManager:
         stream_name: str,
         stream: asyncio.StreamReader | None,
         log_path: Path,
-        cap_bytes: int,
+        cap_bytes: int | None,
     ) -> None:
         if stream is None:
             return
@@ -962,9 +963,11 @@ class RunManager:
                     break
                 chunk_id += 1
 
-                # Always drain the pipe. Only persist/emit up to cap.
-                if written < cap_bytes:
-                    remain = cap_bytes - written
+                # Always drain the pipe. UI/event limits do not truncate raw logs.
+                if cap_bytes is None or written < cap_bytes:
+                    remain = (
+                        len(chunk) if cap_bytes is None else cap_bytes - written
+                    )
                     to_write = chunk[:remain]
                     if to_write:
                         f.write(to_write)

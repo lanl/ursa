@@ -515,6 +515,12 @@ DETAIL_TEMPLATE = r"""
       </section>
       <section class='card'>
         <h2>Raw Events</h2>
+        <div class='small-link'>Captured process logs (dashboard-launched runs):
+          <a id='stdoutDownload' download>Full stdout</a> /
+          <a id='stderrDownload' download>Full stderr</a>
+        </div>
+        <button id='deleteStoredLogs' type='button' disabled>Delete stored logs</button>
+        <div id='logDeleteStatus' class='small-link' role='status'></div>
         <div class='small-link'>Raw event JSON is available separately at <a id='rawEventsLink' href='#'>the events API</a>.</div>
       </section>
     </aside>
@@ -529,6 +535,9 @@ let live = true;
 let selectedParticipant = null;
 let cy = null;
 let topology = null;
+let renderTimer = null;
+let graphNeedsRebuild = false;
+let deletingStoredLogs = false;
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -747,6 +756,7 @@ function likelyWorkspacePath() {
 function updateSummary() {
   const duration = durationFromEvents(); const status = manifest.status || 'unknown'; const task = extractTask(); const workspace = likelyWorkspacePath();
   $('statusBadge').innerHTML = `<span class='status ${statusClass(status)}'>${esc(status)}</span>`;
+  $('deleteStoredLogs').disabled = deletingStoredLogs || !['succeeded','failed','cancelled'].includes(String(status).toLowerCase());
   const cancel = $('cancelEnvironmentRun'); cancel.hidden = manifest.launch_source !== 'dashboard' || !['queued','starting','running','cancelling'].includes(String(status).toLowerCase()); cancel.disabled = String(status).toLowerCase() === 'cancelling';
   $('summary').innerHTML = [
     ['Status', `<span class='status ${statusClass(status)}'>${esc(status)}</span>`, ''],
@@ -758,6 +768,7 @@ function updateSummary() {
   const final = extractFinal(); $('finalResult').textContent = final || 'Waiting for a completion event…'; $('finalResult').classList.toggle('muted', !final);
   $('workspace').textContent = workspacePaths().join('\n') || 'No workspace path recorded yet.';
   $('rawEventsLink').href = '/environment-runs/' + encodeURIComponent(runId) + '/events';
+  for (const stream of ['stdout', 'stderr']) $(stream+'Download').href = '/environment-runs/' + encodeURIComponent(runId) + '/logs/' + stream;
 }
 function communicationKind(e) {
   if (e.event_type === 'delegation_completed') return 'response';
@@ -835,7 +846,10 @@ function timelineEvents() {
   return events.map((e,i) => [e,i]).filter(([e,i]) => eventMatchesParticipant(e, selectedParticipant, i)).filter(([e,i]) => !q || eventSearchText(e, i).includes(q)).reverse();
 }
 function renderTimeline() {
-  const rows = timelineEvents(); $('scrub').max = Math.max(0, events.length - 1); $('scrub').value = selected < 0 ? Math.max(0, events.length - 1) : selected;
+  const matches = timelineEvents();
+  const focus = matches.findIndex(([,i]) => i === selected);
+  const rows = matches.slice(Math.max(0, focus - 125), Math.max(0, focus - 125) + 250);
+  $('scrub').max = Math.max(0, events.length - 1); $('scrub').value = selected < 0 ? Math.max(0, events.length - 1) : selected;
   $('timeline').innerHTML = rows.length ? rows.map(([e,i]) => {
     const cls = eventLevel(e); const st = sourceTargetText(e, i); const p = payload(e); const dur = p.elapsed_seconds != null ? fmtDuration(p.elapsed_seconds) : (p.elapsed_ms != null ? `${Math.round(p.elapsed_ms)}ms` : '');
     return `<article class='timeline-card ${cls} ${i === selected ? 'selected' : ''}' data-index='${i}'><div class='timeline-top'><div><div class='timeline-title'>${esc(readableType(e.event_type))}</div><div class='timeline-msg'>${esc(e.message || p.message || '')}</div></div><span class='chip'>#${esc(e.seq ?? i + 1)}</span></div><div class='timeline-meta'>${phaseLabel(e) ? `<span class='chip'>${esc(phaseLabel(e))}</span>` : ''}${st ? `<span class='chip'>${esc(st)}</span>` : ''}${dur ? `<span class='chip'>${esc(dur)}</span>` : ''}</div></article>`;
@@ -844,7 +858,8 @@ function renderTimeline() {
 }
 function block(label, value, options = {}) {
   if (value == null || value === '') return '';
-  const raw = text(value);
+  const full = text(value);
+  const raw = full.length > 65536 ? full.slice(0, 65536) + '\n[Preview truncated; consult raw events / full logs.]' : full;
   const renderMarkdown = options.markdown !== false && typeof value === 'string';
   const body = renderMarkdown ? mdToHtml(raw) : `<pre>${esc(raw)}</pre>`;
   return `<div class='content-block'><div class='content-label'>${esc(label)}</div>${body}</div>`;
@@ -867,8 +882,47 @@ function renderCurrentEvent() {
 }
 function selectEvent(i) { if (i == null || i < 0 || i >= events.length) return; selected = i; live = false; $('live').textContent = 'Resume live'; renderAll(); }
 function renderAll() { updateSummary(); renderTimeline(); renderCurrentEvent(); applyGraphState(); }
-function addEvent(e) { if (!e || typeof e !== 'object') return; events.push(e); if (!topology && payload(e).topology) initializeGraph(); else if (topology && window.cytoscape) initializeGraph(); if (live) selected = events.length - 1; renderAll(); }
+function addEvent(e) {
+  if (!e || typeof e !== 'object') return;
+  events.push(e);
+  if (payload(e).topology) graphNeedsRebuild = true;
+  if (live) selected = events.length - 1;
+  if (renderTimer !== null) return;
+  // Batch bursts of tool events and keep graph layout/zoom on ordinary events.
+  renderTimer = setTimeout(() => {
+    renderTimer = null;
+    if (graphNeedsRebuild || !topology) {
+      initializeGraph();
+      graphNeedsRebuild = false;
+    } else if (cy) {
+      cy.batch(() => {
+        for (const element of topologyToElements(topology)) {
+          if (cy.$id(element.data.id).empty()) cy.add(element);
+        }
+      });
+    }
+    renderAll();
+  }, 200);
+}
+async function deleteStoredEnvironmentLogs() {
+  if ($('deleteStoredLogs').disabled) return;
+  if (!confirm(`Permanently delete stored stdout/stderr for run ${runId}?\n\nDownload anything needed for provenance first. Results, artifacts, checkpoints and event history will be kept.`)) return;
+  deletingStoredLogs = true;
+  updateSummary();
+  try {
+    const response = await fetch('/environment-runs/'+encodeURIComponent(runId)+'/logs', {method:'DELETE'});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || 'Deletion failed');
+    $('logDeleteStatus').textContent = `Deleted ${result.deleted_bytes.toLocaleString()} bytes of stored stdout/stderr.`;
+  } catch (error) {
+    $('logDeleteStatus').textContent = `Could not delete stored logs: ${error.message}`;
+  } finally {
+    deletingStoredLogs = false;
+    updateSummary();
+  }
+}
 function setupControls() {
+  $('deleteStoredLogs').onclick = deleteStoredEnvironmentLogs;
   $('live').onclick = () => { live = !live; $('live').textContent = live ? 'Pause live' : 'Resume live'; if (live && events.length) { selected = events.length - 1; renderAll(); } };
   $('prev').onclick = () => selectEvent(Math.max(0, (selected < 0 ? events.length : selected) - 1));
   $('next').onclick = () => selectEvent(Math.min(events.length - 1, selected + 1));
