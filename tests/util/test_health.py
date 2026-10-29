@@ -8,7 +8,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from ursa.util.health import probe_embedding_model, run_probe_with_deadline
+from ursa.util.health import (
+    probe_chat_tool_use,
+    probe_embedding_model,
+    run_probe_with_deadline,
+)
 
 
 def _block():
@@ -81,6 +85,33 @@ def test_embedding_probe_normalizes_provider_errors():
     with pytest.raises(RuntimeError, match="rate limited") as captured:
         probe_embedding_model(_embedding_failure(error))
     assert captured.value is error
+
+
+def test_tool_probe_requests_matching_public_tool_name():
+    class RecordingModel:
+        def bind_tools(self, tools, *, tool_choice):
+            self.tool = tools[0]
+            self.tool_choice = tool_choice
+            return self
+
+        def invoke(self, prompt):
+            self.prompt = prompt
+            return SimpleNamespace(
+                tool_calls=[
+                    {
+                        "name": self.tool.name,
+                        "args": {"value": "ursa"},
+                    }
+                ]
+            )
+
+    model = RecordingModel()
+    assert (
+        probe_chat_tool_use(model) == "Model returned the requested tool call"
+    )
+    assert model.tool.name == "ursa_health_echo"
+    assert model.tool_choice == model.tool.name
+    assert model.prompt == "Call ursa_health_echo with the value 'ursa'."
 
 
 @pytest.mark.skipif(

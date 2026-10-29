@@ -18,7 +18,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel
 
 
-@tool
+@tool("ursa_health_echo")
 def _ursa_health_echo(value: str) -> str:
     """Return a value unchanged for an URSA health check."""
     return value
@@ -184,19 +184,25 @@ def probe_chat_config(config: Any, capability: str) -> str:
 
 
 def probe_chat_tool_use(model: Any) -> str:
-    """Raise unless a chat model honors an explicit tool choice."""
+    """Raise unless a chat model invokes a requested health-check tool."""
     response = model.bind_tools(
         [_ursa_health_echo], tool_choice=_ursa_health_echo.name
-    ).invoke("Call ursa_health_echo with the value 'ursa'.")
+    ).invoke(f"Call {_ursa_health_echo.name} with the value 'ursa'.")
+
+    if not _returned_health_echo(response):
+        raise ValueError("model did not return the requested tool call")
+    return "Model returned the requested tool call"
+
+
+def _returned_health_echo(response: Any) -> bool:
+    """Return whether a response contains the expected health-check call."""
     calls = getattr(response, "tool_calls", None) or ()
-    if not any(
+    return any(
         call.get("name") == _ursa_health_echo.name
         and call.get("args", {}).get("value") == "ursa"
         for call in calls
         if isinstance(call, Mapping)
-    ):
-        raise ValueError("model did not return the requested tool call")
-    return "Model returned the required tool call"
+    )
 
 
 def probe_chat_structured_output(model: Any) -> str:

@@ -32,11 +32,11 @@ class _FakeChatModel:
     tool = False
 
     def invoke(self, _prompt):
-        call = {"name": "_ursa_health_echo", "args": {"value": "ursa"}}
+        call = {"name": "ursa_health_echo", "args": {"value": "ursa"}}
         return SimpleNamespace(tool_calls=[call] if self.tool else [])
 
     def bind_tools(self, tools, *, tool_choice):
-        assert tools[0].name == tool_choice == "_ursa_health_echo"
+        assert tools[0].name == tool_choice == "ursa_health_echo"
         self.tool = True
         return self
 
