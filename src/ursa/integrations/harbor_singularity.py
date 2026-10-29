@@ -1280,9 +1280,13 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                         tag,
                         failure_log_path=build_log_path,
                     )
+                # Avoid races in the shared OCI cache during conversions.
+                # Keep this build-only: disabling the cache for runtime actions
+                # can delete the source SIF in Singularity 3.6.2.
                 await self._run(
                     self._instance_runtime(),
                     "build",
+                    "--disable-cache",
                     str(temporary),
                     f"docker-archive://{archive}",
                     failure_log_path=build_log_path,

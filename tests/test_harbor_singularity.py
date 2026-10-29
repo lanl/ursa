@@ -1,8 +1,10 @@
 import asyncio
 import gc
+import os
 import sys
 import weakref
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 import yaml
@@ -486,7 +488,7 @@ async def test_build_with_records_builder_and_apptainer_failures(
     async def capture(*command: str, **kwargs: object) -> None:
         observed.append((command, kwargs))
         if command[:2] == (environment._runtime_path, "build"):
-            Path(command[2]).write_bytes(b"sif")
+            Path(command[-2]).write_bytes(b"sif")
 
     monkeypatch.setattr(environment, "_run", capture)
 
@@ -514,6 +516,79 @@ async def test_build_with_records_builder_and_apptainer_failures(
     save = next(item for item in observed if item[0][:2] == ("docker", "save"))
     assert save[1] == {"failure_log_path": build_log}
     assert output.read_bytes() == b"sif"
+
+
+@pytest.mark.parametrize("builder", ["buildah", "podman", "docker"])
+@pytest.mark.parametrize("runtime", ["singularity", "apptainer"])
+async def test_oci_cache_is_disabled_only_for_sif_builds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    builder: str,
+    runtime: str,
+):
+    cache_variables = ("SINGULARITY_DISABLE_CACHE", "APPTAINER_DISABLE_CACHE")
+    for variable in cache_variables:
+        monkeypatch.delenv(variable, raising=False)
+    environment = _environment(tmp_path)
+    environment._runtime_path = runtime
+    environment._image_cache_dir = tmp_path
+    output = tmp_path / "cached-image.sif"
+    observed: list[tuple[str, ...]] = []
+
+    async def capture(*command: str, **kwargs: object) -> AsyncMock:
+        observed.append(command)
+        process_env = kwargs.get("env")
+        if process_env is None:
+            process_env = os.environ
+        assert all(variable not in process_env for variable in cache_variables)
+        if command[:2] == (runtime, "build"):
+            Path(command[-2]).write_bytes(b"sif")
+        process = AsyncMock()
+        process.returncode = 0
+        process.communicate.return_value = (b"", b"")
+        return process
+
+    monkeypatch.setattr(
+        harbor_singularity.asyncio, "create_subprocess_exec", capture
+    )
+    monkeypatch.setattr(
+        harbor_singularity.shutil,
+        "which",
+        lambda name: builder if name == builder else None,
+    )
+    monkeypatch.setattr(
+        environment, "_dockerfile_cache_path", AsyncMock(return_value=output)
+    )
+
+    assert await environment._build_dockerfile_sif(False) == output
+    build_command = next(
+        command for command in observed if command[:2] == (runtime, "build")
+    )
+    assert build_command[2:4] == (
+        "--disable-cache",
+        str(output.with_suffix(".tmp.sif")),
+    )
+    assert build_command[-1].startswith("docker-archive://")
+    assert output.read_bytes() == b"sif"
+    assert all(
+        "--disable-cache" not in command
+        for command in observed
+        if command != build_command
+    )
+
+    observed.clear()
+    assert await environment._build_dockerfile_sif(False) == output
+    assert observed == [(runtime, "sif", "list", str(output))]
+
+    environment._sif_path = output
+    environment._staging_dir = tmp_path / "staging"
+    environment._staging_dir.mkdir()
+    environment._prepare_runtime_workdir()
+    await environment._start_prepared_runtime(environment._network_policy)
+    assert observed[-2][:3] == (runtime, "instance", "start")
+    assert observed[-1][:2] == (runtime, "exec")
+    assert all("--disable-cache" not in command for command in observed)
+    environment._cleanup_staging()
 
 
 async def test_direct_runtime_commands_use_isolated_host_workdirs(
