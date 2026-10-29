@@ -1487,6 +1487,29 @@
   
   
     <li class="md-nav__item">
+      <a href="../../administration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Managed setup defaults
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../mcp/" class="md-nav__link">
         
   
@@ -1610,10 +1633,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_8" >
         
           
-          <label class="md-nav__link" for="__nav_9_7" id="__nav_9_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_9_8" id="__nav_9_8_label" tabindex="0">
             
   
   
@@ -1626,8 +1649,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_7_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_9_7">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9_8">
             <span class="md-nav__icon md-icon"></span>
             Tutorials and examples
           </label>
@@ -1704,10 +1727,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_8" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_9" checked>
         
           
-          <label class="md-nav__link" for="__nav_9_8" id="__nav_9_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_9_9" id="__nav_9_9_label" tabindex="0">
             
   
   
@@ -1720,8 +1743,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_8_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_9_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_9_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_9_9">
             <span class="md-nav__icon md-icon"></span>
             API Reference
           </label>
@@ -3221,9 +3244,7 @@
 
               <details class="quote">
                 <summary>Source code in <code>src/ursa/util/__init__.py</code></summary>
-                <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-9"> 9</a></span>
-<span class="normal"><a href="#__codelineno-0-10">10</a></span>
-<span class="normal"><a href="#__codelineno-0-11">11</a></span>
+                <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-11">11</a></span>
 <span class="normal"><a href="#__codelineno-0-12">12</a></span>
 <span class="normal"><a href="#__codelineno-0-13">13</a></span>
 <span class="normal"><a href="#__codelineno-0-14">14</a></span>
@@ -3267,53 +3288,55 @@
 <span class="normal"><a href="#__codelineno-0-52">52</a></span>
 <span class="normal"><a href="#__codelineno-0-53">53</a></span>
 <span class="normal"><a href="#__codelineno-0-54">54</a></span>
-<span class="normal"><a href="#__codelineno-0-55">55</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-9" name="__codelineno-0-9"></a><span class="k">class</span><span class="w"> </span><span class="nc">Checkpointer</span><span class="p">:</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10"></a>    <span class="nd">@classmethod</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">from_workspace</span><span class="p">(</span>
-<a id="__codelineno-0-12" name="__codelineno-0-12"></a>        <span class="bp">cls</span><span class="p">,</span>
-<a id="__codelineno-0-13" name="__codelineno-0-13"></a>        <span class="n">workspace</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
-<a id="__codelineno-0-14" name="__codelineno-0-14"></a>        <span class="n">db_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;db&quot;</span><span class="p">,</span>
-<a id="__codelineno-0-15" name="__codelineno-0-15"></a>        <span class="n">db_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;checkpointer.db&quot;</span><span class="p">,</span>
-<a id="__codelineno-0-16" name="__codelineno-0-16"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">SqliteSaver</span><span class="p">:</span>
-<a id="__codelineno-0-17" name="__codelineno-0-17"></a>        <span class="p">(</span><span class="n">db_path</span> <span class="o">:=</span> <span class="n">workspace</span> <span class="o">/</span> <span class="n">db_dir</span><span class="p">)</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-<a id="__codelineno-0-18" name="__codelineno-0-18"></a>        <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">db_path</span> <span class="o">/</span> <span class="n">db_name</span><span class="p">),</span> <span class="n">check_same_thread</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-<a id="__codelineno-0-19" name="__codelineno-0-19"></a>        <span class="k">return</span> <span class="n">SqliteSaver</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
-<a id="__codelineno-0-20" name="__codelineno-0-20"></a>
-<a id="__codelineno-0-21" name="__codelineno-0-21"></a>    <span class="nd">@classmethod</span>
-<a id="__codelineno-0-22" name="__codelineno-0-22"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">async_from_workspace</span><span class="p">(</span>
-<a id="__codelineno-0-23" name="__codelineno-0-23"></a>        <span class="bp">cls</span><span class="p">,</span>
-<a id="__codelineno-0-24" name="__codelineno-0-24"></a>        <span class="n">workspace</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
-<a id="__codelineno-0-25" name="__codelineno-0-25"></a>        <span class="n">db_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;db&quot;</span><span class="p">,</span>
-<a id="__codelineno-0-26" name="__codelineno-0-26"></a>        <span class="n">db_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;checkpointer.db&quot;</span><span class="p">,</span>
-<a id="__codelineno-0-27" name="__codelineno-0-27"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AsyncSqliteSaver</span><span class="p">:</span>
-<a id="__codelineno-0-28" name="__codelineno-0-28"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Make an async SQLite checkpointer under a workspace directory.&quot;&quot;&quot;</span>
-<a id="__codelineno-0-29" name="__codelineno-0-29"></a>        <span class="p">(</span><span class="n">db_path</span> <span class="o">:=</span> <span class="n">workspace</span> <span class="o">/</span> <span class="n">db_dir</span><span class="p">)</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-<a id="__codelineno-0-30" name="__codelineno-0-30"></a>        <span class="n">conn</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aiosqlite</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">db_path</span> <span class="o">/</span> <span class="n">db_name</span><span class="p">))</span>
-<a id="__codelineno-0-31" name="__codelineno-0-31"></a>        <span class="k">return</span> <span class="n">AsyncSqliteSaver</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
-<a id="__codelineno-0-32" name="__codelineno-0-32"></a>
-<a id="__codelineno-0-33" name="__codelineno-0-33"></a>    <span class="nd">@classmethod</span>
-<a id="__codelineno-0-34" name="__codelineno-0-34"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">from_path</span><span class="p">(</span>
-<a id="__codelineno-0-35" name="__codelineno-0-35"></a>        <span class="bp">cls</span><span class="p">,</span> <span class="n">db_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">db_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;checkpointer.db&quot;</span>
-<a id="__codelineno-0-36" name="__codelineno-0-36"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">SqliteSaver</span><span class="p">:</span>
-<a id="__codelineno-0-37" name="__codelineno-0-37"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Make checkpointer sqlite db.</span>
-<a id="__codelineno-0-38" name="__codelineno-0-38"></a>
-<a id="__codelineno-0-39" name="__codelineno-0-39"></a><span class="sd">        Args</span>
-<a id="__codelineno-0-40" name="__codelineno-0-40"></a><span class="sd">        ====</span>
-<a id="__codelineno-0-41" name="__codelineno-0-41"></a><span class="sd">        * db_path: The path to the SQLite database file (e.g. ./checkpoint.db) to be created.</span>
-<a id="__codelineno-0-42" name="__codelineno-0-42"></a><span class="sd">        &quot;&quot;&quot;</span>
-<a id="__codelineno-0-43" name="__codelineno-0-43"></a>
-<a id="__codelineno-0-44" name="__codelineno-0-44"></a>        <span class="n">db_path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-<a id="__codelineno-0-45" name="__codelineno-0-45"></a>        <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">db_path</span> <span class="o">/</span> <span class="n">db_name</span><span class="p">),</span> <span class="n">check_same_thread</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-<a id="__codelineno-0-46" name="__codelineno-0-46"></a>        <span class="k">return</span> <span class="n">SqliteSaver</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
-<a id="__codelineno-0-47" name="__codelineno-0-47"></a>
-<a id="__codelineno-0-48" name="__codelineno-0-48"></a>    <span class="nd">@classmethod</span>
-<a id="__codelineno-0-49" name="__codelineno-0-49"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">async_from_path</span><span class="p">(</span>
-<a id="__codelineno-0-50" name="__codelineno-0-50"></a>        <span class="bp">cls</span><span class="p">,</span> <span class="n">db_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">db_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;checkpointer.db&quot;</span>
-<a id="__codelineno-0-51" name="__codelineno-0-51"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AsyncSqliteSaver</span><span class="p">:</span>
-<a id="__codelineno-0-52" name="__codelineno-0-52"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Make an async SQLite checkpointer under a database path.&quot;&quot;&quot;</span>
-<a id="__codelineno-0-53" name="__codelineno-0-53"></a>        <span class="n">db_path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-<a id="__codelineno-0-54" name="__codelineno-0-54"></a>        <span class="n">conn</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aiosqlite</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">db_path</span> <span class="o">/</span> <span class="n">db_name</span><span class="p">))</span>
-<a id="__codelineno-0-55" name="__codelineno-0-55"></a>        <span class="k">return</span> <span class="n">AsyncSqliteSaver</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-55">55</a></span>
+<span class="normal"><a href="#__codelineno-0-56">56</a></span>
+<span class="normal"><a href="#__codelineno-0-57">57</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-11" name="__codelineno-0-11"></a><span class="k">class</span><span class="w"> </span><span class="nc">Checkpointer</span><span class="p">:</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12"></a>    <span class="nd">@classmethod</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">from_workspace</span><span class="p">(</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14"></a>        <span class="bp">cls</span><span class="p">,</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15"></a>        <span class="n">workspace</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16"></a>        <span class="n">db_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;db&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17"></a>        <span class="n">db_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;checkpointer.db&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">SqliteSaver</span><span class="p">:</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19"></a>        <span class="p">(</span><span class="n">db_path</span> <span class="o">:=</span> <span class="n">workspace</span> <span class="o">/</span> <span class="n">db_dir</span><span class="p">)</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20"></a>        <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">db_path</span> <span class="o">/</span> <span class="n">db_name</span><span class="p">),</span> <span class="n">check_same_thread</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21"></a>        <span class="k">return</span> <span class="n">SqliteSaver</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22"></a>
+<a id="__codelineno-0-23" name="__codelineno-0-23"></a>    <span class="nd">@classmethod</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">async_from_workspace</span><span class="p">(</span>
+<a id="__codelineno-0-25" name="__codelineno-0-25"></a>        <span class="bp">cls</span><span class="p">,</span>
+<a id="__codelineno-0-26" name="__codelineno-0-26"></a>        <span class="n">workspace</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
+<a id="__codelineno-0-27" name="__codelineno-0-27"></a>        <span class="n">db_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;db&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-28" name="__codelineno-0-28"></a>        <span class="n">db_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;checkpointer.db&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-29" name="__codelineno-0-29"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AsyncSqliteSaver</span><span class="p">:</span>
+<a id="__codelineno-0-30" name="__codelineno-0-30"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Make an async SQLite checkpointer under a workspace directory.&quot;&quot;&quot;</span>
+<a id="__codelineno-0-31" name="__codelineno-0-31"></a>        <span class="p">(</span><span class="n">db_path</span> <span class="o">:=</span> <span class="n">workspace</span> <span class="o">/</span> <span class="n">db_dir</span><span class="p">)</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-0-32" name="__codelineno-0-32"></a>        <span class="n">conn</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aiosqlite</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">db_path</span> <span class="o">/</span> <span class="n">db_name</span><span class="p">))</span>
+<a id="__codelineno-0-33" name="__codelineno-0-33"></a>        <span class="k">return</span> <span class="n">AsyncSqliteSaver</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
+<a id="__codelineno-0-34" name="__codelineno-0-34"></a>
+<a id="__codelineno-0-35" name="__codelineno-0-35"></a>    <span class="nd">@classmethod</span>
+<a id="__codelineno-0-36" name="__codelineno-0-36"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">from_path</span><span class="p">(</span>
+<a id="__codelineno-0-37" name="__codelineno-0-37"></a>        <span class="bp">cls</span><span class="p">,</span> <span class="n">db_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">db_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;checkpointer.db&quot;</span>
+<a id="__codelineno-0-38" name="__codelineno-0-38"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">SqliteSaver</span><span class="p">:</span>
+<a id="__codelineno-0-39" name="__codelineno-0-39"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Make checkpointer sqlite db.</span>
+<a id="__codelineno-0-40" name="__codelineno-0-40"></a>
+<a id="__codelineno-0-41" name="__codelineno-0-41"></a><span class="sd">        Args</span>
+<a id="__codelineno-0-42" name="__codelineno-0-42"></a><span class="sd">        ====</span>
+<a id="__codelineno-0-43" name="__codelineno-0-43"></a><span class="sd">        * db_path: The path to the SQLite database file (e.g. ./checkpoint.db) to be created.</span>
+<a id="__codelineno-0-44" name="__codelineno-0-44"></a><span class="sd">        &quot;&quot;&quot;</span>
+<a id="__codelineno-0-45" name="__codelineno-0-45"></a>
+<a id="__codelineno-0-46" name="__codelineno-0-46"></a>        <span class="n">db_path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-0-47" name="__codelineno-0-47"></a>        <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">db_path</span> <span class="o">/</span> <span class="n">db_name</span><span class="p">),</span> <span class="n">check_same_thread</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<a id="__codelineno-0-48" name="__codelineno-0-48"></a>        <span class="k">return</span> <span class="n">SqliteSaver</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
+<a id="__codelineno-0-49" name="__codelineno-0-49"></a>
+<a id="__codelineno-0-50" name="__codelineno-0-50"></a>    <span class="nd">@classmethod</span>
+<a id="__codelineno-0-51" name="__codelineno-0-51"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">async_from_path</span><span class="p">(</span>
+<a id="__codelineno-0-52" name="__codelineno-0-52"></a>        <span class="bp">cls</span><span class="p">,</span> <span class="n">db_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">db_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;checkpointer.db&quot;</span>
+<a id="__codelineno-0-53" name="__codelineno-0-53"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AsyncSqliteSaver</span><span class="p">:</span>
+<a id="__codelineno-0-54" name="__codelineno-0-54"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Make an async SQLite checkpointer under a database path.&quot;&quot;&quot;</span>
+<a id="__codelineno-0-55" name="__codelineno-0-55"></a>        <span class="n">db_path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-0-56" name="__codelineno-0-56"></a>        <span class="n">conn</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aiosqlite</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">db_path</span> <span class="o">/</span> <span class="n">db_name</span><span class="p">))</span>
+<a id="__codelineno-0-57" name="__codelineno-0-57"></a>        <span class="k">return</span> <span class="n">AsyncSqliteSaver</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
               </details>
 
@@ -3351,21 +3374,21 @@
 
             <details class="quote">
               <summary>Source code in <code>src/ursa/util/__init__.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-48">48</a></span>
-<span class="normal"><a href="#__codelineno-0-49">49</a></span>
-<span class="normal"><a href="#__codelineno-0-50">50</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-50">50</a></span>
 <span class="normal"><a href="#__codelineno-0-51">51</a></span>
 <span class="normal"><a href="#__codelineno-0-52">52</a></span>
 <span class="normal"><a href="#__codelineno-0-53">53</a></span>
 <span class="normal"><a href="#__codelineno-0-54">54</a></span>
-<span class="normal"><a href="#__codelineno-0-55">55</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-48" name="__codelineno-0-48"></a><span class="nd">@classmethod</span>
-<a id="__codelineno-0-49" name="__codelineno-0-49"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">async_from_path</span><span class="p">(</span>
-<a id="__codelineno-0-50" name="__codelineno-0-50"></a>    <span class="bp">cls</span><span class="p">,</span> <span class="n">db_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">db_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;checkpointer.db&quot;</span>
-<a id="__codelineno-0-51" name="__codelineno-0-51"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AsyncSqliteSaver</span><span class="p">:</span>
-<a id="__codelineno-0-52" name="__codelineno-0-52"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Make an async SQLite checkpointer under a database path.&quot;&quot;&quot;</span>
-<a id="__codelineno-0-53" name="__codelineno-0-53"></a>    <span class="n">db_path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-<a id="__codelineno-0-54" name="__codelineno-0-54"></a>    <span class="n">conn</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aiosqlite</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">db_path</span> <span class="o">/</span> <span class="n">db_name</span><span class="p">))</span>
-<a id="__codelineno-0-55" name="__codelineno-0-55"></a>    <span class="k">return</span> <span class="n">AsyncSqliteSaver</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-55">55</a></span>
+<span class="normal"><a href="#__codelineno-0-56">56</a></span>
+<span class="normal"><a href="#__codelineno-0-57">57</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-50" name="__codelineno-0-50"></a><span class="nd">@classmethod</span>
+<a id="__codelineno-0-51" name="__codelineno-0-51"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">async_from_path</span><span class="p">(</span>
+<a id="__codelineno-0-52" name="__codelineno-0-52"></a>    <span class="bp">cls</span><span class="p">,</span> <span class="n">db_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">db_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;checkpointer.db&quot;</span>
+<a id="__codelineno-0-53" name="__codelineno-0-53"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AsyncSqliteSaver</span><span class="p">:</span>
+<a id="__codelineno-0-54" name="__codelineno-0-54"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Make an async SQLite checkpointer under a database path.&quot;&quot;&quot;</span>
+<a id="__codelineno-0-55" name="__codelineno-0-55"></a>    <span class="n">db_path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-0-56" name="__codelineno-0-56"></a>    <span class="n">conn</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aiosqlite</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">db_path</span> <span class="o">/</span> <span class="n">db_name</span><span class="p">))</span>
+<a id="__codelineno-0-57" name="__codelineno-0-57"></a>    <span class="k">return</span> <span class="n">AsyncSqliteSaver</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -3393,9 +3416,7 @@
 
             <details class="quote">
               <summary>Source code in <code>src/ursa/util/__init__.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-21">21</a></span>
-<span class="normal"><a href="#__codelineno-0-22">22</a></span>
-<span class="normal"><a href="#__codelineno-0-23">23</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-23">23</a></span>
 <span class="normal"><a href="#__codelineno-0-24">24</a></span>
 <span class="normal"><a href="#__codelineno-0-25">25</a></span>
 <span class="normal"><a href="#__codelineno-0-26">26</a></span>
@@ -3403,17 +3424,19 @@
 <span class="normal"><a href="#__codelineno-0-28">28</a></span>
 <span class="normal"><a href="#__codelineno-0-29">29</a></span>
 <span class="normal"><a href="#__codelineno-0-30">30</a></span>
-<span class="normal"><a href="#__codelineno-0-31">31</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-21" name="__codelineno-0-21"></a><span class="nd">@classmethod</span>
-<a id="__codelineno-0-22" name="__codelineno-0-22"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">async_from_workspace</span><span class="p">(</span>
-<a id="__codelineno-0-23" name="__codelineno-0-23"></a>    <span class="bp">cls</span><span class="p">,</span>
-<a id="__codelineno-0-24" name="__codelineno-0-24"></a>    <span class="n">workspace</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
-<a id="__codelineno-0-25" name="__codelineno-0-25"></a>    <span class="n">db_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;db&quot;</span><span class="p">,</span>
-<a id="__codelineno-0-26" name="__codelineno-0-26"></a>    <span class="n">db_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;checkpointer.db&quot;</span><span class="p">,</span>
-<a id="__codelineno-0-27" name="__codelineno-0-27"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AsyncSqliteSaver</span><span class="p">:</span>
-<a id="__codelineno-0-28" name="__codelineno-0-28"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Make an async SQLite checkpointer under a workspace directory.&quot;&quot;&quot;</span>
-<a id="__codelineno-0-29" name="__codelineno-0-29"></a>    <span class="p">(</span><span class="n">db_path</span> <span class="o">:=</span> <span class="n">workspace</span> <span class="o">/</span> <span class="n">db_dir</span><span class="p">)</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-<a id="__codelineno-0-30" name="__codelineno-0-30"></a>    <span class="n">conn</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aiosqlite</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">db_path</span> <span class="o">/</span> <span class="n">db_name</span><span class="p">))</span>
-<a id="__codelineno-0-31" name="__codelineno-0-31"></a>    <span class="k">return</span> <span class="n">AsyncSqliteSaver</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-31">31</a></span>
+<span class="normal"><a href="#__codelineno-0-32">32</a></span>
+<span class="normal"><a href="#__codelineno-0-33">33</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-23" name="__codelineno-0-23"></a><span class="nd">@classmethod</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">async_from_workspace</span><span class="p">(</span>
+<a id="__codelineno-0-25" name="__codelineno-0-25"></a>    <span class="bp">cls</span><span class="p">,</span>
+<a id="__codelineno-0-26" name="__codelineno-0-26"></a>    <span class="n">workspace</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
+<a id="__codelineno-0-27" name="__codelineno-0-27"></a>    <span class="n">db_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;db&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-28" name="__codelineno-0-28"></a>    <span class="n">db_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;checkpointer.db&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-29" name="__codelineno-0-29"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AsyncSqliteSaver</span><span class="p">:</span>
+<a id="__codelineno-0-30" name="__codelineno-0-30"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Make an async SQLite checkpointer under a workspace directory.&quot;&quot;&quot;</span>
+<a id="__codelineno-0-31" name="__codelineno-0-31"></a>    <span class="p">(</span><span class="n">db_path</span> <span class="o">:=</span> <span class="n">workspace</span> <span class="o">/</span> <span class="n">db_dir</span><span class="p">)</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-0-32" name="__codelineno-0-32"></a>    <span class="n">conn</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aiosqlite</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">db_path</span> <span class="o">/</span> <span class="n">db_name</span><span class="p">))</span>
+<a id="__codelineno-0-33" name="__codelineno-0-33"></a>    <span class="k">return</span> <span class="n">AsyncSqliteSaver</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -3444,9 +3467,7 @@
 
             <details class="quote">
               <summary>Source code in <code>src/ursa/util/__init__.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-33">33</a></span>
-<span class="normal"><a href="#__codelineno-0-34">34</a></span>
-<span class="normal"><a href="#__codelineno-0-35">35</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-35">35</a></span>
 <span class="normal"><a href="#__codelineno-0-36">36</a></span>
 <span class="normal"><a href="#__codelineno-0-37">37</a></span>
 <span class="normal"><a href="#__codelineno-0-38">38</a></span>
@@ -3457,20 +3478,22 @@
 <span class="normal"><a href="#__codelineno-0-43">43</a></span>
 <span class="normal"><a href="#__codelineno-0-44">44</a></span>
 <span class="normal"><a href="#__codelineno-0-45">45</a></span>
-<span class="normal"><a href="#__codelineno-0-46">46</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-33" name="__codelineno-0-33"></a><span class="nd">@classmethod</span>
-<a id="__codelineno-0-34" name="__codelineno-0-34"></a><span class="k">def</span><span class="w"> </span><span class="nf">from_path</span><span class="p">(</span>
-<a id="__codelineno-0-35" name="__codelineno-0-35"></a>    <span class="bp">cls</span><span class="p">,</span> <span class="n">db_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">db_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;checkpointer.db&quot;</span>
-<a id="__codelineno-0-36" name="__codelineno-0-36"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">SqliteSaver</span><span class="p">:</span>
-<a id="__codelineno-0-37" name="__codelineno-0-37"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Make checkpointer sqlite db.</span>
-<a id="__codelineno-0-38" name="__codelineno-0-38"></a>
-<a id="__codelineno-0-39" name="__codelineno-0-39"></a><span class="sd">    Args</span>
-<a id="__codelineno-0-40" name="__codelineno-0-40"></a><span class="sd">    ====</span>
-<a id="__codelineno-0-41" name="__codelineno-0-41"></a><span class="sd">    * db_path: The path to the SQLite database file (e.g. ./checkpoint.db) to be created.</span>
-<a id="__codelineno-0-42" name="__codelineno-0-42"></a><span class="sd">    &quot;&quot;&quot;</span>
-<a id="__codelineno-0-43" name="__codelineno-0-43"></a>
-<a id="__codelineno-0-44" name="__codelineno-0-44"></a>    <span class="n">db_path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-<a id="__codelineno-0-45" name="__codelineno-0-45"></a>    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">db_path</span> <span class="o">/</span> <span class="n">db_name</span><span class="p">),</span> <span class="n">check_same_thread</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-<a id="__codelineno-0-46" name="__codelineno-0-46"></a>    <span class="k">return</span> <span class="n">SqliteSaver</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-46">46</a></span>
+<span class="normal"><a href="#__codelineno-0-47">47</a></span>
+<span class="normal"><a href="#__codelineno-0-48">48</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-35" name="__codelineno-0-35"></a><span class="nd">@classmethod</span>
+<a id="__codelineno-0-36" name="__codelineno-0-36"></a><span class="k">def</span><span class="w"> </span><span class="nf">from_path</span><span class="p">(</span>
+<a id="__codelineno-0-37" name="__codelineno-0-37"></a>    <span class="bp">cls</span><span class="p">,</span> <span class="n">db_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">db_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;checkpointer.db&quot;</span>
+<a id="__codelineno-0-38" name="__codelineno-0-38"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">SqliteSaver</span><span class="p">:</span>
+<a id="__codelineno-0-39" name="__codelineno-0-39"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Make checkpointer sqlite db.</span>
+<a id="__codelineno-0-40" name="__codelineno-0-40"></a>
+<a id="__codelineno-0-41" name="__codelineno-0-41"></a><span class="sd">    Args</span>
+<a id="__codelineno-0-42" name="__codelineno-0-42"></a><span class="sd">    ====</span>
+<a id="__codelineno-0-43" name="__codelineno-0-43"></a><span class="sd">    * db_path: The path to the SQLite database file (e.g. ./checkpoint.db) to be created.</span>
+<a id="__codelineno-0-44" name="__codelineno-0-44"></a><span class="sd">    &quot;&quot;&quot;</span>
+<a id="__codelineno-0-45" name="__codelineno-0-45"></a>
+<a id="__codelineno-0-46" name="__codelineno-0-46"></a>    <span class="n">db_path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-0-47" name="__codelineno-0-47"></a>    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">db_path</span> <span class="o">/</span> <span class="n">db_name</span><span class="p">),</span> <span class="n">check_same_thread</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<a id="__codelineno-0-48" name="__codelineno-0-48"></a>    <span class="k">return</span> <span class="n">SqliteSaver</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>

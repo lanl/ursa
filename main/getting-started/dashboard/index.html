@@ -1594,6 +1594,29 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/administration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Managed setup defaults
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/mcp/" class="md-nav__link">
         
   
@@ -1717,10 +1740,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_8" >
         
           
-          <label class="md-nav__link" for="__nav_9_7" id="__nav_9_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_9_8" id="__nav_9_8_label" tabindex="0">
             
   
   
@@ -1733,8 +1756,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_7_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_9_7">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9_8">
             <span class="md-nav__icon md-icon"></span>
             Tutorials and examples
           </label>
@@ -1809,10 +1832,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_9" >
         
           
-          <label class="md-nav__link" for="__nav_9_8" id="__nav_9_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_9_9" id="__nav_9_9_label" tabindex="0">
             
   
   
@@ -1825,8 +1848,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_9_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9_9">
             <span class="md-nav__icon md-icon"></span>
             API Reference
           </label>
@@ -2110,10 +2133,9 @@ launch with <code>--use-web</code> and disable it for a specific run.</p>
 <h2 id="configure-api-credentials">Configure API credentials<a class="headerlink" href="#configure-api-credentials" title="Permanent link">&para;</a></h2>
 <p>Open <strong>Settings -&gt; LLM</strong> and choose an API-key source:</p>
 <ul>
-<li><strong>Secure system storage</strong> stores the key in macOS Keychain, Windows
-  Credential Manager, or the available Linux keyring service. The key field is
-  always blank when Settings opens; the dashboard reports only whether a usable
-  key is configured.</li>
+<li><strong>Keyring</strong> stores the key using URSA's <a href="../../configuration/secrets/">keyring
+  support</a>. The key field is always blank when
+  Settings opens; the dashboard reports only whether a usable key is configured.</li>
 <li><strong>Environment variable</strong> retains the existing headless and automation
   workflow. Enter the variable name, not its value.</li>
 <li><strong>No API key</strong> is appropriate for endpoints that do not require one.</li>
@@ -2154,9 +2176,9 @@ refer to API-key environment variable names, but literal API keys are rejected
 and never stored in YAML or run metadata.</p>
 <div class="admonition note">
 <p class="admonition-title">Headless Linux</p>
-<p>Secure system storage requires an available desktop keyring service.
-Headless deployments should continue to use environment variables or a
-deployment-managed secret provider.</p>
+<p>When no native keyring is available, URSA uses its file-backed keyring.
+Environment variables and deployment-managed secret providers remain
+available when preferred.</p>
 </div>
 <h2 id="where-next">Where next?<a class="headerlink" href="#where-next" title="Permanent link">&para;</a></h2>
 <ul>

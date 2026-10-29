@@ -14,7 +14,7 @@
         <link rel="prev" href="../../best-practices/contributing/">
       
       
-        <link rel="next" href="../mcp/">
+        <link rel="next" href="../administration/">
       
       
       <link rel="icon" href="../../assets/favicon.png">
@@ -1576,6 +1576,29 @@
   
   
     <li class="md-nav__item">
+      <a href="../administration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Managed setup defaults
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../mcp/" class="md-nav__link">
         
   
@@ -1699,10 +1722,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_8" >
         
           
-          <label class="md-nav__link" for="__nav_9_7" id="__nav_9_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_9_8" id="__nav_9_8_label" tabindex="0">
             
   
   
@@ -1715,8 +1738,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_7_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_9_7">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9_8">
             <span class="md-nav__icon md-icon"></span>
             Tutorials and examples
           </label>
@@ -1791,10 +1814,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_9" >
         
           
-          <label class="md-nav__link" for="__nav_9_8" id="__nav_9_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_9_9" id="__nav_9_9_label" tabindex="0">
             
   
   
@@ -1807,8 +1830,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_9_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9_9">
             <span class="md-nav__icon md-icon"></span>
             API Reference
           </label>
@@ -2072,18 +2095,22 @@
 <p>It reports the URSA version and the running Python version and executable.
 For uv tool installations, it also reports the selected URSA extras and any
 additional packages installed in the tool environment.</p>
+<p>Run the complete health check with:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ursa<span class="w"> </span>self<span class="w"> </span>doctor
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>ursa<span class="w"> </span>self<span class="w"> </span>doctor<span class="w"> </span>--json
+</code></pre></div>
 <p>When URSA was installed with <code>uv tool install</code>, it can update itself while
 preserving the installation recipe:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ursa<span class="w"> </span>self<span class="w"> </span>update
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>ursa<span class="w"> </span>self<span class="w"> </span>update
 </code></pre></div>
 <p>Use <code>modify</code> to change the recipe. Options can add extras or additional
 packages, select an exact release or Git ref, and clear the existing extras
 and additional packages:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--extra<span class="w"> </span>dashboard
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--with<span class="w"> </span>some-package
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--version<span class="w"> </span><span class="m">1</span>.2.3
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--ref<span class="w"> </span>main
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--clean<span class="w"> </span>--extra<span class="w"> </span>fm
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--extra<span class="w"> </span>dashboard
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--with<span class="w"> </span>some-package
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--version<span class="w"> </span><span class="m">1</span>.2.3
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--ref<span class="w"> </span>main
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--clean<span class="w"> </span>--extra<span class="w"> </span>fm
 </code></pre></div>
 <p>Run <code>ursa self modify --help</code> for the complete option list. For pip, Conda,
 and other installations, use the same package manager that installed URSA;
