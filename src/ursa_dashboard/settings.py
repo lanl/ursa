@@ -25,8 +25,8 @@ class LLMSettings(BaseModel):
     base_url: str | None = None
 
     # Security: settings contain only a credential source/reference. Stored
-    # keys live in the OS credential store; environment variables remain an
-    # explicit compatibility option.
+    # keys live in the keyring; environment variables remain an explicit
+    # compatibility option.
     api_key_env: str | None = Field(
         default="OPENAI_API_KEY",
         description="Name of the environment variable that contains the LLM API key (the secret is not stored).",
@@ -369,7 +369,7 @@ class SettingsStore:
         data = read_json(self.path)
         # Settings created before secure storage existed used api_key_env.
         # Preserve that behavior while letting fresh installs default to the
-        # operating system credential store.
+        # keyring.
         for section in ("llm", "embedding"):
             section_data = data.get(section)
             if (

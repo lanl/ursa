@@ -83,6 +83,12 @@ class State(TypedDict):
 
 
 class SimulatorAgent(BaseAgent):
+    """Coordinate simulation documentation and execution.
+
+    ``docs_path`` selects the RAG documentation directory when an embedding
+    model is supplied. Relative paths are resolved by RAGAgent as before.
+    """
+
     state_type = State
 
     def __init__(
@@ -94,6 +100,7 @@ class SimulatorAgent(BaseAgent):
         workspace: Optional[Path | str] = None,
         checkpointer=Checkpointer,
         thread_id=str,
+        docs_path: Path | str = "../simulator_docs",
         **kwargs,
     ):
         super().__init__(llm, workspace=workspace, **kwargs)
@@ -146,7 +153,7 @@ class SimulatorAgent(BaseAgent):
                 workspace=self.workspace,
                 embedding=self.embedding,
                 thread_id="simulation_documentation_rag",
-                database_path="../simulator_docs",
+                database_path=docs_path,
             )
 
             @tool
