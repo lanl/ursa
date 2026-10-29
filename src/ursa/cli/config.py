@@ -34,6 +34,7 @@ from ursa.util.http import (
     httpx_verify_value,
 )
 from ursa.util.mcp import ServerParameters, _serialize_server_config
+from ursa.util.model_context import DEFAULT_SUMMARIZATION_THRESHOLD
 from ursa.util.secrets import SecretReference
 
 logger = logging.getLogger(__name__)
@@ -427,8 +428,13 @@ class ChatModelConfig(ModelConfig):
         return kwargs
 
     def init_chat_model(self) -> BaseChatModel:
+        from ursa.util.model_metadata import load_model_context
+
         llm = init_chat_model(**self.kwargs)
         self.check_instantiated_model(llm)
+        load_model_context(
+            llm, explicit_profile="profile" in (self.model_extra or {})
+        )
         return llm
 
     @model_validator(mode="after")
@@ -513,6 +519,11 @@ class UrsaConfig(BaseModel):
     use_web: bool = False
     """Enable web-search tools for ChatAgent and ExecutionAgent."""
 
+    tokens_before_summarize: int = Field(
+        default=DEFAULT_SUMMARIZATION_THRESHOLD, gt=0
+    )
+    """Fallback summarization threshold when the model context is unknown."""
+
     inference_providers: dict[str, InferenceProviderConfig] = Field(
         default_factory=lambda: {
             "openai": InferenceProviderConfig(
@@ -553,6 +564,15 @@ class UrsaConfig(BaseModel):
             },
         )
         return providers
+
+    @field_validator("tokens_before_summarize", mode="before")
+    @classmethod
+    def _validate_summary_threshold(cls, value):
+        if isinstance(value, bool):
+            raise ValueError(
+                "tokens_before_summarize must be a positive integer"
+            )
+        return value
 
     @field_validator("rag_tools", mode="before")
     @classmethod

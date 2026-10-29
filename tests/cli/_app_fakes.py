@@ -30,6 +30,7 @@ class FakeHITL:
             )
         }
         self.config = SimpleNamespace(
+            tokens_before_summarize=50000,
             mcp_servers={},
             inference_providers=inference_providers,
             llm_model=ChatModelConfig(

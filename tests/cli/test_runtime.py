@@ -1137,6 +1137,27 @@ async def test_agents_apply_agent_config_overrides(
     assert agent._agent.telemetry.enable == override["enable_metrics"]
 
 
+async def test_global_summarization_fallback_and_agent_override(
+    tmp_path, monkeypatch
+):
+    _stub_hitl_dependencies(monkeypatch)
+    hitl = HITL(
+        UrsaConfig(
+            workspace=tmp_path,
+            tokens_before_summarize=12000,
+            agent_config={"chat": {"tokens_before_summarize": 8000}},
+        )
+    )
+    for name, wrapper in hitl.agents.items():
+        assert wrapper.config["tokens_before_summarize"] == (
+            8000 if name == "chat" else 12000
+        )
+    chat = await hitl.get_agent("chat")
+    execute = await hitl.get_agent("execute")
+    assert chat._agent.tokens_before_summarize == 8000
+    assert execute._agent.tokens_before_summarize == 12000
+
+
 @pytest.mark.asyncio
 async def test_thread_id_propagates_from_config(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
