@@ -13,7 +13,7 @@ import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 from urllib.parse import quote, urlsplit
 
 from fastapi import (
@@ -102,6 +102,7 @@ from .credentials import (
     credential_id,
     credential_status,
     credential_target,
+    resolve_api_key,
     store_api_key,
 )
 from .environment_run_manager import (
@@ -119,7 +120,7 @@ from .environment_run_ui import (
 )
 from .models import AgentListResponse
 from .registry import REGISTRY
-from .run_manager import RunManager
+from .run_manager import TERMINAL_STATUSES, RunManager
 from .security import WorkspaceJailError, safe_join
 from .sessions import (
     append_message as session_append_message,
@@ -150,6 +151,7 @@ from .sessions import (
 )
 from .settings import (
     AuthConfig,
+    LLMSettings,
     SettingsStore,
     apply_dashboard_config,
     merge_global_settings_patch,
@@ -161,6 +163,69 @@ def _validated_agent_name(raw: str) -> str:
         return validate_agent_name(raw)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _log_response(root: Path, stream: str, run_id: str, tail_bytes: int | None):
+    try:
+        path = safe_join(root, f"logs/{stream}.log")
+    except WorkspaceJailError as exc:
+        raise HTTPException(status_code=403, detail="Forbidden") from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Log not found")
+    headers = {"Cache-Control": "no-store"}
+    if tail_bytes is None:
+        return FileResponse(
+            path,
+            media_type="text/plain",
+            filename=f"{run_id}-{stream}.log",
+            headers=headers,
+        )
+    with path.open("rb") as handle:
+        size = handle.seek(0, os.SEEK_END)
+        handle.seek(max(0, size - tail_bytes))
+        data = handle.read(tail_bytes)
+    text = data.decode("utf-8", errors="replace")
+    if size > tail_bytes:
+        text = (
+            "[dashboard] Recent output only; download the full log for provenance.\n"
+            + text
+        )
+    return Response(text, media_type="text/plain", headers=headers)
+
+
+def _delete_captured_logs(root: Path) -> dict[str, Any]:
+    """Delete only the two captured streams, never a log directory or journal."""
+    try:
+        if root.is_symlink() or (root / "logs").is_symlink():
+            raise WorkspaceJailError(
+                "Symlinked log directories cannot be deleted"
+            )
+        paths = []
+        for stream in ("stdout", "stderr"):
+            original = root / "logs" / f"{stream}.log"
+            path = safe_join(root, f"logs/{stream}.log")
+            # Do not follow even an in-jail file alias into an artifact.
+            if original.is_symlink() or (path.exists() and not path.is_file()):
+                raise WorkspaceJailError("Expected a regular log file")
+            paths.append(path)
+    except WorkspaceJailError as exc:
+        raise HTTPException(status_code=403, detail="Forbidden") from exc
+
+    deleted_files = []
+    deleted_bytes = 0
+    for path in paths:
+        try:
+            size = path.stat().st_size
+            path.unlink()
+        except FileNotFoundError:
+            continue  # Already deleted, or a run that never captured this stream.
+        except PermissionError as exc:
+            raise HTTPException(
+                status_code=403, detail="Cannot delete stored logs"
+            ) from exc
+        deleted_files.append(path.name)
+        deleted_bytes += size
+    return {"deleted_files": deleted_files, "deleted_bytes": deleted_bytes}
 
 
 def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
@@ -393,6 +458,57 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     def get_settings() -> SettingsResponse:
         s = settings_store.load()
         return SettingsResponse(settings=s.model_dump(mode="json"))
+
+    @app.get("/settings/summarization", dependencies=[Depends(require_auth)])
+    def get_summarization(session_id: str | None = None) -> dict[str, Any]:
+        from ursa.util.model_context import (
+            model_context_window,
+            summarization_threshold,
+        )
+
+        from .worker_main import _init_llm
+
+        settings = settings_store.load()
+        if session_id is not None:
+            try:
+                session = session_read_session(rm.dashboard_root, session_id)
+            except FileNotFoundError as e:
+                raise HTTPException(
+                    status_code=404, detail="Unknown session_id"
+                ) from e
+            settings = merge_global_settings_patch(
+                settings, {"llm": session.get("llm") or {}}
+            )
+        config = settings.llm.model_dump(mode="json")
+        try:
+            enforce_group_base_url_policy(
+                settings.llm.base_url, dashboard_group
+            )
+            key = resolve_api_key(
+                config,
+                group=dashboard_group,
+                kind="llm",
+                store=credential_store,
+            )
+        except (
+            GroupBaseURLPolicyError,
+            CredentialConfigurationError,
+            CredentialStoreError,
+        ) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        try:
+            model = _init_llm(config, api_key_override=key)
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail="Unable to initialize the saved model; check its settings and credentials.",
+            ) from e
+        return {
+            "context_window": model_context_window(model),
+            "tokens_before_summarize": summarization_threshold(
+                model, settings.llm.tokens_before_summarize
+            ),
+        }
 
     @app.patch(
         "/settings",
@@ -706,10 +822,11 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
                 merged_llm["model_kwargs"] = llm_patch.get("model_kwargs") or {}
             patch["llm"] = merged_llm
             try:
+                LLMSettings.model_validate(merged_llm)
                 enforce_group_base_url_policy(
                     merged_llm.get("base_url"), dashboard_group
                 )
-            except GroupBaseURLPolicyError as e:
+            except (GroupBaseURLPolicyError, ValueError) as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
         if "runner" in patch:
             patch["runner"] = _deep_merge_dicts(
@@ -1006,6 +1123,47 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Unknown run_id")
 
+    @app.get(
+        "/runs/{run_id}/logs/{stream}", dependencies=[Depends(require_auth)]
+    )
+    async def download_run_log(
+        run_id: str,
+        stream: Literal["stdout", "stderr"],
+        tail_bytes: int | None = Query(default=None, ge=1, le=262144),
+    ):
+        try:
+            run = await rm.get_run(run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Unknown run_id"
+            ) from exc
+        try:
+            root = safe_join(rm.dashboard_root, run["run_dir"])
+        except WorkspaceJailError as exc:
+            raise HTTPException(status_code=403, detail="Forbidden") from exc
+        return await asyncio.to_thread(
+            _log_response, root, stream, run_id, tail_bytes
+        )
+
+    @app.delete("/runs/{run_id}/logs", dependencies=[Depends(require_auth)])
+    async def delete_run_logs(run_id: str) -> dict[str, Any]:
+        try:
+            run = await rm.get_run(run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Unknown run_id"
+            ) from exc
+        if run.get("status") not in TERMINAL_STATUSES or run_id in rm._inflight:
+            raise HTTPException(
+                status_code=409,
+                detail="Wait for the run to finish before deleting stored logs",
+            )
+        try:
+            root = safe_join(rm.dashboard_root, run["run_dir"])
+        except WorkspaceJailError as exc:
+            raise HTTPException(status_code=403, detail="Forbidden") from exc
+        return await asyncio.to_thread(_delete_captured_logs, root)
+
     @app.post(
         "/runs/{run_id}/cancel",
         response_model=RunRecord,
@@ -1052,7 +1210,9 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
                         break
         return RunEventListResponse(events=out)
 
-    async def _sse_events(run_id: str, after_seq: int) -> AsyncIterator[bytes]:
+    async def _sse_events(
+        run_id: str, after_seq: int, tail_bytes: int | None = None
+    ) -> AsyncIterator[bytes]:
         # Tail events.jsonl and stream as SSE.
         #
         # Notes:
@@ -1077,6 +1237,15 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 
         cursor_seq = after_seq
         offset = 0
+        if tail_bytes is not None and after_seq == 0 and events_path.exists():
+            with events_path.open("rb") as handle:
+                size = handle.seek(0, os.SEEK_END)
+                offset = max(0, size - tail_bytes)
+                if offset:
+                    handle.seek(offset - 1)
+                    if handle.read(1) != b"\n":
+                        handle.readline()  # Skip a partial JSON record.
+                    offset = handle.tell()
 
         while True:
             if events_path.exists():
@@ -1131,6 +1300,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     async def stream_events(
         run_id: str,
         after_seq: int = Query(default=0, ge=0),
+        tail_bytes: int | None = Query(default=None, ge=1, le=262144),
         last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
     ):
         # Prefer Last-Event-ID (standard SSE resume mechanism) if present.
@@ -1141,7 +1311,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             pass
 
         return StreamingResponse(
-            _sse_events(run_id, after_seq),
+            _sse_events(run_id, after_seq, tail_bytes),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -1155,7 +1325,9 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     async def stream_events_api(
         run_id: str, after_seq: int = Query(default=0, ge=0)
     ):
-        return await stream_events(run_id, after_seq)
+        return await stream_events(
+            run_id, after_seq, tail_bytes=None, last_event_id=None
+        )
 
     # ----------------------------
     # Workspace / artifacts
@@ -2536,6 +2708,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     _openSessionMenu: null,
     _renderTimers: { stdout: null, stderr: null },
     _logToken: 0,
+    _deletingLogs: false,
     _followLogs: { stdout: true, stderr: true },
     _pendingWhilePaused: { stdout: false, stderr: false },
   };
@@ -3015,7 +3188,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         const raw = (key === 'stderr') ? state.logs.stderr : state.logs.stdout;
         el.innerHTML = ansiToHtml(raw);
         el.scrollTop = el.scrollHeight;
-    }, 60);
+    }, 200);
   }
 
   function stripBackspaces(s) {
@@ -3059,7 +3232,8 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   }
 
   function trimToLastLines(text, maxLines) {
-    text = String(text ?? '');
+    // Also cap characters: a single unterminated line can be enormous.
+    text = String(text ?? '').slice(-131072);
     maxLines = Number(maxLines);
 
     if (!Number.isFinite(maxLines) || maxLines <= 0) return '';
@@ -3119,6 +3293,45 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     appendLog('stdout', text);
   }
 
+  function setLogDownloads(runIds) {
+    const select = $('#logDownloadRun');
+    if (!select) return;
+    select.innerHTML = runIds.map(id => `<option value="${escHtml(id)}">${escHtml(id)}</option>`).join('');
+    select.value = state.viewRunId || runIds[runIds.length - 1] || '';
+    select.onchange = () => {
+      const button = $('#deleteStoredLogsBtn');
+      button.disabled = state._deletingLogs || !select.value ||
+        (state.viewRunKind === 'stream' && select.value === state.viewRunId);
+      for (const stream of ['stdout', 'stderr']) {
+        const link = $(`#download${stream}`);
+        link.hidden = !select.value;
+        link.href = `/runs/${encodeURIComponent(select.value)}/logs/${stream}`;
+      }
+    };
+    select.onchange();
+  }
+
+  async function deleteStoredRunLogs() {
+    const select = $('#logDownloadRun');
+    const button = $('#deleteStoredLogsBtn');
+    const runId = select.value;
+    if (!runId || button.disabled) return;
+    if (!confirm(`Permanently delete stored stdout/stderr for run ${runId}?\n\nDownload anything needed for provenance first. Results, artifacts, checkpoints and event history will be kept.`)) return;
+    const token = state._logToken;
+    state._deletingLogs = true;
+    select.onchange();
+    try {
+      const result = await api('DELETE', `/runs/${encodeURIComponent(runId)}/logs`);
+      if (token === state._logToken) clearLogs();
+      alert(`Deleted ${result.deleted_bytes.toLocaleString()} bytes of stored stdout/stderr for ${runId}.`);
+    } catch (error) {
+      alert(`Could not delete stored logs: ${error.message}`);
+    } finally {
+      state._deletingLogs = false;
+      select.onchange();
+    }
+  }
+
   function sessionLogMetaText(sessionDetail, phaseText='history loaded') {
     const sess = sessionDetail?.session || {};
     const runIds = getSessionRunIds(sessionDetail);
@@ -3155,6 +3368,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     const cancelBtn = $('#cancelRunBtn');
     if (cancelBtn) cancelBtn.style.display = activeRunId ? '' : 'none';
 
+    setLogDownloads(runIds);
     if (!runIds.length) {
       setStatus('');
       setRunLogMeta('No runs yet in this session.');
@@ -3164,7 +3378,8 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     setStatus(activeRunId ? `run ${activeRunId} · running` : `session ${sess.session_id} · complete`);
     setRunLogMeta(sessionLogMetaText(sessionDetail));
 
-    for (const runId of completedRunIds) {
+    // Older runs remain downloadable; only load recent preview tails eagerly.
+    for (const runId of completedRunIds.slice(-5)) {
       if (token !== state._logToken) return;
       appendRunDivider(runId, runId === sess.last_run_id && !activeRunId ? 'last run' : 'run');
       try {
@@ -3184,33 +3399,14 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   }
 
   async function loadRunEvents(runId, token) {
-    let after = 0;
-    let pages = 0;
-    const limit = 5000;
-    const maxPages = 50;
-
-    while (pages < maxPages) {
+    for (const stream of ['stdout', 'stderr']) {
       if (token !== state._logToken) return;
-      const res = await api('GET', `/runs/${encodeURIComponent(runId)}/events?after_seq=${after}&limit=${limit}`);
-      const events = res.events || [];
-      if (!events.length) break;
-
-      for (const e of events) {
-        if (token !== state._logToken) return;
-        const seq = Number(e.seq || 0);
-        if (Number.isFinite(seq) && seq > after) after = seq;
-
-        if (e.type === 'log') {
-          const p = e.payload || {};
-          appendLog(p.stream || 'stdout', p.text || '');
-        } else if (e.type === 'state_change') {
-          const to = (e.payload && e.payload.to) || '';
-          if (to) setStatus(`run ${runId} \u00b7 ${to}`);
-        }
-      }
-
-      pages += 1;
-      if (events.length < limit) break;
+      const response = await fetch(`/runs/${encodeURIComponent(runId)}/logs/${stream}?tail_bytes=131072`);
+      if (response.status === 404) continue; // Queued/legacy run with no capture.
+      if (!response.ok) throw new Error(`Log preview failed (${response.status})`);
+      const text = await response.text();
+      if (token !== state._logToken) return;
+      appendLog(stream, text);
     }
   }
 
@@ -3222,6 +3418,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     clearLogs();
     setStatus('');
     setRunLogMeta('No run selected.');
+    setLogDownloads([]);
 
     const cancelBtn = $('#cancelRunBtn');
     if (cancelBtn) cancelBtn.style.display = 'none';
@@ -3238,6 +3435,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     clearLogs();
     state.viewRunId = runId;
     state.viewRunKind = 'static';
+    setLogDownloads([runId]);
 
     const cancelBtn = $('#cancelRunBtn');
     if (cancelBtn) cancelBtn.style.display = 'none';
@@ -3267,13 +3465,14 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 
     state.viewRunId = runId;
     state.viewRunKind = 'stream';
+    if (!preserveExisting) setLogDownloads([runId]);
 
     const cancelBtn = $('#cancelRunBtn');
     if (cancelBtn) cancelBtn.style.display = '';
 
     setRunLogMeta(metaText);
 
-    const es = new EventSource(`/runs/${encodeURIComponent(runId)}/stream`);
+    const es = new EventSource(`/runs/${encodeURIComponent(runId)}/stream?tail_bytes=262144`);
     state.es = es;
 
     const onState = (ev) => {
@@ -4472,6 +4671,8 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 
     $('#set_base_url').value = llm.base_url || '';
     $('#set_model').value = llm.model || '';
+    $('#set_tokens_before_summarize').value = llm.tokens_before_summarize ?? 50000;
+    $('#set_summarization_status').textContent = 'Check the saved model to see its effective threshold.';
     $('#set_api_key_env').value = llm.api_key_env || '';
     $('#set_llm_credential_source').value = llm.credential_source || (llm.api_key_env ? 'environment' : 'none');
     $('#set_llm_api_key').value = '';
@@ -4601,7 +4802,32 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
   }
 
+  async function checkSummarization() {
+    const button = $('#checkSummarizationBtn');
+    const status = $('#set_summarization_status');
+    const sessionId = state._settingsMode === 'session' ? state._settingsSessionId : null;
+    button.disabled = true;
+    status.textContent = 'Checking saved model…';
+    try {
+      const query = sessionId ? '?session_id=' + encodeURIComponent(sessionId) : '';
+      const result = await api('GET', '/settings/summarization' + query);
+      const threshold = Number(result.tokens_before_summarize).toLocaleString();
+      status.textContent = result.context_window == null
+        ? `Summarize at ${threshold} tokens (fallback; context unknown).`
+        : `Summarize at ${threshold} tokens (70% of ${Number(result.context_window).toLocaleString()}).`;
+    } catch (e) {
+      status.textContent = e.message || String(e);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   async function saveSettings() {
+    const fallback = Number($('#set_tokens_before_summarize').value);
+    if (!Number.isSafeInteger(fallback) || fallback <= 0) {
+      alert('Summarization fallback must be a positive whole number.');
+      return;
+    }
     let modelKwargs;
     let embeddingModelKwargs;
     try {
@@ -4637,6 +4863,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     const llmPatch = {
       base_url: ($('#set_base_url').value || '').trim() || null,
       model: ($('#set_model').value || '').trim() || null,
+      tokens_before_summarize: fallback,
       api_key_env: ($('#set_api_key_env').value || '').trim() || null,
       model_kwargs: modelKwargs,
     };
@@ -4730,6 +4957,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
       if (credentialSaveError) return;
     }
 
+    $('#set_summarization_status').textContent = 'Settings saved. Check the saved model to refresh its effective threshold.';
     const saved = $('#settingsSaved');
     if (saved) {
       saved.textContent = 'Saved.';
@@ -4854,6 +5082,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
 
     $('#clearLogsBtn').onclick = () => { clearLogs(); };
+    $('#deleteStoredLogsBtn').onclick = deleteStoredRunLogs;
 
     $('#sendMsgBtn').onclick = sendMessage;
     $('#cancelRunBtn').onclick = cancelActiveRun;
@@ -4891,6 +5120,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     $('#set_embedding_remove_key').onclick = () => removeStoredCredential('embedding');
 
     $('#saveSettingsBtn').onclick = saveSettings;
+    $('#checkSummarizationBtn').onclick = checkSummarization;
 
     document.addEventListener('click', (e) => {
       if (!state._openSessionMenu) return;
@@ -5548,6 +5778,48 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         return EnvironmentRunRecord.model_validate(manifest)
 
     @app.get(
+        "/environment-runs/{run_id}/logs/{stream}",
+        dependencies=[Depends(require_auth)],
+    )
+    async def download_environment_log(
+        run_id: str,
+        stream: Literal["stdout", "stderr"],
+        tail_bytes: int | None = Query(default=None, ge=1, le=262144),
+    ):
+        try:
+            read_environment_run_manifest(dashboard_group, run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Run not found"
+            ) from exc
+        paths = get_environment_run_paths(dashboard_group, run_id)
+        return await asyncio.to_thread(
+            _log_response, paths.run_dir, stream, run_id, tail_bytes
+        )
+
+    @app.delete(
+        "/environment-runs/{run_id}/logs", dependencies=[Depends(require_auth)]
+    )
+    async def delete_environment_logs(run_id: str) -> dict[str, Any]:
+        try:
+            manifest = read_environment_run_manifest(dashboard_group, run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Run not found"
+            ) from exc
+        # A worker can publish a terminal manifest before its pipes finish draining.
+        if (
+            manifest.get("status") not in TERMINAL_STATUSES
+            or run_id in environment_rm._inflight
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Wait for the run to finish before deleting stored logs",
+            )
+        paths = get_environment_run_paths(dashboard_group, run_id)
+        return await asyncio.to_thread(_delete_captured_logs, paths.run_dir)
+
+    @app.get(
         "/environment-runs/{run_id}/events",
         dependencies=[Depends(require_auth)],
     )
@@ -5852,21 +6124,27 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
           <div>
             <div class="sectionHead" style="margin-bottom:2px">Run logs</div>
             <div class="muted small mono" id="runLogMeta">No run selected.</div>
+            <div class="muted small">Recent output only (last 5 runs, bounded per stream). Full logs:
+              <select id="logDownloadRun" aria-label="Run to download"></select>
+              <a id="downloadstdout" hidden download>stdout</a> /
+              <a id="downloadstderr" hidden download>stderr</a>
+            </div>
           </div>
           <div class="row" style="justify-content:flex-end">
-            <button class="btn" id="clearLogsBtn" type="button">Clear</button>
+            <button class="btn" id="clearLogsBtn" type="button">Clear preview</button>
+            <button class="btn" id="deleteStoredLogsBtn" type="button" disabled title="Permanently delete captured stdout/stderr for the selected finished run">Delete stored logs</button>
           </div>
         </div>
 
         <details class="logDetails" id="stdoutDetails" open>
-          <!-- summary class="logHead">stdout</summary -->
+          <summary class="logHead">stdout</summary>
           <pre class="log" id="stdoutLog"></pre>
         </details>
 
-        <!-- details class="logDetails" id="stderrDetails">
+        <details class="logDetails" id="stderrDetails">
           <summary class="logHead">stderr</summary>
           <pre class="log" id="stderrLog"></pre>
-        </details -->
+        </details>
       </div>
     </div>
   </div>
@@ -6011,6 +6289,9 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             <div class="sectionHead">LLM</div>
             <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_base_url" placeholder="Model Provider Default" /></div>
             <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_model" placeholder="openai:gpt-5.4-mini" /></div>
+            <div class="fieldRow"><label class="label" for="set_tokens_before_summarize">Summarization fallback (tokens)</label><input class="input" id="set_tokens_before_summarize" type="number" min="1" step="1" /></div>
+            <div class="fieldHelp"><div></div><div class="fieldHelpText">Summarize at 70% of the model context window. Use this fallback only when the context limit is unknown. Changes apply to new runs; individual agents can override the fallback.</div></div>
+            <div class="fieldRow"><div class="label">Effective threshold</div><div><button class="btn" id="checkSummarizationBtn" type="button">Check saved model</button><div class="muted small" id="set_summarization_status" role="status"></div></div></div>
             <div class="globalCredentialOnly">
               <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_llm_credential_source"><option value="stored">Keyring</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
               <div id="set_llm_stored_fields">

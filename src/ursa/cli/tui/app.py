@@ -52,6 +52,10 @@ from ursa.cli.tui.widgets import (
 )
 from ursa.util import crossplatform
 from ursa.util import mcp as ursa_mcp
+from ursa.util.model_context import (
+    model_context_window,
+    summarization_threshold,
+)
 from ursa.util.tqdm_lock import install_thread_only_tqdm_lock
 
 
@@ -191,19 +195,19 @@ class UrsaTextualApp(App[None]):
 
     def _update_status(self, state: str) -> None:
         items = [
-            self.hitl.config.llm_model.pretty_repr(short=True),
-            f"{self.total_tokens:,} tokens",
+            Text(self.hitl.config.llm_model.pretty_repr(short=True)),
+            Text(f"{self.total_tokens:,} tokens"),
         ]
         if agent_name := self.hitl.config.agent_name:
-            items.append(f"agent {agent_name}")
-        items.append(state)
+            items.append(Text(f"agent {agent_name}"))
+        items.append(Text(state))
         # The agent worker's tail can run while teardown is pruning the
         # tree; a bare query here crashes the worker and surfaces as
         # WorkerFailed at run_test exit.
         status = self.query("#status")
         if not status:
             return
-        status.first(Static).update(Text("  •  ".join(items)))
+        status.first(Static).update(Text("  •  ").join(items))
 
     def add_tokens(self, usage: TokenUsage) -> None:
         self.total_tokens += usage.total_tokens
@@ -557,7 +561,23 @@ class UrsaTextualApp(App[None]):
     def _resolved_config_yaml(self) -> str:
         """Serialize the active, already-resolved runtime configuration."""
         values = config_file_value(self.hitl.config, include_defaults=True)
-        return yaml.safe_dump(values, sort_keys=False, allow_unicode=True)
+        fallbacks = [("global", values)]
+        fallbacks.extend((values.get("agent_config") or {}).items())
+        comments = ["# Effective thresholds for the selected model."]
+        for name, config in fallbacks:
+            if "tokens_before_summarize" in config:
+                fallback = config["tokens_before_summarize"]
+                config["tokens_before_summarize"] = summarization_threshold(
+                    self.hitl.model, fallback
+                )
+                comments.append(
+                    f"# Configured fallback ({name}): {fallback} tokens."
+                )
+        return (
+            "\n".join(comments)
+            + "\n"
+            + yaml.safe_dump(values, sort_keys=False, allow_unicode=True)
+        )
 
     def _select_theme(self, theme: str | None) -> None:
         if theme is not None:
@@ -620,6 +640,10 @@ class UrsaTextualApp(App[None]):
 
     def _status_markdown(self) -> str:
         emb_model_cfg = self.hitl.config.emb_model
+        window = model_context_window(self.hitl.model)
+        threshold = summarization_threshold(
+            self.hitl.model, self.hitl.config.tokens_before_summarize
+        )
         rows = [
             ("Input tokens", f"{self.input_tokens:,}"),
             ("Output tokens", f"{self.output_tokens:,}"),
@@ -630,6 +654,28 @@ class UrsaTextualApp(App[None]):
             ("Group", str(getattr(self.hitl, "group", None) or "default")),
             ("LLM model", self.hitl.config.llm_model.model),
             ("LLM Endpoint", self.hitl.config.llm_model.endpoint_repr()),
+            (
+                "Context window",
+                f"{window:,} tokens" if window is not None else "Unknown",
+            ),
+            (
+                "Context source",
+                "Ollama num_ctx"
+                if getattr(self.hitl.model, "num_ctx", None) is not None
+                else getattr(
+                    self.hitl.model,
+                    "_ursa_context_source",
+                    "LangChain profile" if window is not None else "Unknown",
+                ),
+            ),
+            (
+                "Summarization threshold"
+                if window is not None
+                else "Default summarization threshold",
+                f"{threshold:,} tokens (70%)"
+                if window is not None
+                else f"{threshold:,} tokens (fallback; agents may override)",
+            ),
             (
                 "Embedding model",
                 emb_model_cfg.model if emb_model_cfg else "None",

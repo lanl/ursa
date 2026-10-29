@@ -38,6 +38,59 @@ print(agent.format_result(state))
 | `use_web` | `bool` | `False` | When true, adds web, OSTI, and arXiv search tools. |
 | `**kwargs` | `dict` | `{}` | Passed to `BaseAgent` / `AgentWithTools`, including workspace, persistence, group, RAG tool, MCP, and checkpoint-related options. |
 
+## Context summarization
+
+Chat and execution agents summarize conversation history when its approximate
+token count reaches **70% of the selected model's context window**. The count
+includes the system prompt and agent tool definitions. Recent messages are
+preserved according to `messages_to_keep`.
+
+URSA resolves the window when initializing the CLI's selected model:
+
+- An explicit `profile.max_input_tokens` or Ollama `num_ctx` takes precedence.
+- Custom OpenAI-compatible endpoints are queried for LiteLLM `/model/info`,
+  `/model_group/info`, or enriched `/models` metadata. Limits are matched by the
+  selected public alias; if several deployments advertise limits, the smallest
+  is used. Requests retain the configured client's authentication and TLS settings,
+  use a three-second timeout, and do not retry connection failures.
+- Ollama's `/api/show` can supply a model's configured `num_ctx`; `/api/ps` reports
+  the allocated context of a running model. The TUI checks again after each model
+  response. An unloaded model without `num_ctx` remains unknown until then:
+  its architectural maximum does not establish the server's allocated window.
+- Other models use their LangChain integration's local profile catalog. For an
+  official OpenAI model missing from that catalog, URSA reads the current
+  [models.dev catalog](https://models.dev), the upstream source of LangChain's
+  model profiles. The public catalog is fetched anonymously once per process,
+  with a three-second timeout. URSA keeps no model-specific OpenAI table.
+  OpenAI's `/models` API does not expose context limits; a model can still be
+  unknown if the catalog is unavailable or has not added it yet.
+
+The resolved limit is shared by summarization and the TUI. `/status` shows its
+source. Token checks and status rendering make no requests. Output limits such
+as `max_tokens` are never treated as context limits.
+
+Metadata routes can be absent, restricted by the API key, or missing a limit.
+When the window is unknown, `tokens_before_summarize` is the fallback threshold
+(default: `50000`). Set it globally with top-level `tokens_before_summarize` in
+YAML or `URSA_TOKENS_BEFORE_SUMMARIZE`, or override it for an individual agent
+under `agent_config`. This is a token threshold, not a context window to which
+70% is applied. A public model name alone cannot establish a custom endpoint's
+deployment limit. You can supply the actual limit explicitly in configuration:
+
+```yaml
+llm_model:
+  model: my-model
+  model_provider: openai
+  base_url: https://inference.example/v1
+  profile:
+    max_input_tokens: 32768
+```
+
+The same `profile` can be passed when constructing a LangChain chat model.
+This is a summarization trigger, not a guarantee that every request fits: token
+counts are approximate, and a large new message or preserved tail can exceed
+the window.
+
 ## Default tools
 
 The current `ChatAgent` always binds the following tools:

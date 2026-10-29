@@ -88,6 +88,10 @@ from ursa.util.checkpoint_retention import (
 )
 from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER, AgentEvents
 from ursa.util.mcp import load_mcp_tools_with_sources
+from ursa.util.model_context import (
+    DEFAULT_SUMMARIZATION_THRESHOLD,
+    summarization_threshold,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +275,7 @@ class BaseAgent(Generic[TState], ABC):
         autosave_metrics: bool = True,
         otel_metrics: Optional[bool] = None,
         thread_id: Optional[str] = None,
-        tokens_before_summarize: int = 50000,
+        tokens_before_summarize: int = DEFAULT_SUMMARIZATION_THRESHOLD,
         messages_to_keep: int = 20,
         max_single_tool_message_tokens: int = 100000,
         rag_tools: str | Sequence[str] | None = None,
@@ -283,6 +287,8 @@ class BaseAgent(Generic[TState], ABC):
 
         Args:
             llm: a BaseChatModel instance.
+            tokens_before_summarize: Fallback threshold when the model context
+                window is unknown. Otherwise summarize at 70% of that window.
             checkpointer: Optional checkpoint saver for persisting agent state.
             enable_metrics: Whether to collect performance and usage metrics.
             metrics_dir: Directory path where metrics will be saved.
@@ -966,7 +972,8 @@ class BaseAgent(Generic[TState], ABC):
         This preserves the first/system message and the last
         ``self.messages_to_keep`` messages, replacing the middle of the
         transcript with an LLM-generated summary when the approximate token count
-        exceeds ``self.tokens_before_summarize``.
+        reaches 70% of the model context window, or
+        ``self.tokens_before_summarize`` when that window is unknown.
 
         The method also avoids creating dangling tool-call pairs when possible by
         moving tool responses that correspond to summarized-away calls into the
@@ -990,8 +997,13 @@ class BaseAgent(Generic[TState], ABC):
         else:
             head, body = [], messages
 
-        tokens_before = count_tokens_approximately(body)
-        if tokens_before <= self.tokens_before_summarize:
+        tokens_before = count_tokens_approximately(
+            messages, tools=list(getattr(self, "tools", {}).values())
+        )
+        threshold = summarization_threshold(
+            self.llm, self.tokens_before_summarize
+        )
+        if tokens_before < threshold:
             return new_state, False
 
         events.emit(

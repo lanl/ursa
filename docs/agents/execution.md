@@ -30,7 +30,7 @@ The returned state contains the conversation/tool transcript in `state["messages
 | `llm` | `BaseChatModel` | required | Language model used for execution, review, and recap. |
 | `log_state` | `bool` | `False` | Write debug state to `execution_agent.json`. |
 | `extra_tools` | `list[BaseTool] \| None` | `None` | Additional LangChain tools to bind. |
-| `tokens_before_summarize` | `int` | `50000` | Token budget before message context is summarized/compacted. |
+| `tokens_before_summarize` | `int` | `50000` | Fallback threshold when the model context window is unknown; otherwise summarize at 70% of that window (see [context summarization](chat.md#context-summarization)). |
 | `messages_to_keep` | `int` | `20` | Number of recent messages to preserve during context compaction. |
 | `use_web` | `bool` | `False` | Add web, OSTI, and arXiv search tools. |
 | `safe_codes` | `list[str] \| None` | `['python', 'julia']` | Interpreters/languages treated as safe command contexts by the command-safety machinery. |
@@ -77,6 +77,11 @@ The current loop is:
 5. The review node evaluates whether the work adequately addresses the original user request.
 6. If the review says the work is incomplete, the review rationale is appended as a new human feedback message and the graph loops back to `agent`.
 7. If the review says the work is complete, the graph proceeds to `recap` and finishes.
+8. After three rejected reviews without intervening tool execution, the graph also
+   proceeds to `recap`, but explicitly reports that work remains incomplete. This
+   bounds executor/reviewer ping-pong; it does not convert a failed review into a
+   passing one. Tool execution and each new invocation reset this counter. Text-only
+   work is not forced to call tools, but has the same three-review retry bound.
 
 The structured review object is represented as:
 
@@ -96,7 +101,13 @@ The graph stores this value in `state["review"]`. Incomplete reviews intentional
 - `symlinkdir` — optional symlink metadata for exposing external directories inside the workspace.
 - `review` — optional `ReviewAssessment` from the structured review node.
 
-The last message after a successful invocation is the recap. `agent.format_result(state)` returns that message text.
+- `reviews_without_tools` - consecutive rejected reviews since the last tool
+  execution (reset for every invocation).
+
+The last message after an invocation is the recap. `agent.format_result(state)`
+returns that message text. Internal recap instructions are sent only for the recap
+call, not saved as user messages in checkpointed history. The recap response itself
+is retained. A stopped, incomplete run retains `review.is_complete=False`.
 
 ## Custom tools
 

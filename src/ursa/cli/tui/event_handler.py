@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from time import monotonic
 from typing import TYPE_CHECKING, Any
@@ -17,6 +18,7 @@ from ursa.cli.tui.helpers import (
 )
 from ursa.cli.tui.turn import Turn
 from ursa.util.events import DEFAULT_EVENT_NAME
+from ursa.util.model_metadata import refresh_ollama_context
 
 if TYPE_CHECKING:
     from ursa.cli.tui.app import UrsaTextualApp
@@ -158,6 +160,8 @@ class TextualEventHandler(AsyncCallbackHandler):
         })
 
     async def on_llm_end(self, response: Any, **_: Any) -> None:
+        # Ollama may only expose its allocated window after the first response.
+        await asyncio.to_thread(refresh_ollama_context, self.app.hitl.model)
         usage = _token_usage_breakdown(response)
         if self.app.is_ui_thread:
             self._record_tokens(usage)

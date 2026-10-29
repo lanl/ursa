@@ -98,6 +98,7 @@ def _init_llm(
     from langchain.chat_models import init_chat_model  # type: ignore
 
     from ursa.util.http import build_httpx_async_client, build_httpx_client
+    from ursa.util.model_metadata import load_model_context
 
     raw_base_url = llm_cfg.get("base_url")
     base_url = str(raw_base_url).strip() if raw_base_url is not None else None
@@ -137,7 +138,9 @@ def _init_llm(
             build_httpx_async_client(verify=True),
         )
 
-    return init_chat_model(**kwargs)
+    llm = init_chat_model(**kwargs)
+    load_model_context(llm, explicit_profile="profile" in model_kwargs)
+    return llm
 
 
 def _init_embedding(
@@ -279,6 +282,7 @@ def main() -> int:
 
         # Late import to keep worker startup cheap.
         from ursa_dashboard.registry import REGISTRY
+        from ursa_dashboard.settings import LLMSettings
 
         if args.agent_id not in REGISTRY:
             raise ValueError(f"Unknown agent_id: {args.agent_id}")
@@ -304,6 +308,10 @@ def main() -> int:
         secrets_payload = {}
         # Ensure consistent cross-session threading.
         agent_init = dict(agent_init)
+        agent_init.setdefault(
+            "tokens_before_summarize",
+            LLMSettings.model_validate(llm_cfg).tokens_before_summarize,
+        )
         agent_init["thread_id"] = "ursa"
         agent_init.setdefault("enable_metrics", True)
         if embedding is not None:

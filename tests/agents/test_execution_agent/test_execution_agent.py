@@ -308,7 +308,8 @@ def test_execution_agent_keeps_tool_calls_out_of_summary_and_recap(
         ],
         "symlinkdir": {},
     })
-    assert not recap_result["messages"][1].tool_calls
+    assert len(recap_result["messages"]) == 1
+    assert not recap_result["messages"][0].tool_calls
 
     query_result = execution_agent.query_executor(
         {"messages": [HumanMessage(content="hi")], "symlinkdir": {}},
@@ -378,3 +379,162 @@ def test_patch_dangling_tool_calls_emits_events(
     assert events[0][1]["stage"] == "dangling_tool_calls"
     assert events[0][1]["tool_call_ids"] == ["call-1"]
     assert "[Dangling Tool Call Warning]" not in capsys.readouterr().out
+
+
+def test_recap_instruction_is_not_checkpointed(
+    chat_model, monkeypatch, tmp_path
+):
+    from ursa.prompt_library.execution_prompts import recap_prompt
+
+    executor_inputs = []
+    original = ToolReadyFakeChatModel.invoke
+
+    def record(self, input, *args, **kwargs):
+        executor_inputs.append(list(input))
+        return original(self, input, *args, **kwargs)
+
+    monkeypatch.setattr(ToolReadyFakeChatModel, "invoke", record)
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.invoke_structured",
+        lambda *a, **k: ReviewAssessment(is_complete=True, reason="done"),
+    )
+    agent = ExecutionAgent(
+        llm=chat_model,
+        workspace=tmp_path,
+        checkpointer=Checkpointer.from_workspace(tmp_path / "checkpoints"),
+    )
+    try:
+        first = agent.invoke("Review the current work without changing it.")
+        second = agent.invoke("Now revise my own implementation.")
+    finally:
+        agent.close()
+    assert any(
+        messages[-1].content == recap_prompt for messages in executor_inputs
+    )
+    for state in (first, second):
+        assert not any(
+            message.content == recap_prompt for message in state["messages"]
+        )
+    assert not any(
+        message.content == recap_prompt for message in executor_inputs[-2]
+    )
+    assert (
+        executor_inputs[-2][-1].content == "Now revise my own implementation."
+    )
+
+
+def test_incomplete_reviews_without_tools_stop_honestly_and_reset_per_invoke(
+    chat_model, monkeypatch, tmp_path
+):
+    reviews = []
+
+    def reject(*args, **kwargs):
+        reviews.append(args[2])
+        return ReviewAssessment(
+            is_complete=False, reason="Required check is missing"
+        )
+
+    monkeypatch.setattr("ursa.agents.execution_agent.invoke_structured", reject)
+    agent = ExecutionAgent(
+        llm=chat_model,
+        workspace=tmp_path,
+        checkpointer=Checkpointer.from_workspace(tmp_path / "checkpoints"),
+    )
+    try:
+        first = agent.invoke("Check the implementation")
+        assert len(reviews) == 3
+        assert first["review"].is_complete is False
+        assert first["reviews_without_tools"] == 3
+        assert "Work remains incomplete" in agent.format_result(first)
+        agent.invoke("Try the check again")
+        assert len(reviews) == 6
+    finally:
+        agent.close()
+
+
+def test_tool_execution_resets_no_progress_review_count(chat_model, tmp_path):
+    agent = ExecutionAgent(llm=chat_model, workspace=tmp_path)
+    _ = agent.compiled_graph
+    result = agent.query_executor(
+        {
+            "messages": [
+                HumanMessage("Check the work"),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "fake_run_command",
+                            "args": {"query": "pwd"},
+                            "id": "check",
+                        }
+                    ],
+                ),
+                ToolMessage(content="check completed", tool_call_id="check"),
+            ],
+            "symlinkdir": {},
+            "reviews_without_tools": 2,
+        },
+        runtime=SimpleNamespace(context=agent.context),
+    )
+    assert result["reviews_without_tools"] == 0
+
+
+def test_compacted_recap_updates_message_channel_only(
+    chat_model, monkeypatch, tmp_path
+):
+    from langgraph.types import Overwrite
+
+    agent = ExecutionAgent(llm=chat_model, workspace=tmp_path)
+    monkeypatch.setattr(
+        agent, "prepare_messages_context", lambda state, **kw: (state, True)
+    )
+    result = agent.recap({
+        "messages": [HumanMessage("Task context")],
+        "symlinkdir": {},
+    })
+    assert isinstance(result["messages"], Overwrite)
+    assert len(result["messages"].value) == 2
+    assert isinstance(result["messages"].value[-1], AIMessage)
+
+
+def test_reviews_with_intervening_tool_execution_can_continue(
+    monkeypatch, tmp_path
+):
+    responses = []
+    for i in range(3):
+        if i:
+            responses.append(
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "fake_run_command",
+                            "args": {"query": "pwd"},
+                            "id": f"check-{i}",
+                        }
+                    ],
+                )
+            )
+        responses.append(AIMessage(content="Review the current result"))
+    responses.extend([
+        AIMessage(content="Final correction"),
+        AIMessage(content="Recap"),
+    ])
+    reviews = []
+
+    def assess(*args, **kwargs):
+        reviews.append(args[2])
+        return ReviewAssessment(is_complete=len(reviews) == 4, reason="checked")
+
+    monkeypatch.setattr("ursa.agents.execution_agent.invoke_structured", assess)
+    agent = ExecutionAgent(
+        llm=ToolReadyFakeChatModel(messages=iter(responses)), workspace=tmp_path
+    )
+    result = agent.invoke("Check the work and revise it")
+    assert len(reviews) == 4
+    assert result["review"].is_complete is True
+    assert "Work remains incomplete" not in agent.format_result(result)
+    assert (
+        len([msg for msg in result["messages"] if isinstance(msg, ToolMessage)])
+        == 2
+    )
