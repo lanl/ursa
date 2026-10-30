@@ -29,7 +29,7 @@ def test_provider_catalog_profiles(wrapper, fields):
     window = model.profile["max_input_tokens"]
     assert window > 0
     assert model_context_window(model.bind(extra_headers={})) == window
-    assert summarization_threshold(model) == (window * 7 + 9) // 10
+    assert summarization_threshold(model) == round(window * 0.7)
     assert summarization_threshold(model.bind(extra_headers={})) == (
         summarization_threshold(model)
     )
@@ -68,12 +68,12 @@ def test_ollama_allocation_overrides_profile_and_respects_bound_options():
         num_ctx=8192,
         profile={"max_input_tokens": 131072},
     )
-    assert summarization_threshold(model) == 5735
+    assert summarization_threshold(model) == 5734
     bound = model.bind(options={"num_ctx": 4096}).with_config(tags=["test"])
     assert model_context_window(bound) == 4096
     assert summarization_threshold(bound) == 2868
     assert (
-        summarization_threshold(bound.bind(options={"num_ctx": 8192})) == 5735
+        summarization_threshold(bound.bind(options={"num_ctx": 8192})) == 5734
     )
     # Other bound options replace num_ctx as well; server defaults are unknown.
     assert (
