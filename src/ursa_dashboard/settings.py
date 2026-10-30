@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from ursa.cli.config import UrsaConfig, resolve_ursa_config
 from ursa.security import enforce_group_base_url_policy
+from ursa.util.model_context import DEFAULT_SUMMARIZATION_THRESHOLD
 
 from .credentials import assert_no_raw_api_key
 from .storage import read_json, utc_now, write_json
@@ -23,6 +24,12 @@ def _qualified_model_name(model_config) -> str:
 class LLMSettings(BaseModel):
     model: str = "openai:gpt-5.2"
     base_url: str | None = None
+    tokens_before_summarize: int = Field(
+        default=DEFAULT_SUMMARIZATION_THRESHOLD,
+        gt=0,
+        strict=True,
+        description="Fallback summarization threshold; known context windows use 70%.",
+    )
 
     # Security: settings contain only a credential source/reference. Stored
     # keys live in the keyring; environment variables remain an explicit
@@ -188,6 +195,9 @@ def dashboard_llm_patch_from_ursa_config(
     """
 
     cfg = UrsaConfig.from_file(Path(path))
+    has_summarization_fallback = (
+        "tokens_before_summarize" in cfg.model_fields_set
+    )
     llm_cfg = cfg.llm_model
     if isinstance(llm_cfg.api_key, SecretStr):
         raise ValueError(
@@ -223,6 +233,8 @@ def dashboard_llm_patch_from_ursa_config(
     llm_api_key_env = llm_cfg.api_key_env
 
     patch: dict[str, Any] = {"model": _qualified_model_name(llm_cfg)}
+    if has_summarization_fallback:
+        patch["tokens_before_summarize"] = cfg.tokens_before_summarize
     if llm_cfg.base_url is not None:
         patch["base_url"] = llm_cfg.base_url
     if llm_api_key_env is not None:

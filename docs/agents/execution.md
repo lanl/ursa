@@ -30,7 +30,7 @@ The returned state contains the conversation/tool transcript in `state["messages
 | `llm` | `BaseChatModel` | required | Language model used for execution, review, and recap. |
 | `log_state` | `bool` | `False` | Write debug state to `execution_agent.json`. |
 | `extra_tools` | `list[BaseTool] \| None` | `None` | Additional LangChain tools to bind. |
-| `tokens_before_summarize` | `int` | `50000` | Token budget before message context is summarized/compacted. |
+| `tokens_before_summarize` | `int` | `50000` | Fallback threshold when the model context window is unknown; otherwise summarize at 70% of that window (see [context summarization](chat.md#context-summarization)). |
 | `messages_to_keep` | `int` | `20` | Number of recent messages to preserve during context compaction. |
 | `use_web` | `bool` | `False` | Add web, OSTI, and arXiv search tools. |
 | `safe_codes` | `list[str] \| None` | `['python', 'julia']` | Interpreters/languages treated as safe command contexts by the command-safety machinery. |

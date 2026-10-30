@@ -227,7 +227,9 @@ class HITL:
             if deps is not None and not has_optional_dep_group(deps):
                 continue
 
-            config = {}
+            config = {
+                "tokens_before_summarize": self.config.tokens_before_summarize
+            }
             if agent_name in {"chat", "execute", "deep_review", "dsi"}:
                 config.update(rag_tool_config)
             self.agents[agent_name] = AgentHITL(

@@ -702,6 +702,7 @@ async def test_slash_picker_status_config_is_read_only_and_selectable(
     tmp_path,
 ):
     app = UrsaTextualApp(status_hitl(tmp_path))
+    app.hitl.model = SimpleNamespace(profile={"max_input_tokens": 128000})
 
     async with app.run_test(size=(80, 24)) as pilot:
         screen = await open_status_from_slash_picker(pilot)
@@ -720,6 +721,8 @@ async def test_slash_picker_status_config_is_read_only_and_selectable(
         assert editor._highlight_query is not None
         assert "llm_model:" in editor.text
         assert "model: test-model" in editor.text
+        assert "tokens_before_summarize: 89600" in editor.text
+        assert app.hitl.config.tokens_before_summarize == 50000
         assert "env: OPENAI_API_KEY" in editor.text
         assert "**********" in editor.text
         assert "actual-secret" not in editor.text

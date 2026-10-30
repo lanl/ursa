@@ -64,6 +64,7 @@ workspace: ./ursa-workspace
 group: default
 thread_id: null
 use_web: false
+tokens_before_summarize: 50000
 llm_model:
   model: openai:gpt-5.4
 emb_model: null
@@ -88,6 +89,33 @@ agent_config:
   prompt:
     use_web: false
 ```
+
+## Summarization fallback
+
+When a model's context limit is known, agents summarize at 70% of that limit.
+For unknown limits, set the fallback threshold in tokens using YAML:
+
+```yaml
+tokens_before_summarize: 80000
+```
+
+Or use an environment variable or CLI flag:
+
+```bash
+URSA_TOKENS_BEFORE_SUMMARIZE=80000 ursa
+ursa --tokens_before_summarize 80000
+```
+
+The value must be a positive integer and defaults to `50000`. It sets the
+summarization trigger directly; the 70% calculation applies only to known model
+limits. The TUI's `/status` Config tab shows the effective threshold, with the
+configured fallback retained in a comment.
+Individual agents can override it through
+`agent_config.<agent>.tokens_before_summarize`.
+
+In the dashboard, **Settings → LLM → Summarization fallback (tokens)** sets
+the fallback for new runs. **Check saved model** displays the effective threshold
+for the saved global or session model settings.
 
 ## `workspace: tmp`
 
