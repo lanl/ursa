@@ -1,4 +1,6 @@
-# References: https://agentskills.io/client-implementation/adding-skills-support
+# References:
+# * https://agentskills.io/client-implementation/adding-skills-support
+# * https://agentskills.io/specification
 
 import re
 from pathlib import Path
