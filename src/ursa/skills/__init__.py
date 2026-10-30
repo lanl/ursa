@@ -24,7 +24,7 @@ class SkillDict(TypedDict):
 class Skill:
     name: str
     description: str
-    _name_re: re.Pattern = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+    _name_re: re.Pattern = re.compile(r"[a-z\d]+(-[a-z\d]+)*")
 
     def __init__(
         self,
