@@ -26,7 +26,7 @@ def get_chatter_system_prompt():
         if skills_directories is None
         else [
             resolved(d)
-            for d in skills_directories.split(":")
+            for d in skills_directories.strip().split(":")
             if resolved(d).is_dir()
         ]
     )
