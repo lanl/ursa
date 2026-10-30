@@ -40,7 +40,6 @@ class Skill:
         if not skill_md_path.is_file():
             raise FileNotFoundError("SKILL.md not found.")
         self.skill_md_path = skill_md_path.expanduser().resolve()
-        self.skill_dir = self.skill_md_path.parent
         self.max_description_length = max_description_length
         self.max_name_length = max_name_length
         self.parse_skill()
@@ -126,10 +125,10 @@ def create_skill_catalog(directories: list[Path]) -> dict[str, SkillDict]:
     skills = {}
     for directory in reversed(directories):
         d = directory.expanduser().resolve()
-        skills_dirs = [p.parent for p in d.rglob("SKILL.md")]
-        for d in skills_dirs:
+        skill_md_paths = [p for p in d.rglob("SKILL.md") if p.is_file()]
+        for p in skill_md_paths:
             try:
-                skill = Skill(d / "SKILL.md")
+                skill = Skill(p)
                 skills[skill.name] = SkillDict(
                     name=skill.name,
                     description=skill.description,
