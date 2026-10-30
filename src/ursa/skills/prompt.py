@@ -1,3 +1,4 @@
+# From: https://agentskills.io/client-implementation/adding-skills-support#behavioral-instructions
 skills_system_prompt_template = """
 The following skills provide specialized instructions for specific tasks.
 When a task matches a skill's description, use your read_file tool to load
