@@ -16,7 +16,7 @@ class SkillError(Exception):
 class SkillDict(TypedDict):
     name: str
     description: str
-    location: Path
+    location: str
     body: str
 
 
@@ -135,7 +135,7 @@ def create_skill_catalog(directories: list[Path]) -> dict[str, SkillDict]:
                     name=skill.name,
                     description=skill.description,
                     body=skill.body,
-                    location=skill.skill_md_path,
+                    location=str(skill.skill_md_path),
                 )
             except SkillError as e:
                 _INVALID_SKILLS[str(d)] = str(e)
