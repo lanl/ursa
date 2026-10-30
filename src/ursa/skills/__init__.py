@@ -17,7 +17,6 @@ class SkillDict(TypedDict):
     name: str
     description: str
     location: str
-    body: str
 
 
 class Skill:
@@ -134,7 +133,6 @@ def create_skill_catalog(directories: list[Path]) -> dict[str, SkillDict]:
                 skills[skill.name] = SkillDict(
                     name=skill.name,
                     description=skill.description,
-                    body=skill.body,
                     location=str(skill.skill_md_path),
                 )
             except SkillError as e:
