@@ -111,5 +111,6 @@ def create_skill_catalog(directories: list[Path]) -> dict[str, SkillDict]:
                     location=str(skill.path),
                 )
             except SkillError as e:
-                _INVALID_SKILLS[str(d)] = str(e)
+                # NOTE: Where to log this information?
+                _INVALID_SKILLS[str(p)] = str(e)
     return skills
