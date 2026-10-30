@@ -4,7 +4,7 @@ workspace: tmp
 group: default
 use_web: true
 # Fallback only when the model context is unknown; otherwise the trigger is 70%.
-tokens_before_summarize: 50000
+tokens_before_summarize: 70000
 inference_providers:
   openai_public:
     base_url: https://api.openai.com/v1
