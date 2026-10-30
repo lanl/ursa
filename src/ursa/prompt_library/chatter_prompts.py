@@ -14,20 +14,15 @@ The documentation for URSA is available at https://lanl.github.io/ursa/.
 """
 
 
-def resolved(path: str) -> Path:
-    return Path(path).expanduser().resolve()
-
-
 def get_chatter_system_prompt():
-    # Set URSA_SKILLS_DIR env var to colon-separated dirs to discover skills.
-    skills_directories = os.environ.get("URSA_SKILLS_DIRS")
+    # Set URSA_SKILLS_PATH env var to colon-separated dirs to discover skills.
+    skills_dirs = os.environ.get("URSA_SKILLS_PATH")
+
     skill_catalog = create_skill_catalog(
         directories=[]
-        if skills_directories is None
+        if skills_dirs is None
         else [
-            resolved(d)
-            for d in skills_directories.strip().split(":")
-            if resolved(d).is_dir()
+            Path(d) for d in skills_dirs.strip().split(":") if Path(d).is_dir()
         ]
     )
 
