@@ -2196,6 +2196,14 @@ only when you need to change a default or select another provider.</p>
 <p>You should see the full-screen URSA interface. Type <code>/</code> to browse app
 commands, <code>#</code> to route a message to an agent, or <code>@</code> to insert a workspace
 path.</p>
+<p>Use <code>/status</code> to see the context window and its 70% summarization threshold
+(or the default fallback, which individual agents can override), plus the source
+of the context limit. The <strong>Config</strong> tab shows the effective
+<code>tokens_before_summarize</code>; comments preserve the configured fallback values.
+Set <code>tokens_before_summarize</code> in your config or <code>URSA_TOKENS_BEFORE_SUMMARIZE</code>
+to change the fallback, which defaults to 50,000 tokens.
+These values refresh when you switch models. For Ollama,
+the allocated window may only become available after the first response.</p>
 <h3 id="full-screen-interface-controls">Full-screen interface controls<a class="headerlink" href="#full-screen-interface-controls" title="Permanent link">&para;</a></h3>
 <table>
 <thead>

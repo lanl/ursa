@@ -591,6 +591,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#summarization-fallback" class="md-nav__link">
+    <span class="md-ellipsis">
+      Summarization fallback
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#workspace-tmp" class="md-nav__link">
     <span class="md-ellipsis">
       workspace: tmp
@@ -2039,6 +2048,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#summarization-fallback" class="md-nav__link">
+    <span class="md-ellipsis">
+      Summarization fallback
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#workspace-tmp" class="md-nav__link">
     <span class="md-ellipsis">
       workspace: tmp
@@ -2122,12 +2140,13 @@ endpoint. Set <code>OPENAI_API_KEY</code> and skip this configuration entirely.<
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nt">group</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nt">thread_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="nt">use_web</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="nt">llm_model</span><span class="p">:</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai:gpt-5.4</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="nt">emb_model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="nt">rag_tools</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="nt">agent_config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="nt">mcp_servers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="nt">tokens_before_summarize</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">50000</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="nt">llm_model</span><span class="p">:</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai:gpt-5.4</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="nt">emb_model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="nt">rag_tools</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="nt">agent_config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="nt">mcp_servers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
 </code></pre></div>
 <p>Model names normally use <code>&lt;provider&gt;:&lt;model-name&gt;</code>. See
 <a class="autorefs autorefs-internal" href="models/#models-and-inference-providers">Models and inference providers</a> for complete,
@@ -2141,6 +2160,24 @@ tools for supported agents unless an agent overrides it:</p>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">prompt</span><span class="p">:</span>
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">use_web</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
 </code></pre></div>
+<h2 id="summarization-fallback">Summarization fallback<a class="headerlink" href="#summarization-fallback" title="Permanent link">&para;</a></h2>
+<p>When a model's context limit is known, agents summarize at 70% of that limit.
+For unknown limits, set the fallback threshold in tokens using YAML:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">tokens_before_summarize</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">80000</span>
+</code></pre></div>
+<p>Or use an environment variable or CLI flag:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nv">URSA_TOKENS_BEFORE_SUMMARIZE</span><span class="o">=</span><span class="m">80000</span><span class="w"> </span>ursa
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>ursa<span class="w"> </span>--tokens_before_summarize<span class="w"> </span><span class="m">80000</span>
+</code></pre></div>
+<p>The value must be a positive integer and defaults to <code>50000</code>. It sets the
+summarization trigger directly; the 70% calculation applies only to known model
+limits. The TUI's <code>/status</code> Config tab shows the effective threshold, with the
+configured fallback retained in a comment.
+Individual agents can override it through
+<code>agent_config.&lt;agent&gt;.tokens_before_summarize</code>.</p>
+<p>In the dashboard, <strong>Settings → LLM → Summarization fallback (tokens)</strong> sets
+the fallback for new runs. <strong>Check saved model</strong> displays the effective threshold
+for the saved global or session model settings.</p>
 <h2 id="workspace-tmp"><code>workspace: tmp</code><a class="headerlink" href="#workspace-tmp" title="Permanent link">&para;</a></h2>
 <p>Set <code>workspace: tmp</code> to create a temporary workspace for the run. If a local
 directory named <code>tmp</code> already exists, URSA uses that directory.</p>

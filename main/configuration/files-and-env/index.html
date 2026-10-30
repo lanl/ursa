@@ -2220,6 +2220,9 @@ file only for a project-specific or one-off override:</p>
 </div>
 </div>
 <p>Use <code>ursa --help</code> to view supported <code>URSA_...</code> variables.</p>
+<p>For example, <code>URSA_TOKENS_BEFORE_SUMMARIZE=80000</code> changes the summarization
+fallback when the selected model's context limit is unknown. The equivalent
+YAML setting is <code>tokens_before_summarize: 80000</code>.</p>
 <h2 id="environment-interpolation-in-config-files">Environment interpolation in config files<a class="headerlink" href="#environment-interpolation-in-config-files" title="Permanent link">&para;</a></h2>
 <p>URSA config loading supports environment interpolation in YAML values. For MCP server environment blocks, this is useful for passing secrets to subprocesses:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">mcp_servers</span><span class="p">:</span>

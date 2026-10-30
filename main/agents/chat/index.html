@@ -939,6 +939,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#context-summarization" class="md-nav__link">
+    <span class="md-ellipsis">
+      Context summarization
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#default-tools" class="md-nav__link">
     <span class="md-ellipsis">
       Default tools
@@ -2021,6 +2030,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#context-summarization" class="md-nav__link">
+    <span class="md-ellipsis">
+      Context summarization
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#default-tools" class="md-nav__link">
     <span class="md-ellipsis">
       Default tools
@@ -2129,6 +2147,52 @@ tools.</p>
 </tr>
 </tbody>
 </table>
+<h2 id="context-summarization">Context summarization<a class="headerlink" href="#context-summarization" title="Permanent link">&para;</a></h2>
+<p>Chat and execution agents summarize conversation history when its approximate
+token count reaches <strong>70% of the selected model's context window</strong>. The count
+includes the system prompt and agent tool definitions. Recent messages are
+preserved according to <code>messages_to_keep</code>.</p>
+<p>URSA resolves the window when initializing the CLI's selected model:</p>
+<ul>
+<li>An explicit <code>profile.max_input_tokens</code> or Ollama <code>num_ctx</code> takes precedence.</li>
+<li>Custom OpenAI-compatible endpoints are queried for LiteLLM <code>/model/info</code>,
+  <code>/model_group/info</code>, or enriched <code>/models</code> metadata. Limits are matched by the
+  selected public alias; if several deployments advertise limits, the smallest
+  is used. Requests retain the configured client's authentication and TLS settings,
+  use a three-second timeout, and do not retry connection failures.</li>
+<li>Ollama's <code>/api/show</code> can supply a model's configured <code>num_ctx</code>; <code>/api/ps</code> reports
+  the allocated context of a running model. The TUI checks again after each model
+  response. An unloaded model without <code>num_ctx</code> remains unknown until then:
+  its architectural maximum does not establish the server's allocated window.</li>
+<li>Other models use their LangChain integration's local profile catalog. For an
+  official OpenAI model missing from that catalog, URSA reads the current
+  <a href="https://models.dev">models.dev catalog</a>, the upstream source of LangChain's
+  model profiles. The public catalog is fetched anonymously once per process,
+  with a three-second timeout. URSA keeps no model-specific OpenAI table.
+  OpenAI's <code>/models</code> API does not expose context limits; a model can still be
+  unknown if the catalog is unavailable or has not added it yet.</li>
+</ul>
+<p>The resolved limit is shared by summarization and the TUI. <code>/status</code> shows its
+source. Token checks and status rendering make no requests. Output limits such
+as <code>max_tokens</code> are never treated as context limits.</p>
+<p>Metadata routes can be absent, restricted by the API key, or missing a limit.
+When the window is unknown, <code>tokens_before_summarize</code> is the fallback threshold
+(default: <code>50000</code>). Set it globally with top-level <code>tokens_before_summarize</code> in
+YAML or <code>URSA_TOKENS_BEFORE_SUMMARIZE</code>, or override it for an individual agent
+under <code>agent_config</code>. This is a token threshold, not a context window to which
+70% is applied. A public model name alone cannot establish a custom endpoint's
+deployment limit. You can supply the actual limit explicitly in configuration:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">llm_model</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-model</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">model_provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://inference.example/v1</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">profile</span><span class="p">:</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="nt">max_input_tokens</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">32768</span>
+</code></pre></div>
+<p>The same <code>profile</code> can be passed when constructing a LangChain chat model.
+This is a summarization trigger, not a guarantee that every request fits: token
+counts are approximate, and a large new message or preserved tail can exceed
+the window.</p>
 <h2 id="default-tools">Default tools<a class="headerlink" href="#default-tools" title="Permanent link">&para;</a></h2>
 <p>The current <code>ChatAgent</code> always binds the following tools:</p>
 <ul>
@@ -2165,7 +2229,7 @@ tools.</p>
 <h2 id="tui-usage">TUI usage<a class="headerlink" href="#tui-usage" title="Permanent link">&para;</a></h2>
 <p>In the URSA TUI, use the <code>chat</code> agent. Web/search tools are opt-in through a CLI
 flag:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ursa<span class="w"> </span>--use-web
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>ursa<span class="w"> </span>--use-web
 </code></pre></div>
 <p>Without <code>--use-web</code>, the chat agent still has local workspace and experience tools, but it does not have web, OSTI, or arXiv search tools.</p>
 

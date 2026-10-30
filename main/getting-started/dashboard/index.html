@@ -423,6 +423,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#summarization-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      Summarization settings
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#configure-api-credentials" class="md-nav__link">
     <span class="md-ellipsis">
       Configure API credentials
@@ -2039,6 +2048,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#summarization-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      Summarization settings
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#configure-api-credentials" class="md-nav__link">
     <span class="md-ellipsis">
       Configure API credentials
@@ -2130,6 +2148,17 @@ launch with <code>--use-web</code> and disable it for a specific run.</p>
 <li>Follow the activity timeline and inspect generated files in the artifacts
    panel.</li>
 </ol>
+<h2 id="summarization-settings">Summarization settings<a class="headerlink" href="#summarization-settings" title="Permanent link">&para;</a></h2>
+<p>Under <strong>Settings → LLM</strong>, set <strong>Summarization fallback (tokens)</strong> to the threshold
+used when the model's context limit is unknown (default: 50,000). When the limit
+is known, agents summarize at 70% of it. The setting also appears in session
+settings; changes apply to new runs, and explicit agent fallbacks take precedence.
+The dashboard's <code>--config</code> option imports <code>tokens_before_summarize</code> from CLI
+configuration files when provided.</p>
+<p>After saving model settings, use <strong>Check saved model</strong> to display the effective
+threshold. This checks metadata without generating a response. For an unloaded
+Ollama model, the allocated context may be unavailable; configure <code>num_ctx</code> or
+check again once the model is running.</p>
 <h2 id="configure-api-credentials">Configure API credentials<a class="headerlink" href="#configure-api-credentials" title="Permanent link">&para;</a></h2>
 <p>Open <strong>Settings -&gt; LLM</strong> and choose an API-key source:</p>
 <ul>

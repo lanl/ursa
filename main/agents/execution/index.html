@@ -2144,7 +2144,7 @@ include a structured <strong>review-until-complete</strong> loop before the fina
 <td><code>tokens_before_summarize</code></td>
 <td><code>int</code></td>
 <td><code>50000</code></td>
-<td>Token budget before message context is summarized/compacted.</td>
+<td>Fallback threshold when the model context window is unknown; otherwise summarize at 70% of that window (see <a href="../chat/#context-summarization">context summarization</a>).</td>
 </tr>
 <tr>
 <td><code>messages_to_keep</code></td>
