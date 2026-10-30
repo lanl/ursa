@@ -1,14 +1,23 @@
+# References: https://agentskills.io/client-implementation/adding-skills-support
+
 import re
 from pathlib import Path
+from typing import TypedDict
 
 import yaml
+
+_INVALID_SKILLS: dict[str, str] = {}
 
 
 class SkillError(Exception):
     """Raise when skill parsing is unsuccessful."""
 
 
-_INVALID_SKILLS: dict[str, str] = {}
+class SkillDict(TypedDict):
+    name: str
+    description: str
+    location: Path
+    body: str
 
 
 class Skill:
@@ -19,15 +28,20 @@ class Skill:
 
     def __init__(
         self,
-        skill_dir: Path,
+        skill_md_path: Path,
         max_description_length: int = 550,
         max_name_length: int = 64,
     ):
-        if not self.is_skills_dir(skill_dir):
-            raise FileNotFoundError("SKILL.md not found.")
+        if skill_md_path.name != "SKILL.md":
+            raise ValueError(
+                "Skill file must be named SKILL.md. Found: "
+                + skill_md_path.name
+            )
 
-        self.skill_dir = skill_dir.expanduser().resolve()
-        self.skill_md_path = self.skill_dir / "SKILL.md"
+        if not skill_md_path.is_file():
+            raise FileNotFoundError("SKILL.md not found.")
+        self.skill_md_path = skill_md_path.expanduser().resolve()
+        self.skill_dir = self.skill_md_path.parent
         self.max_description_length = max_description_length
         self.max_name_length = max_name_length
         self.parse_skill()
@@ -43,18 +57,27 @@ class Skill:
         return (
             isinstance(description, str)
             and len(description) <= self.max_description_length
+            and "\n" not in description
+            and "\r" not in description
+            and description.isprintable()
         )
-
-    @staticmethod
-    def is_skills_dir(directory: Path) -> bool:
-        d = directory.expanduser()
-        return d.is_dir() and (d / "SKILL.md").is_file()
 
     def parse_skill(self):
         content = self.skill_md_path.read_text()
         lines = content.strip().splitlines()
 
-        if len(lines) <= 5:
+        # SKILL.md should have at least these lines:
+        #
+        # 1 ---
+        # 2 name: skill-name
+        # 3 description: Some description here
+        # 4 ---
+        # 5 Do this.
+        #
+        # So, at least 5 lines.
+        min_lines_in_skill_md = 5
+
+        if len(lines) <= min_lines_in_skill_md:
             raise SkillError(f"{self.skill_md_path} is too short.")
 
         if lines[0] != "---":
@@ -71,8 +94,8 @@ class Skill:
 
         try:
             meta = yaml.safe_load("\n".join(lines[:frontmatter_last_line_nbr]))
-            self.name = meta["name"]
-            self.description = meta["description"]
+            self.name = meta["name"].strip()
+            self.description = meta["description"].strip()
         except Exception:  # noqa: BLE001
             raise SkillError(
                 "Missing name or description in frontmatter: "
@@ -95,28 +118,41 @@ class Skill:
             raise SkillError(f"Error parsing skill: {self.skill_md_path}")
 
 
-def discover_skills(directories: list[Path]):
-    for directory in directories:
+def skill_catalog(directories: list[Path]) -> dict[str, SkillDict]:
+    """Create skill catalog from a list of directories.
+
+    When multiple directories contain a skill with the same name, register the
+    one from the earliest directory in the provided list.
+    """
+    skills = {}
+    for directory in reversed(directories):
         d = directory.expanduser().resolve()
         skills_dirs = [p.parent for p in d.rglob("SKILL.md")]
         for d in skills_dirs:
             try:
-                yield Skill(d)
+                skill = Skill(d / "SKILL.md")
+                skills[skill.name] = SkillDict(
+                    name=skill.name,
+                    description=skill.description,
+                    body=skill.body,
+                    location=skill.skill_md_path,
+                )
             except SkillError as e:
                 _INVALID_SKILLS[str(d)] = str(e)
+    return skills
 
 
-if __name__ == "__main__":
-    skills = list(
-        discover_skills(
-            [
-                Path("~/.codex/skills"),
-                Path("~/.claude/skills"),
-            ],
-        )
-    )
-
-    for i, s in enumerate(skills, start=1):
-        print(
-            f"{i:3d} | {s.name:15s} | {str(s.skill_dir)[:15]:15s} | {s.description[:20]}"
-        )
+# if __name__ == "__main__":
+#     skills = list(
+#         discover_skills(
+#             [
+#                 Path("~/.codex/skills"),
+#                 Path("~/.claude/skills"),
+#             ],
+#         )
+#     )
+#
+#     for i, s in enumerate(skills, start=1):
+#         print(
+#             f"{i:3d} | {s.name:15s} | {str(s.skill_dir)[:15]:15s} | {s.description[:20]}"
+#         )
