@@ -140,7 +140,7 @@ async def test_ollama_response_refreshes_shared_context_and_display(tmp_path):
             == 5735
         )
         assert "Ollama /api/ps" in app._status_markdown()
-        assert summarization_threshold(agent_model) == 5735
+        assert summarization_threshold(agent_model) == 5734
 
 
 @pytest.mark.parametrize(

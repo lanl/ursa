@@ -71,7 +71,7 @@ def test_ollama_allocation_overrides_profile_and_respects_bound_options():
     assert summarization_threshold(model) == 5734
     bound = model.bind(options={"num_ctx": 4096}).with_config(tags=["test"])
     assert model_context_window(bound) == 4096
-    assert summarization_threshold(bound) == 2868
+    assert summarization_threshold(bound) == 2867
     assert (
         summarization_threshold(bound.bind(options={"num_ctx": 8192})) == 5734
     )

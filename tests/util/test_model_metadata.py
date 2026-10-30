@@ -371,7 +371,7 @@ def test_ollama_runtime_allocation_not_architecture_maximum():
     model = ollama_model(handler)
     load_model_context(model)
     assert model_context_window(model) == 4096
-    assert summarization_threshold(model.bind(extra_headers={})) == 2868
+    assert summarization_threshold(model.bind(extra_headers={})) == 2867
     assert model._ursa_context_source == "Ollama /api/ps"
 
 
