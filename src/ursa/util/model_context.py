@@ -55,4 +55,4 @@ def summarization_threshold(
     window = model_context_window(model)
     if window is None:
         return fallback
-    return (window * 7 + 9) // 10  # Round up to avoid triggering below 70%.
+    return round(window * 0.7)
