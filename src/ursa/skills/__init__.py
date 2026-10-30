@@ -28,7 +28,7 @@ class Skill:
     def __init__(
         self,
         skill_md_path: Path,
-        max_description_length: int = 550,
+        max_description_length: int = 1024,
         max_name_length: int = 64,
     ):
         if skill_md_path.name != "SKILL.md":
