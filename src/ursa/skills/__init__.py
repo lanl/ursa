@@ -118,7 +118,7 @@ class Skill:
             raise SkillError(f"Error parsing skill: {self.skill_md_path}")
 
 
-def skill_catalog(directories: list[Path]) -> dict[str, SkillDict]:
+def create_skill_catalog(directories: list[Path]) -> dict[str, SkillDict]:
     """Create skill catalog from a list of directories.
 
     When multiple directories contain a skill with the same name, register the
