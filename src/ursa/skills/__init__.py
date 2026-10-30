@@ -138,19 +138,3 @@ def create_skill_catalog(directories: list[Path]) -> dict[str, SkillDict]:
             except SkillError as e:
                 _INVALID_SKILLS[str(d)] = str(e)
     return skills
-
-
-# if __name__ == "__main__":
-#     skills = list(
-#         discover_skills(
-#             [
-#                 Path("~/.codex/skills"),
-#                 Path("~/.claude/skills"),
-#             ],
-#         )
-#     )
-#
-#     for i, s in enumerate(skills, start=1):
-#         print(
-#             f"{i:3d} | {s.name:15s} | {str(s.skill_dir)[:15]:15s} | {s.description[:20]}"
-#         )
