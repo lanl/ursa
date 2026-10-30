@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 from ursa.skills import create_skill_catalog
@@ -13,9 +14,21 @@ The documentation for URSA is available at https://lanl.github.io/ursa/.
 """
 
 
+def resolved(path: str) -> Path:
+    return Path(path).expanduser().resolve()
+
+
 def get_chatter_system_prompt():
+    # Set URSA_SKILLS_DIR env var to colon-separated dirs to discover skills.
+    skills_directories = os.environ.get("URSA_SKILLS_DIRS")
     skill_catalog = create_skill_catalog(
-        directories=[Path.home() / ".ursa" / "skills"]
+        directories=[]
+        if skills_directories is None
+        else [
+            resolved(d)
+            for d in skills_directories.split(":")
+            if resolved(d).is_dir()
+        ]
     )
 
     if skill_catalog:
