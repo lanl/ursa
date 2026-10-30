@@ -25,7 +25,7 @@ from ursa.util.model_context import summarization_threshold
         (
             {"num_ctx": 8192, "profile": {"max_input_tokens": 131072}},
             "8,192",
-            "5,735",
+            "5,734",
         ),
         ({}, None, "50,000"),
         ({"profile": {"max_input_tokens": 0}}, None, "50,000"),
@@ -137,7 +137,7 @@ async def test_ollama_response_refreshes_shared_context_and_display(tmp_path):
             yaml.safe_load(app._resolved_config_yaml())[
                 "tokens_before_summarize"
             ]
-            == 5735
+            == 5734
         )
         assert "Ollama /api/ps" in app._status_markdown()
         assert summarization_threshold(agent_model) == 5734

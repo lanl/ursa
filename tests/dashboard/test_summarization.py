@@ -27,7 +27,7 @@ def client(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "window,expected", [(128000, 89600), (8192, 5735), (None, 12000)]
+    "window,expected", [(128000, 89600), (8192, 5734), (None, 12000)]
 )
 def test_saved_settings_preview(client, monkeypatch, window, expected):
     seen = {}
