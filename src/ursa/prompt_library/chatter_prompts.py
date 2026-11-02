@@ -18,18 +18,14 @@ def get_chatter_system_prompt():
     local_skills_dir = Path.cwd() / ".ursa" / "skills"
 
     skills_dirs = [local_skills_dir]
-    if paths := os.environ.get("URSA_SKILLS_PATH", "").strip():
-        path_list = (
-            paths.strip().split(";")
-            if os.name == "nt"  # For windows
-            else paths.strip().split(":")
-        )
-        skills_dirs.extend(path_list)
+    delim = ";" if os.name == "nt" else ":"
+    skills_dirs.extend(
+        os.environ.get("URSA_SKILLS_PATH", "").strip().split(delim)
+    )
 
     skill_catalog = create_skill_catalog(
         directories=[Path(d) for d in skills_dirs if Path(d).is_dir()]
     )
-
     if skill_catalog:
         skills_system_prompt = skills_system_prompt_template.format(
             catalog=json.dumps(skill_catalog, indent=2, sort_keys=True)
