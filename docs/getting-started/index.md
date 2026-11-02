@@ -7,25 +7,25 @@ different endpoint.
 
 ## Install URSA
 
-URSA requires Python 3.11 or newer. The guided installer installs `uv` and `ursa-ai` with Python 3.13:
+=== "Installer (Recommended)"
 
-=== "Linux/MacOS"
+    The installer script will install URSA using [`uv`](https://docs.astral.sh/uv/) and then launch the URSA setup wizard.
 
-    ```bash
-    curl -LsSf https://lanl.github.io/ursa/latest/install.sh | sh
-    ```
+    === "Linux/MacOS"
 
-=== "Windows"
+        ```bash
+        curl -LsSf https://lanl.github.io/ursa/latest/install.sh | sh
+        ```
 
-    ```powershell
-    powershell -ExecutionPolicy Bypass -c "irm https://lanl.github.io/ursa/latest/install.ps1 | iex"
-    ```
+    === "Windows"
 
-It then opens provider, model, and optional MCP setup. Run `ursa self setup` to reopen it; administrators can [preload non-secret defaults][managed-setup-defaults].
+        ```powershell
+        powershell -ExecutionPolicy Bypass -c "irm https://lanl.github.io/ursa/latest/install.ps1 | iex"
+        ```
 
-For manual installation, the `uv` tool installation is recommended:
+    You can relaunch the setup wizard with `ursa self setup`; to update URSA use `ursa self update`.
 
-=== "uv tool (recommended)"
+=== "uv tool"
 
     Install [`uv`](https://docs.astral.sh/uv/getting-started/installation/) if
     needed, then install URSA and the dashboard in an isolated tool environment:
@@ -66,12 +66,6 @@ For manual installation, the `uv` tool installation is recommended:
     python -m pip install 'ursa-ai[dashboard]'
     ```
 
-Verify both applications:
-
-```bash
-ursa --help
-ursa-dashboard --help
-```
 
 ## Optional dependencies
 
