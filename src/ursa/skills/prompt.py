@@ -7,4 +7,6 @@ When a skill references relative paths, resolve them against the skill's \
 directory (the parent of SKILL.md) and use absolute paths in tool calls.
 
 {catalog}
+
+When asked to list skills, list in a markdown table.
 """.strip()

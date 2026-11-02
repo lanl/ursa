@@ -46,6 +46,7 @@ class Skill:
             isinstance(name, str)
             and (1 <= len(name) <= self.name_max_length)
             and self._name_re.fullmatch(name)
+            and name == self.path.parent.name
         )
 
     def is_valid_description(self, description: str):
