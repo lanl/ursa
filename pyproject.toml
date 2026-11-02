@@ -153,6 +153,9 @@ markers = [
     "slow: test is comparatively slow and may be omitted from quick local runs",
 ]
 
+[tool.ty.environment]
+python-platform = "all"
+
 [dependency-groups]
 dev = [
     "fastmcp>=2.13.3",
