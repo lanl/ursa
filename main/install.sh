@@ -41,7 +41,7 @@ uv=$(command -v uv || true)
 if [ -z "$uv" ]; then
     command -v curl >/dev/null || fail "curl is required to download uv"
     uv_installer=$(mktemp "${TMPDIR:-/tmp}/ursa-uv-installer.XXXXXX")
-    say "Downloading the uv installer…"
+    say "Downloading the uv installer..."
     curl -LsSf https://astral.sh/uv/install.sh -o "$uv_installer"
     say "uv installer path: $uv_installer"
     printf 'Install uv? [y/N] '
@@ -54,7 +54,7 @@ if [ -z "$uv" ]; then
     y|Y|[yY][eE][sS]) ;;
     *) fail "uv installation declined" ;;
     esac
-    say "Installing uv…"
+    say "Installing uv..."
     sh "$uv_installer"
     directory=${UV_UNMANAGED_INSTALL:-${UV_INSTALL_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}}
     uv=$directory/uv
@@ -63,11 +63,11 @@ else
     say "Using uv at $uv"
 fi
 
-say "Installing URSA with Python $python…"
+say "Installing URSA with Python ${python}..."
 "$uv" tool install --python "$python" --force --upgrade --compile-bytecode "$requirement"
 tool_bin=$("$uv" tool dir --bin)
 ursa="$tool_bin/ursa"
-"$uv" tool update-shell || say "Could not update this shell automatically; add $tool_bin to PATH."
+"$uv" tool update-shell || say "Could not update this shell automatically; add ${tool_bin} to PATH."
 PATH="$tool_bin:$(dirname "$uv")${PATH:+:$PATH}"; export PATH
 
 if ! "$ursa" self setup --help >/dev/null 2>&1; then

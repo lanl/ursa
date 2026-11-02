@@ -295,15 +295,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#quick-first-run" class="md-nav__link">
-    <span class="md-ellipsis">
-      Quick first run
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#where-to-go-next" class="md-nav__link">
     <span class="md-ellipsis">
       Where to go next
@@ -1981,15 +1972,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#quick-first-run" class="md-nav__link">
-    <span class="md-ellipsis">
-      Quick first run
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#where-to-go-next" class="md-nav__link">
     <span class="md-ellipsis">
       Where to go next
@@ -2038,33 +2020,20 @@ tools. Use a dedicated workspace, review actions carefully, and read the
 before running high-trust or data-sensitive workflows.</p>
 </div>
 <h2 id="quick-install">Quick install<a class="headerlink" href="#quick-install" title="Permanent link">&para;</a></h2>
-<p>We recommend installing with <a href="https://docs.astral.sh/uv/"><code>uv</code></a>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.13<span class="w"> </span><span class="s1">&#39;ursa-ai[dashboard]&#39;</span>
-</code></pre></div>
-<p>See <a class="autorefs autorefs-internal" href="getting-started/#getting-started">Getting started</a> for installation alternatives and a
-walkthrough of using URSA.</p>
-<h2 id="quick-first-run">Quick first run<a class="headerlink" href="#quick-first-run" title="Permanent link">&para;</a></h2>
-<p>For OpenAI, set the standard API-key environment variable and run URSA. The
-built-in provider includes the model and base URL, so no config file is needed:</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">macOS/Linux</label><label for="__tabbed_1_2">Windows PowerShell</label></div>
+<p>We recommend installing URSA by running the following command in a terminal:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Linux/MacOS</label><label for="__tabbed_1_2">Windows</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">OPENAI_API_KEY</span><span class="o">=</span><span class="s2">&quot;...&quot;</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>ursa
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-LsSf<span class="w"> </span>https://lanl.github.io/ursa/latest/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
 </code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nv">$env:OPENAI_API_KEY</span> <span class="p">=</span> <span class="s2">&quot;...&quot;</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">ursa</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">powershell</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="n">-c</span> <span class="s2">&quot;irm https://lanl.github.io/ursa/latest/install.ps1 | iex&quot;</span>
 </code></pre></div>
 </div>
 </div>
 </div>
-<p>Inside the URSA app, type <code>/</code> to browse commands or try:</p>
-<ul>
-<li><code>Summarize what URSA can help me do.</code></li>
-<li><code>#execute Write and run a Python script that prints the first 10 prime numbers.</code></li>
-</ul>
+<p>The installer will install URSA using <a href="https://docs.astral.sh/uv/"><code>uv</code></a>, then launch a setup wizard for URSA.</p>
 <h2 id="where-to-go-next">Where to go next<a class="headerlink" href="#where-to-go-next" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a class="autorefs autorefs-internal" title="Getting started" href="getting-started/#getting-started">Follow the getting started guide</a></li>

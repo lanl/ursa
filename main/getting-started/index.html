@@ -2099,8 +2099,11 @@ the terminal interface and browser dashboard. OpenAI models work without a confi
 file; configuration is only needed when you want to change a default or use a
 different endpoint.</p>
 <h2 id="install-ursa">Install URSA<a class="headerlink" href="#install-ursa" title="Permanent link">&para;</a></h2>
-<p>URSA requires Python 3.11 or newer. The guided installer installs <code>uv</code> and <code>ursa-ai</code> with Python 3.13:</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Linux/MacOS</label><label for="__tabbed_1_2">Windows</label></div>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:4"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><input id="__tabbed_1_4" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Installer (Recommended)</label><label for="__tabbed_1_2">uv tool</label><label for="__tabbed_1_3">venv + pip</label><label for="__tabbed_1_4">Conda + pip</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<p>The installer script will install URSA using <a href="https://docs.astral.sh/uv/"><code>uv</code></a> and then launch the URSA setup wizard.</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">Linux/MacOS</label><label for="__tabbed_2_2">Windows</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-LsSf<span class="w"> </span>https://lanl.github.io/ursa/latest/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
@@ -2112,10 +2115,8 @@ different endpoint.</p>
 </div>
 </div>
 </div>
-<p>It then opens provider, model, and optional MCP setup. Run <code>ursa self setup</code> to reopen it; administrators can <a class="autorefs autorefs-internal" title="Managed setup defaults" href="../reference/administration/#managed-setup-defaults">preload non-secret defaults</a>.</p>
-<p>For manual installation, the <code>uv</code> tool installation is recommended:</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="2:3"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><input id="__tabbed_2_3" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">uv tool (recommended)</label><label for="__tabbed_2_2">venv + pip</label><label for="__tabbed_2_3">Conda + pip</label></div>
-<div class="tabbed-content">
+<p>You can relaunch the setup wizard with <code>ursa self setup</code>; to update URSA use <code>ursa self update</code>.</p>
+</div>
 <div class="tabbed-block">
 <p>Install <a href="https://docs.astral.sh/uv/getting-started/installation/"><code>uv</code></a> if
 needed, then install URSA and the dashboard in an isolated tool environment:</p>
@@ -2152,10 +2153,6 @@ needed, then install URSA and the dashboard in an isolated tool environment:</p>
 </div>
 </div>
 </div>
-<p>Verify both applications:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>ursa<span class="w"> </span>--help
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>ursa-dashboard<span class="w"> </span>--help
-</code></pre></div>
 <h2 id="optional-dependencies">Optional dependencies<a class="headerlink" href="#optional-dependencies" title="Permanent link">&para;</a></h2>
 <p>Install optional features using extras on the <code>ursa-ai</code> package. Multiple extras
 can be combined, for example, <code>python -m pip install 'ursa-ai[dashboard,lammps]'</code>
@@ -2232,13 +2229,13 @@ the selected potential and simulation.</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="4:2"><input checked="checked" id="__tabbed_4_1" name="__tabbed_4" type="radio" /><input id="__tabbed_4_2" name="__tabbed_4" type="radio" /><div class="tabbed-labels"><label for="__tabbed_4_1">macOS/Linux</label><label for="__tabbed_4_2">Windows PowerShell</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">OPENAI_API_KEY</span><span class="o">=</span><span class="s2">&quot;...&quot;</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>ursa
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">OPENAI_API_KEY</span><span class="o">=</span><span class="s2">&quot;...&quot;</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>ursa
 </code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nv">$env:OPENAI_API_KEY</span> <span class="p">=</span> <span class="s2">&quot;...&quot;</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">ursa</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nv">$env:OPENAI_API_KEY</span> <span class="p">=</span> <span class="s2">&quot;...&quot;</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">ursa</span>
 </code></pre></div>
 </div>
 </div>
@@ -2279,11 +2276,11 @@ copy the same <code>config.yaml</code> into every project.</p>
 </table>
 <p>For example, this changes only the embedding model and leaves the built-in
 OpenAI chat configuration intact:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">emb_model</span><span class="p">:</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai:text-embedding-3-large</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">emb_model</span><span class="p">:</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai:text-embedding-3-large</span>
 </code></pre></div>
 <p>Inspect the merged user configuration with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>ursa<span class="w"> </span>--print-config<span class="o">=</span>user,resolved
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>ursa<span class="w"> </span>--print-config<span class="o">=</span>user,resolved
 </code></pre></div>
 <p>See <a class="autorefs autorefs-internal" href="../configuration/#configuration">Configuration</a> for other providers and precedence rules.</p>
 <h2 id="learn-the-tui">Learn the TUI<a class="headerlink" href="#learn-the-tui" title="Permanent link">&para;</a></h2>
@@ -2296,21 +2293,21 @@ OpenAI chat configuration intact:</p>
 <li>Type <code>@</code> to find and insert a workspace file into a prompt.</li>
 </ul>
 <p>Try these in order:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>Explain the difference between the chat, planning, and execution agents.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>Explain the difference between the chat, planning, and execution agents.
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>#plan Plan a small parameter sweep and describe the outputs we should retain.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>#plan Plan a small parameter sweep and describe the outputs we should retain.
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>#execute Create hello_ursa.txt containing a one-sentence description of this workspace.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>#execute Create hello_ursa.txt containing a one-sentence description of this workspace.
 </code></pre></div>
 <p>Review proposed tool actions before approving them. Use a named agent when you
 want its state to persist between launches:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>ursa<span class="w"> </span>--name<span class="w"> </span>tutorial
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>ursa<span class="w"> </span>--name<span class="w"> </span>tutorial
 </code></pre></div>
 <p>The <a class="autorefs autorefs-internal" title="Getting Started - TUI" href="tui/#getting-started-tui">TUI guide</a> covers commands, web-tool opt-in, and named
 agents in more detail.</p>
 <h2 id="use-the-dashboard">Use the dashboard<a class="headerlink" href="#use-the-dashboard" title="Permanent link">&para;</a></h2>
 <p>Launch the browser interface:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>ursa-dashboard
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>ursa-dashboard
 </code></pre></div>
 <p>It opens <code>http://127.0.0.1:8080</code>. Then:</p>
 <ol>
