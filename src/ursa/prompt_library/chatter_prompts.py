@@ -19,7 +19,7 @@ def get_chatter_system_prompt():
     skills_dirs = os.environ.get("URSA_SKILLS_PATH")
 
     skill_catalog = create_skill_catalog(
-        directories=[]
+        directories=[Path.cwd() / ".ursa"]
         if skills_dirs is None
         else [
             Path(d) for d in skills_dirs.strip().split(":") if Path(d).is_dir()
