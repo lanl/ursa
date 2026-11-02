@@ -44,13 +44,13 @@
     }
     else { Write-Output "Using uv at $uv" }
 
-    Write-Output "Installing URSA with Python $Python..."
+    Write-Output "Installing URSA with Python ${Python}..."
     & $uv tool install --python $Python --force --upgrade --compile-bytecode $ursaRequirement
-    if ($LASTEXITCODE) { Fail "uv failed to install URSA (exit code $LASTEXITCODE)" }
+    if ($LASTEXITCODE) { Fail "uv failed to install URSA (exit code ${LASTEXITCODE})" }
     $toolBin = "$(& $uv tool dir --bin | Select-Object -Last 1)".Trim()
     $ursa = Join-Path $toolBin "ursa.exe"
     & $uv tool update-shell
-    if ($LASTEXITCODE) { Write-Output "Could not update this shell automatically; add $toolBin to PATH." }
+    if ($LASTEXITCODE) { Write-Output "Could not update this shell automatically; add ${toolBin} to PATH." }
     $env:Path = "$toolBin$([IO.Path]::PathSeparator)$(Split-Path -Parent $uv)$([IO.Path]::PathSeparator)$($env:Path)"
 
     & $ursa self setup --help *> $null
