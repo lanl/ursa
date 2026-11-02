@@ -15,15 +15,19 @@ The documentation for URSA is available at https://lanl.github.io/ursa/.
 
 
 def get_chatter_system_prompt():
-    # Set URSA_SKILLS_PATH env var to colon-separated dirs to discover skills.
-    skills_dirs = os.environ.get("URSA_SKILLS_PATH")
+    local_skills_dir = Path.cwd() / ".ursa" / "skills"
+
+    skills_dirs = [local_skills_dir]
+    if paths := os.environ.get("URSA_SKILLS_PATH", "").strip():
+        path_list = (
+            paths.strip().split(";")
+            if os.name == "nt"  # For windows
+            else paths.strip().split(":")
+        )
+        skills_dirs.extend(path_list)
 
     skill_catalog = create_skill_catalog(
-        directories=[Path.cwd() / ".ursa"]
-        if skills_dirs is None
-        else [
-            Path(d) for d in skills_dirs.strip().split(":") if Path(d).is_dir()
-        ]
+        directories=[Path(d) for d in skills_dirs if Path(d).is_dir()]
     )
 
     if skill_catalog:
