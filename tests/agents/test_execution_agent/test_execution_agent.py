@@ -15,7 +15,7 @@ from langchain_core.messages import (
 from langgraph.types import Overwrite
 
 from ursa.agents import ExecutionAgent
-from ursa.agents.execution_agent import ReviewAssessment, review_complete
+from ursa.agents.execution_agent import ReviewAssessment
 from ursa.util import Checkpointer
 
 
@@ -175,37 +175,6 @@ def test_execution_agent_review_uses_current_invoke_request(
         "REVIEW::new invocation request"
     )
     assert result["review"].is_complete is True
-
-
-@pytest.mark.parametrize("max_review_attempts", [1, 2, 5])
-def test_execution_agent_stops_after_repeated_incomplete_reviews(
-    chat_model, monkeypatch, tmpdir: Path, max_review_attempts: int
-):
-    review_count = 0
-
-    def fake_invoke_structured(*args, **kwargs):
-        nonlocal review_count
-        review_count += 1
-        return ReviewAssessment(is_complete=False, reason="still blocked")
-
-    monkeypatch.setattr(
-        "ursa.agents.execution_agent.invoke_structured",
-        fake_invoke_structured,
-    )
-
-    execution_agent = ExecutionAgent(
-        llm=chat_model,
-        workspace=tmpdir,
-        max_review_attempts=max_review_attempts,
-    )
-    result = execution_agent.invoke("attempt a blocked task")
-
-    assert review_count == max_review_attempts
-    assert result["reviews_without_tools"] == max_review_attempts
-    assert result["review"].is_complete is False
-    assert review_complete(result, max_review_attempts) == "recap"
-    assert isinstance(result["messages"][-1], AIMessage)
-    assert "Work remains incomplete" in result["messages"][-1].content
 
 
 def test_execution_agent_persistent_thread_reviews_latest_invoke_request(

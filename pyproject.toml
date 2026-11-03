@@ -117,10 +117,21 @@ metric_plots = [
 ]
 harbor = [
     "harbor>=0.23.0,<0.24; python_version >= '3.12'",
-    "filelock>=3.19.1,<4",
     "pathspec>=0.12.1,<2",
     "singularity-compose>=0.1.19,<0.2",
     "archspec>=0.2.6,<0.3",
+]
+
+[tool.uv]
+# Harbor's Python 3.12+ dependencies also support the project's Python 3.11
+# floor. Resolve one compatible version instead of forking the lock by marker.
+constraint-dependencies = [
+    "aiohttp>=3.14.2",
+    "boto3>=1.43.117",
+    "certifi>=2026.10.19",
+    "pathspec>=1.0.3",
+    "platformdirs>=4.10.0",
+    "pydantic-settings>=2.14.1",
 ]
 
 [build-system]

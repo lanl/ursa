@@ -15,8 +15,12 @@ from ursa.util.secrets import (
 def test_externalize_secrets_resolves_provider_keyring_on_host(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        "keyring.get_password",
-        lambda service, username: calls.append((service, username)) or "key",
+        "ursa.util.secrets.get_keyring",
+        lambda: SimpleNamespace(
+            get_password=lambda service, username: (
+                calls.append((service, username)) or "key"
+            )
+        ),
     )
 
     projected, secret_env = externalize_secret_references({

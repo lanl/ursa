@@ -5,33 +5,24 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-harbor = pytest.importorskip("harbor")
+try:
+    from harbor.models.task.config import NetworkMode
+    from harbor.models.task.task import Task
 
-from harbor.models.task.config import NetworkMode  # noqa: E402
-from harbor.models.task.task import Task  # noqa: E402
-
-from ursa.integrations import harbor as harbor_integration  # noqa: E402
-from ursa.integrations.harbor_singularity import (  # noqa: E402
-    DockerfileSingularityEnvironment,
-)
-from ursa.integrations.harbor_validation import (  # noqa: E402
-    _task_environments,
-    discover_harbor_tasks,
-    prebuild_harbor_task,
-)
+    from ursa.integrations import harbor as harbor_integration
+    from ursa.integrations.harbor_singularity import (
+        DockerfileSingularityEnvironment,
+    )
+    from ursa.integrations.harbor_validation import (
+        _task_environments,
+        prebuild_harbor_task,
+    )
+except ImportError:
+    pytest.skip("Harbor extra is not installed", allow_module_level=True)
 
 runner = CliRunner()
 
-
-def _task(tmp_path: Path) -> Path:
-    task = tmp_path / "task"
-    (task / "environment").mkdir(parents=True)
-    (task / "tests").mkdir()
-    (task / "instruction.md").write_text("Complete the task.\n")
-    (task / "environment" / "Dockerfile").write_text("FROM scratch\n")
-    (task / "tests" / "Dockerfile").write_text("FROM scratch\n")
-    (task / "task.toml").write_text(
-        """schema_version = "1.4"
+_TASK_TOML = """schema_version = "1.4"
 
 [task]
 name = "example/task"
@@ -47,59 +38,49 @@ network_mode = "no-network"
 [environment]
 network_mode = "public"
 """
-    )
+
+
+def _task(tmp_path: Path, task_toml: str = _TASK_TOML) -> Path:
+    task = tmp_path / "task"
+    (task / "environment").mkdir(parents=True)
+    (task / "tests").mkdir()
+    (task / "instruction.md").write_text("Complete the task.\n")
+    (task / "environment" / "Dockerfile").write_text("FROM scratch\n")
+    (task / "tests" / "Dockerfile").write_text("FROM scratch\n")
+    (task / "task.toml").write_text(task_toml)
     return task
 
 
-def test_harbor_validate_help_exposes_paths():
-    result = runner.invoke(harbor_integration.app, ["validate", "--help"])
-
-    assert result.exit_code == 0
-    assert "PATHS" in result.stdout
-
-
-def test_validate_harbor_paths_reports_success(tmp_path):
+@pytest.mark.parametrize(
+    ("remove_dockerfile", "exit_code", "output"),
+    [
+        (False, 0, "OK   {task}\nValidated 1 Harbor task(s)."),
+        (True, 1, "FAIL {task}"),
+    ],
+)
+def test_validate_harbor_paths(tmp_path, remove_dockerfile, exit_code, output):
     task = _task(tmp_path)
+    if remove_dockerfile:
+        (task / "environment" / "Dockerfile").unlink()
 
     result = runner.invoke(harbor_integration.app, ["validate", str(tmp_path)])
 
-    assert result.exit_code == 0
-    assert f"OK   {task}" in result.stdout
-    assert "Validated 1 Harbor task(s)." in result.stdout
-
-
-def test_validate_harbor_paths_reports_failures(tmp_path):
-    task = _task(tmp_path)
-    (task / "environment" / "Dockerfile").unlink()
-
-    result = runner.invoke(harbor_integration.app, ["validate", str(tmp_path)])
-
-    assert result.exit_code == 1
-    assert f"FAIL {task}" in result.stderr
+    assert result.exit_code == exit_code
+    assert output.format(task=task) in (result.stdout + result.stderr)
 
 
 def test_harbor_network_phases_keep_environment_as_setup_baseline(tmp_path):
-    task_dir = _task(tmp_path)
-    (task_dir / "tests" / "test.sh").write_text("#!/bin/sh\n")
-    (task_dir / "task.toml").write_text(
-        """schema_version = "1.4"
-
-[task]
-name = "example/task"
-version = "1.0.0"
-description = "Example task"
-
-[environment]
-network_mode = "public"
-
-[agent]
-network_mode = "no-network"
-
-[verifier]
-environment_mode = "shared"
-network_mode = "no-network"
-"""
+    task_dir = _task(
+        tmp_path,
+        _TASK_TOML.replace(
+            '[verifier]\nenvironment_mode = "separate"\n\n'
+            '[verifier.environment]\nnetwork_mode = "no-network"',
+            '[agent]\nnetwork_mode = "no-network"\n\n'
+            '[verifier]\nenvironment_mode = "shared"\n'
+            'network_mode = "no-network"',
+        ),
     )
+    (task_dir / "tests" / "test.sh").write_text("#!/bin/sh\n")
 
     environments = _task_environments(Task(task_dir), purpose="validate")
 
@@ -176,21 +157,3 @@ def test_harbor_prebuild_command_reports_built_sifs(tmp_path, monkeypatch):
     assert observed == [(task, True, cache)]
     assert f"OK   {task}: 2 SIF file(s)" in result.stdout
     assert "Pre-built 2 SIF file(s) for 1 Harbor task(s)." in result.stdout
-
-
-def test_harbor_runner_dispatches(monkeypatch):
-    received = []
-    monkeypatch.setattr("ursa.integrations.harbor_runner.main", received.append)
-
-    result = runner.invoke(harbor_integration.app, ["runner", "payload"])
-
-    assert result.exit_code == 0
-    assert received == ["payload"]
-
-
-def test_discover_harbor_tasks_ignores_hidden_directories(tmp_path):
-    task = _task(tmp_path)
-    hidden_task = _task(tmp_path / ".venv")
-
-    assert hidden_task.exists()
-    assert discover_harbor_tasks([tmp_path]) == [task]

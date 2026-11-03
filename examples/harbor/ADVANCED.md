@@ -1,114 +1,59 @@
 # Advanced Harbor usage
 
-## Customize the URSA installation
+## Install and configure URSA
 
-The adapter installs Python and URSA with `uv` inside each task container.
-Add URSA extras or other packages with agent kwargs:
+The adapter installs Python and URSA with `uv` inside each task container. Add
+extras or packages with agent kwargs; `ursa_install_spec` accepts a package
+requirement, Git URL, local project, wheel, or sdist. Local projects are staged
+without Git-ignored and common secret files.
 
 ```bash
 --agent-kwarg ursa_extras=image \
---agent-kwarg 'extra_packages=["numpy","scipy"]'
-```
-
-Set `ursa_install_spec` to a package requirement, Git URL, local project
-directory, or local wheel/sdist archive. Local inputs are staged into the task
-container; project directories exclude Git-ignored files and common secret
-files:
-
-```bash
+--agent-kwarg 'extra_packages=["numpy","scipy"]' \
 --agent-kwarg ursa_install_spec=/path/to/checkout
 ```
 
-## Choose the URSA config stack
-
-By default the adapter merges only the file passed as `config_file`, then
-applies Harbor's model and MCP settings last. Set
-`--agent-kwarg config_only=false` to include URSA's system and user config
-layers first. The supplied file is still merged below Harbor's settings.
-
-Secret references are resolved on the host, including keyring references. The
-adapter passes generated environment references only to the URSA runner; it
-does not copy host config or keyring files into the task container.
-
-Each trial renders human-readable agent and tool progress to `agent/ursa.log`
-and writes structured chat, tool, agent, and chain lifecycle records to
-`agent/ursa.jsonl`. Each JSONL record has a monotonic nanosecond timestamp;
-chat end records include token usage. The formatted final result is written to
-`agent/ursa_result.out`.
+By default, only `config_file` is merged before Harbor's model and MCP layer.
+Set `--agent-kwarg config_only=false` to include system and user config first.
+Secret and keyring references resolve on the host; only generated environment
+references reach the runner, never host config or keyring files. Trial output
+includes `agent/ursa.log`, lifecycle records in `agent/ursa.jsonl` (including
+chat token usage), and `agent/ursa_result.out`.
 
 ## Singularity
 
-The custom environment builds `environment/Dockerfile` with Buildah, Podman,
-or Docker, converts it to a cached SIF, and requires no Apptainer definition
-file. Compute nodes need `apptainer` or `singularity`, plus one of `buildah`,
-`podman`, or `docker`. When using Docker, its daemon must be running and the
-invoking process must have socket access.
-
-SIFs are cached by build context under `$XDG_CACHE_HOME/ursa/harbor/sif`, or
-`~/.cache/ursa/harbor/sif` when `XDG_CACHE_HOME` is unset. Concurrent trials
-with the same build context share a lock and build only once. Set
-`URSA_HARBOR_SIF_CACHE` or pass `singularity_image_cache_dir` as an environment
-kwarg to use a different shared cache.
-
-For a direct run, add:
+Use this environment for direct runs:
 
 ```bash
 --env ursa.integrations.harbor_singularity:DockerfileSingularityEnvironment
 ```
 
-### Multi-container tasks
+It builds `environment/Dockerfile` with Buildah, Podman, or Docker and converts
+it to a SIF; no Apptainer definition is needed. Compute nodes need `apptainer`
+or `singularity` plus one builder (Docker also needs a running daemon and
+socket access). SIFs cache by build context in `$XDG_CACHE_HOME/ursa/harbor/sif`
+or `~/.cache/ursa/harbor/sif`; concurrent builds share a lock. Set
+`URSA_HARBOR_SIF_CACHE`, pass the environment constructor's
+`singularity_image_cache_dir`, or use `prebuild --image-cache-dir` to choose a
+shared cache.
 
-Add Harbor's standard `environment/docker-compose.yaml` to start sidecars with
+### Compose and networking
+
+`environment/docker-compose.yaml` starts sidecars through
 [`singularity-compose`](https://singularityhub.github.io/singularity-compose/).
-The reserved `main` service defaults to `environment/Dockerfile`, but it may
-use an OCI `image` or a `build` with a different context, Dockerfile, build
-arguments, or target. This also works in verifier overlays such as
-`tests/docker-compose.yaml`, where paths are relative to the overlay file.
-Sidecars support the same `image` and `build` forms:
+The `main` service may use an image or a Dockerfile build; verifier overlays
+are resolved relative to their overlay file. The adapter supports images,
+Dockerfile builds, list `depends_on`, commands, bind mounts, TCP ports,
+replicas, environment, `env_file`, and per-service artifacts. Unsupported
+Compose features fail before launch; consult Harbor's
+[multi-container guide](https://docs.harborframework.com/core-concepts/tasks/multi-container)
+and the [`singularity-compose` specification](https://github.com/singularityhub/singularity-compose/blob/master/docs/spec/spec-2.0.md).
+Apptainer and SingularityCE work without a system-wide `singularity` alias;
+the host runtime needs fakeroot CNI networking.
 
-```yaml
-services:
-  main:
-    build:
-      context: ..
-      dockerfile: tests/Dockerfile
-    depends_on:
-      - api
-
-  api:
-    build:
-      context: ./api
-    command: [python, server.py]
-    expose:
-      - "8000"
-```
-
-The adapter translates the subset that `singularity-compose` can represent:
-images, Dockerfile builds (`context`, `dockerfile`, `args`, and `target`), list
-form `depends_on`, commands, bind mounts, TCP `host:container` ports,
-`deploy.replicas`, `environment`, and `env_file`. Sidecars are reachable by
-their Harbor service name. Harbor's per-service artifact collection is also
-supported.
-
-Unsupported Compose fields fail before launch. In particular,
-`singularity-compose` cannot represent healthchecks or conditional
-`depends_on`, named volumes, custom Compose networks, entrypoints, resource
-limits, or privilege/capability settings. See Harbor's
-[multi-container task guide](https://docs.harborframework.com/core-concepts/tasks/multi-container)
-and the
-[`singularity-compose` 2.0 specification](https://github.com/singularityhub/singularity-compose/blob/master/docs/spec/spec-2.0.md)
-before porting a Docker Compose task.
-
-Multi-container tasks work with either SingularityCE or Apptainer. Although
-`singularity-compose` 0.1.19 invokes a command named `singularity` internally,
-the adapter maps that command to the selected runtime inside its private
-project directory. An Apptainer installation therefore does not need a
-system-wide `singularity` alias. The `ursa-ai[harbor]` extra installs
-`singularity-compose`; the host runtime must provide fakeroot CNI networking.
-
-The adapter supports Harbor's `public` and `no-network` modes on
-SingularityCE 3.6.2. The `[environment]` policy is the baseline used when the
-container starts and while Harbor sets up the task and installs the agent:
+The adapter supports Harbor `public` and `no-network` policies. The
+`[environment]` policy is the setup baseline; omitted agent and verifier phase
+policies inherit it:
 
 ```toml
 [environment]
@@ -121,37 +66,19 @@ network_mode = "no-network"
 network_mode = "no-network"
 ```
 
-Immediately before `agent.run()`, Harbor switches to the `[agent]` policy. It
-restores the `[environment]` baseline afterward, then applies `[verifier]`
-while the verifier runs. An omitted phase policy inherits the baseline. The
-adapter restarts the same SIF with the requested network namespace and reuses
-its writable overlay and Harbor bind mounts, so files installed or changed
-during setup remain available in later phases.
+Before each phase it restarts the same SIF with the requested policy, preserving
+its writable overlay and Harbor binds. `public` enables URSA web tools and
+`no-network` disables them, while Harbor remains the actual network boundary.
+Keep the overlay enabled: `singularity_overlay=false` disables phase changes.
+`no-network` is unavailable for Compose projects with sidecars, and network
+allowlists are unsupported because SingularityCE 3.6.2 cannot enforce them
+securely; see Harbor's [network-policy reference](https://docs.harborframework.com/tasks/network-policies#phases)
+and Singularity's [networking guide](https://docs.sylabs.io/guides/3.6/user-guide/networking.html).
 
-The effective Harbor policy is also projected into URSA's `use_web` setting
-for each agent phase: `public` enables web tools, while `no-network` disables
-them. Harbor still enforces the actual network boundary. Keep the writable
-overlay enabled (the default); setting the `singularity_overlay` environment
-kwarg to `false` disables runtime policy changes.
-
-`no-network` starts the task as a named Singularity instance with an isolated
-`none` network. Phase switching is supported for single-container tasks and
-Compose projects containing only the `main` service. A `no-network` baseline
-or phase is not available to projects with sidecars because
-`singularity-compose` cannot preserve communication between sidecars while
-isolating the project from external networks. Network allowlists remain
-unsupported because SingularityCE 3.6.2 cannot enforce them securely. See
-Harbor's
-[network-policy reference](https://docs.harborframework.com/tasks/network-policies#phases)
-and Singularity's
-[networking guide](https://docs.sylabs.io/guides/3.6/user-guide/networking.html).
-
-Set `[environment].workdir` in `task.toml` when a Dockerfile computes
-`WORKDIR` from an environment variable or inherits a non-root workdir from its
-base image. The task setting takes precedence over image metadata; the
-Singularity adapter rejects variable workdirs it cannot resolve before launch.
+Set `[environment].workdir` when a Dockerfile has a variable or inherited
+non-root `WORKDIR`; the adapter rejects unresolved workdirs before launch.
 
 ## Clean up
 
-Remove `jobs/` when local results are no longer needed. Remove the SIF cache
-only when no Harbor jobs use it.
+Remove `jobs/` when results are no longer needed, and remove SIF cache entries
+only when no Harbor jobs use them.

@@ -27,7 +27,6 @@ Entry points:
 
 # from langchain_core.runnables.graph import MermaidDrawMethod
 from copy import deepcopy
-from functools import partial
 from pathlib import Path
 from typing import (
     Annotated,
@@ -135,14 +134,11 @@ def _review_is_complete(review: Any) -> bool:
     return isinstance(review, dict) and bool(review.get("is_complete"))
 
 
-def review_complete(
-    state: ExecutionState,
-    max_review_attempts: int = _MAX_REVIEWS_WITHOUT_TOOLS,
-) -> Literal["recap", "continue"]:
+def review_complete(state: ExecutionState) -> Literal["recap", "continue"]:
     """Recap on completion or the no-tool retry bound; do not equate the two."""
     if _review_is_complete(state.get("review")):
         return "recap"
-    if state.get("reviews_without_tools", 0) >= max_review_attempts:
+    if state.get("reviews_without_tools", 0) >= _MAX_REVIEWS_WITHOUT_TOOLS:
         return "recap"
     return "continue"
 
@@ -226,7 +222,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         extra_tools: list[BaseTool] | None = None,
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
-        max_review_attempts: int = _MAX_REVIEWS_WITHOUT_TOOLS,
         use_web: bool = False,
         safe_codes: list[str] | None = None,
         **kwargs,
@@ -264,9 +259,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.log_state = log_state
         self.tokens_before_summarize = tokens_before_summarize
         self.messages_to_keep = messages_to_keep
-        if max_review_attempts < 1:
-            raise ValueError("max_review_attempts must be at least 1")
-        self.max_review_attempts = max_review_attempts
 
     @staticmethod
     def _message_text(msg: Any) -> str:
@@ -501,7 +493,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             reviews_without_tools += 1
         stopped = (
             not is_complete
-            and reviews_without_tools >= self.max_review_attempts
+            and reviews_without_tools >= _MAX_REVIEWS_WITHOUT_TOOLS
         )
 
         events.emit(
@@ -606,7 +598,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         stopped_incomplete = new_state.get(
             "reviews_without_tools", 0
-        ) >= self.max_review_attempts and not _review_is_complete(
+        ) >= _MAX_REVIEWS_WITHOUT_TOOLS and not _review_is_complete(
             new_state.get("review")
         )
         if stopped_incomplete:
@@ -657,13 +649,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         builder.add_edge("action", "agent")
         builder.add_conditional_edges(
             "review",
-            self._wrap_cond(
-                partial(
-                    review_complete, max_review_attempts=self.max_review_attempts
-                ),
-                "review_complete",
-                "executor",
-            ),
+            self._wrap_cond(review_complete, "review_complete", "executor"),
             {"continue": "agent", "recap": "recap"},
         )
         builder.set_finish_point("recap")

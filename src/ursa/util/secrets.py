@@ -280,70 +280,59 @@ class SecretTemplate(SecretReference):
         return self.template % secret
 
 
-SecretPath = tuple[str, ...]
-SecretTransform = Callable[[SecretReference, SecretPath, str | None], Any]
-LiteralSecretTransform = Callable[[SecretStr, SecretPath], Any]
-
-
-def transform_secret_references(
+def _transform_secrets(
     value: Any,
-    transform: SecretTransform,
+    transform: Callable[[SecretReference, tuple[str, ...], str | None], Any],
     *,
-    transform_literal: LiteralSecretTransform | None = None,
-    path: SecretPath = (),
+    transform_literal: Callable[[SecretStr, tuple[str, ...]], Any]
+    | None = None,
+    path: tuple[str, ...] = (),
     default_username: str | None = None,
 ) -> Any:
-    """Transform every secret in a loaded config using URSA's naming rules."""
-    reference = (
-        SecretTemplate.maybe_validate(value)
-        if isinstance(value, SecretTemplate)
-        or isinstance(value, Mapping)
-        and "template" in value
-        else SecretReference.maybe_validate(value)
-    )
+    """Recursively transform secret values using URSA's naming rules."""
+    if isinstance(value, SecretTemplate) or (
+        isinstance(value, Mapping) and "template" in value
+    ):
+        reference = SecretTemplate.maybe_validate(value)
+    else:
+        reference = SecretReference.maybe_validate(value)
     if isinstance(reference, SecretReference):
         return transform(reference, path, default_username)
-
     if isinstance(value, SecretStr):
         return transform_literal(value, path) if transform_literal else value
-
     if isinstance(value, BaseModel):
         value = dict(value)
-
     if isinstance(value, Mapping):
-        if isinstance(value.get("inference_provider"), str):
-            default_username = value["inference_provider"]
-        elif isinstance(value.get("model"), str) and ":" in value["model"]:
-            default_username = value["model"].split(":", 1)[0]
-
+        provider, model = value.get("inference_provider"), value.get("model")
+        default_username = (
+            provider
+            if isinstance(provider, str)
+            else model.split(":", 1)[0]
+            if isinstance(model, str) and ":" in model
+            else default_username
+        )
         transformed = {}
         for name, child in value.items():
-            child_username = default_username
-            if path in {("inference_providers",), ("mcp_servers",)}:
-                child_username = str(name)
-            elif child_username is None:
-                child_username = str(name)
+            child_username = (
+                str(name)
+                if path in _SECRET_NAME_SECTIONS
+                else default_username or str(name)
+            )
             if name == "api_key_env" and isinstance(child, str):
-                transformed["api_key"] = transform(
-                    SecretReference(env=child),
-                    (*path, "api_key"),
-                    child_username,
-                )
-            else:
-                transformed[name] = transform_secret_references(
-                    child,
-                    transform,
-                    transform_literal=transform_literal,
-                    path=(*path, str(name)),
-                    default_username=child_username,
-                )
+                name, child = "api_key", SecretReference(env=child)
+            transformed[name] = _transform_secrets(
+                child,
+                transform,
+                transform_literal=transform_literal,
+                path=(*path, str(name)),
+                default_username=child_username,
+            )
         return transformed
-
     if isinstance(value, Sequence) and not isinstance(
         value, (str, bytes, bytearray)
     ):
         return [
-            transform_secret_references(
+            _transform_secrets(
                 child,
                 transform,
                 transform_literal=transform_literal,
@@ -357,19 +346,18 @@ def transform_secret_references(
 
 def iter_secret_references(
     value: Any,
-) -> Iterator[tuple[SecretPath, SecretReference, str | None]]:
+) -> Iterator[tuple[tuple[str, ...], SecretReference, str | None]]:
     """Yield every external secret reference in a loaded URSA config."""
-    references: list[tuple[SecretPath, SecretReference, str | None]] = []
-
-    def collect(
-        reference: SecretReference,
-        path: SecretPath,
-        default_username: str | None,
-    ) -> SecretReference:
-        references.append((path, reference, default_username))
-        return reference
-
-    transform_secret_references(value, collect)
+    references: list[tuple[tuple[str, ...], SecretReference, str | None]] = []
+    _transform_secrets(
+        value,
+        lambda reference, path, username: references.append((
+            path,
+            reference,
+            username,
+        ))
+        or reference,
+    )
     yield from references
 
 
@@ -392,32 +380,28 @@ def externalize_secret_references(
     def externalize(secret: str, template: str | None = None) -> dict[str, str]:
         name = f"URSA_HARBOR_SECRET_{len(secret_env)}"
         secret_env[name] = secret
-        reference = {"env": name}
-        if template is not None:
-            reference["template"] = template
-        return reference
+        return {"env": name, **({"template": template} if template else {})}
 
     def resolve_reference(
         reference: SecretReference,
-        path: SecretPath,
+        path: tuple[str, ...],
         username: str | None,
     ) -> dict[str, str]:
-        resolved = reference.resolve(username)
-        if resolved is None:
+        if (resolved := reference.resolve(username)) is None:
             assert reference.env is not None
             location = ".".join(path) or "config"
             raise ValueError(
                 f"Secret at {location} uses unset environment variable "
                 f"'{reference.env}'"
             )
-        template = (
+        return externalize(
+            resolved.get_secret_value(),
             reference.template
             if isinstance(reference, SecretTemplate)
-            else None
+            else None,
         )
-        return externalize(resolved.get_secret_value(), template)
 
-    projected = transform_secret_references(
+    projected = _transform_secrets(
         value,
         resolve_reference,
         transform_literal=lambda secret, _path: externalize(
