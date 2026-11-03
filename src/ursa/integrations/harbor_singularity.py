@@ -995,7 +995,10 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             self._uses_compose
             and "image" in self._load_compose_config()["services"]["main"]
         ):
-            return "/"
+            raise ValueError(
+                "Singularity cannot determine the WORKDIR for a Compose "
+                "main image; set [environment].workdir"
+            )
         elif not dockerfile_path.is_file():
             return "/"
         workdir = PurePosixPath("/")
@@ -2342,6 +2345,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         *,
         default_cwd: str | None = None,
         resolve_default_user: bool = True,
+        environment_file: str | None = None,
     ) -> str:
         command = f"cd {shlex.quote(cwd or default_cwd or self._workdir)} && {command}"
         requested_user = (
@@ -2371,10 +2375,15 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
                 user_arg = shlex.quote(str(resolved_user))
             command = f"su {user_arg} -s /bin/bash -c {shlex.quote(command)}"
         quoted_pid_file = shlex.quote(pid_file)
+        source_environment = (
+            f". {shlex.quote(environment_file)}; "
+            if environment_file is not None
+            else ""
+        )
         return (
             f"echo $$ > {quoted_pid_file}; "
             f"trap 'rm -f {quoted_pid_file}' EXIT; "
-            f"{command}"
+            f"{source_environment}{command}"
         )
 
     def _runtime_environment(
@@ -2399,6 +2408,45 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
                 raise ValueError(f"Invalid environment variable: {key!r}")
             runtime_env[f"{prefix}{key}"] = value
         return runtime_env
+
+    @contextmanager
+    def _staged_multiline_environment(
+        self, command: str, env: dict[str, str] | None
+    ) -> Generator[tuple[str, dict[str, str] | None, str | None], None, None]:
+        """Keep multiline values out of Singularity's environment injection."""
+        multiline = {
+            key: value for key, value in (env or {}).items() if "\n" in value
+        }
+        if not multiline:
+            yield command, env, None
+            return
+        invalid = [
+            key
+            for key in multiline
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None
+        ]
+        if invalid:
+            raise ValueError(
+                "Invalid multiline environment variable names: "
+                + ", ".join(sorted(invalid))
+            )
+        with self._staged_transfer("exec-env") as staged:
+            staged.write_text(
+                "".join(
+                    f"export {key}={shlex.quote(value)}\n"
+                    for key, value in sorted(multiline.items())
+                )
+            )
+            staged.chmod(0o600)
+            yield (
+                command,
+                {
+                    key: value
+                    for key, value in (env or {}).items()
+                    if key not in multiline
+                },
+                f"/staging/{staged.name}",
+            )
 
     async def _cleanup_exec_process(
         self,
@@ -2455,95 +2503,104 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         default_cwd: str | None = None,
         merge_persistent: bool = True,
     ) -> ExecResult:
-        pid_file = f"/tmp/harbor-exec-{secrets.token_hex(8)}.pid"
-        shell_command = self._exec_shell_command(
+        configured_env = self._merge_env(env) if merge_persistent else env
+        with self._staged_multiline_environment(command, configured_env) as (
             command,
-            cwd,
-            user,
-            pid_file,
-            default_cwd=default_cwd,
-            resolve_default_user=merge_persistent,
-        )
-        runtime_command = [
-            *self._instance_exec_prefix(
+            env,
+            environment_file,
+        ):
+            pid_file = f"/tmp/harbor-exec-{secrets.token_hex(8)}.pid"
+            shell_command = self._exec_shell_command(
+                command,
                 cwd,
-                instance_name=instance_name,
-                default_cwd=default_cwd,
-            ),
-            "bash",
-            "-c",
-            shell_command,
-        ]
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *runtime_command,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                start_new_session=True,
-                env=self._runtime_environment(
-                    env, merge_persistent=merge_persistent
-                ),
-            )
-        except OSError as exc:
-            raise RuntimeError(
-                f"Could not execute command in Singularity: {exc}"
-            ) from exc
-
-        communication = asyncio.create_task(process.communicate())
-        timed_out = False
-        try:
-            if timeout_sec is None:
-                stdout, stderr = await communication
-            else:
-                stdout, stderr = await asyncio.wait_for(
-                    asyncio.shield(communication), timeout=timeout_sec
-                )
-        except TimeoutError:
-            timed_out = True
-            await self._cleanup_exec_process(
-                process,
+                user,
                 pid_file,
-                instance_name=instance_name,
                 default_cwd=default_cwd,
+                resolve_default_user=merge_persistent,
+                environment_file=environment_file,
             )
-            stdout, stderr = await communication
-        except asyncio.CancelledError:
-            cleanup = asyncio.create_task(
-                self._cleanup_exec_process(
+            runtime_command = [
+                *self._instance_exec_prefix(
+                    cwd,
+                    instance_name=instance_name,
+                    default_cwd=default_cwd,
+                ),
+                "bash",
+                "-c",
+                shell_command,
+            ]
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *runtime_command,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    start_new_session=True,
+                    env=self._runtime_environment(env, merge_persistent=False),
+                )
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Could not execute command in Singularity: {exc}"
+                ) from exc
+
+            communication = asyncio.create_task(process.communicate())
+            timed_out = False
+            try:
+                if timeout_sec is None:
+                    stdout, stderr = await communication
+                else:
+                    stdout, stderr = await asyncio.wait_for(
+                        asyncio.shield(communication), timeout=timeout_sec
+                    )
+            except TimeoutError:
+                timed_out = True
+                await self._cleanup_exec_process(
                     process,
                     pid_file,
                     instance_name=instance_name,
                     default_cwd=default_cwd,
                 )
-            )
-            with suppress(asyncio.CancelledError):
-                await asyncio.shield(cleanup)
-            with suppress(Exception, asyncio.CancelledError):
-                await asyncio.shield(communication)
-            raise
+                stdout, stderr = await communication
+            except asyncio.CancelledError:
+                cleanup = asyncio.create_task(
+                    self._cleanup_exec_process(
+                        process,
+                        pid_file,
+                        instance_name=instance_name,
+                        default_cwd=default_cwd,
+                    )
+                )
+                with suppress(asyncio.CancelledError):
+                    await asyncio.shield(cleanup)
+                with suppress(Exception, asyncio.CancelledError):
+                    await asyncio.shield(communication)
+                raise
 
-        stdout_text = stdout.decode(errors="replace")
-        stderr_text = stderr.decode(errors="replace")
-        return_code = (
-            process.returncode if process.returncode is not None else 1
-        )
-        if timed_out:
-            return_code = 124
-            timeout_message = f"Command timed out after {timeout_sec} seconds"
-            stderr_text = "\n".join(
-                part for part in (stderr_text.rstrip(), timeout_message) if part
+            stdout_text = stdout.decode(errors="replace")
+            stderr_text = stderr.decode(errors="replace")
+            return_code = (
+                process.returncode if process.returncode is not None else 1
             )
-        if return_code != 0:
-            error_output = stderr_text or stdout_text or "<no output>"
-            self.logger.debug(
-                "Command exited with rc=%s: %s", return_code, error_output
+            if timed_out:
+                return_code = 124
+                timeout_message = (
+                    f"Command timed out after {timeout_sec} seconds"
+                )
+                stderr_text = "\n".join(
+                    part
+                    for part in (stderr_text.rstrip(), timeout_message)
+                    if part
+                )
+            if return_code != 0:
+                error_output = stderr_text or stdout_text or "<no output>"
+                self.logger.debug(
+                    "Command exited with rc=%s: %s", return_code, error_output
+                )
+            return ExecResult(
+                stdout=stdout_text,
+                stderr=stderr_text,
+                return_code=return_code,
             )
-        return ExecResult(
-            stdout=stdout_text,
-            stderr=stderr_text,
-            return_code=return_code,
-        )
 
     def _transfer_staging_path(self, name: str) -> Path:
         return self._staging / (
@@ -2591,12 +2648,12 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             raise FileNotFoundError(f"Source {kind} not found: {source}")
         with self._staged_transfer(source.name) as staged:
             if directory:
-                shutil.copytree(source, staged)
+                shutil.copytree(source, staged, symlinks=True)
                 result = await self.exec(f"mkdir -p {shlex.quote(target_path)}")
                 self._check_transfer(result, "prepare upload directory")
                 source = f"/staging/{staged.name}/."
                 target = f"{target_path}/"
-                command = f"cp -r {shlex.quote(source)} {shlex.quote(target)}"
+                command = f"cp -rP {shlex.quote(source)} {shlex.quote(target)}"
             else:
                 shutil.copy2(source, staged)
                 command = (
@@ -2627,7 +2684,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             parents=True, exist_ok=True
         )
         with self._staged_transfer(Path(source_path).name) as staged:
-            recursive = "-r " if directory else ""
+            recursive = "-rP " if directory else ""
             command = (
                 f"cp {recursive}{shlex.quote(source_path)} "
                 f"{shlex.quote('/staging/' + staged.name)}"
@@ -2640,10 +2697,11 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
                     )
                 for item in staged.iterdir():
                     destination = target / item.name
-                    if item.is_dir():
-                        if destination.exists():
-                            shutil.rmtree(destination)
-                        shutil.copytree(item, destination)
+                    self._remove_staging_path(destination)
+                    if item.is_symlink():
+                        shutil.copy2(item, destination, follow_symlinks=False)
+                    elif item.is_dir():
+                        shutil.copytree(item, destination, symlinks=True)
                     else:
                         shutil.copy2(item, destination)
             else:

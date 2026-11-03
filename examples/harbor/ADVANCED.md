@@ -13,8 +13,8 @@ without Git-ignored and common secret files.
 --agent-kwarg ursa_install_spec=/path/to/checkout
 ```
 
-By default, only `config_file` is merged before Harbor's model and MCP layer.
-Set `--agent-kwarg config_only=false` to include system and user config first.
+The agent's native `config` is the complete URSA configuration before Harbor's
+model and MCP layer are applied.
 Secret and keyring references resolve on the host; only generated environment
 references reach the runner, never host config or keyring files. Trial output
 includes `agent/ursa.log`, lifecycle records in `agent/ursa.jsonl` (including
@@ -76,7 +76,8 @@ securely; see Harbor's [network-policy reference](https://docs.harborframework.c
 and Singularity's [networking guide](https://docs.sylabs.io/guides/3.6/user-guide/networking.html).
 
 Set `[environment].workdir` when a Dockerfile has a variable or inherited
-non-root `WORKDIR`; the adapter rejects unresolved workdirs before launch.
+non-root `WORKDIR`, or when Compose uses an image for its `main` service; the
+adapter rejects unresolved workdirs before launch.
 
 ## Clean up
 

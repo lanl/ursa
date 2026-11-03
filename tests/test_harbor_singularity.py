@@ -1,4 +1,6 @@
 import asyncio
+import os
+import shlex
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -8,6 +10,7 @@ import yaml
 
 pytest.importorskip("harbor")
 
+from harbor.environments.base import ExecResult
 from harbor.models.task.config import (
     EnvironmentConfig,
     NetworkMode,
@@ -29,6 +32,7 @@ def _environment(
     network_mode: NetworkMode = NetworkMode.PUBLIC,
     phase_network_modes: tuple[NetworkMode, ...] = (),
     overlay: bool = False,
+    workdir: str | None = "/workspace",
 ) -> DockerfileSingularityEnvironment:
     environment_dir = tmp_path / "environment"
     environment_dir.mkdir()
@@ -53,7 +57,7 @@ def _environment(
         environment_name="unit-test",
         session_id=f"{tmp_path.name}__env",
         trial_paths=trial_paths,
-        task_env_config=EnvironmentConfig(workdir="/workspace"),
+        task_env_config=EnvironmentConfig(workdir=workdir),
         mounts=[
             dict(
                 type="bind",
@@ -127,6 +131,11 @@ async def _convert_compose(
         (tmp_path / "singularity-compose.yml").read_text()
     )["instances"]
     return names, instances
+
+
+def test_compose_image_requires_explicit_workdir(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Compose main image.*workdir"):
+        _environment(tmp_path, compose=True, workdir=None)
 
 
 @pytest.mark.parametrize("hashed_capath", [False, True])
@@ -539,6 +548,90 @@ async def test_start_failure_cleans_runtime_workdir(tmp_path, monkeypatch):
 
     assert len(roots) == 1 and roots[0] is not None and not roots[0].exists()
     assert environment._runtime_workdir_root is None
+
+
+async def test_exec_stages_multiline_environment_values(tmp_path, monkeypatch):
+    environment = _environment(tmp_path)
+    _prepare_started_environment(environment, tmp_path)
+    environment._fakeroot = True
+    environment._persistent_env["PERSISTENT"] = "persistent\nsecret"
+    observed: dict[str, object] = {}
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return b"ok", b""
+
+    async def create_process(*command: str, **kwargs: object) -> Process:
+        observed["command"] = command
+        observed["env"] = kwargs["env"]
+        staged = next(environment._staging.glob("*exec-env"))
+        observed["contents"] = staged.read_text()
+        observed["mode"] = staged.stat().st_mode & 0o777
+        return Process()
+
+    monkeypatch.setattr(
+        harbor_singularity.asyncio, "create_subprocess_exec", create_process
+    )
+    result = await environment._exec_instance(
+        "printf ready",
+        cwd=None,
+        env={"PROMPT": "private line\nsecond line", "SAFE": "value"},
+        timeout_sec=None,
+        user="taskuser",
+    )
+
+    assert result.stdout == "ok"
+    command = " ".join(observed["command"])
+    assert "private line" not in command
+    assert ". /staging/" in command
+    assert command.index(". /staging/") < command.index("su taskuser")
+    assert observed["contents"] == (
+        "export PERSISTENT='persistent\nsecret'\n"
+        "export PROMPT='private line\nsecond line'\n"
+    )
+    assert observed["mode"] == 0o600
+    runtime_env = observed["env"]
+    assert isinstance(runtime_env, dict)
+    assert runtime_env["SINGULARITYENV_SAFE"] == "value"
+    assert "SINGULARITYENV_PROMPT" not in runtime_env
+    assert "SINGULARITYENV_PERSISTENT" not in runtime_env
+    assert not list(environment._staging.glob("*exec-env"))
+
+
+async def test_directory_transfers_preserve_symlinks(tmp_path, monkeypatch):
+    environment = _environment(tmp_path)
+    _prepare_started_environment(environment, tmp_path)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "target").write_text("data")
+    (source / "link").symlink_to("target")
+    commands: list[str] = []
+
+    async def upload_execute(command: str, **_kwargs: object) -> ExecResult:
+        commands.append(command)
+        if command.startswith("cp -rP"):
+            staged = next(environment._staging.glob("*source"))
+            assert (staged / "link").is_symlink()
+        return ExecResult(stdout="", stderr="", return_code=0)
+
+    monkeypatch.setattr(environment, "exec", upload_execute)
+    await environment.upload_dir(source, "/workspace")
+    assert any(command.startswith("cp -rP") for command in commands)
+
+    async def download_execute(command: str) -> ExecResult:
+        staged = environment._staging / Path(shlex.split(command)[-1]).name
+        staged.mkdir()
+        os.symlink("/container-only/path", staged / "link")
+        return ExecResult(stdout="", stderr="", return_code=0)
+
+    destination = tmp_path / "download"
+    await environment._download(
+        "/workspace", destination, download_execute, directory=True
+    )
+    assert (destination / "link").is_symlink()
+    assert os.readlink(destination / "link") == "/container-only/path"
 
 
 @pytest.mark.parametrize(
