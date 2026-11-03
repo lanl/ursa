@@ -2639,6 +2639,33 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
     async def upload_dir(self, source_dir: Path | str, target_dir: str) -> None:
         await self._upload(source_dir, target_dir, directory=True)
 
+    @staticmethod
+    def _stage_upload_directory(source: Path, destination: Path) -> None:
+        """Copy a directory while keeping its relative links usable."""
+        shutil.copytree(source, destination, symlinks=True)
+        source_root = source.resolve()
+        transfer_root = source_root.parent
+        for source_link in source.rglob("*"):
+            if (
+                not source_link.is_symlink()
+                or source_link.readlink().is_absolute()
+            ):
+                continue
+            try:
+                target = source_link.resolve(strict=True)
+            except OSError:
+                continue
+            if target.is_relative_to(source_root) or not target.is_relative_to(
+                transfer_root
+            ):
+                continue
+            staged_link = destination / source_link.relative_to(source)
+            staged_link.unlink()
+            if target.is_dir():
+                shutil.copytree(target, staged_link, symlinks=True)
+            else:
+                shutil.copy2(target, staged_link)
+
     async def _upload(
         self, source_path: Path | str, target_path: str, *, directory: bool
     ) -> None:
@@ -2648,7 +2675,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             raise FileNotFoundError(f"Source {kind} not found: {source}")
         with self._staged_transfer(source.name) as staged:
             if directory:
-                shutil.copytree(source, staged, symlinks=True)
+                self._stage_upload_directory(source, staged)
                 result = await self.exec(f"mkdir -p {shlex.quote(target_path)}")
                 self._check_transfer(result, "prepare upload directory")
                 source = f"/staging/{staged.name}/."
