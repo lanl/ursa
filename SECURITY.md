@@ -1,5 +1,11 @@
 # Security and execution safety
 
+To report a suspected vulnerability privately, use
+[GitHub private vulnerability reporting](https://github.com/lanl/ursa/security/advisories/new)
+or email [ursa@lanl.gov](mailto:ursa@lanl.gov). Include the affected URSA version,
+reproduction steps, and potential impact. Please avoid posting vulnerability
+details in public issues.
+
 URSA agents can read and write files, execute generated code and shell commands,
 and install packages with the permissions of the process running URSA. Package
 installation may occur while an agent resolves missing dependencies. The
