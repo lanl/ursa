@@ -14,6 +14,7 @@ from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from functools import wraps
 from threading import Lock
 from typing import Any, Callable
@@ -39,9 +40,9 @@ _otel_logger = _logging.getLogger("ursa.observability.otel")
 opentelemetry_available = True
 _otel_import_error: str | None = None
 try:
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-        OTLPSpanExporter,
-    )
+    OTLPSpanExporter = importlib.import_module(
+        "opentelemetry.exporter.otlp.proto.http.trace_exporter"
+    ).OTLPSpanExporter
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -591,6 +592,79 @@ def _acc_from(d: dict, roll: dict):
                 pass
 
 
+def _valid_token_count(value: Any) -> int | None:
+    """Return a non-negative integral token count."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = Decimal(str(value).strip())
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not number.is_finite() or number < 0 or number != number.to_integral():
+        return None
+    return int(number)
+
+
+def _validated_usage(value: Any) -> dict[str, Any]:
+    """Coerce a provider usage object and discard invalid token counts."""
+    output = {}
+    for key, item in _coerce_usage(value).items():
+        if isinstance(item, dict):
+            output[key] = _validated_usage(item)
+        elif (count := _valid_token_count(item)) is not None:
+            output[key] = count
+    return output
+
+
+def extract_token_usage(response: Any) -> dict[str, int]:
+    """Roll provider-specific LangChain usage into Harbor's token fields."""
+    selected, normalized, raw = [], [], []
+    llm_output = getattr(response, "llm_output", None)
+    llm = _validated_usage(
+        (llm_output.get("token_usage") or llm_output.get("usage"))
+        if isinstance(llm_output, dict)
+        else None
+    )
+    for group in getattr(response, "generations", None) or []:
+        for generation in (
+            group if isinstance(group, (list, tuple)) else [group]
+        ):
+            message = getattr(generation, "message", None)
+            usage = _validated_usage(getattr(message, "usage_metadata", None))
+            metadata = getattr(message, "response_metadata", None)
+            metadata = _validated_usage(
+                (metadata.get("token_usage") or metadata.get("usage"))
+                if isinstance(metadata, dict)
+                else None
+            )
+            if usage:
+                normalized.append(usage)
+            if metadata:
+                raw.append(metadata)
+            if usage or metadata:
+                selected.append(usage or metadata)
+
+    total: dict[str, int] = {}
+    for source in selected or ([llm] if llm else []):
+        for target, aliases in (
+            ("input_tokens", ("input_tokens", "prompt_tokens")),
+            ("output_tokens", ("output_tokens", "completion_tokens")),
+        ):
+            count = next(
+                (source[key] for key in aliases if key in source), None
+            )
+            if count is not None:
+                total[target] = total.get(target, 0) + count
+    extra_sources = [*normalized, *raw, *([llm] if llm else [])]
+    for key, extractor in (
+        ("reasoning_tokens", _reasoning_from),
+        ("cached_tokens", _cached_from),
+    ):
+        if count := max(map(extractor, extra_sources), default=0):
+            total[key] = count
+    return total
+
+
 class PerLLMTimer(BaseCallbackHandler):
     """Times LLM calls (chat/completions) and captures usage/metrics."""
 
@@ -638,7 +712,7 @@ class PerLLMTimer(BaseCallbackHandler):
         Priority for rollup: usage_metadata (if any) > response_metadata.token_usage > llm_output.{token_usage|usage}
         We still include all raw sources alongside the normalized rollup.
         """
-        out = {}
+        out: dict[str, Any] = {}
         sources_token_usage = []  # raw token_usage dicts from response_metadata
         sources_usage_meta = []  # raw usage_metadata dicts
         roll = {
@@ -1252,7 +1326,7 @@ class Telemetry:
         elif isinstance(headers, Mapping):
             resolved_headers = dict(headers)
         elif isinstance(headers, str):
-            resolved_headers = parse_env_headers(headers, liberal=True)
+            resolved_headers = dict(parse_env_headers(headers, liberal=True))
         else:
             raise ValueError(
                 "otel_headers must be a mapping or an env-style "

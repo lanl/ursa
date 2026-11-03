@@ -29,7 +29,6 @@ from typing import Annotated, Any
 from urllib.parse import quote, unquote, urlparse
 
 import typer
-import yaml
 from jsonargparse import Namespace
 from pydantic import SecretStr
 
@@ -50,33 +49,24 @@ from ursa.cli.config import (
     ENV_SUB_REGEX,
     UrsaConfig,
     config_search_paths,
+    load_config_file,
 )
 from ursa.security import DEFAULT_GROUP_NAME, validate_group_name
 from ursa.util.secrets import externalize_secret_references
 
-
-def _load_harbor_config_file(path: Path) -> dict[str, Any]:
-    """Load a raw config layer so secrets can be externalized on the host."""
-    loader = yaml.safe_load if path.suffix in {".yaml", ".yml"} else json.load
-    with path.open(encoding="utf-8") as config_file:
-        data = loader(config_file)
-    if data is None:
-        return {}
-    if not isinstance(data, dict):
-        raise ValueError(
-            f"Configuration file '{path}' must contain a mapping at its root"
-        )
-    return data
+TaskPaths = Annotated[
+    list[Path],
+    typer.Argument(
+        help="Task files, task directories, or roots to scan recursively"
+    ),
+]
+_USAGE_KEYS = ("input_tokens", "cached_tokens", "output_tokens")
 
 
 def _jsonl_token_usage(
     path: Path,
 ) -> tuple[int | None, int | None, int | None]:
-    totals: dict[str, int | None] = {
-        "input_tokens": None,
-        "cached_tokens": None,
-        "output_tokens": None,
-    }
+    totals: dict[str, int | None] = dict.fromkeys(_USAGE_KEYS)
     try:
         with path.open(encoding="utf-8", errors="replace") as stream:
             for line in stream:
@@ -92,15 +82,14 @@ def _jsonl_token_usage(
                 usage = record.get("usage")
                 if not isinstance(usage, dict):
                     continue
-                for key in totals:
+                for key in _USAGE_KEYS:
                     value = usage.get(key)
                     if (
-                        not isinstance(value, int)
-                        or isinstance(value, bool)
-                        or value < 0
+                        isinstance(value, int)
+                        and not isinstance(value, bool)
+                        and value >= 0
                     ):
-                        continue
-                    totals[key] = (totals[key] or 0) + value
+                        totals[key] = (totals[key] or 0) + value
     except OSError:
         return None, None, None
 
@@ -191,16 +180,15 @@ class UrsaHarborAgent(BaseInstalledAgent):
             if split_commas:
                 values = value.split(",")
             elif value.lstrip().startswith("["):
+                message = (
+                    f"{name} must be a requirement or JSON array of strings"
+                )
                 try:
                     values = json.loads(value)
                 except json.JSONDecodeError as exc:
-                    raise ValueError(
-                        f"{name} must be a requirement or JSON array of strings"
-                    ) from exc
+                    raise ValueError(message) from exc
                 if not isinstance(values, list):
-                    raise ValueError(
-                        f"{name} must be a requirement or JSON array of strings"
-                    )
+                    raise ValueError(message)
             else:
                 values = [value]
         else:
@@ -297,6 +285,15 @@ class UrsaHarborAgent(BaseInstalledAgent):
                     extras[normalized] = None
         return tuple(extras)
 
+    def _install_target_with_extras(
+        self, name: str, embedded_extras: str | None = None
+    ) -> str:
+        extras = self._merge_extras(
+            embedded_extras.split(",") if embedded_extras else (),
+            self.ursa_extras,
+        )
+        return f"{name}[{','.join(extras)}]"
+
     def _install_target(self, target: str) -> str:
         direct_reference = re.match(
             r"^([A-Za-z0-9][A-Za-z0-9._-]*)"
@@ -305,15 +302,9 @@ class UrsaHarborAgent(BaseInstalledAgent):
         )
         if direct_reference:
             name, embedded, reference = direct_reference.groups()
-            extras = ",".join(
-                self._merge_extras(
-                    embedded.split(",") if embedded else (), self.ursa_extras
-                )
-            )
-            return f"{name}[{extras}] @ {reference}"
+            return f"{self._install_target_with_extras(name, embedded)} @ {reference}"
         if "://" in target:
-            extras = ",".join(self.ursa_extras)
-            return f"ursa-ai[{extras}] @ {target}"
+            return f"{self._install_target_with_extras('ursa-ai')} @ {target}"
         distribution = re.match(
             r"^([A-Za-z0-9][A-Za-z0-9._-]*)"
             r"\s*(?:\[([^\]]+)\])?\s*",
@@ -321,15 +312,9 @@ class UrsaHarborAgent(BaseInstalledAgent):
         )
         if distribution:
             name, embedded = distribution.groups()
-            extras = ",".join(
-                self._merge_extras(
-                    embedded.split(",") if embedded else (), self.ursa_extras
-                )
-            )
             end = distribution.end()
-            return f"{name}[{extras}]{target[end:]}"
-        extras = ",".join(self.ursa_extras)
-        return f"{target}[{extras}]"
+            return f"{self._install_target_with_extras(name, embedded)}{target[end:]}"
+        return self._install_target_with_extras(target)
 
     @staticmethod
     def _github_archive_target(target: str) -> str:
@@ -438,7 +423,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
                 Namespace(config=self.config_file, subcommand=None), "final"
             )
         )
-        layers = [_load_harbor_config_file(path) for path in paths]
+        layers = [load_config_file(path, interpolate=False) for path in paths]
         for layer in layers:
             self._reject_environment_interpolation(layer)
         return layers
@@ -524,14 +509,12 @@ class UrsaHarborAgent(BaseInstalledAgent):
         environment: BaseEnvironment,
         runtime_config: dict[str, Any],
     ) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", encoding="utf-8"
-        ) as runtime_config_file:
-            json.dump(runtime_config, runtime_config_file)
-            runtime_config_file.flush()
-            await environment.upload_file(
-                Path(runtime_config_file.name), self._remote_config_file
-            )
+        await self._upload_config_text(
+            environment,
+            content=json.dumps(runtime_config),
+            remote_path=self._remote_config_file,
+            filename="ursa-config.json",
+        )
         # Docker upload implementations can preserve the root-owned 0600 mode
         # of the host temporary file. The JSON contains secret references,
         # never secret values, and must be readable by a non-root agent.
@@ -667,6 +650,20 @@ class UrsaHarborAgent(BaseInstalledAgent):
             f"rm -f -- {quoted_pid_file}; fi"
         )
 
+    async def _best_effort_root_exec(
+        self, environment: BaseEnvironment, command: str
+    ) -> None:
+        try:
+            await asyncio.shield(
+                self.exec_as_root(
+                    environment,
+                    command=command,
+                    timeout_sec=10,
+                )
+            )
+        except Exception:
+            pass
+
     @staticmethod
     def name() -> str:
         return "ursa"
@@ -743,7 +740,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
                 "uv tool install 'ursa-ai[harbor]'"
             )
 
-        checkpoint = trial_dir / "agent" / "db" / "checkpointer.db"
+        checkpoint = trial_dir / "agent/db/checkpointer.db"
         if not checkpoint.is_file():
             raise ValueError(
                 f"URSA checkpoint not found at {checkpoint}; "
@@ -755,17 +752,15 @@ class UrsaHarborAgent(BaseInstalledAgent):
         agent_name = cls._handoff_agent_name(trial_dir)
         group = cls._handoff_group(trial_dir)
         try:
-            import_agent(
-                checkpoint,
-                group_name=group,
-                agent_name=agent_name,
-            )
+            import_agent(checkpoint, group_name=group, agent_name=agent_name)
         except (FileExistsError, FileNotFoundError) as exc:
             raise ValueError(str(exc)) from exc
-        command = ["ursa", "--name", agent_name]
-        if group != DEFAULT_GROUP_NAME:
-            command.extend(["--group", group])
-        return command
+        return [
+            "ursa",
+            "--name",
+            agent_name,
+            *(["--group", group] if group != DEFAULT_GROUP_NAME else []),
+        ]
 
     def version(self) -> str | None:
         try:
@@ -981,42 +976,27 @@ class UrsaHarborAgent(BaseInstalledAgent):
         }
 
         try:
-            try:
-                await self.exec_as_agent(
-                    environment,
-                    command=(
-                        f"echo $$ > {runner_pid_file}; "
-                        f"exec {self.URSA_RUNNER} " + shlex.quote(encoded)
-                    ),
-                    env={**self._model_env, **self._secret_env},
-                    cwd=self._workspace,
-                    timeout_sec=None,
-                )
-            except asyncio.CancelledError:
-                try:
-                    await asyncio.shield(
-                        self.exec_as_root(
-                            environment,
-                            command=self._terminate_runner_command(
-                                runner_pid_file
-                            ),
-                            timeout_sec=10,
-                        )
-                    )
-                except Exception:
-                    pass
-                raise
+            await self.exec_as_agent(
+                environment,
+                command=(
+                    f"echo $$ > {runner_pid_file}; "
+                    f"exec {self.URSA_RUNNER} " + shlex.quote(encoded)
+                ),
+                env={**self._model_env, **self._secret_env},
+                cwd=self._workspace,
+                timeout_sec=None,
+            )
+        except asyncio.CancelledError:
+            await self._best_effort_root_exec(
+                environment,
+                self._terminate_runner_command(runner_pid_file),
+            )
+            raise
         finally:
-            try:
-                await asyncio.shield(
-                    self.exec_as_root(
-                        environment,
-                        command=f"rm -f -- {shlex.quote(runner_pid_file)}",
-                        timeout_sec=10,
-                    )
-                )
-            except Exception:
-                pass
+            await self._best_effort_root_exec(
+                environment,
+                f"rm -f -- {shlex.quote(runner_pid_file)}",
+            )
             (
                 context.n_input_tokens,
                 context.n_cache_tokens,
@@ -1059,12 +1039,7 @@ app = typer.Typer(
 
 @app.command()
 def validate(
-    paths: Annotated[
-        list[Path],
-        typer.Argument(
-            help="Task files, task directories, or roots to scan recursively"
-        ),
-    ],
+    paths: TaskPaths,
 ) -> None:
     """Validate Harbor task environments supported by URSA."""
     from ursa.integrations.harbor_validation import (
@@ -1089,12 +1064,7 @@ def validate(
 
 @app.command("prebuild")
 def prebuild_sifs(
-    paths: Annotated[
-        list[Path],
-        typer.Argument(
-            help="Task files, task directories, or roots to scan recursively"
-        ),
-    ],
+    paths: TaskPaths,
     force: Annotated[
         bool,
         typer.Option("--force", help="Rebuild SIFs already present in cache"),

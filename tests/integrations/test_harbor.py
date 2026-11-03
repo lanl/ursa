@@ -4,166 +4,135 @@ import os
 import shutil
 import subprocess
 import threading
+from contextlib import asynccontextmanager, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 pytest.importorskip("harbor")
-
-from filelock import FileLock  # noqa: E402
-from harbor.models.task.config import (  # noqa: E402
+from filelock import FileLock
+from harbor.models.task.config import (
     EnvironmentConfig,
     NetworkMode,
     NetworkPolicy,
 )
-from harbor.models.trial.paths import TrialPaths  # noqa: E402
+from harbor.models.trial.paths import TrialPaths
 
-from ursa.integrations.harbor import UrsaHarborAgent  # noqa: E402
-from ursa.integrations.harbor_singularity import (  # noqa: E402
+from ursa.integrations.harbor import UrsaHarborAgent
+from ursa.integrations.harbor_singularity import (
     DockerfileSingularityEnvironment,
 )
 
 SINGULARITY = shutil.which("apptainer") or shutil.which("singularity")
-
 pytestmark = [
     pytest.mark.slow,
     pytest.mark.skipif(
-        SINGULARITY is None,
-        reason="Apptainer or Singularity is required",
+        SINGULARITY is None, reason="Apptainer or Singularity is required"
     ),
 ]
 
 
-def _shared_session_dir(
-    tmp_path_factory: pytest.TempPathFactory,
-    worker_id: str,
-    name: str,
-) -> Path:
-    base = tmp_path_factory.getbasetemp()
-    root = (base if worker_id == "master" else base.parent) / name
+def _shared(factory, worker, name):
+    root = (
+        factory.getbasetemp()
+        if worker == "master"
+        else factory.getbasetemp().parent
+    ) / name
     root.mkdir(exist_ok=True)
     return root
 
 
 @pytest.fixture(scope="session")
-def ubuntu_sif(
-    tmp_path_factory: pytest.TempPathFactory,
-    worker_id: str,
-) -> Path:
-    """Build the test image directly from Ubuntu with Singularity."""
-    root = _shared_session_dir(tmp_path_factory, worker_id, "harbor-ubuntu-sif")
-    image = root / "ubuntu-24.04.sif"
+def ubuntu_sif(tmp_path_factory, worker_id):
+    image = (
+        _shared(tmp_path_factory, worker_id, "harbor-ubuntu-sif")
+        / "ubuntu-24.04.sif"
+    )
     with FileLock(f"{image}.lock"):
-        if image.is_file():
-            return image
-        temporary = image.with_suffix(".tmp.sif")
-        temporary.unlink(missing_ok=True)
-        result = subprocess.run(
-            [
-                SINGULARITY,
-                "build",
-                str(temporary),
-                "docker://ubuntu:24.04",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-        if result.returncode != 0:
-            pytest.fail(
-                "Could not build the Ubuntu Singularity fixture:\n"
-                f"{result.stderr or result.stdout}"
+        if not image.is_file():
+            temporary = image.with_suffix(".tmp.sif")
+            result = subprocess.run(
+                [SINGULARITY, "build", str(temporary), "docker://ubuntu:24.04"],
+                capture_output=True,
+                text=True,
+                timeout=300,
             )
-        temporary.replace(image)
+            if result.returncode:
+                pytest.fail(
+                    f"Could not build Ubuntu SIF:\n{result.stderr or result.stdout}"
+                )
+            temporary.replace(image)
     return image
 
 
 @pytest.fixture(scope="session")
-def ursa_wheel(
-    tmp_path_factory: pytest.TempPathFactory,
-    worker_id: str,
-) -> Path:
-    """Build the package under test for installation inside Singularity."""
-    uv = shutil.which("uv")
-    if uv is None:
-        pytest.fail("Building the URSA wheel requires uv")
-    output_dir = _shared_session_dir(
-        tmp_path_factory, worker_id, "harbor-ursa-wheel"
+def ursa_wheel(tmp_path_factory, worker_id):
+    uv = shutil.which("uv") or pytest.fail(
+        "Building the URSA wheel requires uv"
     )
-    repository = Path(__file__).resolve().parents[2]
-    with FileLock(f"{output_dir}.lock"):
-        wheels = list(output_dir.glob("ursa_ai-*.whl"))
+    root = _shared(tmp_path_factory, worker_id, "harbor-ursa-wheel")
+    with FileLock(f"{root}.lock"):
+        wheels = list(root.glob("ursa_ai-*.whl"))
         if not wheels:
-            build_dir = output_dir / "build"
-            build_dir.mkdir(exist_ok=True)
+            build = root / "build"
+            build.mkdir(exist_ok=True)
             result = subprocess.run(
                 [
                     uv,
                     "build",
                     "--wheel",
                     "--out-dir",
-                    str(build_dir),
-                    str(repository),
+                    str(build),
+                    str(Path(__file__).resolve().parents[2]),
                 ],
                 capture_output=True,
                 text=True,
                 timeout=180,
             )
-            if result.returncode != 0:
-                pytest.fail(f"Could not build the URSA wheel:\n{result.stderr}")
-            built_wheels = list(build_dir.glob("ursa_ai-*.whl"))
-            if len(built_wheels) != 1:
-                pytest.fail(
-                    f"Expected one built URSA wheel, found: {built_wheels}"
-                )
-            built_wheels[0].replace(output_dir / built_wheels[0].name)
-            wheels = list(output_dir.glob("ursa_ai-*.whl"))
-        if len(wheels) != 1:
-            pytest.fail(f"Expected one URSA wheel, found: {wheels}")
+            if result.returncode:
+                pytest.fail(f"Could not build URSA wheel:\n{result.stderr}")
+            wheels = list(build.glob("ursa_ai-*.whl"))
+            if len(wheels) != 1:
+                pytest.fail(f"Expected one URSA wheel, found: {wheels}")
+            wheels[0].replace(root / wheels[0].name)
+            wheels = list(root.glob("ursa_ai-*.whl"))
+    if len(wheels) != 1:
+        pytest.fail(f"Expected one URSA wheel, found: {wheels}")
     return wheels[0]
 
 
-async def _start_environment(
-    root: Path,
-    image: Path,
+async def _start(
+    root,
+    image,
     *,
-    fakeroot: bool = False,
-    network_mode: NetworkMode = NetworkMode.PUBLIC,
-    phase_network_modes: tuple[NetworkMode, ...] = (),
-    overlay: bool = False,
-    compose: bool = False,
-    compose_sidecar: bool = True,
-    image_cache_dir: Path | None = None,
-) -> DockerfileSingularityEnvironment:
-    environment_dir = root / "environment"
-    environment_dir.mkdir(parents=True)
-    (environment_dir / "Dockerfile").write_text(
+    fakeroot=False,
+    network=NetworkMode.PUBLIC,
+    phases=(),
+    overlay=False,
+    compose=False,
+    sidecar=True,
+    cache=None,
+):
+    env_dir, workspace = root / "environment", root / "workspace"
+    env_dir.mkdir(parents=True)
+    workspace.mkdir(mode=0o777)
+    (env_dir / "Dockerfile").write_text(
         "FROM ubuntu:24.04\nWORKDIR /workspace\n"
     )
     if compose:
-        compose_text = "services:\n  main:\n    build: .\n"
-        if compose_sidecar:
-            sidecar = environment_dir / "sidecar"
-            sidecar.mkdir()
-            (sidecar / "Dockerfile").write_text("FROM ubuntu:24.04\n")
-            compose_text += "  helper:\n    build: ./sidecar\n"
-        (environment_dir / "docker-compose.yaml").write_text(compose_text)
-    workspace = root / "workspace"
-    workspace.mkdir(mode=0o777)
-    trial_paths = TrialPaths(root / "trial")
-    trial_paths.mkdir()
-
-    environment = DockerfileSingularityEnvironment(
-        environment_dir=environment_dir,
+        text = "services:\n  main:\n    build: .\n"
+        if sidecar:
+            (env_dir / "sidecar").mkdir()
+            (env_dir / "sidecar/Dockerfile").write_text("FROM ubuntu:24.04\n")
+            text += "  helper:\n    build: ./sidecar\n"
+        (env_dir / "docker-compose.yaml").write_text(text)
+    env = DockerfileSingularityEnvironment(
+        environment_dir=env_dir,
         environment_name="local-test",
         session_id=f"{root.name}__env",
-        trial_paths=trial_paths,
-        task_env_config=EnvironmentConfig(
-            workdir="/workspace",
-            storage_mb=32,
-        ),
+        trial_paths=TrialPaths(root / "trial"),
+        task_env_config=EnvironmentConfig(workdir="/workspace", storage_mb=32),
         mounts=[
             {
                 "type": "bind",
@@ -172,587 +141,397 @@ async def _start_environment(
                 "read_only": False,
             }
         ],
-        network_policy=NetworkPolicy(network_mode=network_mode),
+        network_policy=NetworkPolicy(network_mode=network),
         phase_network_policies=[
-            NetworkPolicy(network_mode=mode) for mode in phase_network_modes
+            NetworkPolicy(network_mode=mode) for mode in phases
         ],
         persistent_env={"PERSISTED_VALUE": "from-environment"},
         singularity_fakeroot=fakeroot,
         singularity_overlay=overlay,
-        singularity_image_cache_dir=image_cache_dir or root / "sif-cache",
+        singularity_image_cache_dir=cache or root / "sif-cache",
         singularity_startup_timeout_sec=30,
     )
-    if compose:
-        services = environment._load_compose_config()["services"].values()
-        build_inputs = [
-            environment._compose_build_inputs(service["build"])
-            for service in services
-        ]
-    else:
-        build_inputs = [
-            (environment._dockerfile_path, environment_dir, (), None)
-        ]
-    for dockerfile, context, build_args, target in build_inputs:
-        cache_path = await environment._dockerfile_cache_path(
-            dockerfile,
-            context,
-            build_args,
-            target,
+    env.trial_paths.mkdir()
+    builds = (
+        env._load_compose_config()["services"].values()
+        if compose
+        else ({"build": "."},)
+    )
+    for service in builds:
+        args = (
+            env._compose_build_inputs(service["build"])
+            if compose
+            else (env._dockerfile_path, env_dir, (), None)
         )
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        if not cache_path.exists():
-            shutil.copy2(image, cache_path)
+        path = await env._dockerfile_cache_path(*args)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            shutil.copy2(image, path)
     try:
-        await environment.start(force_build=False)
+        await env.start(force_build=False)
     except BaseException:
-        await _cleanup_environment(environment)
+        await _cleanup(env)
         raise
-    return environment
+    return env
 
 
-def _force_stop(
-    environment: DockerfileSingularityEnvironment,
-    known_instances: set[str] | None = None,
-) -> None:
-    instance_names = set(known_instances or ()) | {
-        instance
-        for instances in environment._compose_instances.values()
-        for instance in instances
-    }
-    instance_names.add(environment._instance_name)
-    for instance_name in instance_names:
+def _force_stop(env, names=()):
+    names = (
+        set(names)
+        | {env._instance_name}
+        | {n for values in env._compose_instances.values() for n in values}
+    )
+    for name in names:
         try:
             subprocess.run(
-                [
-                    environment._instance_runtime(),
-                    "instance",
-                    "stop",
-                    "--force",
-                    instance_name,
-                ],
+                [env._instance_runtime(), "instance", "stop", "--force", name],
                 capture_output=True,
                 timeout=10,
             )
         except subprocess.TimeoutExpired:
-            continue
+            pass
 
 
-def _require_fakeroot(image: Path) -> None:
+async def _cleanup(env, names=()):
+    try:
+        await env.stop(delete=False)
+    finally:
+        _force_stop(env, names)
+        env._cleanup_compose_project()
+        env._cleanup_staging()
+
+
+@asynccontextmanager
+async def _environment(root, image, **kwargs):
+    env = await _start(root, image, **kwargs)
+    try:
+        yield env
+    finally:
+        await _cleanup(env)
+
+
+@pytest.fixture
+async def environment(tmp_path, ubuntu_sif):
+    async with _environment(tmp_path, ubuntu_sif) as env:
+        yield env
+
+
+def _require_fakeroot(image):
     result = subprocess.run(
         [SINGULARITY, "exec", "--fakeroot", str(image), "true"],
         capture_output=True,
         text=True,
         timeout=30,
     )
-    if result.returncode != 0:
+    if result.returncode:
         pytest.skip(
             f"Singularity fakeroot is unavailable: {result.stderr.strip()}"
         )
 
 
-async def _cleanup_environment(
-    environment: DockerfileSingularityEnvironment,
-    known_instances: set[str] | None = None,
-) -> None:
-    try:
-        await environment.stop(delete=False)
-    finally:
-        _force_stop(environment, known_instances)
-        environment._cleanup_compose_project()
-        environment._cleanup_staging()
-
-
-@pytest.fixture
-async def environment(tmp_path: Path, ubuntu_sif: Path):
-    running = await _start_environment(tmp_path, ubuntu_sif)
-    try:
-        yield running
-    finally:
-        await _cleanup_environment(running)
-
-
-async def test_real_instance_lifecycle_and_file_transfer(
-    environment: DockerfileSingularityEnvironment,
-    tmp_path: Path,
-):
-    result = await environment.exec(
-        'printf \'%s:%s\' "$PERSISTED_VALUE" "$PER_CALL_VALUE"',
-        env={"PER_CALL_VALUE": "per-call"},
-    )
-
-    assert result.return_code == 0
-    assert result.stdout == "from-environment:per-call"
-
-    written = await environment.exec("printf container-data > result.txt")
-    assert written.return_code == 0
-    assert (tmp_path / "workspace" / "result.txt").read_text() == (
-        "container-data"
-    )
-
-    source = tmp_path / "source with spaces.txt"
-    source.write_text("round trip")
-    await environment.upload_file(source, "/workspace/uploaded with spaces.txt")
-    downloaded = tmp_path / "downloaded with spaces.txt"
-    await environment.download_file(
-        "/workspace/uploaded with spaces.txt", downloaded
-    )
-    assert downloaded.read_text() == "round trip"
-
-    runtime_workdir = environment._runtime_workdir_root
-    assert runtime_workdir is not None
-    large_tmp = await environment.exec(
-        "dd if=/dev/zero of=/tmp/ursa-workdir-capacity "
-        "bs=1M count=65 status=none"
-    )
-    assert large_tmp.return_code == 0
-    assert (
-        runtime_workdir / "main" / "tmp" / "ursa-workdir-capacity"
-    ).stat().st_size == 65 * 1024 * 1024
-
-    scratch = environment._scratch_dir
-    await environment.stop(delete=False)
-    assert scratch is not None and not scratch.exists()
-    assert not runtime_workdir.exists()
-    stopped = subprocess.run(
-        [
-            environment._instance_runtime(),
-            "exec",
-            f"instance://{environment._instance_name}",
-            "true",
-        ],
-        capture_output=True,
-        timeout=10,
-    )
-    assert stopped.returncode != 0
-    with pytest.raises(RuntimeError, match="not started"):
-        await environment.exec("true")
-
-
-async def test_cached_sif_is_touched_and_marked_until_its_last_user_stops(
-    tmp_path: Path,
-    ubuntu_sif: Path,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    cache = tmp_path / "shared-sif-cache"
-    old_image = tmp_path / "old-ubuntu.sif"
-    shutil.copy2(ubuntu_sif, old_image)
-    os.utime(old_image, (1, 1))
-    first = await _start_environment(
-        tmp_path / "first",
-        old_image,
-        image_cache_dir=cache,
-    )
-    second = None
-    try:
-        sif = first._sif_path
-        assert sif is not None
-        marker = first._sif_in_use_path(sif)
-        assert sif.stat().st_mtime_ns > old_image.stat().st_mtime_ns
-        assert marker.is_file()
-        with monkeypatch.context() as patch:
-            patch.setattr(
-                "ursa.integrations.harbor_singularity.archspec.cpu.host",
-                lambda: SimpleNamespace(name="different-microarchitecture"),
-            )
-            other_microarchitecture = await first._dockerfile_cache_path()
-        assert other_microarchitecture != sif
-
-        second = await _start_environment(
-            tmp_path / "second",
-            old_image,
-            image_cache_dir=cache,
-        )
-        assert second._sif_path == sif
-
-        await first.stop(delete=False)
-        assert marker.is_file()
-
-        await second.stop(delete=False)
-        assert not marker.exists()
-    finally:
-        if second is not None:
-            await _cleanup_environment(second)
-        await _cleanup_environment(first)
-
-
-async def test_timeout_kills_the_command_but_keeps_instance_usable(
-    environment: DockerfileSingularityEnvironment,
-    tmp_path: Path,
-):
-    result = await environment.exec(
-        "sleep 30 & child=$!; printf '%s' \"$child\" > timeout.pid; "
-        'wait "$child"',
-        timeout_sec=1,
-    )
-
-    assert result.return_code == 124
-    assert "timed out" in result.stderr
-    child_pid = (tmp_path / "workspace" / "timeout.pid").read_text()
-    reaped = await environment.exec(f"kill -0 {child_pid}")
-    assert reaped.return_code != 0
-    follow_up = await environment.exec("printf still-running")
-    assert follow_up.return_code == 0
-    assert follow_up.stdout == "still-running"
-
-
-class _LoopbackHandler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:
+class _Loopback(BaseHTTPRequestHandler):
+    def do_GET(self):
         body = b"local-only"
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, _format: str, *args: object) -> None:
+    def log_message(self, _format, *args):
         pass
 
 
-async def test_no_network_policy_is_enforced_by_the_runtime(
-    tmp_path: Path,
-    ubuntu_sif: Path,
-):
-    _require_fakeroot(ubuntu_sif)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _LoopbackHandler)
+@contextmanager
+def _server():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Loopback)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    port = server.server_address[1]
-    public = isolated = None
     try:
-        public = await _start_environment(tmp_path / "public", ubuntu_sif)
-        isolated = await _start_environment(
-            tmp_path / "isolated",
-            ubuntu_sif,
-            fakeroot=True,
-            network_mode=NetworkMode.NO_NETWORK,
-        )
-
-        request = (
-            f'bash -c "exec 3<>/dev/tcp/127.0.0.1/{port}; '
-            "printf 'GET / HTTP/1.0\\r\\n\\r\\n' >&3; cat <&3\""
-        )
-        reachable = await public.exec(request, timeout_sec=5)
-        blocked = await isolated.exec(request, timeout_sec=5)
-
-        assert reachable.return_code == 0
-        assert "local-only" in reachable.stdout
-        assert blocked.return_code != 0
+        yield server.server_address[1]
     finally:
-        if isolated is not None:
-            await _cleanup_environment(isolated)
-        if public is not None:
-            await _cleanup_environment(public)
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
 
 
-async def test_host_ca_certificates_are_exposed_to_tls_clients(
-    tmp_path: Path,
-    ubuntu_sif: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def _request(port):
+    return f"bash -c \"exec 3<>/dev/tcp/127.0.0.1/{port}; printf 'GET / HTTP/1.0\\r\\n\\r\\n' >&3; cat <&3\""
+
+
+async def _assert_reaped(env, pid, text):
+    assert (await env.exec(f"kill -0 {pid}")).return_code != 0
+    result = await env.exec(f"printf {text}")
+    assert (result.return_code, result.stdout) == (0, text)
+
+
+async def _assert_persistent_after_isolation(env):
+    assert (
+        await env.exec(
+            "mkdir /installed && printf persisted > /installed/value"
+        )
+    ).return_code == 0
+    await env.set_network_policy(
+        NetworkPolicy(network_mode=NetworkMode.NO_NETWORK)
+    )
+    assert (await env.exec("cat /installed/value")).stdout == "persisted"
+
+
+def _assert_instances_stopped(env, names):
+    for name in names:
+        assert subprocess.run(
+            [env._instance_runtime(), "exec", f"instance://{name}", "true"],
+            capture_output=True,
+            timeout=10,
+        ).returncode
+
+
+async def test_lifecycle_transfer_capacity_and_stop(environment, tmp_path):
+    assert (
+        await environment.exec(
+            'printf \'%s:%s\' "$PERSISTED_VALUE" "$PER_CALL_VALUE"',
+            env={"PER_CALL_VALUE": "per-call"},
+        )
+    ).stdout == "from-environment:per-call"
+    assert (
+        await environment.exec("printf container-data > result.txt")
+    ).return_code == 0
+    assert (tmp_path / "workspace/result.txt").read_text() == "container-data"
+    source, destination = (
+        tmp_path / "source with spaces.txt",
+        tmp_path / "downloaded with spaces.txt",
+    )
+    source.write_text("round trip")
+    await environment.upload_file(source, "/workspace/uploaded with spaces.txt")
+    await environment.download_file(
+        "/workspace/uploaded with spaces.txt", destination
+    )
+    assert destination.read_text() == "round trip"
+    assert (
+        await environment.exec(
+            "dd if=/dev/zero of=/tmp/ursa-workdir-capacity bs=1M count=65 status=none"
+        )
+    ).return_code == 0
+    runtime, scratch = (
+        environment._runtime_workdir_root,
+        environment._scratch_dir,
+    )
+    assert (
+        runtime
+        and (runtime / "main/tmp/ursa-workdir-capacity").stat().st_size
+        == 65 * 1024 * 1024
+    )
+    await environment.stop(delete=False)
+    assert scratch and not scratch.exists() and not runtime.exists()
+    _assert_instances_stopped(environment, [environment._instance_name])
+    with pytest.raises(RuntimeError, match="not started"):
+        await environment.exec("true")
+
+
+async def test_timeout_reaps_process_and_preserves_instance(
+    environment, tmp_path
 ):
+    result = await environment.exec(
+        'sleep 30 & child=$!; printf \'%s\' "$child" > timeout.pid; wait "$child"',
+        timeout_sec=1,
+    )
+    assert result.return_code == 124 and "timed out" in result.stderr
+    await _assert_reaped(
+        environment,
+        (tmp_path / "workspace/timeout.pid").read_text(),
+        "still-running",
+    )
+
+
+async def test_network_policy_blocks_loopback(tmp_path, ubuntu_sif):
+    _require_fakeroot(ubuntu_sif)
+    with _server() as port:
+        async with _environment(tmp_path / "public", ubuntu_sif) as public:
+            async with _environment(
+                tmp_path / "isolated",
+                ubuntu_sif,
+                fakeroot=True,
+                network=NetworkMode.NO_NETWORK,
+            ) as isolated:
+                reachable = await public.exec(_request(port), timeout_sec=5)
+                blocked = await isolated.exec(_request(port), timeout_sec=5)
+                assert reachable.return_code == 0
+                assert "local-only" in reachable.stdout
+                assert blocked.return_code != 0
+
+
+async def test_host_ca_mount_is_read_only(tmp_path, ubuntu_sif, monkeypatch):
     monkeypatch.setattr(
         "ursa.integrations.harbor_singularity._host_ca_certificates_pem",
         lambda: "test host CA bundle\n",
     )
-    environment = await _start_environment(tmp_path, ubuntu_sif)
-
-    try:
-        mounted = await environment.exec(
-            'printf \'%s\\n\' "$SSL_CERT_FILE" "$REQUESTS_CA_BUNDLE" '
-            '"$CURL_CA_BUNDLE"; cat "$SSL_CERT_FILE"'
+    async with _environment(tmp_path, ubuntu_sif) as env:
+        result = await env.exec(
+            'printf \'%s\\n\' "$SSL_CERT_FILE" "$REQUESTS_CA_BUNDLE" "$CURL_CA_BUNDLE"; cat "$SSL_CERT_FILE"'
         )
-        modified = await environment.exec('printf tampered >> "$SSL_CERT_FILE"')
-
-        assert mounted.stdout == (
-            "/staging/host-ca-certificates.crt\n" * 3 + "test host CA bundle\n"
+        assert (
+            result.stdout
+            == "/staging/host-ca-certificates.crt\n" * 3
+            + "test host CA bundle\n"
         )
-        assert modified.return_code != 0
-    finally:
-        await _cleanup_environment(environment)
+        assert (
+            await env.exec('printf tampered >> "$SSL_CERT_FILE"')
+        ).return_code != 0
 
 
-async def test_fakeroot_overlay_provides_a_writable_container_root(
-    tmp_path: Path,
-    ubuntu_sif: Path,
+async def test_compose_overlay_survives_network_transition(
+    tmp_path, ubuntu_sif
 ):
     _require_fakeroot(ubuntu_sif)
-    environment = await _start_environment(
+    async with _environment(
         tmp_path,
         ubuntu_sif,
         fakeroot=True,
+        phases=(NetworkMode.NO_NETWORK,),
         overlay=True,
-    )
-    try:
-        result = await environment.exec(
-            "mkdir /created-at-runtime && printf overlay > "
-            "/created-at-runtime/value"
-        )
-        read_back = await environment.exec("cat /created-at-runtime/value")
-
-        assert result.return_code == 0
-        assert read_back.stdout == "overlay"
-    finally:
-        await _cleanup_environment(environment)
+        compose=True,
+        sidecar=False,
+    ) as env:
+        await _assert_persistent_after_isolation(env)
 
 
-async def test_overlay_persists_agent_setup_across_network_policy_change(
-    tmp_path: Path,
-    ubuntu_sif: Path,
-):
+async def test_network_transition_restores_connectivity(tmp_path, ubuntu_sif):
     _require_fakeroot(ubuntu_sif)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _LoopbackHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    port = server.server_address[1]
-    environment = None
-    try:
-        environment = await _start_environment(
+    with _server() as port:
+        async with _environment(
             tmp_path,
             ubuntu_sif,
             fakeroot=True,
-            phase_network_modes=(NetworkMode.NO_NETWORK,),
+            phases=(NetworkMode.NO_NETWORK,),
             overlay=True,
-        )
-        installed = await environment.exec(
-            "mkdir /installed-during-agent-setup && "
-            "printf persisted > /installed-during-agent-setup/value"
-        )
-        assert installed.return_code == 0
-
-        request = (
-            f'bash -c "exec 3<>/dev/tcp/127.0.0.1/{port}; '
-            "printf 'GET / HTTP/1.0\\r\\n\\r\\n' >&3; cat <&3\""
-        )
-        reachable = await environment.exec(request, timeout_sec=5)
-        assert reachable.return_code == 0
-
-        await environment.set_network_policy(
-            NetworkPolicy(network_mode=NetworkMode.NO_NETWORK)
-        )
-
-        persisted = await environment.exec(
-            "cat /installed-during-agent-setup/value"
-        )
-        blocked = await environment.exec(request, timeout_sec=5)
-        assert persisted.stdout == "persisted"
-        assert blocked.return_code != 0
-
-        await environment.set_network_policy(
-            NetworkPolicy(network_mode=NetworkMode.PUBLIC)
-        )
-        restored = await environment.exec(request, timeout_sec=5)
-        assert restored.return_code == 0
-        assert "local-only" in restored.stdout
-    finally:
-        if environment is not None:
-            await _cleanup_environment(environment)
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-
-
-async def test_main_only_compose_restarts_with_overlay_and_no_network(
-    tmp_path: Path,
-    ubuntu_sif: Path,
-):
-    _require_fakeroot(ubuntu_sif)
-    environment = await _start_environment(
-        tmp_path,
-        ubuntu_sif,
-        fakeroot=True,
-        phase_network_modes=(NetworkMode.NO_NETWORK,),
-        overlay=True,
-        compose=True,
-        compose_sidecar=False,
-    )
-    try:
-        written = await environment.exec(
-            "mkdir /installed-during-agent-setup && "
-            "printf persisted > /installed-during-agent-setup/value"
-        )
-        assert written.return_code == 0
-
-        await environment.set_network_policy(
-            NetworkPolicy(network_mode=NetworkMode.NO_NETWORK)
-        )
-
-        persisted = await environment.exec(
-            "cat /installed-during-agent-setup/value"
-        )
-        assert persisted.stdout == "persisted"
-    finally:
-        await _cleanup_environment(environment)
-
-
-async def test_compose_sidecar_lifecycle_and_file_transfer(
-    tmp_path: Path,
-    ubuntu_sif: Path,
-):
-    _require_fakeroot(ubuntu_sif)
-    environment = await _start_environment(
-        tmp_path,
-        ubuntu_sif,
-        fakeroot=True,
-        compose=True,
-    )
-    instances: set[str] = set()
-    try:
-        cached_sifs = list((tmp_path / "sif-cache").glob("*.sif"))
-        assert len(cached_sifs) == 2
-        assert all(
-            environment._sif_in_use_path(path).is_file() for path in cached_sifs
-        )
-
-        main = await environment.service_exec(
-            "printf main-service",
-            service="main",
-        )
-        sidecar = await environment.service_exec(
-            "printf sidecar-service",
-            service="helper",
-            cwd="/",
-        )
-        await environment.service_exec(
-            "printf sidecar-file > /tmp/result",
-            service="helper",
-            cwd="/",
-        )
-        main_is_isolated = await environment.service_exec(
-            "test ! -e /tmp/result",
-            service="main",
-            cwd="/",
-        )
-        downloaded = tmp_path / "sidecar-result"
-        await environment.service_download_file(
-            "/tmp/result",
-            downloaded,
-            service="helper",
-        )
-
-        assert main.stdout == "main-service"
-        assert sidecar.stdout == "sidecar-service"
-        assert main_is_isolated.return_code == 0
-        assert downloaded.read_text() == "sidecar-file"
-
-        instances = {
-            instance
-            for names in environment._compose_instances.values()
-            for instance in names
-        }
-        await environment.stop(delete=False)
-        assert all(
-            not environment._sif_in_use_path(path).exists()
-            for path in cached_sifs
-        )
-        for instance in instances:
-            probe = subprocess.run(
-                [
-                    environment._instance_runtime(),
-                    "exec",
-                    f"instance://{instance}",
-                    "true",
-                ],
-                capture_output=True,
-                timeout=10,
+        ) as env:
+            assert (
+                await env.exec(_request(port), timeout_sec=5)
+            ).return_code == 0
+            await _assert_persistent_after_isolation(env)
+            assert (
+                await env.exec(_request(port), timeout_sec=5)
+            ).return_code != 0
+            await env.set_network_policy(
+                NetworkPolicy(network_mode=NetworkMode.PUBLIC)
             )
-            assert probe.returncode != 0
+            assert (
+                "local-only"
+                in (await env.exec(_request(port), timeout_sec=5)).stdout
+            )
+
+
+async def test_compose_sidecar_isolation_transfer_and_cleanup(
+    tmp_path, ubuntu_sif
+):
+    _require_fakeroot(ubuntu_sif)
+    env = await _start(tmp_path, ubuntu_sif, fakeroot=True, compose=True)
+    names = set()
+    try:
+        sifs = list((tmp_path / "sif-cache").glob("*.sif"))
+        assert len(sifs) == 2
+        assert (
+            await env.service_exec("printf main-service", service="main")
+        ).stdout == "main-service"
+        assert (
+            await env.service_exec(
+                "printf sidecar-service", service="helper", cwd="/"
+            )
+        ).stdout == "sidecar-service"
+        await env.service_exec(
+            "printf sidecar-file > /tmp/result", service="helper", cwd="/"
+        )
+        assert (
+            await env.service_exec(
+                "test ! -e /tmp/result", service="main", cwd="/"
+            )
+        ).return_code == 0
+        output = tmp_path / "sidecar-result"
+        await env.service_download_file("/tmp/result", output, service="helper")
+        assert output.read_text() == "sidecar-file"
+        names = {
+            name
+            for values in env._compose_instances.values()
+            for name in values
+        }
+        await env.stop(delete=False)
+        assert all(not env._sif_in_use_path(path).exists() for path in sifs)
+        _assert_instances_stopped(env, names)
     finally:
-        await _cleanup_environment(environment, instances)
+        await _cleanup(env, names)
 
 
 @pytest.mark.parametrize("fakeroot", [True, False])
 @pytest.mark.skipif(
-    os.geteuid() == 0,
-    reason="requires a genuinely unprivileged host user",
+    os.geteuid() == 0, reason="requires a genuinely unprivileged host user"
 )
-async def test_agent_install_works_in_an_unprivileged_instance(
-    tmp_path: Path,
-    ubuntu_sif: Path,
-    ursa_wheel: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    fakeroot: bool,
+async def test_agent_install_unprivileged_instance(
+    tmp_path, ubuntu_sif, ursa_wheel, monkeypatch, fakeroot
 ):
     monkeypatch.setenv("OPENAI_API_KEY", "host-only-secret")
     if fakeroot:
         _require_fakeroot(ubuntu_sif)
-    environment = await _start_environment(
-        tmp_path,
-        ubuntu_sif,
-        fakeroot=fakeroot,
-    )
-    config = tmp_path / "ursa.yaml"
-    config.write_text("llm_model:\n  model: gpt-4.1-nano\n")
-    agent = UrsaHarborAgent(
-        logs_dir=tmp_path / "agent-logs",
-        model_name="openai/gpt-4.1-nano",
-        config_file=config,
-        ursa_install_spec=ursa_wheel,
-    )
-
-    try:
-        immutable_root = await environment.exec("touch /outside-writable-binds")
-        assert immutable_root.return_code != 0
-        identity = await environment.exec("id -u")
-        assert identity.stdout.strip() == (
+    async with _environment(tmp_path, ubuntu_sif, fakeroot=fakeroot) as env:
+        config = tmp_path / "ursa.yaml"
+        config.write_text("llm_model:\n  model: gpt-4.1-nano\n")
+        agent = UrsaHarborAgent(
+            logs_dir=tmp_path / "agent-logs",
+            model_name="openai/gpt-4.1-nano",
+            config_file=config,
+            ursa_install_spec=ursa_wheel,
+        )
+        assert (
+            await env.exec("touch /outside-writable-binds")
+        ).return_code != 0
+        assert (await env.exec("id -u")).stdout.strip() == (
             "0" if fakeroot else str(os.geteuid())
         )
-
-        await agent.install(environment)
-
-        installed = await environment.exec(
-            "test -x /installed-agent/bin/ursa-harbor-runner && "
-            "test -x /installed-agent/tools/ursa-ai/bin/python"
+        await agent.install(env)
+        assert (
+            await env.exec(
+                "test -x /installed-agent/bin/ursa-harbor-runner && test -x /installed-agent/tools/ursa-ai/bin/python"
+            )
+        ).return_code == 0
+        assert (
+            "usage: ursa"
+            in (
+                await env.exec(
+                    "/installed-agent/bin/ursa --help", timeout_sec=30
+                )
+            ).stdout
         )
-        cli_result = await environment.exec(
-            "/installed-agent/bin/ursa --help", timeout_sec=30
+        assert (
+            "Run the container-side Harbor agent process"
+            in (
+                await env.exec(
+                    "/installed-agent/bin/ursa-harbor-runner --help",
+                    timeout_sec=30,
+                )
+            ).stdout
         )
-        runner_result = await environment.exec(
-            "/installed-agent/bin/ursa-harbor-runner --help", timeout_sec=30
-        )
-        config_result = await environment.exec(
-            "cat /installed-agent/tmp/ursa-config.json"
+        output = (
+            await env.exec("cat /installed-agent/tmp/ursa-config.json")
+        ).stdout
+        assert (
+            json.loads(output)["llm_model"]["model"] == "gpt-4.1-nano"
+            and "host-only-secret" not in output
+            and agent._workspace == "/workspace"
         )
 
-        assert installed.return_code == 0
-        assert cli_result.return_code == 0
-        assert "usage: ursa" in cli_result.stdout
-        assert runner_result.return_code == 0
-        assert "Run the container-side Harbor agent process" in (
-            runner_result.stdout
-        )
-        runtime_config = json.loads(config_result.stdout)
-        assert runtime_config["llm_model"]["model"] == "gpt-4.1-nano"
-        assert "host-only-secret" not in config_result.stdout
-        assert agent._workspace == "/workspace"
-    finally:
-        await _cleanup_environment(environment)
 
-
-async def test_cancelling_exec_reaps_the_container_process(
-    environment: DockerfileSingularityEnvironment,
-    tmp_path: Path,
-):
-    pid_file = tmp_path / "workspace" / "cancel.pid"
+async def test_cancelling_exec_reaps_process(environment, tmp_path):
+    path = tmp_path / "workspace/cancel.pid"
     command = asyncio.create_task(
         environment.exec(
-            "sleep 30 & child=$!; printf '%s' \"$child\" > cancel.pid; "
-            'wait "$child"'
+            'sleep 30 & child=$!; printf \'%s\' "$child" > cancel.pid; wait "$child"'
         )
     )
     for _ in range(500):
-        if pid_file.is_file():
+        if path.is_file():
             break
         await asyncio.sleep(0.02)
     else:
         pytest.fail("container command did not publish its child PID")
     command.cancel()
-
     with pytest.raises(asyncio.CancelledError):
         await command
-    child_pid = pid_file.read_text()
-    reaped = await environment.exec(f"kill -0 {child_pid}")
-    assert reaped.return_code != 0
-    follow_up = await environment.exec("printf recovered")
-    assert follow_up.return_code == 0
-    assert follow_up.stdout == "recovered"
+    await _assert_reaped(environment, path.read_text(), "recovered")

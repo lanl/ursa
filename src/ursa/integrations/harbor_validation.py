@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from harbor.models.task.config import StepConfig, VerifierEnvironmentMode
+from harbor.models.task.config import (
+    EnvironmentConfig,
+    StepConfig,
+    VerifierEnvironmentMode,
+)
 from harbor.models.task.task import Task
 from harbor.models.task.verifier_mode import (
     resolve_effective_verifier_env_config,
@@ -85,7 +89,12 @@ def _task_environments(
     trial_environment = TrialEnvironmentConfig()
     steps: list[StepConfig | None] = list(task.config.steps or [None])
     plans: list[
-        tuple[StepConfig | None, VerifierEnvironmentMode, TrialNetworkPlan]
+        tuple[
+            StepConfig | None,
+            VerifierEnvironmentMode,
+            EnvironmentConfig | None,
+            TrialNetworkPlan,
+        ]
     ] = []
 
     for step in steps:
@@ -101,56 +110,52 @@ def _task_environments(
             verifier_mode=mode,
             env_config=verifier_environment,
         )
-        plans.append((step, mode, plan))
+        plans.append((step, mode, verifier_environment, plan))
 
-    environments = []
     agent_phases = [
         policy
-        for _, mode, plan in plans
+        for _, mode, _, plan in plans
         for policy in (
             [plan.agent_phase, plan.verifier_phase]
             if mode == VerifierEnvironmentMode.SHARED
             else [plan.agent_phase]
         )
     ]
-    environments.append(
+    environments = [
         _make_environment(
             task,
             environment_dir=task.paths.environment_dir,
             task_env_config=task.config.environment,
-            network_policy=plans[0][2].agent_env_baseline,
+            network_policy=plans[0][3].agent_env_baseline,
             phase_network_policies=agent_phases,
             suffix="agent",
             purpose=purpose,
             image_cache_dir=image_cache_dir,
         )
-    )
+    ]
 
-    for index, (step, mode, plan) in enumerate(plans):
-        if mode != VerifierEnvironmentMode.SEPARATE:
-            continue
-        verifier_environment = resolve_effective_verifier_env_config(
-            task.config, step
-        )
-        if verifier_environment is None or plan.verifier_env_baseline is None:
-            raise RuntimeError("Separate verifier environment did not resolve")
-        environment_dir = task.paths.tests_dir
-        if step is not None:
-            step_tests = task.paths.step_tests_dir(step.name)
-            if step_tests.exists():
-                environment_dir = step_tests
-        environments.append(
-            _make_environment(
-                task,
-                environment_dir=environment_dir,
-                task_env_config=verifier_environment,
-                network_policy=plan.verifier_env_baseline,
-                phase_network_policies=[plan.verifier_phase],
-                suffix=f"verifier-{index}",
-                purpose=purpose,
-                image_cache_dir=image_cache_dir,
+    def verifier_dir(step: StepConfig | None) -> Path:
+        tests = task.paths.step_tests_dir(step.name) if step else None
+        return tests if tests and tests.exists() else task.paths.tests_dir
+
+    for index, (step, mode, config, plan) in enumerate(plans):
+        if mode == VerifierEnvironmentMode.SEPARATE:
+            if config is None or plan.verifier_env_baseline is None:
+                raise RuntimeError(
+                    "Separate verifier environment did not resolve"
+                )
+            environments.append(
+                _make_environment(
+                    task,
+                    environment_dir=verifier_dir(step),
+                    task_env_config=config,
+                    network_policy=plan.verifier_env_baseline,
+                    phase_network_policies=[plan.verifier_phase],
+                    suffix=f"verifier-{index}",
+                    purpose=purpose,
+                    image_cache_dir=image_cache_dir,
+                )
             )
-        )
     return environments
 
 
@@ -166,17 +171,14 @@ async def prebuild_harbor_task(
     image_cache_dir: Path | str | None = None,
 ) -> list[Path]:
     """Build main, Compose-build, and separate-verifier SIFs for one task."""
-    environments = _task_environments(
-        Task(task_dir),
-        purpose="prebuild",
-        image_cache_dir=image_cache_dir,
-    )
-    paths: list[Path] = []
-    for environment in environments:
-        for path in await environment.build_sifs(force_build=force_build):
-            if path not in paths:
-                paths.append(path)
-    return paths
+    paths: dict[Path, None] = {}
+    for environment in _task_environments(
+        Task(task_dir), purpose="prebuild", image_cache_dir=image_cache_dir
+    ):
+        paths.update(
+            dict.fromkeys(await environment.build_sifs(force_build=force_build))
+        )
+    return list(paths)
 
 
 def discover_harbor_tasks(paths: list[Path]) -> list[Path]:

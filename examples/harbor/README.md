@@ -1,13 +1,13 @@
 # Run URSA with Harbor
 
 This example connects URSA's `ExecutionAgent` to
-[Harbor](https://www.harborframework.com/docs/core-concepts). The included
-benchmark asks the agent to install GPAW, Parthenon, and PyTorch.
+[Harbor](https://www.harborframework.com/docs/core-concepts) and includes
+GPAW, Parthenon, and PyTorch installation tasks.
 
-## Run one task
+## Run a task
 
-Install Python 3.12 or newer, [uv](https://docs.astral.sh/uv/), and Docker. Set
-the credential for your inference provider, then run from this directory:
+From this directory, install Python 3.12+, [uv](https://docs.astral.sh/uv/),
+and Docker for Harbor's default environment. Set a provider credential, then:
 
 ```bash
 export OPENAI_API_KEY=...
@@ -19,68 +19,48 @@ uv run harbor run \
   --model openai/openai:gpt-5.4-nano
 ```
 
-A successful task reports reward `1`. Inspect the result with:
+A successful task reports reward `1`; inspect results with `uv run harbor view
+jobs`. Use `--path benchmark/tasks` to run all included tasks.
 
-```bash
-uv run harbor view jobs
-```
-
-To continue a completed trial as a local URSA conversation, pass its trial
-directory to Harbor's handoff command:
+To continue a completed trial locally, run:
 
 ```bash
 uv run harbor trial handoff jobs/<job>/<trial>
 ```
 
-The handoff imports `agent/db/checkpointer.db` as a persistent agent named
-`harbor-<trial-directory>` in the same URSA group used during evaluation, then
-opens the local URSA TUI. A non-default group must already exist locally so its
-security policy is preserved. Handoff is refused when the trial does not record
-its evaluation group. The trial artifacts are left unchanged. As with other
-Harbor handoffs, the conversation is restored but files from the task container
-are not copied into the local workspace.
+Handoff imports the trial checkpoint into its recorded, existing URSA group and
+opens the TUI; the task container's files are not copied into the workspace.
 
-To run all three tasks, repeat the command with `--path benchmark/tasks`.
-
-Validate their Docker and Compose environments without running an agent:
+Validate tasks against URSA's Singularity constraints, or warm the SIF cache,
+without running an agent:
 
 ```bash
 uv run -m ursa.integrations.harbor validate benchmark/tasks
+uv run -m ursa.integrations.harbor prebuild benchmark/tasks
 ```
+
+See [advanced usage](ADVANCED.md) for the Singularity environment, cache
+options, and non-Docker prerequisites.
 
 ## Add a task
 
-Start with Harbor's generator:
+Start with Harbor's generator, then follow its task tutorial and reference for
+the generated instruction, environment, task, and verifier files:
 
 ```bash
 uv run harbor task init --tasks-dir benchmark/tasks my-org/my-task
 ```
 
-Then work through the generated files one at a time:
-
-1. Write the request in `instruction.md`.
-2. Define the base environment and tools available to the agent in
-   `environment/Dockerfile`.
-3. Describe the task in `task.toml`.
-4. Make `tests/test.sh` write a numeric reward to
-   `/logs/verifier/reward.txt`.
-5. Run the task by passing its directory to `--path`.
-
-The official [task tutorial](https://www.harborframework.com/docs/tasks/task-tutorial)
-walks through these files. Use the
-[task-format reference](https://www.harborframework.com/docs/tasks) for details
-and the [publishing guide](https://www.harborframework.com/docs/tasks/publishing)
-when the task is ready to share.
+The official [task tutorial](https://www.harborframework.com/docs/tasks/task-tutorial),
+[format reference](https://www.harborframework.com/docs/tasks), and
+[publishing guide](https://www.harborframework.com/docs/tasks/publishing) cover
+authoring and sharing tasks.
 
 ## Configuration
 
-Harbor models use
-`<inference-provider>/<model-provider>:<model-name>`, for example
-`ollama/ollama:gemma4:latest`. The inference provider must exist in
-`ursa.yaml`. If it defines `model_provider`, the model-provider prefix may be
-omitted. The adapter replaces its configured model with `--model`.
-Harbor `[[environment.mcp_servers]]` entries are also attached automatically;
-see the [MCP task tutorial](https://www.harborframework.com/docs/tutorials/mcp-server-task).
-
-See [advanced usage](ADVANCED.md) for extra Python packages, Singularity, and
-cleanup.
+Harbor models use `<inference-provider>/<model-provider>:<model-name>`, such
+as `ollama/ollama:gemma4:latest`. The inference provider must exist in
+`ursa.yaml`; its `model_provider` allows omitting the model-provider prefix.
+`--model` replaces the configured model, and Harbor
+`[[environment.mcp_servers]]` entries are attached automatically. See the
+[MCP task tutorial](https://www.harborframework.com/docs/tutorials/mcp-server-task).

@@ -36,26 +36,26 @@ def _agent_config(
     use_web: bool | None = None,
 ) -> dict[str, Any]:
     """Select the conventional ``agent_config`` entry for an agent class."""
-    name = agent_class.__name__.removesuffix("Agent")
     snake = "".join(
-        f"_{char.lower()}" if char.isupper() else char for char in name
-    )
-    snake = snake.removeprefix("_")
-    aliases = {
+        f"_{char.lower()}" if char.isupper() else char
+        for char in agent_class.__name__.removesuffix("Agent")
+    ).removeprefix("_")
+    key = {
         "execution": "execute",
         "hypothesizer": "hypothesize",
         "planning": "plan",
         "prompting": "prompt",
-    }
-    key = aliases.get(snake, snake)
+    }.get(snake, snake)
     options = dict(
         config.agent_config.get(key, config.agent_config.get(snake, {}))
     )
-    supports_web = "use_web" in options or any(
-        "use_web" in inspect.signature(base).parameters
-        for base in agent_class.__mro__
-    )
-    if use_web is not None and supports_web:
+    if use_web is not None and (
+        "use_web" in options
+        or any(
+            "use_web" in inspect.signature(base).parameters
+            for base in agent_class.__mro__
+        )
+    ):
         options["use_web"] = use_web
     return options
 
@@ -77,25 +77,47 @@ async def _close_checkpoint(checkpointer: Any) -> None:
     """Flush and close the artifact-backed SQLite checkpoint database."""
     connection = checkpointer.conn
     failure: BaseException | None = None
+
+    async def capture(awaitable) -> None:
+        nonlocal failure
+        try:
+            await awaitable
+        except BaseException as exc:
+            failure = failure or exc
+
     try:
         await connection.commit()
         await connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     except BaseException as exc:
         failure = exc
-    try:
-        await connection.close()
-    except BaseException as exc:
-        if failure is None:
-            failure = exc
+    await capture(connection.close())
     join = getattr(connection, "join", None)
     if callable(join):
-        try:
-            await asyncio.to_thread(join)
-        except BaseException as exc:
-            if failure is None:
-                failure = exc
+        await capture(asyncio.to_thread(join))
     if failure is not None:
         raise failure
+
+
+async def _run_planning_workflow(
+    workflow: Any, task: str, callbacks: list[Any]
+) -> str:
+    """Drive the existing sync workflow through its agents' async APIs."""
+    planning_output = await workflow.planner.ainvoke(
+        f"Break this down into one step per technique:\n{task}",
+        config={"callbacks": callbacks},
+    )
+    summary = "No previous step."
+    for step in planning_output["plan"].steps:
+        result = await workflow.executor.ainvoke(
+            f"You are contributing to the larger solution:\n{task}\n\n"
+            f"Previous-step summary:\n{summary}\n\nCurrent step:\n{step}\n\n"
+            "Execute this step and report results for the executor of the next "
+            "step. Do not use placeholders. Run commands to execute code generated "
+            "for the step if applicable. Only address the current step. Stay in your lane.",
+            config={"callbacks": callbacks},
+        )
+        summary = workflow.executor.format_result(result)
+    return summary
 
 
 async def _run(config: dict[str, Any]) -> None:
@@ -181,9 +203,14 @@ async def _run(config: dict[str, Any]) -> None:
                 ),
                 JSONLLogEventHandler(jsonl_file),
             ]
-            output = await agent.ainvoke(
-                config["instruction"],
-                config={"callbacks": callbacks},
+            output = (
+                await _run_planning_workflow(
+                    agent, config["instruction"], callbacks
+                )
+                if is_workflow
+                else await agent.ainvoke(
+                    config["instruction"], config={"callbacks": callbacks}
+                )
             )
         result = output if is_workflow else agent.format_result(output)
         (logs_dir / "ursa_result.out").write_text(

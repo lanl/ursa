@@ -101,8 +101,6 @@ class ExecutionState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     symlinkdir: dict
     review: NotRequired[ReviewAssessment]
-    review_attempts: NotRequired[int]
-    review_exhausted: NotRequired[bool]
     current_user_request: NotRequired[str]
 
 
@@ -128,8 +126,6 @@ def should_continue(state: ExecutionState) -> Literal["review", "continue"]:
 
 def review_complete(state: ExecutionState) -> Literal["recap", "continue"]:
     """Route to recap when review passes, otherwise continue execution."""
-    if state.get("review_exhausted"):
-        return "recap"
     review = state.get("review")
     if isinstance(review, ReviewAssessment):
         return "recap" if review.is_complete else "continue"
@@ -217,7 +213,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         extra_tools: list[BaseTool] | None = None,
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
-        max_review_attempts: int = 3,
         use_web: bool = False,
         safe_codes: list[str] | None = None,
         **kwargs,
@@ -255,9 +250,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.log_state = log_state
         self.tokens_before_summarize = tokens_before_summarize
         self.messages_to_keep = messages_to_keep
-        if max_review_attempts < 1:
-            raise ValueError("max_review_attempts must be at least 1")
-        self.max_review_attempts = max_review_attempts
 
     @staticmethod
     def _message_text(msg: Any) -> str:
@@ -307,8 +299,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             normalized.get("messages", [])
         )
         normalized["current_user_request"] = user_request
-        normalized["review_attempts"] = 0
-        normalized["review_exhausted"] = False
         return normalized
 
     # Define the function that calls the model
@@ -341,10 +331,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         new_state = deepcopy(state)
         events = self.events(config)
         new_state.setdefault("symlinkdir", {})
-        made_tool_progress = bool(
-            new_state.get("messages")
-            and isinstance(new_state["messages"][-1], ToolMessage)
-        )
 
         full_overwrite = False
 
@@ -409,23 +395,12 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         if self.log_state:
             self.write_state("execution_agent.json", new_state)
         if full_overwrite:
-            result = {
+            return {
                 "messages": Overwrite(new_state["messages"]),
                 "symlinkdir": new_state["symlinkdir"],
             }
-            if made_tool_progress:
-                result["review_attempts"] = 0
-                result["review_exhausted"] = False
-            return result
         else:
-            result = {
-                "messages": response,
-                "symlinkdir": new_state["symlinkdir"],
-            }
-            if made_tool_progress:
-                result["review_attempts"] = 0
-                result["review_exhausted"] = False
-            return result
+            return {"messages": response, "symlinkdir": new_state["symlinkdir"]}
 
     def _get_current_user_request(self, state: ExecutionState) -> str:
         """Return the user request for the current invoke.
@@ -488,24 +463,14 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         is_complete = bool(review.is_complete)
         reason = str(review.reason)
-        review_attempts = int(new_state.get("review_attempts", 0)) + 1
-        review_exhausted = (
-            not is_complete and review_attempts >= self.max_review_attempts
-        )
 
         events.emit(
-            (
-                "Execution Review: Complete"
-                if is_complete
-                else "Execution Review: Attempt Limit Reached"
-                if review_exhausted
-                else "Execution Review: Continue"
-            ),
+            "Execution Review: Complete"
+            if is_complete
+            else "Execution Review: Continue",
             stage="review_work",
             approved=is_complete,
             reason=reason,
-            attempt=review_attempts,
-            max_attempts=self.max_review_attempts,
         )
 
         if is_complete:
@@ -513,15 +478,9 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 return {
                     "messages": Overwrite(new_state["messages"]),
                     "review": review,
-                    "review_attempts": review_attempts,
-                    "review_exhausted": False,
                     "symlinkdir": new_state.get("symlinkdir", {}),
                 }
-            return {
-                "review": review,
-                "review_attempts": review_attempts,
-                "review_exhausted": False,
-            }
+            return {"review": review}
 
         feedback = HumanMessage(
             content=(
@@ -531,25 +490,12 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 f"{reason}"
             )
         )
-        if review_exhausted:
-            feedback = HumanMessage(
-                content=(
-                    "The work remains incomplete after "
-                    f"{review_attempts} consecutive review attempts without "
-                    "additional tool progress. Do not retry execution. In the "
-                    "final recap, clearly report the unresolved objectives and "
-                    "the reason they could not be completed:\n\n"
-                    f"{reason}"
-                )
-            )
         return self.messages_update(
             new_state,
             [feedback],
             full_overwrite=full_overwrite,
             extra={
                 "review": review,
-                "review_attempts": review_attempts,
-                "review_exhausted": review_exhausted,
                 "symlinkdir": new_state.get("symlinkdir", {}),
             },
         )
