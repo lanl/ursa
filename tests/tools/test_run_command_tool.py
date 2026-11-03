@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -50,9 +51,13 @@ def _patch_safety_result(
     return captured
 
 
+@pytest.mark.parametrize("setting, expected", [(None, 3600), ("7200", 7200)])
 def test_run_command_invokes_subprocess_in_workspace(
-    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel, setting, expected
 ):
+    monkeypatch.delenv("URSA_COMMAND_TIMEOUT_SECONDS", raising=False)
+    if setting is not None:
+        monkeypatch.setenv("URSA_COMMAND_TIMEOUT_SECONDS", setting)
     recorded = {}
     _patch_safety_result(monkeypatch, chat_model, is_safe=True)
 
@@ -78,6 +83,7 @@ def test_run_command_invokes_subprocess_in_workspace(
     assert result == "STDOUT:\noutput\nSTDERR:\n"
     assert recorded["kwargs"]["cwd"] == tmp_path
     assert recorded["kwargs"]["shell"] is True
+    assert recorded["kwargs"]["timeout"] == expected
     assert events[0] == (
         "ursa_agent_progress",
         {
@@ -163,6 +169,36 @@ def test_run_command_truncates_output(
     assert "... [snipped" in stderr_body
     assert len(stdout_body) < len(long_stdout)
     assert len(stderr_body) < len(long_stderr)
+
+
+@pytest.mark.parametrize("setting", ["0", "-1", "invalid", "1.5", ""])
+def test_run_command_rejects_invalid_timeout(
+    monkeypatch, tmp_path, chat_model, setting
+):
+    monkeypatch.setenv("URSA_COMMAND_TIMEOUT_SECONDS", setting)
+    monkeypatch.setattr(
+        "ursa.tools.run_command_tool.subprocess.run",
+        lambda *args, **kwargs: pytest.fail("Command must not execute"),
+    )
+    result = run_command.func("echo hi", make_runtime(tmp_path, llm=chat_model))
+    assert "Invalid URSA_COMMAND_TIMEOUT_SECONDS" in result
+
+
+def test_run_command_reports_timeout(monkeypatch, tmp_path, chat_model):
+    monkeypatch.setenv("URSA_COMMAND_TIMEOUT_SECONDS", "300")
+    _patch_safety_result(monkeypatch, chat_model, is_safe=True)
+
+    def expire(query, **kwargs):
+        raise subprocess.TimeoutExpired(query, kwargs["timeout"])
+
+    monkeypatch.setattr("ursa.tools.run_command_tool.subprocess.run", expire)
+    result = invoke_with_parent_run(
+        lambda config: run_command.func(
+            "sleep 999",
+            make_runtime(tmp_path, llm=chat_model, config=config),
+        )
+    )
+    assert "Command timed out after 300 seconds" in result
 
 
 def test_run_command_handles_keyboard_interrupt(
