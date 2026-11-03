@@ -43,6 +43,9 @@ dedicated workspace for execution tasks.
 
 ## Minimal execution-agent script
 
+This example uses the built-in chat-model defaults and requires OPENAI_API_KEY.
+To use your configured model or endpoint, see [the configuration example below](#initialize-chat-and-embedding-models-from-a-ursa-config).
+
 Create `run_ursa.py`:
 
 ```python
