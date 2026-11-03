@@ -476,7 +476,7 @@ async def test_agent_install_unprivileged_instance(
         agent = UrsaHarborAgent(
             logs_dir=tmp_path / "agent-logs",
             model_name="openai/gpt-4.1-nano",
-            config_file=config,
+            config=config,
             ursa_install_spec=ursa_wheel,
         )
         assert (

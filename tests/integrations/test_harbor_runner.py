@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -113,7 +114,7 @@ class SetupFailingAgent(BaseAgent):
         pass
 
 
-def _runtime_config(path: Path) -> Path:
+def _native_config_file(path: Path) -> Path:
     path.write_text(
         "llm_model:\n  model: gpt-4.1-nano\n  model_provider: openai\nagent_config:\n  harbor_lifecycle:\n    enable_metrics: false\n"
     )
@@ -144,16 +145,163 @@ def cli(monkeypatch):
     )
 
 
-def test_runtime_config_records_evaluation_group(tmp_path):
-    config = _runtime_config(tmp_path / "ursa.yaml")
+def test_native_config_records_evaluation_group(tmp_path):
+    config = _native_config_file(tmp_path / "ursa.yaml")
     config.write_text(config.read_text() + "group: science\n")
     agent = UrsaHarborAgent(
         logs_dir=tmp_path / "agent",
         environment_logs_dir=tmp_path / "agent",
-        config_file=config,
+        config=config,
     )
-    runtime, _ = agent._runtime_config()
+    runtime, _ = agent._materialize_native_config()
     assert runtime["group"] == agent._runtime_group == "science"
+
+
+@pytest.mark.parametrize("inline", [False, True])
+def test_native_config_accepts_file_and_inline_sources(tmp_path, inline):
+    native = {
+        "llm_model": {
+            "model": "gpt-4.1-nano",
+            "model_provider": "openai",
+        }
+    }
+    source: Path | dict[str, Any]
+    if inline:
+        source = native
+    else:
+        source = _native_config_file(tmp_path / "ursa.yaml")
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "agent",
+        environment_logs_dir=tmp_path / "agent",
+        config=source,
+    )
+
+    runtime, _ = agent._materialize_native_config()
+
+    assert agent.capabilities.native_config
+    assert runtime["llm_model"]["model"] == "gpt-4.1-nano"
+
+
+@pytest.mark.parametrize(
+    ("native_config", "provider"),
+    [
+        (
+            {
+                "inference_providers": {
+                    "research-gateway": {
+                        "model_provider": "openai",
+                        "api_key": {"keyring": True},
+                    }
+                },
+                "llm_model": {
+                    "model": "gpt-4.1-nano",
+                    "inference_provider": "research-gateway",
+                },
+            },
+            "research-gateway",
+        ),
+        (
+            {
+                "llm_model": {
+                    "model": "anthropic:claude",
+                    "api_key": {"keyring": True},
+                }
+            },
+            "openai",
+        ),
+    ],
+)
+def test_native_config_keyring_uses_inference_provider(
+    tmp_path, monkeypatch, native_config, provider
+):
+    calls = []
+    monkeypatch.setattr(
+        "ursa.util.secrets.get_keyring",
+        lambda: SimpleNamespace(
+            get_password=lambda service, username: (
+                calls.append((service, username)) or "key"
+            )
+        ),
+    )
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "agent",
+        environment_logs_dir=tmp_path / "agent",
+        config=native_config,
+    )
+
+    _, secret_env = agent._materialize_native_config()
+
+    assert calls == [("ursa", provider)]
+    assert secret_env == {"URSA_HARBOR_SECRET_0": "key"}
+
+
+@pytest.mark.asyncio
+async def test_default_local_install_builds_and_uploads_a_wheel(
+    tmp_path, monkeypatch
+):
+    config = _native_config_file(tmp_path / "ursa.yaml")
+    checkout = tmp_path / "checkout"
+    (checkout / "pyproject.toml").parent.mkdir()
+    (checkout / "pyproject.toml").write_text("[project]\nname = 'ursa-ai'\n")
+    monkeypatch.setattr(
+        UrsaHarborAgent,
+        "_default_install_spec",
+        staticmethod(lambda: checkout),
+    )
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "agent",
+        environment_logs_dir=tmp_path / "agent",
+        config=config,
+    )
+    built: list[Path] = []
+
+    def build(source: Path, destination: Path) -> Path:
+        assert source == checkout
+        wheel = destination / "ursa_ai-1.0.0-py3-none-any.whl"
+        wheel.write_bytes(b"wheel")
+        built.append(wheel)
+        return wheel
+
+    class Environment:
+        def __init__(self) -> None:
+            self.files: list[tuple[Path, str]] = []
+
+        async def upload_file(self, source: Path, destination: str) -> None:
+            self.files.append((source, destination))
+
+        async def upload_dir(self, *_args: object) -> None:
+            pytest.fail("the implicit local installation must upload a wheel")
+
+    environment = Environment()
+    monkeypatch.setattr(
+        agent, "_materialize_native_config", lambda **_kwargs: ({}, {})
+    )
+    monkeypatch.setattr(agent, "_network_use_web", lambda _env: None)
+    monkeypatch.setattr(
+        agent,
+        "exec_as_agent",
+        AsyncMock(return_value=SimpleNamespace(stdout="/")),
+    )
+    root = AsyncMock(return_value=SimpleNamespace(stdout="x86_64"))
+    monkeypatch.setattr(agent, "exec_as_root", root)
+    monkeypatch.setattr(agent, "_upload_native_config", AsyncMock())
+    monkeypatch.setattr(agent, "_build_wheel", build)
+    monkeypatch.setattr(
+        agent,
+        "_stage_uv_binary",
+        lambda _machine, destination: destination.write_bytes(b"uv"),
+    )
+
+    await agent.install(environment)
+
+    assert len(built) == 1
+    assert any(
+        destination.endswith(".whl") for _, destination in environment.files
+    )
+    assert (
+        "file:///installed-agent/tmp/ursa_ai-1.0.0-py3-none-any.whl"
+        in root.call_args_list[-1].kwargs["command"]
+    )
 
 
 def test_handoff_imports_checkpoint_as_local_named_agent(
@@ -219,14 +367,14 @@ def _lifecycle_agent(tmp_path):
     logs, workspace, config = (
         tmp_path / "agent",
         tmp_path / "workspace",
-        _runtime_config(tmp_path / "ursa.yaml"),
+        _native_config_file(tmp_path / "ursa.yaml"),
     )
     workspace.mkdir()
     agent = UrsaHarborAgent(
         logs_dir=logs,
         environment_logs_dir=logs,
         model_name="openai/gpt-4.1-nano",
-        config_file=config,
+        config=config,
         agent_import_path=f"{__name__}:HarborLifecycleAgent",
     )
     agent._remote_config_file, agent._workspace = str(config), str(workspace)
@@ -330,7 +478,7 @@ async def test_runner_closes_setup_connection_on_agent_setup_failure(
     with pytest.raises(RuntimeError, match="agent setup failed"):
         await _runner_run({
             "agent_import_path": f"{__name__}:SetupFailingAgent",
-            "config_file": str(_runtime_config(tmp_path / "bad.yaml")),
+            "config_file": str(_native_config_file(tmp_path / "bad.yaml")),
             "workspace": str(tmp_path / "workspace"),
             "log_dir": str(tmp_path / "failed"),
             "instruction": "solve it",

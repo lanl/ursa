@@ -14,8 +14,7 @@ export OPENAI_API_KEY=...
 uv run harbor run \
   --path benchmark/tasks/install-pytorch \
   --agent ursa.integrations.harbor:UrsaHarborAgent \
-  --agent-kwarg config_file="$PWD/ursa.yaml" \
-  --agent-kwarg config_only=true \
+  --agent-kwarg config="$PWD/ursa.yaml" \
   --model openai/openai:gpt-5.4-nano
 ```
 
