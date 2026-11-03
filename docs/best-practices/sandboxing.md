@@ -35,11 +35,19 @@ Use a virtual machine, container, dedicated user account, or isolated environmen
 ## File access outside the workspace
 
 The workspace is a working directory, not a filesystem security boundary.
-`read_file` intentionally permits reading files outside it without an LLM safety
-assessment, so workflows can access existing inputs and reference files. Relative
-paths are resolved from the workspace; absolute paths, `../` paths, and symlinks
-can reach other files readable by the URSA process. File contents may be sent to
-the configured model as tool results.
+`read_file` resolves the requested path and permits reads only within the
+workspace by default, without an additional LLM safety assessment. Relative paths are
+resolved from the workspace; absolute paths within it are also accepted.
+Paths containing `../` and symlinks are rejected if they resolve outside the
+workspace. Copy external inputs into the workspace before reading them with
+this tool. File contents may be sent to the configured model as tool results.
+
+To explicitly permit outside reads, set `URSA_ALLOW_UNSAFE_READS=1` before
+launching URSA. The values `1`, `true`, `yes`, and `on` enable this override
+(case-insensitive, with surrounding whitespace ignored). Unset or any other
+value keeps workspace restrictions enabled. This grants `read_file` access to
+any file readable by the URSA process, including through absolute paths and
+symlinks.
 
 Although `write_code` checks that its target resolves inside the workspace,
 this does not isolate the agent: shell commands and other tools retain the host
