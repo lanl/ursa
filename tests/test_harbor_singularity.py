@@ -607,6 +607,9 @@ async def test_directory_transfers_preserve_symlinks(tmp_path, monkeypatch):
     source.mkdir()
     (source / "target").write_text("data")
     (source / "link").symlink_to("target")
+    external = tmp_path / "external"
+    external.write_text("fixture")
+    (source / "external-link").symlink_to("../external")
     commands: list[str] = []
 
     async def upload_execute(command: str, **_kwargs: object) -> ExecResult:
@@ -614,6 +617,8 @@ async def test_directory_transfers_preserve_symlinks(tmp_path, monkeypatch):
         if command.startswith("cp -rP"):
             staged = next(environment._staging.glob("*source"))
             assert (staged / "link").is_symlink()
+            assert not (staged / "external-link").is_symlink()
+            assert (staged / "external-link").read_text() == "fixture"
         return ExecResult(stdout="", stderr="", return_code=0)
 
     monkeypatch.setattr(environment, "exec", upload_execute)
