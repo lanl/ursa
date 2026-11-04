@@ -729,3 +729,48 @@ def test_ursa_config_from_file(tmp_path):
     config = config_mod.UrsaConfig.from_file(path)
 
     assert config.group == "science"
+
+
+def test_ursa_user_config_merges_system_and_user_layers(tmp_path, monkeypatch):
+    class CustomUrsaConfig(config_mod.UrsaConfig):
+        pass
+
+    system = tmp_path / "system.yaml"
+    user = tmp_path / "user.yaml"
+    system.write_text(
+        "group: system\nagent_config:\n  chat:\n    system: true\n",
+        encoding="utf-8",
+    )
+    user.write_text(
+        "group: user\nagent_config:\n  chat:\n    user: true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_mod, "system_config_paths", lambda: [system])
+    monkeypatch.setattr(config_mod, "user_config_paths", lambda: [user])
+
+    config = CustomUrsaConfig.user_config(resolve=False)
+
+    assert isinstance(config, CustomUrsaConfig)
+    assert config.group == "user"
+    assert config.agent_config == {"chat": {"system": True, "user": True}}
+
+
+def test_ursa_user_config_resolves_by_default(tmp_path, monkeypatch):
+    user = tmp_path / "user.yaml"
+    user.write_text("use_web: true\n", encoding="utf-8")
+    monkeypatch.setattr(config_mod, "system_config_paths", lambda: [])
+    monkeypatch.setattr(config_mod, "user_config_paths", lambda: [user])
+    monkeypatch.setattr(
+        config_mod, "enforce_group_base_url_policy", lambda *_: None
+    )
+
+    unresolved = config_mod.UrsaConfig.user_config(resolve=False)
+    resolved = config_mod.UrsaConfig.user_config()
+
+    assert unresolved.agent_config == {}
+    assert resolved.agent_config == {
+        "chat": {"use_web": True},
+        "execute": {"use_web": True},
+        "deep_review": {"use_web": True},
+        "prompt": {"use_web": True},
+    }
