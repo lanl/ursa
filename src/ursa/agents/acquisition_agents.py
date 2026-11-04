@@ -10,7 +10,15 @@ import re
 import shutil
 from io import BytesIO
 from pathlib import Path
-from typing import Annotated, Any, NotRequired, Optional, TypedDict
+from typing import (
+    Annotated,
+    Any,
+    Literal,
+    NotRequired,
+    Optional,
+    TypedDict,
+    get_args,
+)
 from urllib.parse import quote, urlparse
 
 import feedparser
@@ -48,6 +56,8 @@ except Exception:
     OpenAI = None
 
 logger = logging.getLogger(__name__)
+
+RerankMode = Literal["fast", "embedding", "llm"]
 
 
 # ---------- Shared State / Types ----------
@@ -198,6 +208,56 @@ def extract_and_describe_images(
     return descriptions
 
 
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def _rank_lexical(query: str, docs: list[str]) -> list[int]:
+    """Order docs by BM25-style term overlap with query. No model calls."""
+    import math
+
+    q_terms = set(_tokens(query))
+    toks = [_tokens(d) for d in docs]
+    n = len(docs)
+    avg = (sum(len(t) for t in toks) / n) or 1.0
+    scores = []
+    for t in toks:
+        score = 0.0
+        for term in q_terms:
+            tf = t.count(term)
+            if not tf:
+                continue
+            df = sum(term in other for other in toks)
+            idf = math.log(1 + (n - df + 0.5) / (df + 0.5))
+            score += idf * tf * 2.2 / (tf + 1.2 * (0.25 + 0.75 * len(t) / avg))
+        scores.append(score)
+    return sorted(range(n), key=lambda i: -scores[i])
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def _arxiv_search_query(query: str) -> str:
+    """Build an arXiv query requiring every term (``all:a AND all:b``).
+
+    arXiv's ``all:`` prefix only binds to the first word, so a bare
+    ``all:neutron transport reduction`` matches loosely on the rest and
+    ranks unrelated papers first. Quoted phrases are kept as phrases.
+    """
+    parts = re.findall(r'"([^"]+)"|(\S+)', query)
+    clauses = []
+    for phrase, word in parts:
+        text = " ".join(_tokens(phrase or word))
+        if not text:
+            continue
+        clauses.append(f'all:"{text}"' if " " in text else f"all:{text}")
+    return " AND ".join(clauses) or f"all:{query.strip()}"
+
+
 # ---------- The Parent / Generic Agent ----------
 
 
@@ -226,6 +286,9 @@ class BaseAcquisitionAgent(BaseAgent):
         rag_embedding=None,
         process_images: bool = True,
         max_results: int = 5,
+        fetch_k: int | None = None,
+        rerank: RerankMode | None = None,
+        rerank_embedding=None,
         database_path: str = "acq_db",
         summaries_path: str = "acq_summaries",
         vectorstore_path: str = "acq_vectorstores",
@@ -243,6 +306,24 @@ class BaseAcquisitionAgent(BaseAgent):
         self.rag_embedding = rag_embedding
         self.process_images = process_images
         self.max_results = max_results
+        if rerank is not None and rerank not in get_args(RerankMode):
+            raise ValueError(
+                f"rerank must be None or one of {get_args(RerankMode)}, "
+                f"got {rerank!r}"
+            )
+        # Embedding used only for reranking; falls back to rag_embedding.
+        self.rerank_embedding = (
+            rerank_embedding if rerank_embedding is not None else rag_embedding
+        )
+        if rerank == "embedding" and self.rerank_embedding is None:
+            raise ValueError(
+                "rerank='embedding' requires rerank_embedding or rag_embedding"
+            )
+        self.rerank = rerank
+        # Candidates to fetch before reranking down to max_results.
+        if fetch_k is None:
+            fetch_k = max(max_results, 10) if rerank else max_results
+        self.fetch_k = max(fetch_k, max_results)
         self.database_path = self.den / database_path
         self.summaries_path = self.den / summaries_path
         self.vectorstore_path = self.den / vectorstore_path
@@ -277,6 +358,75 @@ class BaseAcquisitionAgent(BaseAgent):
     def _citation(self, item: ItemMetadata) -> str:
         # Subclass should format its ideal citation; fallback is ID or URL.
         return item.get("id") or item.get("url", "Unknown Source")
+
+    # ---- reranking ----
+    def _hit_text(self, hit: dict[str, Any]) -> str:
+        """Text used to judge a hit's relevance (title + abstract/snippet)."""
+        parts = [hit.get("title"), hit.get("abstract") or hit.get("snippet")]
+        return "\n".join(str(p).strip() for p in parts if p)
+
+    async def _arerank(
+        self, hits: list[dict[str, Any]], context: str
+    ) -> list[dict[str, Any]]:
+        """Reorder hits by relevance to ``context``; never raises.
+
+        Modes: "fast" (lexical overlap, no model calls), "embedding"
+        (cosine similarity using ``rag_embedding``), "llm" (one LLM call).
+        Hits without text (e.g. search-error placeholders) go last.
+        """
+        if not self.rerank or len(hits) < 2:
+            return hits
+        ranked = [h for h in hits if self._hit_text(h) and not h.get("error")]
+        rest = [h for h in hits if h not in ranked]
+        if len(ranked) < 2:
+            return hits
+        try:
+            rank = getattr(self, f"_rank_{self.rerank}")
+            order = await rank(context, ranked)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Rerank (%s) failed, keeping order: %s", self.rerank, exc
+            )
+            return hits
+        return [ranked[i] for i in order] + rest
+
+    async def _rank_fast(
+        self, context: str, hits: list[dict[str, Any]]
+    ) -> list[int]:
+        return _rank_lexical(context, [self._hit_text(h) for h in hits])
+
+    async def _rank_embedding(
+        self, context: str, hits: list[dict[str, Any]]
+    ) -> list[int]:
+        emb = self.rerank_embedding
+        q = await emb.aembed_query(context)
+        docs = await emb.aembed_documents([self._hit_text(h) for h in hits])
+        scores = [_cosine(q, d) for d in docs]
+        return sorted(range(len(hits)), key=lambda i: -scores[i])
+
+    async def _rank_llm(
+        self, context: str, hits: list[dict[str, Any]]
+    ) -> list[int]:
+        listing = "\n\n".join(
+            f"[{i}] {self._hit_text(h)[:1500]}" for i, h in enumerate(hits)
+        )
+        prompt = (
+            f"Task: {context}\n\nCandidate papers:\n\n{listing}\n\n"
+            "Rank the candidates from most to least useful for the task. "
+            "Return only a JSON list of the candidate numbers, e.g. [2, 0, 1]."
+        )
+        reply = await self.llm.ainvoke(
+            prompt, config=self.build_config(tags=["acq", "rerank"])
+        )
+        match = re.search(r"\[[\d,\s]*\]", reply.text or "")
+        if not match:
+            raise ValueError("no ranking found in LLM reply")
+        seen: list[int] = []
+        for i in json.loads(match.group(0)):
+            if isinstance(i, int) and 0 <= i < len(hits) and i not in seen:
+                seen.append(i)
+        # Append anything the LLM omitted, preserving original order.
+        return seen + [i for i in range(len(hits)) if i not in seen]
 
     # ---- optional hooks ----
     def _filter_hit(self, hit: dict[str, Any]) -> bool:
@@ -367,7 +517,8 @@ class BaseAcquisitionAgent(BaseAgent):
                 for index, path in enumerate(paths)
             ]
         else:
-            hits = (await self._asearch(state["query"]))[: self.max_results]
+            hits = await self._asearch(state["query"])
+            hits = (await self._arerank(hits, context))[: self.max_results]
             tasks = [
                 SourceTask(index=index, context=context, hit=hit)
                 for index, hit in enumerate(hits)
@@ -879,6 +1030,9 @@ class ArxivAgent(BaseAcquisitionAgent):
         *,
         process_images: bool = True,
         max_results: int = 3,
+        fetch_k: int | None = None,
+        rerank: RerankMode | None = None,
+        rerank_embedding=None,
         download: bool = True,
         rag_embedding=None,
         database_path="arxiv_papers",
@@ -891,6 +1045,9 @@ class ArxivAgent(BaseAcquisitionAgent):
             rag_embedding=rag_embedding,
             process_images=process_images,
             max_results=max_results,
+            fetch_k=fetch_k,
+            rerank=rerank,
+            rerank_embedding=rerank_embedding,
             database_path=database_path,
             summaries_path=summaries_path,
             vectorstore_path=vectorstore_path,
@@ -912,8 +1069,8 @@ class ArxivAgent(BaseAcquisitionAgent):
         return f"ArXiv ID: {item.get('id', '?')}"
 
     def _search(self, query: str) -> list[dict[str, Any]]:
-        enc = quote(query)
-        url = f"http://export.arxiv.org/api/query?search_query=all:{enc}&start=0&max_results={self.max_results}"
+        enc = quote(_arxiv_search_query(query))
+        url = f"http://export.arxiv.org/api/query?search_query={enc}&start=0&max_results={self.fetch_k}"
         try:
             with requests.get(url, timeout=15) as response:
                 response.raise_for_status()
@@ -926,6 +1083,7 @@ class ArxivAgent(BaseAcquisitionAgent):
                     "id": e.id,
                     "title": e.title.strip(),
                     "arxiv_id": full_id.split("/")[-1],
+                    "abstract": " ".join(e.get("summary", "").split()),
                 })
             return hits
         except Exception as e:
