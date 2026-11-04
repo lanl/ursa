@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from .base import (
     TERM_ID_LENGTH,
@@ -58,12 +59,7 @@ WAIT_MAX_MULTIPLIER = 10
 
 @dataclass(frozen=True, slots=True)
 class TermInfo:
-    """Immutable registry metadata for a terminal session.
-
-    ``creation_order`` is the authoritative recency key.  ``created_at`` is
-    supplied for display only, since wall clocks can move or have insufficient
-    resolution to distinguish terminals created close together.
-    """
+    """Immutable registry metadata; ``creation_order`` defines recency."""
 
     term_id: str
     backend: str
@@ -81,12 +77,7 @@ class _CreationReservation:
 
 
 class TermManager:
-    """Own all live terminal sessions.
-
-    The singleton construction and registry are protected by synchronous
-    locks, making lookup safe across event-loop threads.  No lock is held
-    while awaiting backend I/O.
-    """
+    """Thread-safe singleton registry for sessions owned by one event loop."""
 
     _instance: TermManager | None = None
     _instance_lock = threading.Lock()
@@ -99,7 +90,6 @@ class TermManager:
                 cls._instance._session_info = {}
                 cls._instance._creation_counter = 0
                 cls._instance._reserved_ids = set()
-                cls._instance._creation_reservations = {}
                 cls._instance._closing = False
                 cls._instance._sessions_lock = threading.RLock()
                 cls._instance._loop_ready = threading.Event()
@@ -118,8 +108,8 @@ class TermManager:
         self._loop_ready.set()
         self._owner_loop.run_forever()
 
-    async def _dispatch(self, coroutine):
-        """Run backend work on the manager's dedicated event loop."""
+    async def _dispatch(self, coroutine, *, cancellable: bool = False) -> Any:
+        """Run backend work on the owner loop with the requested cancellation policy."""
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -127,21 +117,12 @@ class TermManager:
         if loop is self._owner_loop:
             return await coroutine
         future = asyncio.run_coroutine_threadsafe(coroutine, self._owner_loop)
-        # Caller cancellation must not strand a half-created or half-closed
-        # session.  The owner loop completes lifecycle operations regardless.
-        return await asyncio.shield(asyncio.wrap_future(future))
-
-    async def _dispatch_cancellable(self, coroutine):
-        """Run polling work while propagating caller cancellation."""
+        wrapped = asyncio.wrap_future(future)
+        if not cancellable:
+            # Lifecycle work must survive caller cancellation.
+            return await asyncio.shield(wrapped)
         try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop is self._owner_loop:
-            return await coroutine
-        future = asyncio.run_coroutine_threadsafe(coroutine, self._owner_loop)
-        try:
-            return await asyncio.wrap_future(future)
+            return await wrapped
         except asyncio.CancelledError:
             future.cancel()
             raise
@@ -260,7 +241,6 @@ class TermManager:
                 creation_order=self._creation_counter,
             )
             self._reserved_ids.add(term_id)
-            self._creation_reservations[term_id] = reservation
         return await self._dispatch_create(
             self._create(
                 reservation,
@@ -290,13 +270,13 @@ class TermManager:
         cwd: str | Path | None,
         session_factory: SessionFactory | None,
     ) -> TermSession:
-        factory = session_factory or self._default_factory()
+        factory = session_factory or self._default_backend()[0]
         term_id = reservation.term_id
         terminal: TermSession | None = None
         try:
             terminal = factory(
                 term_id,
-                shell or self.default_shell(),
+                self.default_shell() if shell is None else shell,
                 env=env,
                 cwd=cwd,
             )
@@ -310,7 +290,6 @@ class TermManager:
                 cleanup_error = error
             with self._sessions_lock:
                 self._reserved_ids.discard(term_id)
-                self._creation_reservations.pop(term_id, None)
                 if terminal is not None and cleanup_error is not None:
                     self._sessions[term_id] = terminal
                     self._record_info(terminal, reservation)
@@ -323,25 +302,36 @@ class TermManager:
         assert terminal is not None
         with self._sessions_lock:
             self._reserved_ids.discard(term_id)
-            self._creation_reservations.pop(term_id, None)
             self._sessions[term_id] = terminal
             self._record_info(terminal, reservation)
         return terminal
 
     @staticmethod
     def _session_capabilities(terminal: TermSession) -> frozenset[str]:
-        capabilities = _STREAM_CAPABILITIES
         session_type = type(terminal)
-        if all(
+        screen = all(
             getattr(session_type, operation)
             is not getattr(TermSession, operation)
             for operation in ("cursor", "resize", "size")
-        ):
-            capabilities |= _SCREEN_CAPABILITIES
-        if session_type.mouse_event is not TermSession.mouse_event:
+        )
+        capabilities = TermManager._capabilities(session_type, screen)
+        if TermManager._factory_supports_mouse(session_type):
             capabilities |= _MOUSE_CAPABILITIES
-        if session_type.paste_text is not TermSession.paste_text:
+        if TermManager._factory_supports_paste(session_type):
             capabilities |= _PASTE_CAPABILITIES
+        return capabilities
+
+    @staticmethod
+    def _capabilities(
+        factory: SessionFactory, supports_screen: bool
+    ) -> frozenset[str]:
+        capabilities = _STREAM_CAPABILITIES
+        if supports_screen:
+            capabilities |= _SCREEN_CAPABILITIES
+            if TermManager._factory_supports_mouse(factory):
+                capabilities |= _MOUSE_CAPABILITIES
+            if TermManager._factory_supports_paste(factory):
+                capabilities |= _PASTE_CAPABILITIES
         return capabilities
 
     @staticmethod
@@ -398,32 +388,19 @@ class TermManager:
     def _default_backend(cls) -> tuple[SessionFactory, bool]:
         """Return the configured factory and its screen support."""
         preference = cls._backend_preference()
-        if preference == "process":
-            from .process import ProcessTerm
-
-            return ProcessTerm, False
-        if preference == "ghostty":
-            return cls._ghostty_backend()
-        try:
-            return cls._ghostty_backend()
-        except (ImportError, OSError, RuntimeError):
-            pass
+        if preference != "process":
+            try:
+                return cls._ghostty_backend()
+            except (ImportError, OSError, RuntimeError):
+                if preference == "ghostty":
+                    raise
         from .process import ProcessTerm
 
         return ProcessTerm, False
 
     @classmethod
-    def _default_factory(cls) -> SessionFactory:
-        return cls._default_backend()[0]
-
-    @classmethod
     def backend_status(cls) -> str:
-        """Return a human-readable description of the selected backend.
-
-        ProcessTerm is deliberately identified as a fallback so the status UI
-        does not imply that screen rendering and resize support are active.
-        Detection failures are reported instead of breaking the status modal.
-        """
+        """Describe the selected backend without raising detection failures."""
         try:
             factory, supports_screen = cls._default_backend()
         except Exception as exc:
@@ -445,20 +422,9 @@ class TermManager:
 
     @classmethod
     def supported_capabilities(cls) -> frozenset[str]:
-        """Return operations supported by the usable default backend.
-
-        This follows the same selection path as :meth:`create` without
-        constructing a session, including native ``pyghostty`` availability.
-        """
-        capabilities = _STREAM_CAPABILITIES
+        """Return capabilities of the usable default backend."""
         factory, supports_screen = cls._default_backend()
-        if supports_screen:
-            capabilities |= _SCREEN_CAPABILITIES
-            if cls._factory_supports_mouse(factory):
-                capabilities |= _MOUSE_CAPABILITIES
-            if cls._factory_supports_paste(factory):
-                capabilities |= _PASTE_CAPABILITIES
-        return capabilities
+        return cls._capabilities(factory, supports_screen)
 
     @staticmethod
     def _factory_supports_mouse(factory: SessionFactory) -> bool:
@@ -476,20 +442,15 @@ class TermManager:
 
     @classmethod
     def supports_screen(cls) -> bool:
-        """Return whether the default backend provides screen semantics."""
         return _SCREEN_CAPABILITIES <= cls.supported_capabilities()
 
     @classmethod
     def supports_mouse(cls) -> bool:
-        """Return whether the default backend accepts mouse input."""
-        factory, _ = cls._default_backend()
-        return cls._factory_supports_mouse(factory)
+        return "mouse" in cls.supported_capabilities()
 
     @classmethod
     def supports_paste(cls) -> bool:
-        """Return whether the default backend supports negotiated paste."""
-        factory, _ = cls._default_backend()
-        return cls._factory_supports_paste(factory)
+        return "paste" in cls.supported_capabilities()
 
     def register(self, terminal: TermSession) -> None:
         """Register an already-created session, primarily for integrations."""
@@ -537,17 +498,25 @@ class TermManager:
                 raise KeyError(f"unknown terminal: {term_id}")
             return self._session_info[term_id]
 
+    async def _call(
+        self, term_id: str, operation: str, *args: Any, **kwargs: Any
+    ) -> Any:
+        """Invoke one backend operation on the owner loop."""
+        return await self._dispatch(
+            getattr(self.get(term_id), operation)(*args, **kwargs)
+        )
+
     async def send_bytes(self, term_id: str, data: bytes) -> None:
         """Send raw bytes to a registered terminal."""
-        await self._dispatch(self.get(term_id).send_bytes(data))
+        await self._call(term_id, "send_bytes", data)
 
     async def send_text(self, term_id: str, text: str) -> None:
         """Send UTF-8 text to a registered terminal."""
-        await self._dispatch(self.get(term_id).send_text(text))
+        await self._call(term_id, "send_text", text)
 
     async def send_line(self, term_id: str, text: str) -> None:
         """Send text and a trailing newline to a registered terminal."""
-        await self._dispatch(self.get(term_id).send_line(text))
+        await self._call(term_id, "send_line", text)
 
     async def read(
         self,
@@ -557,18 +526,16 @@ class TermManager:
         lines: int | None = None,
     ) -> str:
         """Read a registered terminal's output."""
-        return await self._dispatch(
-            self.get(term_id).read(offset=offset, lines=lines)
-        )
+        return await self._call(term_id, "read", offset=offset, lines=lines)
 
     async def is_alive(self, term_id: str) -> dict[str, bool | int]:
         """Return a registered terminal's process state."""
-        return await self._dispatch(self.get(term_id).is_alive())
+        return await self._call(term_id, "is_alive")
 
     async def resources(self, term_id: str) -> dict[str, int | float | str]:
         """Sample a terminal's local process tree without sending it input."""
-        return await self._dispatch_cancellable(
-            self._resources(self.get(term_id))
+        return await self._dispatch(
+            self._resources(self.get(term_id)), cancellable=True
         )
 
     @staticmethod
@@ -582,11 +549,7 @@ class TermManager:
             result["pid"] = identity.pid
         state = await terminal.is_alive()
         if "exit_code" in state:
-            return {
-                **result,
-                "status": "exited",
-                "exit_code": state["exit_code"],
-            }
+            return TermManager._exited_resources(result, state)
         if identity is None:
             return {
                 **result,
@@ -598,39 +561,34 @@ class TermManager:
         # close during sampling. Do not return old counters as live usage.
         state = await terminal.is_alive()
         if "exit_code" in state:
-            return {
-                **result,
-                "status": "exited",
-                "exit_code": state["exit_code"],
-            }
+            return TermManager._exited_resources(result, state)
         return {**result, **sampled}
 
+    @staticmethod
+    def _exited_resources(
+        result: dict[str, int | float | str], state: dict[str, bool | int]
+    ) -> dict[str, int | float | str]:
+        return {**result, "status": "exited", "exit_code": state["exit_code"]}
+
     async def wait(self, term_id: str) -> int:
-        """Wait for a registered terminal to exit."""
-        return await self._dispatch(self.get(term_id).wait())
+        return await self._call(term_id, "wait")
 
     async def contents(self, term_id: str) -> str:
-        """Return a registered terminal's complete output or scrollback."""
-        return await self._dispatch(self.get(term_id).contents())
+        return await self._call(term_id, "contents")
 
     async def render_snapshot(self, term_id: str) -> TerminalRenderSnapshot:
-        """Return immutable display state for a registered terminal."""
-        return await self._dispatch(self.get(term_id).render_snapshot())
+        return await self._call(term_id, "render_snapshot")
 
     async def resize(self, term_id: str, rows: int, cols: int) -> None:
-        """Resize a registered terminal."""
-        await self._dispatch(self.get(term_id).resize(rows, cols))
+        await self._call(term_id, "resize", rows, cols)
 
     async def cursor(self, term_id: str) -> tuple[int, int]:
-        """Return a registered terminal's cursor position."""
-        return await self._dispatch(self.get(term_id).cursor())
+        return await self._call(term_id, "cursor")
 
     async def size(self, term_id: str) -> tuple[int, int]:
-        """Return a registered terminal's dimensions."""
-        return await self._dispatch(self.get(term_id).size())
+        return await self._call(term_id, "size")
 
     async def paste_text(self, term_id: str, text: str) -> None:
-        """Paste text using the session's negotiated terminal mode."""
         terminal = self.get(term_id)
         if "paste" not in self.terminal_info(term_id).capabilities:
             raise NotImplementedError(
@@ -694,7 +652,6 @@ class TermManager:
         await terminal.mouse_events(row, col, events, modifiers=modifiers)
 
     async def remove(self, term_id: str, *, terminate: bool = True) -> None:
-        """Unregister a terminal and optionally terminate it."""
         await self._dispatch(self._remove(term_id, terminate=terminate))
 
     async def _remove(self, term_id: str, *, terminate: bool) -> None:
@@ -704,13 +661,16 @@ class TermManager:
             raise KeyError(f"unknown terminal: {term_id}")
         if terminate:
             await terminal.terminate()
+        self._unregister(terminal)
+
+    def _unregister(self, terminal: TermSession) -> None:
+        """Remove *terminal* only if it is still the registered instance."""
         with self._sessions_lock:
-            if self._sessions.get(term_id) is terminal:
-                del self._sessions[term_id]
-                self._session_info.pop(term_id, None)
+            if self._sessions.get(terminal.term_id) is terminal:
+                del self._sessions[terminal.term_id]
+                self._session_info.pop(terminal.term_id, None)
 
     async def close_all(self) -> None:
-        """Terminate and unregister every session."""
         with self._sessions_lock:
             if self._closing:
                 raise RuntimeError("terminal manager is already closing")
@@ -722,7 +682,6 @@ class TermManager:
                 self._closing = False
 
     def close_all_sync(self, *, timeout: float = 10.0) -> None:
-        """Synchronously close sessions during interpreter shutdown."""
         with self._sessions_lock:
             if not self._sessions and not self._reserved_ids:
                 return
@@ -739,7 +698,6 @@ class TermManager:
                 self._closing = False
 
     def terminate_all_at_exit(self) -> None:
-        """Best-effort cleanup that does not schedule new async or thread work."""
         with self._sessions_lock:
             terminals = tuple(self._sessions.values())
         for terminal in terminals:
@@ -747,15 +705,9 @@ class TermManager:
                 terminal.terminate_at_exit()
             except BaseException:
                 continue
-            with self._sessions_lock:
-                if self._sessions.get(terminal.term_id) is terminal:
-                    del self._sessions[terminal.term_id]
-                    self._session_info.pop(terminal.term_id, None)
+            self._unregister(terminal)
 
     async def _close_all(self) -> None:
-        # Creates admitted before close_all set the gate may still be queued on
-        # the owner loop or awaiting backend startup.  Yield until each has
-        # either registered a reachable session or failed cleanly.
         while True:
             with self._sessions_lock:
                 if not self._reserved_ids:
@@ -767,12 +719,9 @@ class TermManager:
             *(terminal.terminate() for terminal in terminals),
             return_exceptions=True,
         )
-        with self._sessions_lock:
-            for terminal, result in zip(terminals, results, strict=True):
-                if not isinstance(result, BaseException):
-                    if self._sessions.get(terminal.term_id) is terminal:
-                        del self._sessions[terminal.term_id]
-                        self._session_info.pop(terminal.term_id, None)
+        for terminal, result in zip(terminals, results, strict=True):
+            if not isinstance(result, BaseException):
+                self._unregister(terminal)
         failures = [
             result for result in results if isinstance(result, BaseException)
         ]
@@ -789,9 +738,8 @@ class TermManager:
         pattern: str,
         timeout: float | None = None,
     ) -> str:
-        """Wait for new output matching a regex, newest match first."""
-        return await self._dispatch_cancellable(
-            self._wait_for(term_id, pattern, timeout=timeout)
+        return await self._dispatch(
+            self._wait_for(term_id, pattern, timeout=timeout), cancellable=True
         )
 
     async def _wait_for(
@@ -801,16 +749,7 @@ class TermManager:
         *,
         timeout: float | None,
     ) -> str:
-        wait_timeout = (
-            WAIT_DEFAULT_MULTIPLIER * TERM_TIMEOUT
-            if timeout is None
-            else timeout
-        )
-        if wait_timeout < 0:
-            raise ValueError("timeout must not be negative")
-        if wait_timeout > WAIT_MAX_MULTIPLIER * TERM_TIMEOUT:
-            maximum = WAIT_MAX_MULTIPLIER * TERM_TIMEOUT
-            raise ValueError(f"timeout cannot exceed {maximum:g} seconds")
+        wait_timeout = _wait_timeout(timeout)
         regex = re.compile(pattern)
         terminal = self.get(term_id)
         loop = asyncio.get_running_loop()
@@ -871,19 +810,15 @@ class TermManager:
         include_styling: bool = True,
         timeout: float | None = None,
     ) -> str:
-        """Wait until a terminal display changes or remains stable.
-
-        ``bounding_box`` is ``(top, left, bottom, right)`` in terminal cells,
-        with an exclusive bottom and right edge.
-        """
-        return await self._dispatch_cancellable(
+        return await self._dispatch(
             self._wait_screen(
                 term_id,
                 condition=condition,
                 bounding_box=bounding_box,
                 include_styling=include_styling,
                 timeout=timeout,
-            )
+            ),
+            cancellable=True,
         )
 
     async def _wait_screen(
@@ -897,16 +832,7 @@ class TermManager:
     ) -> str:
         if condition not in {"stable", "change"}:
             raise ValueError("condition must be 'stable' or 'change'")
-        wait_timeout = (
-            WAIT_DEFAULT_MULTIPLIER * TERM_TIMEOUT
-            if timeout is None
-            else timeout
-        )
-        if wait_timeout < 0:
-            raise ValueError("timeout must not be negative")
-        maximum = WAIT_MAX_MULTIPLIER * TERM_TIMEOUT
-        if wait_timeout > maximum:
-            raise ValueError(f"timeout cannot exceed {maximum:g} seconds")
+        wait_timeout = _wait_timeout(timeout)
         _validate_bounding_box(bounding_box)
 
         terminal = self.get(term_id)
@@ -987,6 +913,19 @@ def _last_overlapping_match(
         match = candidate
         position = candidate.start() + 1
     return match
+
+
+def _wait_timeout(timeout: float | None) -> float:
+    """Validate one bounded terminal wait timeout."""
+    value = (
+        WAIT_DEFAULT_MULTIPLIER * TERM_TIMEOUT if timeout is None else timeout
+    )
+    if value < 0:
+        raise ValueError("timeout must not be negative")
+    maximum = WAIT_MAX_MULTIPLIER * TERM_TIMEOUT
+    if value > maximum:
+        raise ValueError(f"timeout cannot exceed {maximum:g} seconds")
+    return value
 
 
 def _validate_bounding_box(

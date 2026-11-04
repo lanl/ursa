@@ -1,7 +1,7 @@
-import asyncio
 import os
 import subprocess
 from pathlib import Path
+from typing import cast
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
@@ -13,7 +13,7 @@ from ursa.prompt_library.safety_prompts import (
 )
 from ursa.util.events import ToolEvents
 from ursa.util.rendering import event_artifact
-from ursa.util.structured_output import ainvoke_structured
+from ursa.util.structured_output import invoke_structured
 from ursa.util.types import (
     AsciiValidationError,
     ascii_validation_message,
@@ -26,7 +26,7 @@ class SafetyAssessment(BaseModel):
     reason: str = Field(description="Brief reason for the safety decision.")
 
 
-async def assess_command_safety(
+def assess_command_safety(
     query: str, runtime: ToolRuntime[AgentContext]
 ) -> SafetyAssessment:
     """Apply URSA's configured command safety policy to *query*."""
@@ -36,11 +36,11 @@ async def assess_command_safety(
             is_safe=True, reason=f"User set safety level to {prompt_level}"
         )
     if runtime.store is not None:
-        search_results = await runtime.store.asearch(
+        search_results = runtime.store.search(
             ("workspace", "file_edit"), limit=1000
         )
         edited_files = [item.key for item in search_results]
-        search_results = await runtime.store.asearch(
+        search_results = runtime.store.search(
             ("workspace", "safe_codes"), limit=1000
         )
         safe_codes = [item.key for item in search_results]
@@ -48,29 +48,29 @@ async def assess_command_safety(
         edited_files = []
         safe_codes = []
 
-    result = await ainvoke_structured(
-        runtime.context.llm,
+    return cast(
         SafetyAssessment,
-        get_safety_prompt(
-            query, safe_codes, edited_files, prompt_level=prompt_level
-        ),
-        context="run_command safety assessment",
-        fallback=SafetyAssessment(
-            is_safe=False,
-            reason=(
-                "Could not parse command safety assessment from the model. "
-                "Command blocked."
+        invoke_structured(
+            runtime.context.llm,
+            SafetyAssessment,
+            get_safety_prompt(
+                query, safe_codes, edited_files, prompt_level=prompt_level
             ),
+            context="run_command safety assessment",
+            fallback=SafetyAssessment(
+                is_safe=False,
+                reason=(
+                    "Could not parse command safety assessment from the model. "
+                    "Command blocked."
+                ),
+            ),
+            repair=1,
         ),
-        repair=1,
     )
-    if not isinstance(result, SafetyAssessment):
-        raise TypeError("command safety assessment returned an invalid result")
-    return result
 
 
 @tool
-async def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
+def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
     """Execute a shell command in the workspace and return its combined output.
 
     Runs the specified command using subprocess.run in the given workspace
@@ -86,15 +86,12 @@ async def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
         "STDERR:" followed by the truncated stderr.
     """
     try:
-        validated_query = validate_ascii(query)
+        query = cast(str, validate_ascii(query))
     except AsciiValidationError as exc:
         return ascii_validation_message("query", exc)
-    if validated_query is None:
-        raise TypeError("query must be a string")
-    query = validated_query
     workspace_dir = Path(runtime.context.workspace)
     events = ToolEvents.from_runtime("run_command", runtime)
-    safety_result = await assess_command_safety(query, runtime)
+    safety_result = assess_command_safety(query, runtime)
 
     if not safety_result.is_safe:
         tool_response = (
@@ -129,8 +126,7 @@ async def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
             error="Command interrupted",
             query=query,
         ) as span:
-            result = await asyncio.to_thread(
-                subprocess.run,
+            result = subprocess.run(
                 query,
                 text=True,
                 shell=True,

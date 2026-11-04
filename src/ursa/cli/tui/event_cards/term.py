@@ -19,37 +19,36 @@ from ursa.cli.tui.event_cards.base import EventCard
 from ursa.cli.tui.terminal_view import TerminalView
 from ursa.tools.terminal.manager import TermManager, term_manager
 
+_TERM_ID = re.compile(r"[A-Za-z0-9]{8}")
 _TERM_RESULT = re.compile(r"Terminal ID:\s*([A-Za-z0-9]{8})")
 
 
 def terminal_id(value: Any) -> str | None:
-    """Extract a terminal ID from tool input or the documented result text."""
+    """Extract a session ID from tool arguments or the stable result format."""
     if isinstance(value, ToolMessage):
         value = value.content
     if isinstance(value, Mapping):
         candidate = value.get("term_id")
-        if isinstance(candidate, str) and re.fullmatch(
-            r"[A-Za-z0-9]{8}", candidate
-        ):
+        if isinstance(candidate, str) and _TERM_ID.fullmatch(candidate):
             return candidate
-        if value.get("type") == "text":
-            return terminal_id(value.get("text"))
-        return None
+        return (
+            terminal_id(value.get("text"))
+            if value.get("type") == "text"
+            else None
+        )
     if isinstance(value, list | tuple):
-        for nested in value:
-            if found := terminal_id(nested):
-                return found
-        return None
-    if not isinstance(value, str):
-        return None
-    # Avoid treating arbitrary output as an ID. Tool results intentionally
-    # identify sessions with this exact stable format.
-    match = _TERM_RESULT.fullmatch(value.strip())
-    return match.group(1) if match else None
+        return next(
+            (found for item in value if (found := terminal_id(item))), None
+        )
+    if isinstance(value, str) and (
+        match := _TERM_RESULT.fullmatch(value.strip())
+    ):
+        return match.group(1)
+    return None
 
 
 class TermCard(EventCard):
-    """One card shared by every tool call against a terminal session."""
+    """One live card shared by all calls against a terminal session."""
 
     def __init__(
         self,
@@ -59,10 +58,8 @@ class TermCard(EventCard):
         manager: TermManager | None = None,
     ) -> None:
         super().__init__(key, "Terminal")
-        self.term_id = term_id
-        self.manager = manager or term_manager
+        self.term_id, self.manager = term_id, manager or term_manager
         self.call_count = 0
-        self._call_tools: list[str] = []
         self.last_line = "Starting terminal…"
         self._tail_timer: Timer | None = None
         self._view: TerminalView | None = None
@@ -76,8 +73,7 @@ class TermCard(EventCard):
     def on_mount(self) -> None:
         self._render_summary()
         self._tail_timer = self.set_interval(0.25, self._refresh_tail)
-        if self.term_id:
-            self._mount_view()
+        self._mount_view()
         self._update_expand_hint()
 
     def on_unmount(self) -> None:
@@ -89,56 +85,23 @@ class TermCard(EventCard):
         phase = str(payload.get("phase") or "")
         if phase in {"", "start"}:
             self.call_count += 1
-            self._call_tools.append(tool)
-        failed = phase == "error" or payload.get("status") == "error"
-        if failed:
+        if phase == "error" or payload.get("status") == "error":
             self.last_line = str(payload.get("error") or "Terminal call failed")
         elif tool == "term" and phase == "end" and self.term_id is None:
             result = payload.get("tool_message", payload.get("result"))
-            if isinstance(result, ToolMessage):
-                result = result.content
-            lines = str(result or "").splitlines()
+            lines = str(
+                result.content
+                if isinstance(result, ToolMessage)
+                else result or ""
+            ).splitlines()
             if lines:
                 self.last_line = lines[-1]
         self._render_summary()
 
-    def associate(self, term_id: str) -> None:
-        if self.term_id == term_id:
-            return
-        self.term_id = term_id
-        self.last_line = "Terminal session started"
-        self._render_summary()
-        if self.is_mounted:
-            self._mount_view()
-
-    def absorb(self, other: TermCard) -> None:
-        """Merge callback state from a provisional card into this session."""
-        if other is self:
-            return
-        if set(self._call_tools) == {"term"} and set(other._call_tools) == {
-            "term"
-        }:
-            # Duplicate launch callback lifecycles can have distinct run IDs,
-            # but one manager-issued terminal ID proves they were one launch.
-            self.call_count = max(self.call_count, other.call_count)
-        else:
-            self.call_count += other.call_count
-            self._call_tools.extend(other._call_tools)
-        if self.last_line in {
-            "Starting terminal…",
-            "Terminal session started",
-        } and other.last_line not in {
-            "Starting terminal…",
-            "Terminal session started",
-        }:
-            self.last_line = other.last_line
-        self._render_summary()
-
     def _mount_view(self) -> None:
-        if self._view is not None or self.term_id is None:
-            return
-        self._view = TerminalView(self.term_id, manager=self.manager)
-        self.query_one(".term-card-live", Vertical).mount(self._view)
+        if self._view is None and self.term_id is not None:
+            self._view = TerminalView(self.term_id, manager=self.manager)
+            self.query_one(".term-card-live", Vertical).mount(self._view)
 
     async def _refresh_tail(self) -> None:
         if self.term_id is None:
@@ -147,26 +110,29 @@ class TermCard(EventCard):
             contents = await self.manager.contents(self.term_id)
         except KeyError:
             self.last_line = "Terminal session no longer exists."
-            self._render_summary()
-            return
         except RuntimeError:
             return
-        lines = contents.splitlines()
-        self.last_line = next(
-            (line for line in reversed(lines) if line.strip()),
-            "(terminal is empty)",
-        )
+        else:
+            self.last_line = next(
+                (
+                    line
+                    for line in reversed(contents.splitlines())
+                    if line.strip()
+                ),
+                "(terminal is empty)",
+            )
         self._render_summary()
 
     def _render_summary(self) -> None:
-        if not self.is_mounted:
-            return
-        identity = self.term_id or "starting"
-        suffix = f" · {self.call_count} calls" if self.call_count != 1 else ""
-        self.query_one(".term-card-title", Static).update(
-            f"▣ Terminal {identity}{suffix}"
-        )
-        self.query_one(".term-card-tail", Static).update(self.last_line)
+        if self.is_mounted:
+            identity = self.term_id or "starting"
+            suffix = (
+                f" · {self.call_count} calls" if self.call_count != 1 else ""
+            )
+            self.query_one(".term-card-title", Static).update(
+                f"▣ Terminal {identity}{suffix}"
+            )
+            self.query_one(".term-card-tail", Static).update(self.last_line)
 
     def set_expanded(self, expanded: bool) -> None:
         self.expanded = expanded

@@ -6,8 +6,8 @@ from langchain.chat_models import BaseChatModel
 from langgraph.store.memory import InMemoryStore
 
 from tests.tools.utils import (
-    ainvoke_with_event_recorder,
-    ainvoke_with_parent_run,
+    invoke_with_event_recorder,
+    invoke_with_parent_run,
     make_runtime,
 )
 from ursa.tools.run_command_tool import SafetyAssessment, run_command
@@ -36,7 +36,7 @@ def _patch_safety_result(
         captured["schema"] = schema
 
         class Invoker:
-            async def ainvoke(self_inner, prompt):
+            def invoke(self_inner, prompt):
                 captured["prompt"] = prompt
                 return {"is_safe": is_safe, "reason": reason}
 
@@ -50,7 +50,7 @@ def _patch_safety_result(
     return captured
 
 
-async def test_run_command_invokes_subprocess_in_workspace(
+def test_run_command_invokes_subprocess_in_workspace(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
     recorded = {}
@@ -61,19 +61,10 @@ async def test_run_command_invokes_subprocess_in_workspace(
         recorded["kwargs"] = kwargs
         return SimpleNamespace(stdout="output", stderr="", returncode=0)
 
-    to_thread_calls = []
-
-    async def fake_to_thread(function, *args, **kwargs):
-        to_thread_calls.append(function)
-        return function(*args, **kwargs)
-
     monkeypatch.setattr("ursa.tools.run_command_tool.subprocess.run", fake_run)
-    monkeypatch.setattr(
-        "ursa.tools.run_command_tool.asyncio.to_thread", fake_to_thread
-    )
 
-    result, recorder = await ainvoke_with_event_recorder(
-        run_command.coroutine,
+    result, recorder = invoke_with_event_recorder(
+        run_command.func,
         "echo hi",
         runtime=make_runtime(
             tmp_path,
@@ -87,7 +78,6 @@ async def test_run_command_invokes_subprocess_in_workspace(
     assert result == "STDOUT:\noutput\nSTDERR:\n"
     assert recorded["kwargs"]["cwd"] == tmp_path
     assert recorded["kwargs"]["shell"] is True
-    assert to_thread_calls == [fake_run]
     assert events[0] == (
         "ursa_agent_progress",
         {
@@ -137,7 +127,7 @@ async def test_run_command_invokes_subprocess_in_workspace(
     assert isinstance(payload["elapsed_ms"], float)
 
 
-async def test_run_command_truncates_output(
+def test_run_command_truncates_output(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
     long_stdout = "a" * 200
@@ -151,8 +141,8 @@ async def test_run_command_truncates_output(
         ),
     )
 
-    result = await ainvoke_with_parent_run(
-        lambda config: run_command.coroutine(
+    result = invoke_with_parent_run(
+        lambda config: run_command.func(
             "noop",
             runtime=make_runtime(
                 tmp_path,
@@ -175,7 +165,7 @@ async def test_run_command_truncates_output(
     assert len(stderr_body) < len(long_stderr)
 
 
-async def test_run_command_handles_keyboard_interrupt(
+def test_run_command_handles_keyboard_interrupt(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
     _patch_safety_result(monkeypatch, chat_model, is_safe=True)
@@ -187,8 +177,8 @@ async def test_run_command_handles_keyboard_interrupt(
         "ursa.tools.run_command_tool.subprocess.run", raise_interrupt
     )
 
-    result = await ainvoke_with_parent_run(
-        lambda config: run_command.coroutine(
+    result = invoke_with_parent_run(
+        lambda config: run_command.func(
             "sleep 1",
             runtime=make_runtime(
                 tmp_path,
@@ -203,7 +193,7 @@ async def test_run_command_handles_keyboard_interrupt(
     assert "KeyboardInterrupt:" in result
 
 
-async def test_run_command_returns_message_for_unicode_input(
+def test_run_command_returns_message_for_unicode_input(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
     runtime = make_runtime(
@@ -219,14 +209,14 @@ async def test_run_command_returns_message_for_unicode_input(
         ),
     )
 
-    result = await run_command.coroutine("ls café", runtime)
+    result = run_command.func("ls café", runtime)
 
     assert result.startswith("Invalid query:")
     assert "U+00E9" in result
     assert "corrected ASCII string" in result
 
 
-async def test_run_command_blocks_commands_that_fail_safety_check(
+def test_run_command_blocks_commands_that_fail_safety_check(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
     captured = _patch_safety_result(
@@ -245,24 +235,17 @@ async def test_run_command_blocks_commands_that_fail_safety_check(
     store.put(("workspace", "safe_codes"), "julia", {})
 
     search_calls = []
-    original_asearch = InMemoryStore.asearch
+    original_search = InMemoryStore.search
 
-    async def tracked_asearch(self, namespace_prefix, /, **kwargs):
+    def tracked_search(self, namespace_prefix, /, **kwargs):
         if self is store:
             search_calls.append((namespace_prefix, kwargs.get("limit")))
-        return await original_asearch(self, namespace_prefix, **kwargs)
+        return original_search(self, namespace_prefix, **kwargs)
 
-    monkeypatch.setattr(
-        InMemoryStore,
-        "search",
-        lambda *args, **kwargs: pytest.fail(
-            "async safety assessment must not call store.search"
-        ),
-    )
-    monkeypatch.setattr(InMemoryStore, "asearch", tracked_asearch)
+    monkeypatch.setattr(InMemoryStore, "search", tracked_search)
 
-    result, recorder = await ainvoke_with_event_recorder(
-        run_command.coroutine,
+    result, recorder = invoke_with_event_recorder(
+        run_command.func,
         "rm -rf important_files",
         runtime=make_runtime(
             tmp_path,

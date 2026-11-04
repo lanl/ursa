@@ -16,7 +16,9 @@ import shlex
 import signal
 import struct
 import time
+from collections.abc import Iterator
 from contextlib import suppress
+from pathlib import Path
 from typing import Any
 
 from .base import (
@@ -32,10 +34,10 @@ from .resources import capture_process_identity
 _C1_ERROR_HANDLER = "ursa_terminal_c1_controls"
 
 
-def _decode_c1_control(
-    error: UnicodeDecodeError,
-) -> tuple[str, int]:
+def _decode_c1_control(error: UnicodeError) -> tuple[str, int]:
     """Preserve isolated 8-bit C1 controls rejected by UTF-8 decoding."""
+    if not isinstance(error, UnicodeDecodeError):
+        raise error
     invalid = error.object[error.start : error.end]
     replacement = "".join(
         chr(byte) if 0x80 <= byte <= 0x9F else "\ufffd" for byte in invalid
@@ -146,7 +148,9 @@ class GhosttyTerm(TermSession):
         cols: int = 80,
         scrollback: int = TERM_SCROLLBACK_LINES,
     ) -> None:
-        super().__init__(term_id, shell, env=env, cwd=cwd)
+        super().__init__(
+            term_id, shell, env=env, cwd=Path(cwd) if cwd is not None else None
+        )
         if PyGhosttyTerminal is None:
             raise RuntimeError(
                 "GhosttyTerm requires a working pyghostty installation"
@@ -390,45 +394,14 @@ class GhosttyTerm(TermSession):
         )
         raw_cells = self._has_raw_grid_api()
         visible = self._terminal.text().splitlines() if not raw_cells else []
-        visible.extend([""] * (rows - len(visible)))
         spans: list[TerminalSpan] = []
         for row in range(rows):
-            col = 0
-            if raw_cells:
-                while col < cols:
-                    text, width = self._raw_cell(col, row)
-                    self._append_span(
-                        spans,
-                        text,
-                        self._style_at(
-                            col,
-                            row,
-                            palette,
-                            default_foreground,
-                            default_background,
-                        ),
-                        cells=width,
-                    )
-                    col += width
-            else:
-                line = visible[row] if row < len(visible) else ""
-                for character in line:
-                    self._append_span(
-                        spans,
-                        character,
-                        self._style_at(
-                            col,
-                            row,
-                            palette,
-                            default_foreground,
-                            default_background,
-                        ),
-                    )
-                    col += 1
-            while col < cols:
+            for col, text, cells in self._row_cells(
+                row, cols, raw_cells, visible
+            ):
                 self._append_span(
                     spans,
-                    " ",
+                    text,
                     self._style_at(
                         col,
                         row,
@@ -436,8 +409,8 @@ class GhosttyTerm(TermSession):
                         default_foreground,
                         default_background,
                     ),
+                    cells=cells,
                 )
-                col += 1
             if row != rows - 1:
                 spans.append(TerminalSpan("\n"))
         cursor_col, cursor_row = self._terminal.cursor
@@ -449,6 +422,30 @@ class GhosttyTerm(TermSession):
             screen=True,
             cursor=(cursor_row, cursor_col),
         )
+
+    def _row_cells(
+        self,
+        row: int,
+        cols: int,
+        raw_cells: bool,
+        visible: list[str],
+    ) -> Iterator[tuple[int, str, int | None]]:
+        """Yield screen cells in either native-grid or text fallback form."""
+        col = 0
+        if raw_cells:
+            while col < cols:
+                text, width = self._raw_cell(col, row)
+                yield col, text, width
+                col += width
+            return
+        for text in visible[row] if row < len(visible) else "":
+            if col == cols:
+                return
+            yield col, text, None
+            col += 1
+        while col < cols:
+            yield col, " ", None
+            col += 1
 
     @staticmethod
     def _append_span(
@@ -465,6 +462,7 @@ class GhosttyTerm(TermSession):
             and cells is not None
         ):
             previous = spans[-1]
+            assert previous.cells is not None
             spans[-1] = TerminalSpan(
                 previous.text + text, style, previous.cells + cells
             )

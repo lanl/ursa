@@ -15,12 +15,7 @@ from ursa.tools.terminal.screenshot import snapshot_text
 
 
 class TerminalView(Static):
-    """Live, non-interactive display of one managed terminal.
-
-    Ghostty screens retain their emulated row and column dimensions and do
-    not reflow. Process-backed streams instead occupy the available pane and
-    soft-wrap long lines.
-    """
+    """Live, non-interactive display of one managed terminal."""
 
     DEFAULT_CSS = """
     TerminalView {
@@ -31,7 +26,6 @@ class TerminalView(Static):
         content-align: left bottom;
     }
     """
-
     can_focus = False
 
     def __init__(
@@ -45,46 +39,40 @@ class TerminalView(Static):
         if refresh_interval <= 0:
             raise ValueError("refresh_interval must be positive")
         super().__init__("Loading terminal…", expand=True, markup=False, id=id)
-        self.term_id = term_id
-        self.manager = manager or term_manager
+        self.term_id, self.manager = term_id, manager or term_manager
         self.refresh_interval = refresh_interval
         self._refresh_timer: Timer | None = None
-        self._snapshot_pending = False
-        self._screen_snapshot = False
+        self._snapshot_pending = self._screen_snapshot = False
         self._latest_snapshot: TerminalRenderSnapshot | None = None
 
     def on_mount(self) -> None:
-        """Start periodically refreshing from the manager's owner loop."""
         self.request_snapshot()
         self._refresh_timer = self.set_interval(
             self.refresh_interval, self.request_snapshot
         )
 
     def on_unmount(self) -> None:
-        """Stop the refresh timer once its tab or modal is removed."""
         if self._refresh_timer is not None:
             self._refresh_timer.stop()
             self._refresh_timer = None
 
     def on_show(self) -> None:
-        """Refresh immediately when a tab becomes visible."""
         self.request_snapshot()
 
     def on_resize(self, _event: events.Resize) -> None:
-        """Repaint streams at the new viewport width."""
         self.refresh(layout=True)
         if not self._screen_snapshot:
             self.call_after_refresh(self._render_stream_tail)
 
     def request_snapshot(self) -> None:
-        """Schedule a fresh immutable snapshot without blocking Textual."""
+        """Schedule a snapshot only while this view is visible."""
         if (
-            not self.is_mounted
+            self._snapshot_pending
+            or not self.is_mounted
             or any(
                 not widget.display or not widget.visible
                 for widget in self.ancestors_with_self
             )
-            or self._snapshot_pending
         ):
             return
         self._snapshot_pending = True
@@ -96,55 +84,44 @@ class TerminalView(Static):
 
     async def _update_snapshot(self) -> None:
         try:
-            try:
-                snapshot = await self.manager.render_snapshot(self.term_id)
-            except KeyError:
-                self.update("Terminal session no longer exists.")
-                return
-            except Exception as exc:  # Keep backend failures visible.
-                self.update(f"Unable to render terminal: {exc}")
-                return
-            self._apply_snapshot(snapshot)
+            self._apply_snapshot(
+                await self.manager.render_snapshot(self.term_id)
+            )
+        except KeyError:
+            self.update("Terminal session no longer exists.")
+        except Exception as error:
+            self.update(f"Unable to render terminal: {error}")
         finally:
             self._snapshot_pending = False
 
     def _apply_snapshot(self, snapshot: TerminalRenderSnapshot) -> None:
-        self._screen_snapshot = snapshot.screen
         self._latest_snapshot = snapshot
-        if snapshot.screen:
-            self.update(snapshot_text(snapshot))
-            assert snapshot.cols is not None and snapshot.rows is not None
-            # Textual dimensions include the border. Keep the emulated grid's
-            # rows and columns exact within that surrounding chrome.
-            self.styles.width = snapshot.cols + 2
-            self.styles.height = snapshot.rows + 2
-        else:
-            self.styles.width = "100%"
-            self.styles.height = "100%"
+        self._screen_snapshot = snapshot.screen
+        if not snapshot.screen:
+            self.styles.width = self.styles.height = "100%"
             self.call_after_refresh(self._render_stream_tail)
+            return
+        self.update(snapshot_text(snapshot))
+        assert snapshot.cols is not None and snapshot.rows is not None
+        # Account for this widget's border while retaining the emulated grid.
+        self.styles.width, self.styles.height = (
+            snapshot.cols + 2,
+            snapshot.rows + 2,
+        )
 
     def _render_stream_tail(self) -> None:
-        """Wrap process output and retain the newest viewport-sized tail."""
         snapshot = self._latest_snapshot
         if snapshot is None or snapshot.screen:
             return
         rendered = snapshot_text(snapshot)
         if not rendered.plain:
-            # Pipe-backed interactive programs commonly suppress their prompt
-            # when stdout isn't a TTY.  Keep the modal informative instead of
-            # presenting an apparently broken, completely blank pane.
             self.update("No output has been captured from this terminal yet.")
             return
-        width = max(1, self.content_size.width)
-        height = max(1, self.content_size.height)
         lines = rendered.wrap(
-            self.app.console,
-            width,
-            overflow="fold",
+            self.app.console, max(1, self.content_size.width), overflow="fold"
         )
-        tail = Text("\n").join(lines[-height:])
-        tail.no_wrap = False
-        tail.overflow = "fold"
+        tail = Text("\n").join(lines[-max(1, self.content_size.height) :])
+        tail.no_wrap, tail.overflow = False, "fold"
         self.update(tail)
 
 

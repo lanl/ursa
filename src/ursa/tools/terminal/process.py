@@ -19,7 +19,7 @@ import threading
 import time
 from contextlib import suppress
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, cast
 
 from .base import TERM_CAPTURE_MAX_BYTES, OutputJournal, TermSession
 from .resources import capture_process_identity
@@ -188,7 +188,7 @@ class ProcessTerm(TermSession):
                 raise
 
             self._output_path = Path(output.name)
-            self._output_writer = output
+            self._output_writer = cast(BinaryIO, output)
             self._process = process
             self._process_identity = capture_process_identity(process.pid)
             output_thread = threading.Thread(
@@ -378,6 +378,10 @@ class ProcessTerm(TermSession):
                 except OSError:
                     pass
             self._join_output_thread(timeout=1.0)
+        self._release_capture()
+
+    def _release_capture(self) -> None:
+        """Close and remove the bounded circular-capture file once."""
         with self._output_lock:
             if self._output_writer is not None:
                 self._output_writer.close()
@@ -458,9 +462,6 @@ class ProcessTerm(TermSession):
                     except ProcessLookupError:
                         pass
             self._join_output_thread(timeout=0.1)
-            if self._output_writer is not None:
-                self._output_writer.close()
-            if self._output_path is not None:
-                self._output_path.unlink(missing_ok=True)
+            self._release_capture()
         except (OSError, AttributeError):
             pass

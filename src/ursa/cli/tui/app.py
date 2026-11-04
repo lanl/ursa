@@ -561,8 +561,6 @@ class UrsaTextualApp(App[None]):
             )
             return
         if command == "terms":
-            from ursa.tools.terminal import term_manager
-
             self.push_screen(
                 TermsScreen(term_manager.terminals(), manager=term_manager),
                 callback=lambda _: self.query_one(PromptArea).focus(),
@@ -669,8 +667,6 @@ class UrsaTextualApp(App[None]):
         self.run_worker(apply(), group="model", exclusive=True)
 
     def _status_markdown(self) -> str:
-        from ursa.tools.terminal import term_manager
-
         emb_model_cfg = self.hitl.config.emb_model
         window = model_context_window(self.hitl.model)
         threshold = summarization_threshold(

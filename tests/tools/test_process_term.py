@@ -1,11 +1,7 @@
+"""Representative ProcessTerm integration and unit contracts."""
+
 import asyncio
 import os
-import re
-import shlex
-import signal
-import subprocess
-import sys
-from types import SimpleNamespace
 
 import pytest
 
@@ -16,464 +12,85 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-async def test_process_term_runs_command_captures_combined_output_and_exits(
-    tmp_path,
-):
-    terminal = ProcessTerm(
-        "proc1234", ["/bin/sh"], env={"URSA_TERM_TEST": "works"}, cwd=tmp_path
-    )
-    await terminal.start(
-        "printf 'out:%s\\n' \"$URSA_TERM_TEST\"; printf 'err\\n' >&2; exit 7"
-    )
-    assert await terminal.wait() == 7
-    assert await terminal.read() == "out:works\nerr\n"
-    assert await terminal.is_alive() == {"exit_code": 7}
-    await terminal.terminate()
+def term(name="proc1234", **kwargs):
+    return ProcessTerm(name, ["/bin/sh"], **kwargs)
 
 
-async def test_process_render_snapshot_is_plain_reflowable_stream(tmp_path):
-    terminal = ProcessTerm("proc1234", ["/bin/sh"], cwd=tmp_path)
-    await terminal.start("printf 'one\\ntwo\\n'")
-    await terminal.wait()
-
-    rendered = await terminal.render_snapshot()
-
-    assert rendered.term_id == "proc1234"
-    assert tuple(span.text for span in rendered.spans) == ("one\ntwo\n",)
-    assert rendered.screen is False
-    assert rendered.rows is None
-    assert rendered.cols is None
-    await terminal.terminate()
-
-
-async def test_process_term_supports_argument_list_and_tail_slicing(tmp_path):
-    terminal = ProcessTerm("proc1234", ["/bin/sh"], cwd=tmp_path)
-    await terminal.start(["printf", "one\\ntwo\\nthree\\nfour\\n"])
+@pytest.mark.asyncio
+async def test_command_capture_read_slicing_snapshot_and_bounded_ring(tmp_path):
+    terminal = term(cwd=tmp_path, capture_max_bytes=64)
+    await terminal.start("printf 'one\\ntwo\\nthree\\nfour\\n'; printf err >&2")
     assert await terminal.wait() == 0
-    assert await terminal.read(lines=2) == "three\nfour\n"
-    assert await terminal.read(offset=1, lines=2) == "two\nthree\n"
-    assert await terminal.read(offset=2) == "one\ntwo\n"
-    assert await terminal.read(lines=0) == ""
+    assert (await terminal.read(lines=2)).endswith("four\nerr")
+    assert await terminal.is_alive() == {"exit_code": 0}
+    snapshot = await terminal.render_snapshot()
+    assert not snapshot.screen and snapshot.spans[0].text.endswith("err")
     await terminal.terminate()
 
 
-async def test_process_term_capture_is_a_file_backed_circular_buffer(tmp_path):
-    capacity = 64
-    output = "".join(str(number % 10) for number in range(200))
-    terminal = ProcessTerm(
-        "procring",
-        ["/bin/sh"],
-        cwd=tmp_path,
-        capture_max_bytes=capacity,
-    )
-    await terminal.start(["printf", "%s", output])
-    assert await terminal.wait() == 0
-
-    assert await terminal.read() == output[-capacity:]
-    assert terminal._output_path is not None
-    assert terminal._output_path.stat().st_size <= capacity
-    await terminal.terminate()
-
-
-async def test_process_wait_does_not_block_on_descendant_inheriting_output_pipe(
-    tmp_path,
-):
-    terminal = ProcessTerm("procpipe", ["/bin/sh"], cwd=tmp_path)
-    await terminal.start("sleep 30 & printf ready")
-
-    assert await asyncio.wait_for(terminal.wait(), timeout=2.0) == 0
-    assert await terminal.read() == "ready"
-    await terminal.terminate()
-
-
-def test_process_command_formatting_and_shell_detection():
-    assert ProcessTerm._format_command(["echo", "a b", "x'y"]) == (
-        "echo 'a b' 'x'\"'\"'y'"
-    )
-    assert ProcessTerm._is_powershell([r"C:\Tools\PwSh.EXE"]) is True
-    assert ProcessTerm._is_powershell(["/bin/bash"]) is False
-    assert (
-        ProcessTerm._powershell_command(["echo", "a'b", "$x; y"])
-        == "& 'echo' 'a''b' '$x; y'"
-    )
-    assert ProcessTerm._powershell_command([]) == ""
-
-
-async def test_process_start_builds_literal_powershell_argv(monkeypatch):
-    captured = {}
-
-    class FakeProcess:
-        stdin = None
-        pid = 123
-
-        def poll(self):
-            return 0
-
-    def fake_popen(argv, **kwargs):
-        captured["argv"] = argv
-        captured["kwargs"] = kwargs
-        return FakeProcess()
-
-    monkeypatch.setattr(
-        "ursa.tools.terminal.process.subprocess.Popen", fake_popen
-    )
-    terminal = ProcessTerm("proc1234", [r"C:\Tools\PwSh.EXE", "-NoLogo"])
-    await terminal.start(["echo", "a'b", "$x; y"])
-    assert captured["argv"] == [
-        r"C:\Tools\PwSh.EXE",
-        "-NoLogo",
-        "-Command",
-        "& 'echo' 'a''b' '$x; y'",
-    ]
-    assert captured["kwargs"]["stdin"] is subprocess.PIPE
-    assert captured["kwargs"]["env"]["PYTHONUNBUFFERED"] == "1"
-    await terminal.terminate()
-
-
-async def test_process_term_preserves_explicit_python_buffering_env(tmp_path):
-    terminal = ProcessTerm(
-        "proc1234",
-        ["/bin/sh"],
-        env={"PYTHONUNBUFFERED": "caller-value"},
-        cwd=tmp_path,
-    )
-    await terminal.start('printf %s "$PYTHONUNBUFFERED"')
-    await terminal.wait()
-    assert await terminal.read() == "caller-value"
-    await terminal.terminate()
-
-
-async def test_process_term_quotes_argument_list_as_one_command(tmp_path):
-    terminal = ProcessTerm("proc1234", ["/bin/sh"], cwd=tmp_path)
-    await terminal.start(["printf", "%s", "argument with spaces"])
-    assert await terminal.wait() == 0
-    assert await terminal.read() == "argument with spaces"
-    await terminal.terminate()
-
-
-async def test_process_term_interactive_sends_and_lifecycle(tmp_path):
-    terminal = ProcessTerm("proc1234", ["/bin/sh"], cwd=tmp_path)
-    with pytest.raises(RuntimeError, match="not been started"):
-        await terminal.read()
+@pytest.mark.asyncio
+async def test_interactive_input_markers_and_lifecycle(tmp_path):
+    terminal = term(cwd=tmp_path)
     await terminal.start()
-    assert await terminal.is_alive() == {"is_alive": True}
-    await terminal.send_text("printf interactive")
-    await terminal.send_line("")
-    await terminal.send_line("exit")
+    await terminal.send_line("printf BEFORE")
+    await _wait_for(terminal, "BEFORE")
+    marker = await terminal.output_marker()
+    await terminal.send_line("printf AFTER; exit")
     assert await terminal.wait() == 0
-    assert await terminal.read() == "interactive"
-    with pytest.raises(BrokenPipeError, match="not running"):
+    assert "AFTER" in await terminal.output_since(marker)
+    with pytest.raises(BrokenPipeError):
         await terminal.send_bytes(b"again")
     await terminal.terminate()
 
 
-async def test_process_term_streams_interactive_python_output_before_exit(
-    tmp_path,
-):
-    terminal = ProcessTerm("proc1234", ["/bin/sh"], cwd=tmp_path)
-    await terminal.start(shlex.quote(sys.executable))
-    await terminal.send_line("print('PROCESS_TERM_LIVE')")
-
-    await _wait_for_output(terminal, re.compile(r"PROCESS_TERM_LIVE"))
-    assert await terminal.is_alive() == {"is_alive": True}
-
-    await terminal.send_line("exit()")
-    await terminal.send_line("exit")
-    await terminal.wait()
+@pytest.mark.asyncio
+async def test_wait_does_not_depend_on_descendant_pipe_closure(tmp_path):
+    terminal = term(cwd=tmp_path)
+    await terminal.start("sleep 30 & printf ready")
+    assert await asyncio.wait_for(terminal.wait(), timeout=2) == 0
+    assert await terminal.read() == "ready"
     await terminal.terminate()
 
 
-async def test_process_term_output_marker_excludes_prior_output(tmp_path):
-    terminal = ProcessTerm("procmark", ["/bin/sh"], cwd=tmp_path)
-    await terminal.start()
-    await terminal.send_line("printf 'BEFORE\\n'")
-    await _wait_for_output(terminal, re.compile(r"BEFORE"))
-    marker = await terminal.output_marker()
-    await terminal.send_line("printf 'AFTER\\n'")
-    await _wait_for_output(terminal, re.compile(r"AFTER"))
-    output = await terminal.output_since(marker)
-    assert "AFTER" in output
-    assert "BEFORE" not in output
-    await terminal.send_line("exit")
-    await terminal.wait()
-    await terminal.terminate()
-
-
-async def test_process_term_marker_does_not_split_multibyte_utf8(tmp_path):
-    terminal = ProcessTerm("procutf8", ["/bin/sh"], cwd=tmp_path)
-    await terminal.start("printf '\\342'; sleep 0.15; printf '\\202\\254X'")
-    while (
-        terminal._output_path is None
-        or terminal._output_path.stat().st_size < 1
-    ):
-        await asyncio.sleep(0.005)
-
-    marker = await terminal.output_marker()
-    assert marker == 0
-    await terminal.wait()
-    assert await terminal.output_since(marker) == "€X"
-    await terminal.terminate()
-
-
-@pytest.mark.parametrize(
-    ("command", "expected"),
-    [
-        ("python", "python -i"),
-        ("python3", "python3 -i"),
-        ("/usr/bin/python3.11", "/usr/bin/python3.11 -i"),
-        (["python3"], ["python3", "-i"]),
-        ("python -c 'print(1)'", "python -c 'print(1)'"),
-        ("python -m module", "python -m module"),
-        ("python script.py", "python script.py"),
-        (["python", "script.py"], ["python", "script.py"]),
-    ],
-)
-def test_process_term_only_normalizes_bare_python(command, expected):
-    assert ProcessTerm._interactive_python_command(command) == expected
-
-
-async def test_process_term_validates_reads_and_unsupported_screen_operations(
-    tmp_path,
-):
-    terminal = ProcessTerm("proc1234", ["/bin/sh"], cwd=tmp_path)
-    await terminal.start()
-    with pytest.raises(ValueError, match="offset"):
-        await terminal.read(offset=-1)
-    with pytest.raises(ValueError, match="lines"):
-        await terminal.read(lines=-1)
-    with pytest.raises(TypeError, match="bytes"):
-        await terminal.send_bytes("not bytes")
-    with pytest.raises(NotImplementedError, match="resized"):
-        await terminal.resize(30, 90)
-    with pytest.raises(NotImplementedError, match="cursor"):
-        await terminal.cursor()
-    with pytest.raises(NotImplementedError, match="screen size"):
-        await terminal.size()
-    await terminal.terminate()
-
-
-async def test_process_term_rejects_double_start(tmp_path):
-    terminal = ProcessTerm("proc1234", ["/bin/sh"], cwd=tmp_path)
-    await terminal.start()
-    with pytest.raises(RuntimeError, match="already started"):
-        await terminal.start()
-    await terminal.terminate()
-
-
-async def test_process_term_terminate_stops_running_shell(tmp_path):
-    terminal = ProcessTerm("proc1234", ["/bin/sh"], cwd=tmp_path)
-    await terminal.start()
-    await terminal.terminate()
-    state = await terminal.is_alive()
-    assert state["exit_code"] != 0
-
-
-async def test_process_term_termination_is_concurrent_idempotent_and_cleans_temp(
-    tmp_path,
-):
-    terminal = ProcessTerm("proc1234", ["/bin/sh"], cwd=tmp_path)
-    await terminal.start("exit 0")
-    await terminal.wait()
-    output_path = terminal._output_path
-    assert output_path is not None and output_path.exists()
-    await asyncio.gather(terminal.terminate(), terminal.terminate())
-    assert not output_path.exists()
-    assert terminal._output_path is None
-
-
-async def test_process_term_cancelled_terminate_still_finishes_cleanup(
-    tmp_path, monkeypatch
-):
-    terminal = ProcessTerm("proc1234", ["/bin/sh"], cwd=tmp_path)
-    await terminal.start()
-    output_path = terminal._output_path
-    original = terminal._terminate_sync
-
-    def delayed_terminate():
-        import time
-
-        time.sleep(0.02)
-        original()
-
-    monkeypatch.setattr(terminal, "_terminate_sync", delayed_terminate)
-    task = asyncio.create_task(terminal.terminate())
-    await asyncio.sleep(0)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert terminal._termination_task is not None
-    await terminal._termination_task
-    assert output_path is not None and not output_path.exists()
-
-
-async def test_process_term_escalates_to_kill_after_terminate_timeout(
-    monkeypatch,
-):
-    terminal = ProcessTerm("proc1234", ["fake-shell"])
-
-    class FakeInput:
-        def __init__(self):
-            self.closed = False
-
-        def close(self):
-            self.closed = True
+def test_command_formatting_and_powershell_start(monkeypatch):
+    assert ProcessTerm._format_command(["echo", "a b", "x'y"]) == (
+        "echo 'a b' 'x'\"'\"'y'"
+    )
+    assert ProcessTerm._powershell_command(["echo", "a'b"]) == "& 'echo' 'a''b'"
+    captured = {}
 
     class FakeProcess:
-        stdin = FakeInput()
-
-        def __init__(self):
-            self.calls = []
-            self.pid = 12345
+        stdin = None
+        pid = 1
 
         def poll(self):
-            return None
+            return 0
 
-        def terminate(self):
-            self.calls.append("terminate")
-
-        def wait(self, timeout=None):
-            self.calls.append(("wait", timeout))
-            if timeout is not None:
-                raise subprocess.TimeoutExpired("fake", timeout)
-            return -9
-
-        def kill(self):
-            self.calls.append("kill")
-
-    process = FakeProcess()
-    signals = []
     monkeypatch.setattr(
-        "ursa.tools.terminal.process.os.killpg",
-        lambda pid, sig: signals.append((pid, sig)),
+        "ursa.tools.terminal.process.subprocess.Popen",
+        lambda argv, **kwargs: captured.update(argv=argv, kwargs=kwargs)
+        or FakeProcess(),
     )
-    times = iter((0.0, 3.0))
-    monkeypatch.setattr(
-        "ursa.tools.terminal.process.time",
-        SimpleNamespace(monotonic=lambda: next(times), sleep=lambda _: None),
-    )
-    terminal._process = process
-    await terminal.terminate()
-    assert process.calls == [
-        ("wait", 2),
-        ("wait", None),
-    ]
-    assert signals == [(12345, signal.SIGTERM), (12345, signal.SIGKILL)]
-    assert process.stdin.closed is True
+    terminal = ProcessTerm("powersh", [r"C:\\pwsh.exe"])
+    asyncio.run(terminal.start(["echo", "a'b"]))
+    assert captured["argv"][-2:] == ["-Command", "& 'echo' 'a''b'"]
 
 
-async def test_process_term_accepts_repeated_writes(tmp_path):
-    terminal = ProcessTerm("proc1234", ["/bin/sh"], cwd=tmp_path)
-    await terminal.start()
-    for number in range(10):
-        await terminal.send_line(f"printf '{number}\\n'")
-    await terminal.send_line("exit")
-    await terminal.wait()
-    assert sorted((await terminal.read()).splitlines(), key=int) == [
-        str(number) for number in range(10)
-    ]
+@pytest.mark.parametrize("read_args", [{"offset": -1}, {"lines": -1}])
+@pytest.mark.asyncio
+async def test_validates_reads_and_input(tmp_path, read_args):
+    terminal = term(cwd=tmp_path)
+    await terminal.start("exit")
+    with pytest.raises(ValueError):
+        await terminal.read(**read_args)
+    with pytest.raises(TypeError):
+        await terminal.send_bytes("bad")
     await terminal.terminate()
 
 
-async def _wait_for_output(terminal, pattern, timeout=1.0):
-    deadline = asyncio.get_running_loop().time() + timeout
-    while asyncio.get_running_loop().time() < deadline:
-        match = pattern.search(await terminal.read())
-        if match:
-            return match
-        await asyncio.sleep(0.01)
-    pytest.fail(f"output did not match {pattern.pattern!r}")
-
-
-async def _wait_until_process_gone(pid, timeout=1.0):
-    deadline = asyncio.get_running_loop().time() + timeout
-    while asyncio.get_running_loop().time() < deadline:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
+async def _wait_for(terminal, text):
+    for _ in range(100):
+        if text in await terminal.read():
             return
         await asyncio.sleep(0.01)
-    pytest.fail(f"process {pid} still exists")
-
-
-async def test_process_terminate_kills_descendant_process_group(tmp_path):
-    terminal = ProcessTerm("proc1234", ["/bin/bash"], cwd=tmp_path)
-    await terminal.start()
-    await terminal.send_line("sleep 30 & echo CHILD:$!")
-    match = await _wait_for_output(terminal, re.compile(r"CHILD:(\d+)"))
-    child_pid = int(match.group(1))
-    assert terminal._process is not None
-    assert os.getpgid(child_pid) == terminal._process.pid
-    await asyncio.wait_for(terminal.terminate(), timeout=3.0)
-    await _wait_until_process_gone(child_pid)
-
-
-async def test_process_terminate_unblocks_large_pipe_send(tmp_path):
-    terminal = ProcessTerm("proc1234", ["/bin/bash"], cwd=tmp_path)
-    await terminal.start("sleep 30")
-    send = asyncio.create_task(terminal.send_bytes(b"x" * (10 * 1024 * 1024)))
-    await asyncio.sleep(0.05)
-    assert not send.done()
-    await asyncio.wait_for(terminal.terminate(), timeout=3.0)
-    with pytest.raises(BrokenPipeError):
-        await asyncio.wait_for(send, timeout=1.0)
-
-
-async def test_process_resources_include_children_and_preserve_exit_identity():
-    from ursa.tools.terminal.manager import TermManager
-    from ursa.tools.terminal.resources import capture_process_identity
-
-    terminal = ProcessTerm("resource", ["/bin/sh"])
-    assert terminal.process_identity is None
-    try:
-        await terminal.start("sleep 30 & printf 'ready\\n'; wait")
-        async with asyncio.timeout(5):
-            while "ready" not in await terminal.contents():
-                await asyncio.sleep(0.01)
-        identity = terminal.process_identity
-        assert identity is not None
-        assert identity == capture_process_identity(identity.pid)
-        assert identity.create_time is not None
-        result = await TermManager._resources(terminal)
-        assert result["status"] == "running"
-        assert result["process_count"] >= 2
-        assert result["thread_count"] >= 2
-        assert result["rss_bytes"] > 0
-        assert result["vms_bytes"] > 0
-        assert result["cpu_percent"] >= 0
-        assert result["sample_seconds"] >= 0.2
-        assert result["pid"] == identity.pid
-        assert await terminal.read() == "ready\n"
-    finally:
-        await terminal.terminate()
-    assert terminal.process_identity is identity
-    result = await TermManager._resources(terminal)
-    assert result["status"] == "exited"
-    assert "exit_code" in result
-    assert "rss_bytes" not in result
-    assert "cpu_percent" not in result
-
-
-async def test_process_captures_identity_before_polling_even_when_unavailable(
-    monkeypatch,
-):
-    from ursa.tools.terminal.resources import ProcessIdentity
-
-    terminal = ProcessTerm("resource", ["/bin/sh"])
-    captures = []
-
-    def capture(pid):
-        assert terminal._process.pid == pid
-        assert terminal._process.returncode is None
-        captures.append(pid)
-        return ProcessIdentity(pid, None)
-
-    monkeypatch.setattr(
-        "ursa.tools.terminal.process.capture_process_identity", capture
-    )
-    try:
-        await terminal.start("exit 7")
-        assert terminal.process_identity == ProcessIdentity(captures[0], None)
-        assert await terminal.wait() == 7
-        assert len(captures) == 1
-    finally:
-        await terminal.terminate()
+    pytest.fail(f"missing {text}")

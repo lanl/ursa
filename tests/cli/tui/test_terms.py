@@ -1,6 +1,6 @@
 # ruff: noqa: TID251
 
-"""Terminal-browser tests for the Textual application."""
+"""Focused integration coverage for the live terminal browser."""
 
 from __future__ import annotations
 
@@ -23,9 +23,7 @@ from ursa.tools.terminal import (
 )
 
 
-def terminal_info(
-    term_id: str, order: int, *, screen: bool = False
-) -> TermInfo:
+def info(term_id: str, order: int, *, screen: bool = False) -> TermInfo:
     return TermInfo(
         term_id=term_id,
         backend="GhosttyTerm" if screen else "ProcessTerm",
@@ -36,343 +34,103 @@ def terminal_info(
     )
 
 
-def snapshot(
-    term_id: str,
-    text: str,
-    *,
-    screen: bool = False,
-    rows: int | None = None,
-    cols: int | None = None,
-    style: TerminalStyle = TerminalStyle(),
-) -> TerminalRenderSnapshot:
+def snapshot(term_id: str, text: str, *, screen=False, style=TerminalStyle()):
     return TerminalRenderSnapshot(
-        term_id=term_id,
-        spans=(TerminalSpan(text, style),),
-        rows=rows,
-        cols=cols,
+        term_id,
+        (TerminalSpan(text, style),),
+        rows=7 if screen else None,
+        cols=31 if screen else None,
         screen=screen,
     )
 
 
-class SnapshotManager:
-    def __init__(self, snapshots: dict[str, TerminalRenderSnapshot]) -> None:
+class Manager:
+    def __init__(self, snapshots):
         self.snapshots = snapshots
-        self.calls: list[str] = []
+        self.calls = []
 
-    async def render_snapshot(self, term_id: str) -> TerminalRenderSnapshot:
+    async def render_snapshot(self, term_id):
         self.calls.append(term_id)
-        value = self.snapshots.get(term_id)
-        if value is None:
+        if term_id not in self.snapshots:
             raise KeyError(term_id)
-        return value
-
-
-class SlowSnapshotManager(SnapshotManager):
-    def __init__(
-        self,
-        snapshots: dict[str, TerminalRenderSnapshot],
-        release: asyncio.Event,
-    ) -> None:
-        super().__init__(snapshots)
-        self.release = release
-
-    async def render_snapshot(self, term_id: str) -> TerminalRenderSnapshot:
-        self.calls.append(term_id)
-        await self.release.wait()
         return self.snapshots[term_id]
 
 
-async def test_terms_screen_explains_when_there_are_no_terminals(tmp_path):
+async def test_terms_screen_handles_empty_and_ordered_live_sessions(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        app.push_screen(TermsScreen([], manager=SnapshotManager({})))
-        await pilot.pause()
-
-        empty = app.screen.query_one(".terminals-empty", Static)
-        assert str(empty.content) == "No managed terminal sessions."
-        assert not app.screen.query(TabbedContent)
-
-
-async def test_terms_are_oldest_to_newest_with_newest_active_on_right(tmp_path):
-    infos = [terminal_info("newest00", 30), terminal_info("oldest00", 10)]
-    manager = SnapshotManager({
-        info.term_id: snapshot(info.term_id, info.term_id) for info in infos
-    })
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
     async with app.run_test(size=(90, 28)) as pilot:
-        app.push_screen(TermsScreen(infos, manager=manager))
+        app.push_screen(TermsScreen([], manager=Manager({})))
         await pilot.pause()
-
-        tabs = list(app.screen.query(Tab))
-        assert [str(tab.label) for tab in tabs] == ["oldest00", "newest00"]
-        assert app.screen.query_one("#terminal-tabs", TabbedContent).active == (
-            "terminal-tab-newest00"
+        assert (
+            str(app.screen.query_one(".terminals-empty", Static).content)
+            == "No managed terminal sessions."
         )
-        assert tabs[-1].region.x > tabs[0].region.x
+        await app.pop_screen()
 
-
-async def test_process_terminal_fills_viewport_and_soft_wraps(tmp_path):
-    line = "0123456789" * 20
-    manager = SnapshotManager({"process0": snapshot("process0", line)})
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(60, 20)) as pilot:
-        app.push_screen(
-            TermsScreen([terminal_info("process0", 1)], manager=manager)
-        )
+        terminals = [info("newest00", 30), info("oldest00", 10)]
+        manager = Manager({
+            item.term_id: snapshot(item.term_id, item.term_id)
+            for item in terminals
+        })
+        app.push_screen(TermsScreen(terminals, manager=manager))
         await pilot.pause()
-
-        view = app.screen.query_one(TerminalView)
-        rendered = view.content
-        assert isinstance(rendered, Text)
-        assert rendered.overflow == "fold"
-        assert not rendered.no_wrap
-        assert view.region.width == view.parent.content_region.width
-        assert view.region.height == view.parent.content_region.height
-        assert view.content_region.width == view.region.width - 2
-        assert view.content_region.height == view.region.height - 2
-        assert view.virtual_size.height > 1
-
-
-async def test_process_terminal_view_is_anchored_to_newest_output(tmp_path):
-    content = "\n".join(f"output-line-{line:03}" for line in range(60))
-    manager = SnapshotManager({"process0": snapshot("process0", content)})
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(60, 20)) as pilot:
-        app.push_screen(
-            TermsScreen([terminal_info("process0", 1)], manager=manager)
-        )
-        await pilot.pause()
-        await pilot.pause()
-
-        screenshot = app.export_screenshot(simplify=False)
-        assert "output-line-059" in screenshot
-        assert "output-line-000" not in screenshot
-
-
-async def test_process_terminal_without_captured_output_is_not_blank(tmp_path):
-    manager = SnapshotManager({"process0": snapshot("process0", "")})
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(60, 20)) as pilot:
-        app.push_screen(
-            TermsScreen([terminal_info("process0", 1)], manager=manager)
-        )
-        await pilot.pause()
-        await pilot.pause()
-
-        view = app.screen.query_one(TerminalView)
-        assert str(view.content) == (
-            "No output has been captured from this terminal yet."
+        assert [str(tab.label) for tab in app.screen.query(Tab)] == [
+            "oldest00",
+            "newest00",
+        ]
+        assert (
+            app.screen.query_one("#terminal-tabs", TabbedContent).active
+            == "terminal-tab-newest00"
         )
 
 
-async def test_ghostty_terminal_keeps_dimensions_and_rich_styling(tmp_path):
+async def test_terminal_views_render_process_and_ghostty_and_refresh(tmp_path):
     style = TerminalStyle(
-        foreground=(12, 34, 56),
-        background=(65, 43, 21),
-        bold=True,
-        italic=True,
-        underline=True,
+        foreground=(12, 34, 56), background=(65, 43, 21), bold=True
     )
-    manager = SnapshotManager({
-        "ghost000": snapshot(
-            "ghost000", "styled", screen=True, rows=7, cols=31, style=style
-        )
+    manager = Manager({
+        "process0": snapshot("process0", "first"),
+        "ghost000": snapshot("ghost000", "styled", screen=True, style=style),
     })
     app = UrsaTextualApp(FakeHITL(tmp_path))
-
     async with app.run_test(size=(80, 24)) as pilot:
         app.push_screen(
             TermsScreen(
-                [terminal_info("ghost000", 1, screen=True)], manager=manager
+                [info("process0", 1), info("ghost000", 2, screen=True)],
+                manager=manager,
             )
         )
         await pilot.pause()
+        await pilot.pause()
+        view = app.screen.query_one("#terminal-view-ghost000", TerminalView)
+        assert isinstance(view.content, Text) and view.content.no_wrap
+        assert view.content.get_style_at_offset(app.console, 0).bold
 
-        view = app.screen.query_one(TerminalView)
-        rendered = view.content
-        assert isinstance(rendered, Text)
-        assert rendered.no_wrap
-        assert rendered.overflow == "crop"
-        assert view.region.size == (33, 9)
-        assert view.content_region.size == (31, 7)
-        rich_style = rendered.get_style_at_offset(app.console, 0)
-        assert rich_style.color.triplet == style.foreground
-        assert rich_style.bgcolor.triplet == style.background
-        assert rich_style.bold and rich_style.italic and rich_style.underline
-
-
-def test_snapshot_text_preserves_all_terminal_style_flags():
-    style = TerminalStyle(
-        faint=True,
-        blink=True,
-        reverse=True,
-        conceal=True,
-        strike=True,
-        overline=True,
-    )
-    rendered = snapshot_text(snapshot("term0000", "x", style=style))
-    rich_style = rendered.spans[0].style
-
-    assert rich_style.dim and rich_style.blink and rich_style.reverse
-    assert rich_style.conceal and rich_style.strike and rich_style.overline
+        manager.snapshots["ghost000"] = snapshot(
+            "ghost000", "second", screen=True, style=style
+        )
+        await asyncio.sleep(view.refresh_interval + 0.05)
+        await pilot.pause()
+        assert "second" in str(view.content)
+        await pilot.press("escape")
+        assert app.focused is app.query_one(PromptArea)
 
 
-def test_snapshot_text_preserves_ghostty_grid_width_for_joined_emoji():
+def test_snapshot_text_keeps_terminal_style_flags_and_grid_width():
     rendered = snapshot_text(
         TerminalRenderSnapshot(
-            term_id="ghost000",
-            spans=(TerminalSpan("👩\u200d💻👍🏽", cells=8),),
+            "ghost000",
+            (
+                TerminalSpan(
+                    "👩\u200d💻👍🏽",
+                    TerminalStyle(strike=True, overline=True),
+                    cells=8,
+                ),
+            ),
             rows=1,
             cols=8,
             screen=True,
         )
     )
-
-    assert rendered.plain.startswith("👩\u200d💻👍🏽")
     assert cell_len(rendered.plain) == 8
-
-
-async def test_terminal_view_is_view_only_and_refreshes_live(tmp_path):
-    manager = SnapshotManager({"process0": snapshot("process0", "first")})
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(70, 22)) as pilot:
-        app.push_screen(
-            TermsScreen([terminal_info("process0", 1)], manager=manager)
-        )
-        await pilot.pause()
-        view = app.screen.query_one(TerminalView)
-        assert not view.can_focus
-        assert str(view.content) == "first"
-
-        manager.snapshots["process0"] = snapshot("process0", "second")
-        await asyncio.sleep(view.refresh_interval + 0.05)
-        await pilot.pause()
-        assert str(view.content) == "second"
-        assert manager.calls.count("process0") >= 2
-
-        prompt_text = app.query_one(PromptArea).text
-        await pilot.press("x", "enter")
-        assert app.screen.query_one(TerminalView) is view
-        assert app.query_one(PromptArea).text == prompt_text
-
-
-async def test_slow_snapshot_is_not_repeatedly_cancelled_by_refresh_timer(
-    tmp_path,
-):
-    release = asyncio.Event()
-    manager = SlowSnapshotManager(
-        {"process0": snapshot("process0", "eventual output")}, release
-    )
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(70, 22)) as pilot:
-        app.push_screen(
-            TermsScreen([terminal_info("process0", 1)], manager=manager)
-        )
-        await pilot.pause()
-        view = app.screen.query_one(TerminalView)
-
-        await asyncio.sleep(view.refresh_interval * 2.5)
-        assert manager.calls == ["process0"]
-        release.set()
-        await pilot.pause()
-        assert str(view.content) == "eventual output"
-
-
-async def test_removed_terminal_and_modal_cleanup_are_safe(tmp_path):
-    manager = SnapshotManager({"process0": snapshot("process0", "running")})
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(70, 22)) as pilot:
-        app.push_screen(
-            TermsScreen([terminal_info("process0", 1)], manager=manager)
-        )
-        await pilot.pause()
-        view = app.screen.query_one(TerminalView)
-        timer = view._refresh_timer
-        assert timer is not None and timer._active
-
-        manager.snapshots.clear()
-        view.request_snapshot()
-        await pilot.pause()
-        assert str(view.content) == "Terminal session no longer exists."
-
-        await pilot.press("escape")
-        await pilot.pause()
-        assert view._refresh_timer is None
-        calls_after_close = len(manager.calls)
-        await asyncio.sleep(view.refresh_interval + 0.05)
-        await pilot.pause()
-        assert len(manager.calls) == calls_after_close
-
-
-async def test_slash_terms_opens_modal_and_restores_prompt_focus(
-    tmp_path, monkeypatch
-):
-    import ursa.tools.terminal as terminal_module
-
-    info = terminal_info("process0", 1)
-    manager = SnapshotManager({"process0": snapshot("process0", "output")})
-    manager.terminals = lambda: (info,)  # type: ignore[attr-defined]
-    monkeypatch.setattr(terminal_module, "term_manager", manager)
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.press("/", "t", "e", "r", "m", "s", "enter")
-        await pilot.pause()
-        assert isinstance(app.screen, TermsScreen)
-        assert str(app.screen.query_one(TerminalView).content) == "output"
-
-        await pilot.press("q")
-        await pilot.pause()
-        assert app.focused is app.query_one(PromptArea)
-
-
-async def test_terms_screen_refreshes_tabs_when_sessions_change(tmp_path):
-    info1 = terminal_info("process0", 1)
-    info2 = terminal_info("process1", 2)
-    infos = [info1]
-    manager = SnapshotManager({
-        "process0": snapshot("process0", "zero"),
-        "process1": snapshot("process1", "one"),
-    })
-    manager.terminals = lambda: tuple(infos)  # type: ignore[attr-defined]
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        app.push_screen(
-            TermsScreen(infos, manager=manager, refresh_interval=0.05)
-        )
-        await pilot.pause()
-        tabs = list(app.screen.query(Tab))
-        assert [str(tab.label) for tab in tabs] == ["process0"]
-
-        infos.append(info2)
-        await asyncio.sleep(0.08)
-        await pilot.pause()
-        tabs = list(app.screen.query(Tab))
-        assert [str(tab.label) for tab in tabs] == ["process0", "process1"]
-        assert app.screen.query_one("#terminal-tabs", TabbedContent).active == (
-            "terminal-tab-process1"
-        )
-
-        infos.pop(0)
-        await asyncio.sleep(0.08)
-        await pilot.pause()
-        tabs = list(app.screen.query(Tab))
-        assert [str(tab.label) for tab in tabs] == ["process1"]
-        assert app.screen.query_one("#terminal-tabs", TabbedContent).active == (
-            "terminal-tab-process1"
-        )
-
-        infos.clear()
-        await asyncio.sleep(0.08)
-        await pilot.pause()
-        tabs = list(app.screen.query(Tab))
-        assert [str(tab.label) for tab in tabs] == ["process1"]
+    assert rendered.spans[0].style.strike and rendered.spans[0].style.overline

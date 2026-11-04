@@ -7,7 +7,7 @@ import base64
 import re
 import shlex
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 from langchain.tools import ToolRuntime
 from langchain_core.messages.content import (
@@ -20,7 +20,7 @@ from langchain_core.tools import BaseTool, ToolException, tool
 from pydantic import AfterValidator, Field, ValidationError
 
 from ursa.agents.base import AgentContext
-from ursa.tools.run_command_tool import assess_command_safety, SafetyAssessment
+from ursa.tools.run_command_tool import assess_command_safety
 from ursa.tools.terminal import (
     TERM_MAX_BYTES,
     TERM_MAX_LINES,
@@ -133,7 +133,8 @@ def _canonical_modifiers(
     """Validate modifier names and return their canonical forms."""
     canonical: set[str] = set()
     for modifier in modifiers or ():
-        assert isinstance(modifier, str), "modifiers must be strings"
+        if not isinstance(modifier, str):
+            raise ValueError("modifiers must be strings")
         normalized = _MODIFIER_ALIASES.get(modifier.casefold())
         if normalized is None:
             raise ValueError(f"unknown modifier: {modifier!r}")
@@ -332,6 +333,42 @@ def _unknown_terminal(term_id: str) -> ToolException:
     )
 
 
+async def _terminal_call(
+    term_id: str,
+    method: str,
+    *args: object,
+    tool_errors: tuple[type[Exception], ...] = (),
+    **kwargs: object,
+) -> object:
+    """Call a manager operation with the shared tool-facing error contract."""
+    try:
+        return await getattr(term_manager, method)(term_id, *args, **kwargs)
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
+    except tool_errors as error:
+        raise ToolException(str(error)) from error
+
+
+def _input_error(
+    tool_name: str,
+    location: tuple[str, ...],
+    value: object,
+    error: ValueError,
+) -> ValidationError:
+    """Create the retryable Pydantic error used for cross-field validation."""
+    return ValidationError.from_exception_data(
+        tool_name,
+        [
+            {
+                "type": "value_error",
+                "loc": location,
+                "input": value,
+                "ctx": {"error": error},
+            }
+        ],
+    )
+
+
 @tool
 async def term(
     cmd: TermCommand,
@@ -339,13 +376,12 @@ async def term(
     env: dict[str, str] | None = None,
     session: bool = False,
     shell: ShellArgv = None,
-) -> str | TermId | SafetyAssessment:
+) -> str:
     """Run a command, returning its output or a persistent terminal ID.
 
     Set ``session`` for interactive or long-running work. Short commands return
     their output directly when they finish within the configured time and size
-    limits; otherwise returns a `term_id` within `<term-id>...</term-id>`
-    braces.
+    limits; otherwise they return a persistent terminal ID.
 
     Args:
         cmd: Command text, an argument list to execute, or None to launch just the shell.
@@ -359,7 +395,9 @@ async def term(
     workspace = Path(runtime.context.workspace)
     if cmd is not None:
         launch_text = _launch_safety_text(cmd, env, shell, workspace)
-        safety_result = await assess_command_safety(launch_text, runtime)
+        safety_result = await asyncio.to_thread(
+            assess_command_safety, launch_text, runtime
+        )
         if not safety_result.is_safe:
             return (
                 "[UNSAFE] That terminal launch was deemed unsafe and "
@@ -377,24 +415,24 @@ async def term(
             # Deliver cancellation requested during creation before disclosing
             # the session ID, so ownership cannot be lost between those steps.
             await asyncio.sleep(0)
-            return f"<term-id>{terminal.term_id}</term-id>"
+            return f"Terminal ID: {terminal.term_id}"
 
         try:
             await asyncio.wait_for(
                 term_manager.wait(terminal.term_id), timeout=TERM_TIMEOUT
             )
         except TimeoutError:
-            return f"<term-id>{terminal.term_id}</term-id>"
+            return f"Terminal ID: {terminal.term_id}"
 
         contents = await term_manager.contents(terminal.term_id)
         if (
             len(contents.encode("utf-8")) >= TERM_MAX_BYTES
             or len(contents.splitlines()) >= TERM_MAX_LINES
         ):
-            return f"<term-id>{terminal.term_id}</term-id>"
+            return f"Terminal ID: {terminal.term_id}"
 
         await term_manager.remove(terminal.term_id, terminate=True)
-        return contents
+        return f"Terminal contents:\n{contents}"
     except asyncio.CancelledError:
         cleanup = asyncio.create_task(
             term_manager.remove(terminal.term_id, terminate=True)
@@ -423,42 +461,30 @@ async def term_send_bytes(
         payload = bytes(data)
     else:
         payload = data
-    try:
-        await term_manager.send_bytes(term_id, payload)
-    except KeyError as error:
-        raise _unknown_terminal(term_id) from error
+    await _terminal_call(term_id, "send_bytes", payload)
     return f"Sent {len(payload)} bytes to terminal {term_id}"
 
 
 @tool
 async def term_send_text(term_id: TermId, text: str) -> str:
     """Send text to a terminal session without appending a newline."""
-    try:
-        await term_manager.send_text(term_id, text)
-    except KeyError as error:
-        raise _unknown_terminal(term_id) from error
+    await _terminal_call(term_id, "send_text", text)
     return f"Sent text to terminal {term_id}"
 
 
 @tool
 async def term_paste_text(term_id: TermId, text: PasteText) -> str:
     """Paste literal text without triggering per-character terminal bindings."""
-    try:
-        await term_manager.paste_text(term_id, text)
-    except KeyError as error:
-        raise _unknown_terminal(term_id) from error
-    except NotImplementedError as error:
-        raise ToolException(str(error)) from error
+    await _terminal_call(
+        term_id, "paste_text", text, tool_errors=(NotImplementedError,)
+    )
     return f"Pasted text to terminal {term_id}"
 
 
 @tool
 async def term_send_line(term_id: TermId, line: str) -> str:
     """Send text followed by a newline to a terminal session."""
-    try:
-        await term_manager.send_line(term_id, line)
-    except KeyError as error:
-        raise _unknown_terminal(term_id) from error
+    await _terminal_call(term_id, "send_line", line)
     return f"Sent line to terminal {term_id}"
 
 
@@ -475,21 +501,13 @@ async def term_send_key(
         # Cross-field constraints (for example Ctrl+Enter) cannot be expressed
         # on either annotation alone. Still expose them as retryable Pydantic
         # input errors rather than leaking an implementation ValueError.
-        raise ValidationError.from_exception_data(
+        raise _input_error(
             "term_send_key",
-            [
-                {
-                    "type": "value_error",
-                    "loc": ("key", "modifiers"),
-                    "input": {"key": key, "modifiers": modifiers},
-                    "ctx": {"error": error},
-                }
-            ],
+            ("key", "modifiers"),
+            {"key": key, "modifiers": modifiers},
+            error,
         ) from error
-    try:
-        await term_manager.send_bytes(term_id, payload)
-    except KeyError as error:
-        raise _unknown_terminal(term_id) from error
+    await _terminal_call(term_id, "send_bytes", payload)
     return f"Sent key {key!r} to terminal {term_id}"
 
 
@@ -500,19 +518,18 @@ async def term_read(
     lines: PositiveInt | None = None,
 ) -> str:
     """Read terminal text, optionally selecting lines back from the end."""
-    try:
-        return await term_manager.read(term_id, offset=offset, lines=lines)
-    except KeyError as error:
-        raise _unknown_terminal(term_id) from error
+    return cast(
+        str,
+        await _terminal_call(term_id, "read", offset=offset, lines=lines),
+    )
 
 
 @tool
 async def term_is_alive(term_id: TermId) -> dict[str, bool | int]:
     """Report whether a terminal is alive, or return its process exit code."""
-    try:
-        return await term_manager.is_alive(term_id)
-    except KeyError as error:
-        raise _unknown_terminal(term_id) from error
+    return cast(
+        dict[str, bool | int], await _terminal_call(term_id, "is_alive")
+    )
 
 
 @tool
@@ -528,19 +545,16 @@ async def term_resources(term_id: TermId) -> dict[str, int | float | str]:
     Detached/reparented and remote jobs, GPU usage, historical peaks, and URSA's
     own emulator/scrollback overhead are not tracked.
     """
-    try:
-        return await term_manager.resources(term_id)
-    except KeyError as error:
-        raise _unknown_terminal(term_id) from error
+    return cast(
+        dict[str, int | float | str],
+        await _terminal_call(term_id, "resources"),
+    )
 
 
 @tool
 async def term_close(term_id: TermId) -> str:
     """Terminate and remove a terminal session, making its ID unusable."""
-    try:
-        await term_manager.remove(term_id, terminate=True)
-    except KeyError as error:
-        raise _unknown_terminal(term_id) from error
+    await _terminal_call(term_id, "remove", terminate=True)
     return f"Closed terminal {term_id}"
 
 
@@ -551,10 +565,9 @@ async def term_wait_for(
     timeout: WaitTimeout | None = None,
 ) -> str:
     """Wait for new output matching a regex, returning the newest match."""
-    try:
-        return await term_manager.wait_for(term_id, pattern, timeout)
-    except KeyError as error:
-        raise _unknown_terminal(term_id) from error
+    return cast(
+        str, await _terminal_call(term_id, "wait_for", pattern, timeout)
+    )
 
 
 @tool
@@ -573,18 +586,18 @@ async def term_wait_screen(
     zero-based, end-exclusive coordinates. Styling participates in comparison
     by default; set ``include_styling`` false to compare only displayed text.
     """
-    try:
-        return await term_manager.wait_screen(
+    return cast(
+        str,
+        await _terminal_call(
             term_id,
+            "wait_screen",
             condition=condition,
             bounding_box=bounding_box,
             include_styling=include_styling,
             timeout=timeout,
-        )
-    except KeyError as error:
-        raise _unknown_terminal(term_id) from error
-    except (ValueError, NotImplementedError) as error:
-        raise ToolException(str(error)) from error
+            tool_errors=(ValueError, NotImplementedError),
+        ),
+    )
 
 
 async def _send_mouse_events(
@@ -594,15 +607,15 @@ async def _send_mouse_events(
     events: tuple[tuple[str, str | None], ...],
     modifiers: set[str] | list[str] | None,
 ) -> None:
-    canonical = _canonical_modifiers(modifiers)
-    try:
-        await term_manager.mouse_input(
-            term_id, row, col, events, modifiers=canonical
-        )
-    except KeyError as error:
-        raise _unknown_terminal(term_id) from error
-    except (ValueError, NotImplementedError) as error:
-        raise ToolException(str(error)) from error
+    await _terminal_call(
+        term_id,
+        "mouse_input",
+        row,
+        col,
+        events,
+        modifiers=_canonical_modifiers(modifiers),
+        tool_errors=(ValueError, NotImplementedError),
+    )
 
 
 @tool
@@ -676,16 +689,11 @@ async def term_scroll(
     """Scroll at a terminal cell; positive deltas move down and right."""
     if delta_y == 0 and delta_x == 0:
         error = ValueError("at least one scroll delta must be nonzero")
-        raise ValidationError.from_exception_data(
+        raise _input_error(
             "term_scroll",
-            [
-                {
-                    "type": "value_error",
-                    "loc": ("delta_y", "delta_x"),
-                    "input": {"delta_y": delta_y, "delta_x": delta_x},
-                    "ctx": {"error": error},
-                }
-            ],
+            ("delta_y", "delta_x"),
+            {"delta_y": delta_y, "delta_x": delta_x},
+            error,
         )
     events: list[tuple[str, str | None]] = []
     if delta_y:
@@ -706,29 +714,20 @@ async def term_resize(
     term_id: TermId, rows: PositiveInt, cols: PositiveInt
 ) -> str:
     """Resize a terminal screen to the requested rows and columns."""
-    try:
-        await term_manager.resize(term_id, rows, cols)
-    except KeyError as error:
-        raise _unknown_terminal(term_id) from error
+    await _terminal_call(term_id, "resize", rows, cols)
     return f"Resized terminal {term_id} to {rows} rows by {cols} columns"
 
 
 @tool
 async def term_cursor(term_id: TermId) -> tuple[int, int]:
     """Return a terminal's cursor position as ``(row, column)``."""
-    try:
-        return await term_manager.cursor(term_id)
-    except KeyError as error:
-        raise _unknown_terminal(term_id) from error
+    return cast(tuple[int, int], await _terminal_call(term_id, "cursor"))
 
 
 @tool
 async def term_size(term_id: TermId) -> tuple[int, int]:
     """Return a terminal's screen size as ``(rows, columns)``."""
-    try:
-        return await term_manager.size(term_id)
-    except KeyError as error:
-        raise _unknown_terminal(term_id) from error
+    return cast(tuple[int, int], await _terminal_call(term_id, "size"))
 
 
 @tool
@@ -783,10 +782,7 @@ _SCREEN_TERM_TOOLS = [
     term_scroll,
 ]
 
-TERM_TOOLS = [
-    *_BASE_TERM_TOOLS,
-    *_SCREEN_TERM_TOOLS,
-]
+TERM_TOOLS = [*_BASE_TERM_TOOLS, *_SCREEN_TERM_TOOLS]
 
 
 def get_supported_term_tools() -> list[BaseTool]:

@@ -25,11 +25,7 @@ if TYPE_CHECKING:
 
 
 def textual_screenshot_to_png(svg: str, *, scale: float = 1.0) -> bytes:
-    """Rasterize an SVG document as PNG bytes.
-
-    PyMuPDF is already a core URSA dependency and delegates SVG layout to
-    MuPDF.  A scale greater than one is useful for high-DPI image output.
-    """
+    """Rasterize an SVG document as PNG bytes."""
     return svg_to_png(svg, scale=scale)
 
 
@@ -40,14 +36,10 @@ def textual_app_to_png(
     simplify: bool = True,
     scale: float = 1.0,
 ) -> bytes:
-    """Export the currently composed Textual screen as PNG bytes.
-
-    The app must be running, as required by Textual's screenshot API.  This
-    captures the same compositor output shown to the user, including terminal
-    colors and text attributes rendered by its widgets.
-    """
-    svg = app.export_screenshot(title=title, simplify=simplify)
-    return textual_screenshot_to_png(svg, scale=scale)
+    """Export the currently composed Textual screen as PNG bytes."""
+    return textual_screenshot_to_png(
+        app.export_screenshot(title=title, simplify=simplify), scale=scale
+    )
 
 
 __all__ = [

@@ -1,21 +1,16 @@
 # Terminal tools
 
-URSA's terminal tools run commands in managed shell sessions. A short command
-normally returns its output directly. Interactive, long-running, or large-output
-commands return `Terminal ID: <id>`, where `<id>` is eight characters; use the
-ID with the other terminal tools.
+Terminal tools run managed shell sessions. Short completed commands return
+`Terminal contents:`; interactive, slow, or large-output commands return an
+eight-character `Terminal ID: <id>` for use with the other tools.
 
 !!! warning
-    Terminal sessions execute commands with the permissions of the URSA
-    process. Treat command text and environment values as sensitive input, and
-    use a restricted workspace when running untrusted commands.
+    Sessions run with URSA's permissions. Use a restricted workspace for
+    untrusted work. The initial launch is safety-reviewed, including `cmd`,
+    shell, workspace, and `env`; do not put secrets in `env`. Later session
+    input is not reassessed.
 
-The terminal tool set is opt-in. `TERM_TOOLS` is not part of the default Chat
-or Execution agent tool set because later calls such as `term_send_line` can
-submit arbitrary shell input without a complete command to assess. Add the
-tools explicitly only when an agent should control interactive processes.
-Use `get_supported_term_tools()` to omit screen operations that the selected
-fallback backend cannot implement:
+Tools are opt-in because later calls can submit arbitrary shell input:
 
 ```python
 from ursa.agents import ExecutionAgent
@@ -24,206 +19,69 @@ from ursa.tools import get_supported_term_tools
 agent = ExecutionAgent(llm, extra_tools=get_supported_term_tools())
 ```
 
-`TERM_TOOLS` remains available as the complete, unfiltered tool catalog.
+`TERM_TOOLS` is the complete catalog. `get_supported_term_tools()` omits
+screen-only tools when the selected backend cannot implement them. Shell
+arguments cannot include command flags (`-c`, `--command`, `-Command`, or
+`-EncodedCommand`); pass the command as `cmd`.
 
-The initial terminal launch uses the same fail-closed safety assessment as
-`run_command`. The assessment includes the command, resolved shell arguments,
-working directory, and every environment override key and value. Do not put
-secrets in `env`: those values are sent to the configured safety-review model
-because environment variables can change what a shell executes. A launch that
-cannot be assessed as safe is rejected before a session starts. Shell arguments
-must not contain command-execution flags such as `-c`, `--command`,
-`-Command`, or `-EncodedCommand`; pass the command through `cmd`. The initial
-check does not cover input sent later through the `term_send_*` tools.
+## Backends and limits
 
-## Backends
+`GhosttyTerm` is used on supported macOS and Linux installations with
+[`pyghostty`](https://github.com/AnswerDotAI/pyghostty). It emulates a screen,
+scrollback, cursor, resizing, styling, paste, and mouse input. `ProcessTerm`
+is the portable Windows/unsupported-platform fallback: it supports command
+execution, input, status, waiting, and line reads, but has no screen. Set
+`URSA_TERM_BACKEND` to `auto` (default), `ghostty`, or `process` before import.
 
-`GhosttyTerm` is the preferred backend on supported macOS and Linux systems. It
-uses [`pyghostty`](https://github.com/AnswerDotAI/pyghostty) to maintain a real
-terminal screen, including scrollback, cursor position, and resize behavior.
-It is installed automatically with URSA on the supported operating-system and
-CPU combinations where upstream publishes a wheel:
+The dependency marker covers x86-64/AArch64 macOS and Linux. It cannot identify
+musl Linux or old macOS releases; omit `pyghostty` there to use ProcessTerm.
+Unix defaults to Bash; Windows prefers Git Bash, then PowerShell. Pass `shell`
+to override either choice.
 
-```bash
-uv sync
-```
+| Limit | Default |
+| --- | ---: |
+| Ghostty scrollback | 2,000 lines |
+| ProcessTerm capture | 100 MiB combined output |
+| Live or starting sessions | 16 |
+| `URSA_TERM_TIMEOUT` | 10 seconds |
+| `URSA_TERM_MAX_BYTES` / `URSA_TERM_MAX_LINES` | 20,000 / 200 |
 
-- macOS 13 or newer on x86-64 or Apple silicon;
-- glibc-based Linux on x86-64 or AArch64.
+The three `URSA_TERM_*` values are read when the terminal package imports.
+Graceful runtime and interpreter shutdown both clean up registered sessions.
 
-Python dependency markers cannot distinguish glibc Linux from musl Linux or
-express a minimum macOS release. Consequently, automatic dependency selection
-can still fail during installation on musl-based Linux or macOS older than 13;
-those environments must omit `pyghostty` when constructing an installation in
-order to use the runtime `ProcessTerm` fallback.
+## Tool reference
 
-`ProcessTerm` is the fallback when `pyghostty` is unavailable, including on
-Windows and unsupported architectures. It captures combined standard output
-and standard error in a private, file-backed 100 MiB circular buffer. Once the
-buffer is full, new output replaces the oldest output. It supports command
-execution, input, status, waiting, and line-based reads, but it does not emulate
-a terminal screen; cursor, size, and resize operations are therefore
-unavailable.
-
-Set `URSA_TERM_BACKEND=process` before starting URSA to force the portable
-fallback, even when Ghostty is installed. This is useful for testing the exact
-backend that Windows and unsupported platforms use. `URSA_TERM_BACKEND=ghostty`
-forces Ghostty and reports a configuration error if it is unavailable;
-`URSA_TERM_BACKEND=auto` (the default) prefers Ghostty and falls back to
-ProcessTerm. `/status` identifies forced backend selection.
-
-On Unix, sessions use Bash by default. On Windows, URSA prefers Git Bash when it
-is installed and otherwise uses PowerShell. Pass `shell` to `term` to override
-the default.
-
-## Start a command
-
-```text
-term(
-    cmd: str | list[str],
-    env: dict[str, str] | None = None,
-    session: bool = False,
-    shell: list[str] | None = None,
-)
-```
-
-Set `session=true` for an interactive program and `term` immediately returns
-`Terminal ID: <id>`. With the default `session=false`, output is returned as
-`Terminal contents:\n<contents>`
-only when the command finishes before `URSA_TERM_TIMEOUT` and remains within
-both output limits. If the output reaches either limit, the session stays
-registered and `term` returns `Terminal ID: <id>` so output can be inspected
-incrementally. In other words, direct output must be strictly below both byte
-and line thresholds.
-
-`cmd` may be shell text or a list of arguments. `env` is merged into the child
-process environment; it does not replace the complete environment.
-
-## Interact with a session
+`term(cmd, env=None, session=False, shell=None)` starts a command. `cmd` can
+be shell text or an argument list; `env` augments the child environment. With
+`session=True`, it returns an ID immediately. Otherwise it returns direct
+output only when completion occurs before the timeout and output stays strictly
+below both output limits; the retained session otherwise returns an ID.
 
 | Tool | Purpose |
 | --- | --- |
-| `term_send_bytes(term_id, data)` | Send `bytes`, or a JSON-compatible list of integer byte values from 0 through 255. |
-| `term_send_text(term_id, text)` | Send UTF-8 text without a newline. |
-| `term_paste_text(term_id, text)` | Paste literal UTF-8 text using the Ghostty terminal's negotiated paste mode. |
-| `term_send_line(term_id, line)` | Send UTF-8 text followed by a newline. |
-| `term_send_key(term_id, key, modifiers=None)` | Send a printable or named key with optional modifiers. |
-| `term_read(term_id, offset=0, lines=None)` | Read terminal text, or select lines back from the end. |
-| `term_is_alive(term_id)` | Return `{"is_alive": true}` while running, or report `exit_code` after exit. |
-| `term_resources(term_id)` | Sample CPU, memory, process count, and thread count for the local shell and its recursive children. |
-| `term_close(term_id)` | Terminate and remove a session, making its ID unusable. |
-| `term_wait_for(term_id, pattern, timeout=None)` | Search output emitted after the call begins, newest-first, and return the newest matching line and stream offset. |
-| `term_wait_screen(term_id, condition="stable", bounding_box=None, include_styling=true, timeout=None)` | Wait for a Ghostty screen to remain unchanged for one second or ten frames (minimum two frames), or to change. |
-| `term_click(term_id, row, col, button="left", modifiers=None)` | Click a mouse button at a Ghostty screen cell. |
-| `term_mouse_down(term_id, row, col, button="left", modifiers=None)` | Press and hold a mouse button at a Ghostty screen cell. |
-| `term_mouse_up(term_id, row, col, button="left", modifiers=None)` | Release a mouse button at a Ghostty screen cell. |
-| `term_hover(term_id, row, col, modifiers=None)` | Move the pointer to a Ghostty screen cell. |
-| `term_scroll(term_id, row, col, delta_y, delta_x=0, modifiers=None)` | Send vertical or horizontal wheel events at a Ghostty screen cell. |
-| `term_resize(term_id, rows, cols)` | Resize a Ghostty-backed screen. |
-| `term_cursor(term_id)` | Return the Ghostty-backed cursor as `(row, column)`. |
-| `term_size(term_id)` | Return the Ghostty-backed size as `(rows, columns)`. |
-| `term_screenshot(term_id)` | Return a styled PNG image of a Ghostty-backed screen. |
+| `term_send_bytes`, `term_send_text`, `term_send_line` | Send raw bytes, UTF-8 text, or text plus newline. |
+| `term_paste_text` | Send one negotiated Ghostty bracketed paste; rejects NUL/Escape/newlines and does not submit. |
+| `term_send_key` | Send printable, navigation, editing, or F1–F12 keys with ctrl/control, alt/option, shift, and super/cmd/meta modifiers. |
+| `term_read` | Read visible Ghostty screen, or use `offset`/`lines` for scrollback/tail selection; ProcessTerm reads its capture. |
+| `term_is_alive`, `term_resources`, `term_close` | Report process state, sample the shell tree's CPU/memory/process/thread use, or terminate and discard a session. |
+| `term_wait_for` | Search output emitted after the call begins and return the newest matching line/offset, or `Pattern not found`. |
+| `term_wait_screen` | Wait for Ghostty screen `stable` or `changed`; accepts an end-exclusive `(top, left, bottom, right)` box and optional styling comparison. |
+| `term_click`, `term_mouse_down`, `term_mouse_up`, `term_hover`, `term_scroll` | Send Ghostty mouse input at zero-based cells; left/middle/right buttons and key modifiers are supported. |
+| `term_resize`, `term_cursor`, `term_size`, `term_screenshot` | Resize or inspect the Ghostty screen, or return its styled PNG. |
 
-With Ghostty, `term_read(id)` returns the visible screen. Supplying a nonzero
-`offset` or a `lines` value switches to the complete terminal contents,
-including scrollback, and selects from the end. `ProcessTerm` has no screen
-model, so an unbounded read returns its complete captured output. For a
-tail-like read, `offset` skips trailing lines and `lines` limits the preceding
-selection. For example, `term_read(id, offset=10, lines=20)` returns the 20
-lines immediately before the final 10 lines.
+Ghostty's modified navigation/function keys use xterm parameters; super-
+modified printable keys use Kitty CSI-u. Mouse input takes effect only when the
+application enables tracking. New Ghostty sessions start at 120×40 cells.
+`term_wait_for` accepts Python regex and defaults to five times the base timeout
+(requests cannot exceed ten times it). `term_wait_screen` needs Ghostty and
+defaults to comparing text and styling until one second or ten frames settle.
 
-`term_send_key` supports printable characters, Enter, Tab, Escape, Backspace,
-Delete, the arrow keys, Home, End, Page Up, Page Down, Insert, and F1 through
-F12. Modifier names are case-insensitive: `ctrl`/`control`, `alt`/`option`,
-`shift`, and `super`/`cmd`/`meta`. Modified navigation and function keys use
-xterm modifier parameters. Super-modified printable characters use Kitty's
-CSI-u keyboard encoding, so applications that do not understand that protocol
-may not recognize them.
+## Textual PNG export
 
-Use `term_paste_text` when entering literal text into a full-screen terminal
-application. Unlike `term_send_text`, characters such as `/` are delivered as
-one bracketed paste and do not individually trigger Textual or other application
-key bindings. Ghostty sends plain text when the application has not enabled
-bracketed paste. Paste does not submit the input; send Enter separately when
-needed. Escape and NUL characters are rejected so pasted text cannot break out
-of the bracketed-paste event. This tool is unavailable with ProcessTerm.
-
-`term_wait_for` uses Python regular-expression syntax and returns `Pattern not
-found` when its deadline expires. Terminal wait tools default to five times
-`URSA_TERM_TIMEOUT`; a requested timeout cannot exceed ten times that value.
-
-`term_wait_screen` compares text and styling by default. Set
-`include_styling=false` to ignore color and other visual-style changes. Its
-optional bounding box is `(top, left, bottom, right)` in zero-based terminal
-cells, with exclusive bottom and right edges. It is available only with the
-Ghostty backend.
-
-Mouse coordinates are zero-based. Click, press, and release accept left,
-middle, or right buttons and the same modifiers as `term_send_key`. Positive
-scroll deltas move down or right; negative deltas move up or left. A held
-button can be dragged with `term_mouse_down`, one or more `term_hover` calls,
-then `term_mouse_up`. Mouse tools are available only with Ghostty and emit
-input only when the terminal application has enabled mouse tracking. New
-Ghostty sessions default to 120 columns by 40 rows.
-
-## Limits
-
-Ghostty retains at most 2,000 scrollback lines. ProcessTerm retains at most
-100 MiB of combined output. URSA permits at most 16 registered or starting
-terminal sessions at once; close a session before opening another after that
-limit is reached. Graceful runtime shutdown terminates every registered
-terminal, with an interpreter-shutdown hook providing a final cleanup fallback.
-
-The defaults can be changed before starting URSA:
-
-| Environment variable | Default | Meaning |
-| --- | ---: | --- |
-| `URSA_TERM_BACKEND` | `auto` | Backend selection: `auto`, `ghostty`, or `process`. |
-| `URSA_TERM_TIMEOUT` | `10` | Seconds allowed for a direct short-command result. |
-| `URSA_TERM_MAX_BYTES` | `20000` | UTF-8 output size at which `term` returns a session ID. |
-| `URSA_TERM_MAX_LINES` | `200` | Output line count at which `term` returns a session ID. |
-
-The values are read when the terminal package is imported. All sessions receive
-an ID internally, but a successfully completed short command returns its
-captured output prefixed by `Terminal contents:`.
-
-## Exporting the Textual view as PNG
-
-Textual's compositor can export the currently running app as SVG. URSA can
-rasterize that exact view to PNG through PyMuPDF, which is already a core
-dependency:
-
-```python
-from ursa.cli.tui.image_export import textual_app_to_png
-
-png = textual_app_to_png(app, scale=2)
-```
-
-This is an application screenshot helper, not a `term_read` mode or a headless
-terminal-rendering API. `textual_app_to_png` asks a running Textual app for its
-current composed SVG screen, then rasterizes that SVG. It returns PNG bytes and
-does not write to the filesystem. It preserves the composed Textual appearance;
-theme blending and modal opacity may make the resulting pixels differ from raw
-Ghostty RGB values.
-
-Rasterization rejects SVG input above 16 MiB, scale factors above 8, and output
-above 64 million pixels before allocating the output pixmap.
-
-The app must already be running, as required by Textual's screenshot API. The
-helper captures the whole screen exactly as composed, including overlays. To
-capture the terminal browser, open `/terms`, select the wanted tab, and call the
-helper while that modal is active. It does not temporarily push a screen,
-select a terminal, or crop the result to the terminal widget. Use
-`textual_screenshot_to_png(svg)` only when an SVG screenshot has already been
-captured and needs rasterization.
-
-## Terminal screenshots
-
-On the Ghostty backend, `term_screenshot(term_id)` returns a PNG image of the
-terminal's current screen, including colors and text styling. It uses the same
-styled snapshot and Rich/Textual rendering path as the live terminal view.
-Newly started screen sessions are sampled briefly for initial output and a
-stable frame, preventing an immediate screenshot from capturing the empty PTY
-state before the child process has rendered its first prompt.
-The Process fallback has no emulated screen, so it does not advertise this
-tool; use `term_read` for Process terminal output.
+`textual_app_to_png(app, scale=1)` captures the running Textual compositor as
+SVG and rasterizes it through PyMuPDF; `textual_screenshot_to_png(svg)` converts
+an existing SVG. Both return bytes without writing files. Exports include
+overlays (open `/terms` and select its tab first), limit SVG input to 16 MiB,
+scale to 8, and output to 64 million pixels. `term_screenshot` instead captures
+one Ghostty screen and waits briefly for initial rendering; use `term_read` for
+the ProcessTerm fallback.
