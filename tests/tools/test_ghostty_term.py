@@ -1,6 +1,9 @@
 """Ghostty backend contracts, using the binding-free emulator double."""
 
 import os
+import signal
+import subprocess
+import sys
 from io import BytesIO
 
 import pytest
@@ -137,13 +140,29 @@ async def test_screen_settling_observes_change_and_timeout():
 
 
 @pytest.mark.skipif(os.name == "nt", reason="PTY smoke is Unix-only")
-@pytest.mark.asyncio
-async def test_native_backend_smoke_when_binding_is_available(monkeypatch):
+def test_native_backend_smoke_when_binding_is_available():
     if REAL_BINDING is None:
         pytest.skip("pyghostty unavailable")
-    monkeypatch.setattr(ghostty, "PyGhosttyTerminal", REAL_BINDING)
-    terminal = ghostty.GhosttyTerm("native123", ["/bin/sh"])
-    await terminal.start("printf native")
-    assert await terminal.wait() == 0
-    assert "native" in await terminal.contents()
-    await terminal.terminate()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import asyncio\n"
+            "from ursa.tools.terminal.ghostty import GhosttyTerm\n"
+            "async def main():\n"
+            "    terminal = GhosttyTerm('native123', ['/bin/sh'])\n"
+            "    try:\n"
+            "        await terminal.start('printf native')\n"
+            "        assert await terminal.wait() == 0\n"
+            "        assert 'native' in await terminal.contents()\n"
+            "    finally:\n"
+            "        await terminal.terminate()\n"
+            "asyncio.run(main())\n",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode == -signal.SIGILL:
+        pytest.skip("pyghostty wheel requires unsupported CPU instructions")
+    assert result.returncode == 0, result.stderr
