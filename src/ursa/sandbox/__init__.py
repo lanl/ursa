@@ -1,5 +1,12 @@
 # TODO
-# - [ ] Sandbox all tools, starting with run_command
+# - [X] run_command tool
+#   - flags, config, env vars:
+#       - [ ] `-s/--sandbox-mode`: workspace-write, full-access, read-only
+#       - [ ] `--safety-level`: auto (disable if sandbox is working), high, low
+# - [ ] write_file tool
+# - [ ] read_file tool
+# - [ ] write_code tool
+
 
 import os
 import shutil

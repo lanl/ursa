@@ -10,7 +10,7 @@ from ursa.agents.base import AgentContext
 from ursa.prompt_library.safety_prompts import (
     get_safety_prompt,
 )
-from ursa.tools.sandbox import (
+from ursa.sandbox import (
     BaseSandbox,
     LinuxBwrapSandbox,
     MacSandbox,
