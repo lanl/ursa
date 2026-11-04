@@ -1,7 +1,7 @@
 """Public manager contracts with deterministic stream and screen doubles."""
 
 import asyncio
-from datetime import UTC
+from datetime import UTC, datetime
 
 import pytest
 
@@ -11,6 +11,7 @@ from ursa.tools.terminal import (
     TermManager,
     TermSession,
 )
+from ursa.tools.terminal import manager as manager_module
 from ursa.tools.terminal.base import OutputJournal
 
 
@@ -123,7 +124,9 @@ async def test_register_metadata_io_and_screen_operations(manager):
 
 
 @pytest.mark.asyncio
-async def test_waits_use_only_new_output_and_changed_screen(manager):
+async def test_waits_use_only_new_output_and_changed_screen(
+    manager, monkeypatch
+):
     term = FakeTerm("wait1234", ["sh"], screen=True)
     term.emit("old")
     manager.register(term)
@@ -137,6 +140,29 @@ async def test_waits_use_only_new_output_and_changed_screen(manager):
     await task
     assert await manager.wait_for(term.term_id, "never", timeout=0.01) == (
         "Pattern not found"
+    )
+
+    async def update_screen():
+        await asyncio.sleep(0.02)
+        term.output = "NEW"
+
+    task = asyncio.create_task(update_screen())
+    assert (
+        await manager.wait_screen(
+            term.term_id,
+            condition="change",
+            bounding_box=(0, 0, 1, 1),
+            include_styling=False,
+            timeout=0.2,
+        )
+        == "Screen changed"
+    )
+    await task
+    monkeypatch.setattr(manager_module, "SCREEN_STABILITY_SECONDS", 0)
+    monkeypatch.setattr(manager_module, "SCREEN_MIN_STABILITY_FRAMES", 2)
+    assert (
+        await manager.wait_screen(term.term_id, timeout=0.2)
+        == "Screen stabilized"
     )
 
 
@@ -164,3 +190,39 @@ async def test_create_registers_factory_session_and_rejects_empty_shell(
     terminal = await manager.create(session_factory=FakeTerm)
     assert terminal.term_id in manager.ids()
     await manager.remove(terminal.term_id)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_start_releases_reservation_and_terminates(manager):
+    started = asyncio.Event()
+    instances = []
+
+    class Slow(FakeTerm):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            instances.append(self)
+
+        async def start(self, command=None):
+            started.set()
+            await asyncio.Event().wait()
+
+    reservation = manager_module._CreationReservation(
+        "cancel12", datetime.now(UTC), 1
+    )
+    manager._reserved_ids.add(reservation.term_id)
+    task = asyncio.create_task(
+        manager._create(
+            reservation,
+            None,
+            env=None,
+            shell=None,
+            cwd=None,
+            session_factory=Slow,
+        )
+    )
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert reservation.term_id not in manager._reserved_ids
+    assert instances[0].terminated

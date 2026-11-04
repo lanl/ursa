@@ -2,12 +2,13 @@
 
 import asyncio
 import os
+import sys
 
 import pytest
 
 from ursa.tools.terminal.process import ProcessTerm
 
-pytestmark = pytest.mark.skipif(
+posix_only = pytest.mark.skipif(
     os.name == "nt", reason="Unix shell integration"
 )
 
@@ -17,6 +18,7 @@ def term(name="proc1234", **kwargs):
 
 
 @pytest.mark.asyncio
+@posix_only
 async def test_command_capture_read_slicing_snapshot_and_bounded_ring(tmp_path):
     terminal = term(cwd=tmp_path, capture_max_bytes=64)
     await terminal.start("printf 'one\\ntwo\\nthree\\nfour\\n'; printf err >&2")
@@ -29,6 +31,7 @@ async def test_command_capture_read_slicing_snapshot_and_bounded_ring(tmp_path):
 
 
 @pytest.mark.asyncio
+@posix_only
 async def test_interactive_input_markers_and_lifecycle(tmp_path):
     terminal = term(cwd=tmp_path)
     await terminal.start()
@@ -44,6 +47,7 @@ async def test_interactive_input_markers_and_lifecycle(tmp_path):
 
 
 @pytest.mark.asyncio
+@posix_only
 async def test_wait_does_not_depend_on_descendant_pipe_closure(tmp_path):
     terminal = term(cwd=tmp_path)
     await terminal.start("sleep 30 & printf ready")
@@ -78,6 +82,7 @@ def test_command_formatting_and_powershell_start(monkeypatch):
 
 @pytest.mark.parametrize("read_args", [{"offset": -1}, {"lines": -1}])
 @pytest.mark.asyncio
+@posix_only
 async def test_validates_reads_and_input(tmp_path, read_args):
     terminal = term(cwd=tmp_path)
     await terminal.start("exit")
@@ -85,6 +90,15 @@ async def test_validates_reads_and_input(tmp_path, read_args):
         await terminal.read(**read_args)
     with pytest.raises(TypeError):
         await terminal.send_bytes("bad")
+    await terminal.terminate()
+
+
+@pytest.mark.asyncio
+async def test_cross_platform_python_lifecycle(tmp_path):
+    terminal = ProcessTerm("portable", [sys.executable], cwd=tmp_path)
+    await terminal.start("print('portable')")
+    assert await terminal.wait() == 0
+    assert "portable" in await terminal.read()
     await terminal.terminate()
 
 
