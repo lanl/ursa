@@ -1485,7 +1485,7 @@ inference_provider: fast
         await pilot.pause()
         assert not editor.has_class("yaml-valid", "yaml-invalid")
         await wait_for_yaml_debounce(pilot)
-        await app.workers.wait_for_complete()
+        await await_workers(app, pilot)
 
         assert (
             app.screen.query_one("#chat-inference-provider", Select).value

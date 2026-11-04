@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 from io import BytesIO
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -16,6 +17,9 @@ from ursa.tools.terminal.screenshot import (
 )
 
 REAL_BINDING = ghostty.PyGhosttyTerminal
+pytestmark = pytest.mark.skipif(
+    REAL_BINDING is None, reason="pyghostty unavailable"
+)
 
 
 class FakeTerminal:
@@ -118,8 +122,18 @@ async def test_input_mouse_paste_and_validation(monkeypatch):
     )
     await terminal.mouse_event("press", 1, 2, button="left")
     assert sent == [b"mouse"]
-    with pytest.raises(AttributeError):
-        await terminal.paste_text("paste")
+    terminal._terminal._t = [None]
+    monkeypatch.setattr(
+        ghostty, "_ghostty_ffi", SimpleNamespace(new=lambda _: [True])
+    )
+    monkeypatch.setattr(
+        ghostty,
+        "_ghostty_lib",
+        SimpleNamespace(ghostty_terminal_mode_get=lambda *_: 0),
+    )
+    monkeypatch.setattr(ghostty, "_ghostty_check", lambda *_: None)
+    await terminal.paste_text("paste")
+    assert sent[-1] == b"\x1b[200~paste\x1b[201~"
     with pytest.raises(ValueError):
         await terminal.resize(0, 1)
 
