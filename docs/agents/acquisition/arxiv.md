@@ -43,6 +43,9 @@ print(agent.format_result(state))
 | `llm` | `BaseChatModel` | required | Language model used for query generation and summarization. |
 | `process_images` | `bool` | `True` | For downloaded PDFs, optionally append image interpretations when image-description support is available. |
 | `max_results` | `int` | `3` | Maximum number of arXiv results to acquire. |
+| `fetch_k` | `int \| None` | `None` | Candidates to fetch from arXiv before reranking down to `max_results`. Defaults to `max_results`, or `10` when `rerank` is set. |
+| `rerank` | `None \| "fast" \| "embedding" \| "llm"` | `None` | Rerank candidates by title+abstract relevance to `context`. `"fast"`: local BM25-style keyword scoring, no model calls. `"embedding"`: cosine similarity using `rerank_embedding` (or `rag_embedding` if that is unset); one of them is required. `"llm"`: one LLM call ranks the abstracts. Any reranking failure falls back to arXiv's order. |
+| `rerank_embedding` | optional embedding object | `None` | Embedding used only for `rerank="embedding"`. Unlike `rag_embedding`, it does not switch summarization to the RAG path. The TUI sets it automatically from `emb_model`. |
 | `download` | `bool` | `True` | If `True`, search arXiv and download PDFs. If `False`, read cached files from `database_path`. |
 | `rag_embedding` | optional embedding object | `None` | If provided, use the RAG path instead of direct per-paper summarization. |
 | `database_path` | `str` | `"arxiv_papers"` | Directory under the agent den for downloaded/cached papers. |

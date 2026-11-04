@@ -232,6 +232,8 @@ class HITL:
             }
             if agent_name in {"chat", "execute", "deep_review", "dsi"}:
                 config.update(rag_tool_config)
+            if agent_name == "arxiv":
+                config["rerank_embedding"] = self.embedding
             self.agents[agent_name] = AgentHITL(
                 agent_class=getattr(agents, agent_class_name),
                 config=config,
@@ -493,6 +495,8 @@ class HITL:
                 for wrapper in self.agents.values():
                     if "rag_tool_embedding" in wrapper.config:
                         wrapper.config["rag_tool_embedding"] = new_embedding
+                    if "rerank_embedding" in wrapper.config:
+                        wrapper.config["rerank_embedding"] = new_embedding
                 self.last_agent = None
                 self.last_agent_result = None
 
