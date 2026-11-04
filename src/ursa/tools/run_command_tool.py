@@ -1,5 +1,5 @@
 import os
-import subprocess
+import platform
 from pathlib import Path
 
 from langchain.tools import ToolRuntime
@@ -9,6 +9,12 @@ from pydantic import BaseModel, Field
 from ursa.agents.base import AgentContext
 from ursa.prompt_library.safety_prompts import (
     get_safety_prompt,
+)
+from ursa.tools.sandbox import (
+    BaseSandbox,
+    LinuxBwrapSandbox,
+    MacSandbox,
+    WindowsSandbox,
 )
 from ursa.util.events import ToolEvents
 from ursa.util.rendering import event_artifact
@@ -113,15 +119,17 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
             error="Command interrupted",
             query=query,
         ) as span:
-            result = subprocess.run(
-                query,
-                text=True,
-                shell=True,
-                timeout=600000,
-                capture_output=True,
-                cwd=workspace_dir,
-                check=False,
-            )
+            match platform.system():
+                case "Linux":
+                    sbx = LinuxBwrapSandbox(cwd=workspace_dir)
+                case "Darwin":
+                    sbx = MacSandbox(cwd=workspace_dir)
+                case "Windows":
+                    sbx = WindowsSandbox(cwd=workspace_dir)
+                case _:
+                    sbx = BaseSandbox(cwd=workspace_dir)
+
+            result = sbx.run(query)
             stdout, stderr = result.stdout, result.stderr
             stdout = stdout.encode("utf-8", errors="ignore").decode("utf-8")
             stderr = stderr.encode("utf-8", errors="ignore").decode("utf-8")
