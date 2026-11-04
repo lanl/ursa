@@ -11,7 +11,6 @@ import asyncio
 import codecs
 import errno
 import os
-import pty
 import shlex
 import signal
 import struct
@@ -30,6 +29,11 @@ from .base import (
     TermSession,
 )
 from .resources import capture_process_identity
+
+try:
+    import pty
+except ImportError:  # Unix-only standard library module.
+    pty = None  # type: ignore[assignment]
 
 _C1_ERROR_HANDLER = "ursa_terminal_c1_controls"
 
@@ -184,6 +188,8 @@ class GhosttyTerm(TermSession):
         self._held_mouse_buttons: list[str] = []
 
     async def start(self, command: str | list[str] | None = None) -> None:
+        if pty is None:
+            raise RuntimeError("Ghostty terminals are unsupported on Windows")
         if self._pid is not None:
             raise RuntimeError("terminal session has already been started")
         if self._closed:
