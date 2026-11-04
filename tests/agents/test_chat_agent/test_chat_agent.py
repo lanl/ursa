@@ -4,6 +4,7 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 
 from ursa.agents.chat_agent import ChatAgent
+from ursa.tools.term_tool import get_supported_term_tools
 
 
 async def test_chat_agent_appends_ai_response(chat_model, tmpdir):
@@ -34,7 +35,7 @@ class _ToolCallingModel(GenericFakeChatModel):
         return self
 
 
-async def test_chat_agent_includes_and_dispatches_terminal_tools(
+async def test_chat_agent_dispatches_opt_in_terminal_tools(
     monkeypatch, tmp_path
 ):
     model = _ToolCallingModel(
@@ -72,6 +73,8 @@ async def test_chat_agent_includes_and_dispatches_terminal_tools(
     )
     monkeypatch.setattr("ursa.tools.term_tool.term_manager", Manager())
     agent = ChatAgent(llm=model, workspace=tmp_path)
+    assert "run_command" in agent.tools
+    agent.add_tool(get_supported_term_tools())
     assert "term" in agent.tools
     assert "term_screenshot" not in agent.tools
 

@@ -56,6 +56,15 @@ class Manager:
         return self.snapshots[term_id]
 
 
+class LiveManager(Manager):
+    def __init__(self):
+        super().__init__({})
+        self.term_infos = []
+
+    def terminals(self):
+        return self.term_infos
+
+
 async def test_terms_screen_handles_empty_and_ordered_live_sessions(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
     async with app.run_test(size=(90, 28)) as pilot:
@@ -82,6 +91,29 @@ async def test_terms_screen_handles_empty_and_ordered_live_sessions(tmp_path):
             app.screen.query_one("#terminal-tabs", TabbedContent).active
             == "terminal-tab-newest00"
         )
+
+
+async def test_empty_terms_screen_tracks_first_and_last_session(tmp_path):
+    manager = LiveManager()
+    screen = TermsScreen([], manager=manager, refresh_interval=60)
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(screen)
+        await pilot.pause()
+
+        terminal = info("first000", 1)
+        manager.term_infos = [terminal]
+        manager.snapshots[terminal.term_id] = snapshot(
+            terminal.term_id, "running"
+        )
+        await screen._sync_terminals()
+        assert app.screen.query_one("#terminal-tabs", TabbedContent).active == (
+            "terminal-tab-first000"
+        )
+
+        manager.term_infos = []
+        await screen._sync_terminals()
+        assert app.screen.query_one(".terminals-empty", Static)
 
 
 async def test_terminal_views_render_process_and_ghostty_and_refresh(tmp_path):

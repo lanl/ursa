@@ -185,10 +185,7 @@ class UrsaTextualApp(App[None]):
 
     async def on_unmount(self) -> None:
         """Release runtime resources on every graceful Textual shutdown."""
-        try:
-            await term_manager.close_all()
-        finally:
-            await self.hitl.aclose()
+        await self.hitl.aclose()
 
     @property
     def is_ui_thread(self) -> bool:

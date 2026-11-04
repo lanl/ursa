@@ -26,17 +26,18 @@ arguments cannot include command flags (`-c`, `--command`, `-Command`, or
 
 ## Backends and limits
 
-`GhosttyTerm` is used on supported macOS and Linux installations with
-[`pyghostty`](https://github.com/AnswerDotAI/pyghostty). It emulates a screen,
+`GhosttyTerm` is the default on supported macOS and Linux installations through
+the [`pyghostty`](https://github.com/AnswerDotAI/pyghostty) dependency. It
+emulates a screen,
 scrollback, cursor, resizing, styling, paste, and mouse input. `ProcessTerm`
 is the portable Windows/unsupported-platform fallback: it supports command
 execution, input, status, waiting, and line reads, but has no screen. Set
 `URSA_TERM_BACKEND` to `auto` (default), `ghostty`, or `process` before import.
 
-The dependency marker covers x86-64/AArch64 macOS and Linux. It cannot identify
-musl Linux or old macOS releases; omit `pyghostty` there to use ProcessTerm.
-Unix defaults to Bash; Windows prefers Git Bash, then PowerShell. Pass `shell`
-to override either choice.
+The dependency covers glibc-based x86-64/AArch64 Linux and macOS 13+ on Intel
+or Apple silicon. Other platforms use ProcessTerm. Unix defaults to Bash;
+Windows prefers Git Bash, then PowerShell. Pass `shell` to override either
+choice.
 
 | Limit | Default |
 | --- | ---: |

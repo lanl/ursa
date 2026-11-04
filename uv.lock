@@ -5726,16 +5726,16 @@ wheels = [
 
 [[package]]
 name = "pyghostty"
-version = "0.1.0"
+version = "0.1.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cffi" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5b/9e/64b07389d5a99d3c735f02629c561729f7df5a6ec4c7a8d1a9b6df6feef4/pyghostty-0.1.0-py3-none-macosx_13_0_arm64.whl", hash = "sha256:5b9dd0487667be3500e51ffbf5ca87f53e020a9ef36f0dc0cf4ddd277e8822b2", size = 591183, upload-time = "2026-07-24T07:20:25.047Z" },
-    { url = "https://files.pythonhosted.org/packages/66/82/b8531f50f44e8fa85cd96acd011067f55c932f4225891d34bb3e5def9b4f/pyghostty-0.1.0-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:2722590d17f4cb5376e1d04d251a824b173223bb45466e94632c61b4e1cef577", size = 655962, upload-time = "2026-07-24T07:20:27.006Z" },
-    { url = "https://files.pythonhosted.org/packages/1f/e1/c2815400bb74a9846b44f2aa86e83088f42312b7e48c18a576b4d703fd7a/pyghostty-0.1.0-py3-none-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:8a1c628bff9a449707ea71ae6fd47e859ce5d80a5312bef357c383b7e7a7e71c", size = 2010126, upload-time = "2026-07-24T07:20:29.153Z" },
-    { url = "https://files.pythonhosted.org/packages/50/c9/d56ce52b8e109c2dfa7882fe0b7b9ebd527c554b7d5e33f9e2648dfa89f3/pyghostty-0.1.0-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9461e0e42d9be8fd0a0afcd0e7c9487d5e900b1e57e64df16adc0ebdbb527194", size = 2176016, upload-time = "2026-07-24T07:20:31.06Z" },
+    { url = "https://files.pythonhosted.org/packages/b9/93/9001ec0fc6b2708064c6c6ab8c840ff82619c6b16d45665e26c1c2eea9c0/pyghostty-0.1.4-py3-none-macosx_13_0_arm64.whl", hash = "sha256:36ab741c3906ca4d09e5f5bde0cf31aaf27fd1a3126a42b34786421cdd606ef8", size = 745867, upload-time = "2026-10-28T08:03:35.198Z" },
+    { url = "https://files.pythonhosted.org/packages/53/ee/5e3b514e3d7f2d12905ed7fac30142f7848ca2498872b30f79ca4e91278f/pyghostty-0.1.4-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:7b00aa8ead35fba7b4335c9cc33bd81066cccbeef6e5c694768cb5bcbef11161", size = 771436, upload-time = "2026-10-28T08:03:37.037Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/7f/d724d1c5dadc5ce8e029c22a42028bf1161b418e2dcb9e66460b23f32d37/pyghostty-0.1.4-py3-none-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:ea4d6366bbfb00dc445ac40c684b7a5154897dc9219ef949a490a9565eae2eba", size = 2805321, upload-time = "2026-10-28T08:03:38.681Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/5b/4f23dd7d7c53950067c57514b083f0e70ed413a098b7964ad121439e88be/pyghostty-0.1.4-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ea203580d8424a79bbad75e159494591ef3d7d3dfa43675a80f72271b72329d0", size = 2962925, upload-time = "2026-10-28T08:03:40.368Z" },
 ]
 
 [[package]]
@@ -8154,7 +8154,7 @@ requires-dist = [
     { name = "pillow", marker = "extra == 'image'", specifier = ">=11.3.0,<12.0.0" },
     { name = "psutil", specifier = ">=7.1.0,<8.0" },
     { name = "pydantic", specifier = ">=2.12.0,<3.0" },
-    { name = "pyghostty", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')", specifier = ">=0.1.0,<0.2" },
+    { name = "pyghostty", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')", specifier = ">=0.1.4,<0.2" },
     { name = "pymupdf", specifier = ">=1.28.0,<2.0" },
     { name = "pymupdf4llm", specifier = ">=0.3.4,<1.0" },
     { name = "python-docx", marker = "extra == 'office-readers'", specifier = ">=1.2" },

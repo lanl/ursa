@@ -115,6 +115,9 @@ When `use_web=True`, it also binds:
 
 If persistent RAG tools are configured through `rag_tools`, `AgentWithTools` can expose those as additional tools. MCP tools can also be attached in the TUI when MCP servers are configured.
 
+Managed [terminal tools](../reference/terminal.md) are available as explicit
+opt-ins when persistent or interactive sessions are needed.
+
 ## Graph behavior
 
 `ChatAgent` compiles a small LangGraph loop:

@@ -1301,20 +1301,38 @@ class TermsScreen(ModalScreen[None]):
 
     async def _sync_terminals(self) -> None:
         manager_terminals = getattr(self.manager, "terminals", None)
-        if (
-            manager_terminals is None
-            or self._tabs is None
-            or not self.is_mounted
-        ):
+        if manager_terminals is None or not self.is_mounted:
             return
         latest = self._ordered(manager_terminals())
         if latest == self.terminals:
             return
+        container = self.query_one("#terminals", Vertical)
+        if not latest:
+            if self._tabs is not None:
+                await self._tabs.remove()
+                self._tabs = None
+                await container.mount(
+                    Static(
+                        "No managed terminal sessions.",
+                        classes="terminals-empty",
+                    )
+                )
+            self.terminals = latest
+            return
+        if self._tabs is None:
+            empty = self.query(".terminals-empty")
+            if empty:
+                await empty.remove()
+            tabs = TabbedContent(id="terminal-tabs")
+            await container.mount(tabs)
+            for terminal in latest:
+                await tabs.add_pane(self._pane(terminal.term_id))
+            tabs.active = self._tab_id(latest[-1].term_id)
+            self._tabs, self.terminals = tabs, latest
+            return
         previous_ids = {terminal.term_id for terminal in self.terminals}
         previous_last = self.terminals[-1].term_id
         latest_ids = [terminal.term_id for terminal in latest]
-        if not latest_ids:
-            return
 
         added = [term for term in latest if term.term_id not in previous_ids]
         removed = previous_ids - set(latest_ids)
