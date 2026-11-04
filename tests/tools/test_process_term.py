@@ -80,6 +80,30 @@ def test_command_formatting_and_powershell_start(monkeypatch):
     assert captured["argv"][-2:] == ["-Command", "& 'echo' 'a''b'"]
 
 
+@posix_only
+def test_group_signal_permission_falls_back_to_process(monkeypatch):
+    class FakeProcess:
+        pid = 1
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    def denied(*_args):
+        raise PermissionError
+
+    monkeypatch.setattr(os, "killpg", denied)
+    process = FakeProcess()
+    ProcessTerm._stop_process(process)
+    assert process.returncode == 0
+
+
 @pytest.mark.parametrize("read_args", [{"offset": -1}, {"lines": -1}])
 @pytest.mark.asyncio
 @posix_only

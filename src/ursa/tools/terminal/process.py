@@ -409,18 +409,17 @@ class ProcessTerm(TermSession):
     @staticmethod
     def _stop_process(process: subprocess.Popen[bytes]) -> None:
         if os.name == "nt":
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
+            ProcessTerm._stop_process_directly(process)
+            return
+        if process.poll() is not None:
             return
 
         try:
             os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
+            return
+        except PermissionError:
+            ProcessTerm._stop_process_directly(process)
             return
 
         deadline = time.monotonic() + 2
@@ -434,13 +433,27 @@ class ProcessTerm(TermSession):
                 os.killpg(process.pid, 0)
             except ProcessLookupError:
                 return
+            except PermissionError:
+                break
             time.sleep(0.01)
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            ProcessTerm._stop_process_directly(process)
         if process.poll() is None:
             process.wait()
+
+    @staticmethod
+    def _stop_process_directly(process: subprocess.Popen[bytes]) -> None:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
 
     def _require_started(self) -> subprocess.Popen[bytes]:
         if self._process is None:
