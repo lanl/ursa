@@ -120,23 +120,25 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
             query=query,
         ) as span:
             access_network = os.getenv("URSA_ACCESS_NETWORK", "1") == "1"
-
-            match platform.system(), prompt_level.lower():
+            enable_sbx = os.getenv("URSA_SBX", "1") == "1"
+            match platform.system(), prompt_level.lower(), enable_sbx:
                 # NOTE:
-                # No sandbox if URSA_SAFETY_LEVEL=yolo
-                # Sandbox with no safety checks if URSA_SAFETY_LEVEL=none
-                # Sandbox with safety checks if URSA_SAFETY_LEVEL=default
-                case _, "yolo":
+                # * No sandbox if URSA_SAFETY_LEVEL=yolo or URSA_SBX=0
+                # * To use sandbox but disable safety checks,
+                #   set URSA_SAFETY_LEVEL=none, URSA_SBX=1 (default)
+                case _, "yolo", _:
                     sbx = NoSandbox(cwd=workspace_dir)
-                case "Linux", _:
+                case _, _, 0:
+                    sbx = NoSandbox(cwd=workspace_dir)
+                case "Linux", _, 1:
                     sbx = LinuxBwrapSandbox(
                         cwd=workspace_dir, access_network=access_network
                     )
-                case "Darwin", _:
+                case "Darwin", _, 1:
                     sbx = MacSandbox(
                         cwd=workspace_dir, access_network=access_network
                     )
-                case "Windows", _:
+                case "Windows", _, 1:
                     # TODO: Implement WindowsSandbox
                     sbx = NoSandbox(cwd=workspace_dir)
 
