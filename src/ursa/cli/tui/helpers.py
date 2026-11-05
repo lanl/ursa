@@ -7,7 +7,7 @@ from typing import Any
 
 from rich.cells import cell_len, chop_cells  # noqa: TID251
 
-from ursa.cli.runtime import HITL
+from ursa.runtime import AgentRuntime
 
 SUMMARY_GROUP_GRACE_SECONDS = 3.0
 FILE_TOOLS = {
@@ -83,8 +83,8 @@ def _inference_provider(value: str | None) -> str:
     return value or "default"
 
 
-def _embedding_name(hitl: HITL) -> str:
-    embedding = getattr(hitl, "embedding", None)
+def _embedding_name(runtime: AgentRuntime) -> str:
+    embedding = getattr(runtime, "embedding", None)
     if embedding is None:
         return "none"
     for attribute in ("model_name", "model"):
@@ -93,12 +93,12 @@ def _embedding_name(hitl: HITL) -> str:
     return type(embedding).__name__
 
 
-def _route_prompt(hitl: HITL, prompt: str) -> tuple[str, str]:
+def _route_prompt(runtime: AgentRuntime, prompt: str) -> tuple[str, str]:
     """Route a leading ``#agent`` macro, defaulting to chat."""
     match = re.match(
         r"^#(?P<name>\S+)(?:\s(?P<prompt>.*))?$", prompt, re.DOTALL
     )
-    if match and match["name"] in hitl.agents:
+    if match and match["name"] in runtime.agents:
         return match["name"], match["prompt"] or ""
     return "chat", prompt
 

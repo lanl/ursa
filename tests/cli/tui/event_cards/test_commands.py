@@ -3,8 +3,7 @@ import asyncio
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
-from tests.cli._app_fakes import FakeHITL, emit_event
-from tests.tui.utils import eventually
+from tests.cli._app_helpers import emit_event, make_runtime, wait_for
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import CommandSafetyIndicator, RunCommandCard
 from ursa.cli.tui.event_handler import TextualEventHandler
@@ -28,7 +27,7 @@ def test_long_command_preview_keeps_top_and_bottom_eight_lines():
 async def test_overlapping_commands_stay_compact_and_complete_independently(
     tmp_path,
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("run both", tmp_path)
@@ -59,7 +58,7 @@ async def test_overlapping_commands_stay_compact_and_complete_independently(
             "result": "",
         })
         await pilot.pause()
-        await eventually(pilot, lambda: cards[0].completed)
+        await wait_for(pilot, lambda: cards[0].completed)
         assert cards[0].completed
         assert cards[0].returncode == 0
         assert not cards[1].completed
@@ -70,7 +69,7 @@ async def test_overlapping_commands_stay_compact_and_complete_independently(
 
 
 async def test_identical_concurrent_commands_are_correlated_by_run_id(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("run both", tmp_path)
@@ -109,7 +108,7 @@ async def test_identical_concurrent_commands_are_correlated_by_run_id(tmp_path):
 
 
 async def test_command_completion_finishes_pending_safety_indicator(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("run it", tmp_path)
@@ -136,7 +135,7 @@ async def test_command_completion_finishes_pending_safety_indicator(tmp_path):
 async def test_solitary_command_after_overlap_returns_to_detailed_layout(
     tmp_path,
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("run commands", tmp_path)
@@ -173,7 +172,7 @@ async def test_solitary_command_after_overlap_returns_to_detailed_layout(
 
 
 async def test_run_command_card_tracks_safety_and_collapses_on_result(tmp_path):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
     pass_safety = asyncio.Event()
     return_result = asyncio.Event()
     return_second = asyncio.Event()
@@ -224,8 +223,8 @@ async def test_run_command_card_tracks_safety_and_collapses_on_result(tmp_path):
         )
         return "Finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("r", "u", "n", "enter")
@@ -241,12 +240,12 @@ async def test_run_command_card_tracks_safety_and_collapses_on_result(tmp_path):
 
         pass_safety.set()
         await pilot.pause()
-        await eventually(pilot, lambda: safety.status == "passed")
+        await wait_for(pilot, lambda: safety.status == "passed")
         assert safety.status == "passed"
 
         return_result.set()
         await pilot.pause()
-        await eventually(pilot, lambda: source.content.code == "echo line-1 …")
+        await wait_for(pilot, lambda: source.content.code == "echo line-1 …")
         assert source.content.code == "echo line-1 …"
         output = card.query_one(".command-output", Static)
         assert output.content.code == "command output"
@@ -276,7 +275,7 @@ async def test_run_command_card_tracks_safety_and_collapses_on_result(tmp_path):
 async def test_single_command_output_preserves_top_and_bottom_until_expanded(
     tmp_path,
 ):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
     full_output = "\n".join(f"line {index}" for index in range(1, 31))
 
     async def run_agent(_name, _prompt, callbacks=None):
@@ -299,8 +298,8 @@ async def test_single_command_output_preserves_top_and_bottom_until_expanded(
         await handler.on_tool_end(full_output, run_id="long-output")
         return "Finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("r", "u", "n", "enter")
@@ -317,7 +316,7 @@ async def test_single_command_output_preserves_top_and_bottom_until_expanded(
 
 
 async def test_collapsed_commands_retain_execution_outcomes(tmp_path):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
 
     async def run_agent(_name, _prompt, callbacks=None):
         handler = callbacks[0]
@@ -364,8 +363,8 @@ async def test_collapsed_commands_retain_execution_outcomes(tmp_path):
         await command("unsafe", "dangerous", safe=False, output="Rejected")
         return "Finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("r", "u", "n", "enter")

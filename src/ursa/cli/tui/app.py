@@ -11,12 +11,15 @@ import sys
 import threading
 import traceback
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import asdict, is_dataclass
+from enum import Enum
 from functools import partial
 from math import ceil
 from pathlib import Path
 from typing import Any, ClassVar
 
 import yaml
+from pydantic import BaseModel, SecretStr
 from rich.console import Console
 from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
@@ -27,9 +30,8 @@ from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Static, TextArea
 
-from ursa.cli.callbacks import HITLLogEventHandler
+from ursa.cli.callbacks import AgentLogEventHandler
 from ursa.cli.config import config_file_value
-from ursa.cli.runtime import HITL
 from ursa.cli.tui.agent_info import load_agent_details
 from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.helpers import (
@@ -52,6 +54,7 @@ from ursa.cli.tui.widgets import (
     ToolMessage,
     WelcomeBanner,
 )
+from ursa.runtime import AgentRuntime
 from ursa.util import crossplatform
 from ursa.util import mcp as ursa_mcp
 from ursa.util.model_context import (
@@ -59,6 +62,35 @@ from ursa.util.model_context import (
     summarization_threshold,
 )
 from ursa.util.tqdm_lock import install_thread_only_tqdm_lock
+
+
+def _config_yaml_value(value: Any) -> Any:
+    """Convert resolved config values to safe, YAML-serializable values."""
+    if isinstance(value, SecretStr):
+        return str(value)
+    if isinstance(value, BaseModel):
+        return _config_yaml_value(
+            value.model_dump(mode="python", context={"include_defaults": True})
+        )
+    if is_dataclass(value) and not isinstance(value, type):
+        return _config_yaml_value(asdict(value))
+    if isinstance(value, Mapping):
+        return {
+            str(key): _config_yaml_value(item) for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_config_yaml_value(item) for item in value]
+    if isinstance(value, (Path, Enum)):
+        return str(value.value if isinstance(value, Enum) else value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if hasattr(value, "__dict__"):
+        return {
+            key: _config_yaml_value(item)
+            for key, item in vars(value).items()
+            if not key.startswith("_")
+        }
+    return str(value)
 
 
 class ConversationScroll(VerticalScroll):
@@ -82,12 +114,12 @@ class UrsaTextualApp(App[None]):
     """Full-screen URSA chat application."""
 
     TITLE = "URSA"
-    SUB_TITLE = "Textual HITL"
+    SUB_TITLE = "Textual Agent Runtime"
     BINDINGS: ClassVar = [
         Binding(
             "ctrl+c",
             "cancel_agent",
-            "Explain active-turn cancellation",
+            "Cancel the active agent",
             show=False,
         ),
         Binding(
@@ -134,13 +166,13 @@ class UrsaTextualApp(App[None]):
     ]
     CSS_PATH = Path(__file__).with_name("app.tcss")
 
-    def __init__(self, hitl: HITL) -> None:
+    def __init__(self, runtime: AgentRuntime) -> None:
         super().__init__()
         self.kitty_keyboard_expected = crossplatform.expects_kitty_keyboard()
         for theme in AVAILABLE_THEMES:
             self.register_theme(theme)
         self.theme = AVAILABLE_THEMES[0].name
-        self.hitl = hitl
+        self.runtime = runtime
         self.total_tokens = 0
         self.input_tokens = 0
         self.output_tokens = 0
@@ -151,6 +183,7 @@ class UrsaTextualApp(App[None]):
         self._hotlist_origin: tuple[str, tuple[int, int]] | None = None
         self._ui_thread_id: int | None = None
         self._turn_navigation_marker: Widget | None = None
+        self._active_agent_name: str | None = None
         self._quit_after_turn = False
         self._active_agent_runs = 0
         self._active_agent_path: str | None = None
@@ -163,7 +196,7 @@ class UrsaTextualApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield ConversationScroll(
-            WelcomeBanner(self.hitl),
+            WelcomeBanner(self.runtime),
             id="conversation",
             on_release=self._cancel_conversation_anchor_transition,
         )
@@ -196,7 +229,7 @@ class UrsaTextualApp(App[None]):
 
     async def on_unmount(self) -> None:
         """Release runtime resources on every graceful Textual shutdown."""
-        await self.hitl.aclose()
+        await self.runtime.aclose()
 
     @property
     def is_ui_thread(self) -> bool:
@@ -209,21 +242,21 @@ class UrsaTextualApp(App[None]):
 
     def _update_status(self, state: str) -> None:
         items = [
-            Text(self.hitl.config.llm_model.pretty_repr(short=True)),
-            Text(f"{self.total_tokens:,} tokens"),
+            self.runtime.config.llm_model.pretty_repr(short=True),
+            f"{self.total_tokens} tokens",
         ]
-        if agent_name := self.hitl.config.agent_name:
-            items.append(Text(f"agent {agent_name}"))
+        if agent_name := self.runtime.config.agent_name:
+            items.append(f"agent {agent_name}")
         if self._active_agent_path:
-            items.append(Text(self._active_agent_path))
-        items.append(Text(state))
+            items.append(self._active_agent_path)
+        items.append(state)
         # The agent worker's tail can run while teardown is pruning the
         # tree; a bare query here crashes the worker and surfaces as
         # WorkerFailed at run_test exit.
         status = self.query("#status")
         if not status:
             return
-        status.first(Static).update(Text("  •  ").join(items))
+        status.first(Static).update(Text("  •  ".join(items)))
 
     def add_tokens(self, usage: TokenUsage) -> None:
         self.total_tokens += usage.total_tokens
@@ -248,10 +281,9 @@ class UrsaTextualApp(App[None]):
     ) -> Turn:
         """Return the live progress turn for one hierarchy member."""
         if not agent_path:
-            if fallback is None:  # pragma: no cover - defensive
+            if fallback is None:
                 raise RuntimeError("An agent path or fallback turn is required")
             return fallback
-
         async with self._agent_turn_lock:
             if fallback is not None and fallback.agent_path in {
                 None,
@@ -263,13 +295,11 @@ class UrsaTextualApp(App[None]):
                     self._active_agent_path = agent_path
                 self._apply_agent_turn_visibility()
                 return fallback
-
             if existing := self._agent_turns.get(agent_path):
                 return existing
-
             turn = Turn(
                 "",
-                self.hitl.workspace,
+                self.runtime.workspace,
                 agent_path=agent_path,
                 progress_only=True,
             )
@@ -286,7 +316,6 @@ class UrsaTextualApp(App[None]):
         agent_path: str | None,
         data: Mapping[str, Any],
     ) -> None:
-        """Route callback data to the hierarchy member that produced it."""
         turn = await self._turn_for_agent(agent_path, fallback)
         await self.add_turn_event(turn, data)
 
@@ -296,7 +325,6 @@ class UrsaTextualApp(App[None]):
         agent_path: str | None,
         message: str,
     ) -> None:
-        """Update the selected agent's progress indicator."""
         turn = await self._turn_for_agent(agent_path, fallback)
         turn.update_activity(message)
 
@@ -306,7 +334,6 @@ class UrsaTextualApp(App[None]):
         agent_path: str | None,
         usage: TokenUsage,
     ) -> None:
-        """Record tokens on both the producing agent and the whole session."""
         turn = await self._turn_for_agent(agent_path, fallback)
         turn.add_tokens(usage.total_tokens)
         self.add_tokens(usage)
@@ -317,7 +344,6 @@ class UrsaTextualApp(App[None]):
         *,
         message_id: str | None = None,
     ) -> Turn:
-        """Start a fresh progress turn for one delegated message."""
         async with self._agent_turn_lock:
             existing = self._agent_turns.get(agent_path)
             if (
@@ -331,7 +357,7 @@ class UrsaTextualApp(App[None]):
                 return existing
             turn = Turn(
                 "",
-                self.hitl.workspace,
+                self.runtime.workspace,
                 agent_path=agent_path,
                 progress_only=True,
             )
@@ -351,13 +377,11 @@ class UrsaTextualApp(App[None]):
         succeeded: bool,
         turn: Turn | None = None,
     ) -> None:
-        """Finish a delegated agent's progress indicator."""
         if turn is None:
             turn = await self._turn_for_agent(agent_path, fallback)
         turn.finish_activity(succeeded=succeeded)
 
     def _apply_agent_turn_visibility(self) -> None:
-        """Show only transcript turns belonging to the selected agent."""
         selected = self._active_agent_path
         if selected is None:
             return
@@ -417,8 +441,7 @@ class UrsaTextualApp(App[None]):
         prompt_widget.load_text("")
         if self._message_mode:
             if self._active_agent_path is None:
-                if active_path := getattr(self.hitl, "active_agent_path", None):
-                    self._active_agent_path = active_path
+                self._active_agent_path = self.runtime.active_agent_path
             await self._start_agent_message(event.text, interrupt=False)
             return
         if self._active_agent_path and not event.text.startswith("#"):
@@ -427,13 +450,11 @@ class UrsaTextualApp(App[None]):
         await self._start_agent_turn(event.text)
 
     async def _mount_turn(self, prompt: str) -> Turn:
-        """Mount and initialize a conversation turn."""
-        turn = Turn(prompt, self.hitl.workspace)
+        turn = Turn(prompt, self.runtime.workspace)
         await self._mount_existing_turn(turn)
         return turn
 
     async def _mount_existing_turn(self, turn: Turn) -> None:
-        """Move a constructed turn into the conversation."""
         conversation = self.query_one("#conversation", VerticalScroll)
         self._reset_conversation_auto_follow(conversation)
         await conversation.mount(turn)
@@ -447,10 +468,9 @@ class UrsaTextualApp(App[None]):
         self._update_status("working")
 
     async def _queue_message(self, prompt: str) -> tuple[Turn, QueuedMessage]:
-        """Show a draft above the editor until its agent starts it."""
         turn = Turn(
             prompt,
-            self.hitl.workspace,
+            self.runtime.workspace,
             agent_path=self._active_agent_path,
         )
         queued = QueuedMessage(prompt, self._active_agent_path)
@@ -462,7 +482,6 @@ class UrsaTextualApp(App[None]):
     async def _promote_queued_message(
         self, turn: Turn, queued: QueuedMessage
     ) -> None:
-        """Move a queued draft into the transcript once delivery starts."""
         if self._exit or turn.is_mounted:
             return
         container = self.query_one("#queued-messages", VerticalScroll)
@@ -494,35 +513,30 @@ class UrsaTextualApp(App[None]):
         self._message_mode = True
         self.query_one(PromptArea).focus()
         self.run_worker(
-            self._run_active_message(
-                turn,
-                queued,
-                prompt,
-                interrupt=interrupt,
-            ),
+            self._run_active_message(turn, queued, prompt, interrupt=interrupt),
             exclusive=False,
             group="agent",
         )
 
     async def _run_agent(self, turn: Turn, prompt: str) -> None:
         name, prompt = self._route_prompt(prompt)
+        self._active_agent_name = name
         handler = TextualEventHandler(self, turn)
         succeeded = True
         try:
-            response = await self.hitl.run_agent(
+            response = await self.runtime.run_agent(
                 name, prompt, callbacks=[handler]
             )
-        except asyncio.CancelledError:
-            succeeded = False
-            response = "_Interrupted by the user._"
         except Exception as exc:
             succeeded = False
             await turn.add_exception(
                 exc, "".join(traceback.format_exception(exc))
             )
             response = f"**Agent failed:** `{type(exc).__name__}: {exc}`"
-        active_path = getattr(self.hitl, "active_agent_path", None)
-        if active_path:
+        finally:
+            if self._active_agent_name == name:
+                self._active_agent_name = None
+        if active_path := self.runtime.active_agent_path:
             self._active_agent_path = active_path
         await self._finish_agent_run(turn, response, succeeded=succeeded)
 
@@ -541,31 +555,19 @@ class UrsaTextualApp(App[None]):
             await self._promote_queued_message(turn, queued)
 
         try:
-            run_active = getattr(self.hitl, "run_active_agent", None)
             if not self._active_agent_path:
-                self._active_agent_path = getattr(
-                    self.hitl, "active_agent_path", None
+                self._active_agent_path = (
+                    await self.runtime.wait_for_active_agent()
                 )
-            if not self._active_agent_path:
-                wait_for_active = getattr(
-                    self.hitl, "wait_for_active_agent", None
-                )
-                if callable(wait_for_active):
-                    self._active_agent_path = await wait_for_active()
-            if not callable(run_active) or not self._active_agent_path:
-                raise RuntimeError("No active agent hierarchy to message")
             turn.agent_path = self._active_agent_path
             queued.set_target(self._active_agent_path)
-            response = await run_active(
+            response = await self.runtime.run_active_agent(
                 self._active_agent_path,
                 prompt,
                 callbacks=[handler],
                 interrupt=interrupt,
                 on_start=on_start,
             )
-        except asyncio.CancelledError:
-            succeeded = False
-            response = "_Interrupted by the user._"
         except Exception as exc:
             succeeded = False
             if turn.is_mounted:
@@ -603,7 +605,6 @@ class UrsaTextualApp(App[None]):
         self._settle_prompt_after_run()
 
     def _settle_prompt_after_run(self) -> None:
-        """Refresh prompt and status state after any agent worker settles."""
         prompt_widget = self.query_one(PromptArea)
         prompt_widget.disabled = False
         prompt_widget.focus()
@@ -615,25 +616,39 @@ class UrsaTextualApp(App[None]):
             self.exit()
 
     def _route_prompt(self, prompt: str) -> tuple[str, str]:
-        return _route_prompt(self.hitl, prompt)
+        return _route_prompt(self.runtime, prompt)
 
     def action_cancel_agent(self) -> None:
-        """Explain that an active agent cannot be cancelled safely."""
-        if self._active_agent_runs:
+        """Terminate the active managed process at its last state boundary."""
+        name = self._active_agent_name
+        kill_agent = getattr(self.runtime, "kill_agent", None)
+        if not self._active_agent_runs or name is None:
+            return
+        if not callable(kill_agent):
             self.notify(
-                "Cancelling an active turn is not supported. "
-                "Press Ctrl+D to abruptly quit URSA.",
+                "Active-turn cancellation is not supported by this runtime. "
+                "Press Ctrl+D to quit URSA.",
                 title="Turn is still running",
                 severity="warning",
             )
+            return
+
+        async def cancel() -> None:
+            await kill_agent(name)
+            self.notify(
+                f"Stopped {name} at its last committed state.",
+                title="Agent stopped",
+                severity="warning",
+            )
+
+        self.run_worker(cancel(), group="agent-control", exclusive=True)
 
     async def action_message_active_agent(self) -> None:
         """Interrupt active work and submit every waiting user message."""
         if not self._active_agent_runs:
             return
         if self._active_agent_path is None:
-            if active_path := getattr(self.hitl, "active_agent_path", None):
-                self._active_agent_path = active_path
+            self._active_agent_path = self.runtime.active_agent_path
         prompt = self.query_one(PromptArea)
         if not self._message_mode:
             self._message_mode = True
@@ -647,28 +662,16 @@ class UrsaTextualApp(App[None]):
 
         text = prompt.text.strip()
         queued = bool(self.query(QueuedMessage))
-        interrupt_queue = getattr(self.hitl, "interrupt_active_agent", None)
-        if not text and (not queued or not callable(interrupt_queue)):
+        if not text and not queued:
             prompt.focus()
             return
-
         if text:
             prompt._remember(text)
             prompt.load_text("")
-            await self._start_agent_message(
-                text,
-                interrupt=not callable(interrupt_queue),
-            )
-
-        if not callable(interrupt_queue):
-            return
+            await self._start_agent_message(text, interrupt=False)
         if self._active_agent_path is None:
-            wait_for_active = getattr(self.hitl, "wait_for_active_agent", None)
-            if callable(wait_for_active):
-                self._active_agent_path = await wait_for_active()
-        if self._active_agent_path is None:
-            raise RuntimeError("No active agent hierarchy to interrupt")
-        await interrupt_queue(self._active_agent_path)
+            self._active_agent_path = await self.runtime.wait_for_active_agent()
+        await self.runtime.interrupt_active_agent(self._active_agent_path)
         prompt.focus()
 
     def action_hard_quit(self) -> None:
@@ -713,11 +716,6 @@ class UrsaTextualApp(App[None]):
             max_content_height, max(1, prompt.virtual_size.height)
         )
         prompt.styles.height = content_height + 2
-        # TextArea scrolls the cursor when its selection changes, before the
-        # edit has updated its virtual size. Once the prompt is capped, that
-        # leaves its viewport one visual line behind each newly inserted line.
-        # Re-evaluate cursor visibility now that virtual_size is current.
-        prompt.scroll_cursor_visible(animate=False)
 
     def _open_hotlist(self, trigger: str) -> None:
         candidates = self._hotlist_candidates(trigger)
@@ -815,13 +813,13 @@ class UrsaTextualApp(App[None]):
 
     def _hotlist_candidates(self, trigger: str) -> list[str]:
         if trigger == "#":
-            return sorted(self.hitl.agents)
+            return sorted(self.runtime.agents)
         if trigger == "/":
             return [
                 f"{name} — {description}"
                 for name, description in COMMAND_CHOICES.items()
             ]
-        workspace = Path(self.hitl.workspace)
+        workspace = Path(self.runtime.workspace)
         ignored = {".git", ".venv", "__pycache__", "node_modules"}
         # TODO: Traverse asynchronously and remove the arbitrary result cap;
         # large workspaces currently block the UI and stop at 2,000 paths.
@@ -846,15 +844,14 @@ class UrsaTextualApp(App[None]):
             self.action_quit()
             return
         if command == "agents":
-            details = load_agent_details(self.hitl)
-            await self.push_screen(
-                AgentsScreen(details, self.hitl),
+            details = load_agent_details(self.runtime)
+            self.push_screen(
+                AgentsScreen(details, self.runtime),
                 callback=lambda _: self.query_one(PromptArea).focus(),
             )
             return
         if command == "subagents":
-            paths_getter = getattr(self.hitl, "subagent_paths", None)
-            paths = paths_getter() if callable(paths_getter) else []
+            paths = self.runtime.subagent_paths()
             if not paths:
                 self.notify(
                     "No active agent hierarchy is available yet.",
@@ -863,24 +860,22 @@ class UrsaTextualApp(App[None]):
                 )
                 self.query_one(PromptArea).focus()
                 return
-            active = self._active_agent_path or getattr(
-                self.hitl, "active_agent_path", None
-            )
+            active = self._active_agent_path or self.runtime.active_agent_path
             choices = [
                 f"{path} — {'active' if path == active else 'available'}"
                 for path in paths
             ]
-            await self.push_screen(
+            self.push_screen(
                 HotlistScreen("Subagents", choices),
                 callback=self._select_subagent,
             )
             return
         if command == "models":
-            await self.push_screen(
+            self.push_screen(
                 ModelScreen(
-                    self.hitl.config.inference_providers,
-                    self.hitl.config.llm_model,
-                    self.hitl.config.emb_model,
+                    self.runtime.config.inference_providers,
+                    self.runtime.config.llm_model,
+                    self.runtime.config.emb_model,
                 ),
                 callback=self._select_model,
             )
@@ -894,7 +889,7 @@ class UrsaTextualApp(App[None]):
                     if theme.name != self.theme
                 ),
             ]
-            await self.push_screen(
+            self.push_screen(
                 ThemeScreen(choices, initial_theme=self.theme),
                 callback=self._select_theme,
             )
@@ -906,7 +901,7 @@ class UrsaTextualApp(App[None]):
         if content is None:
             self.query_one(PromptArea).focus()
             return
-        await self.push_screen(
+        self.push_screen(
             InformationScreen(
                 command.capitalize(),
                 content(),
@@ -923,7 +918,6 @@ class UrsaTextualApp(App[None]):
         )
 
     def _select_subagent(self, choice: str | None) -> None:
-        """Select a hierarchy path for both messages and live progress."""
         if choice:
             self._active_agent_path = choice.split(" — ", 1)[0]
             self._apply_agent_turn_visibility()
@@ -937,28 +931,34 @@ class UrsaTextualApp(App[None]):
                 if self._message_mode
                 else ("working" if self._active_agent_runs else "ready")
             )
-        prompt = self.query_one(PromptArea)
-        prompt.focus()
+        self.query_one(PromptArea).focus()
 
     def _resolved_config_yaml(self) -> str:
         """Serialize the active, already-resolved runtime configuration."""
-        values = config_file_value(self.hitl.config, include_defaults=True)
+        values = config_file_value(self.runtime.config, include_defaults=True)
+        model = getattr(self.runtime, "model", None)
         fallbacks = [("global", values)]
         fallbacks.extend((values.get("agent_config") or {}).items())
         comments = ["# Effective thresholds for the selected model."]
         for name, config in fallbacks:
-            if "tokens_before_summarize" in config:
-                fallback = config["tokens_before_summarize"]
+            if "tokens_before_summarize" not in config:
+                continue
+            fallback = config["tokens_before_summarize"]
+            if model is not None:
                 config["tokens_before_summarize"] = summarization_threshold(
-                    self.hitl.model, fallback
+                    model, fallback
                 )
-                comments.append(
-                    f"# Configured fallback ({name}): {fallback} tokens."
-                )
+            comments.append(
+                f"# Configured fallback ({name}): {fallback} tokens."
+            )
         return (
             "\n".join(comments)
             + "\n"
-            + yaml.safe_dump(values, sort_keys=False, allow_unicode=True)
+            + yaml.safe_dump(
+                _config_yaml_value(values),
+                sort_keys=False,
+                allow_unicode=True,
+            )
         )
 
     def _select_theme(self, theme: str | None) -> None:
@@ -973,12 +973,12 @@ class UrsaTextualApp(App[None]):
 
         async def apply() -> None:
             prompt = self.query_one(PromptArea)
-            previous_chat = self.hitl.config.llm_model
-            previous_embedding = self.hitl.config.emb_model
+            previous_chat = self.runtime.config.llm_model
+            previous_embedding = self.runtime.config.emb_model
             prompt.disabled = True
             self._update_status("switching model")
             try:
-                await self.hitl.reconfigure_models(
+                await self.runtime.reconfigure_models(
                     selection.chat,
                     selection.embedding,
                 )
@@ -994,14 +994,14 @@ class UrsaTextualApp(App[None]):
                 for banner in self.query(WelcomeBanner):
                     banner.refresh_config()
                 conversation = self.query_one("#conversation", VerticalScroll)
-                if previous_chat != self.hitl.config.llm_model:
+                if previous_chat != self.runtime.config.llm_model:
                     await conversation.mount(
                         ToolMessage(
-                            f"Changed the chat model to {self.hitl.config.llm_model.pretty_repr()}"
+                            f"Changed the chat model to {self.runtime.config.llm_model.pretty_repr()}"
                         )
                     )
-                if previous_embedding != self.hitl.config.emb_model:
-                    embedding = self.hitl.config.emb_model
+                if previous_embedding != self.runtime.config.emb_model:
+                    embedding = self.runtime.config.emb_model
                     description = (
                         embedding.pretty_repr() if embedding else "none"
                     )
@@ -1021,10 +1021,14 @@ class UrsaTextualApp(App[None]):
         self.run_worker(apply(), group="model", exclusive=True)
 
     def _status_markdown(self) -> str:
-        emb_model_cfg = self.hitl.config.emb_model
-        window = model_context_window(self.hitl.model)
-        threshold = summarization_threshold(
-            self.hitl.model, self.hitl.config.tokens_before_summarize
+        emb_model_cfg = self.runtime.config.emb_model
+        model = getattr(self.runtime, "model", None)
+        window = model_context_window(model) if model is not None else None
+        fallback = self.runtime.config.tokens_before_summarize
+        threshold = (
+            summarization_threshold(model, fallback)
+            if model is not None
+            else fallback
         )
         rows = [
             ("Input tokens", f"{self.input_tokens:,}"),
@@ -1032,10 +1036,10 @@ class UrsaTextualApp(App[None]):
             ("Cached tokens", f"{self.cached_tokens:,}"),
             ("Total tokens (all agents)", f"{self.total_tokens:,}"),
             ("Theme", self.theme),
-            ("Workspace", str(Path(self.hitl.workspace).resolve())),
-            ("Group", str(getattr(self.hitl, "group", None) or "default")),
-            ("LLM model", self.hitl.config.llm_model.model),
-            ("LLM Endpoint", self.hitl.config.llm_model.endpoint_repr()),
+            ("Workspace", str(Path(self.runtime.workspace).resolve())),
+            ("Group", str(getattr(self.runtime, "group", None) or "default")),
+            ("LLM model", self.runtime.config.llm_model.model),
+            ("LLM Endpoint", self.runtime.config.llm_model.endpoint_repr()),
             (
                 "Context window",
                 f"{window:,} tokens" if window is not None else "Unknown",
@@ -1043,9 +1047,9 @@ class UrsaTextualApp(App[None]):
             (
                 "Context source",
                 "Ollama num_ctx"
-                if getattr(self.hitl.model, "num_ctx", None) is not None
+                if getattr(model, "num_ctx", None) is not None
                 else getattr(
-                    self.hitl.model,
+                    model,
                     "_ursa_context_source",
                     "LangChain profile" if window is not None else "Unknown",
                 ),
@@ -1067,14 +1071,14 @@ class UrsaTextualApp(App[None]):
                 emb_model_cfg.endpoint_repr() if emb_model_cfg else "None",
             ),
         ]
-        if agent_name := getattr(self.hitl, "agent_name", None):
+        if agent_name := getattr(self.runtime, "agent_name", None):
             rows.insert(3, ("Agent", str(agent_name)))
         model_table = "\n".join([
             "| Setting | Value |",
             "|---|---|",
             *(f"| {key} | `{value}` |" for key, value in rows),
         ])
-        servers = self.hitl.config.mcp_servers
+        servers = self.runtime.config.mcp_servers
         if not servers:
             return model_table + "\n\n## MCP servers\n\nNone configured."
         server_rows = []
@@ -1098,42 +1102,30 @@ class UrsaTextualApp(App[None]):
         )
 
     def _subagents_markdown(self) -> str:
-        """Render the active hierarchy and each member's live inbox state."""
-        root = getattr(self.hitl, "active_agent", None)
-        if root is None:
+        """Render the process hierarchy maintained by the host runtime."""
+        statuses = self.runtime.hierarchy_status()
+        if not statuses:
             return (
                 "## Live hierarchy\n\n"
                 "No active agent hierarchy. Start an agent to inspect its "
                 "subagents here."
             )
-
         lines = ["## Live hierarchy", ""]
-
-        def add_agent(agent: Any, depth: int = 0) -> None:
-            path = str(getattr(agent, "agent_path", "agent"))
-            state = self._agent_state(agent)
-            turn = self._agent_turns.get(path)
+        for status in statuses:
+            depth = status.path.count("/")
+            turn = self._agent_turns.get(status.path)
             tokens = turn.token_usage if turn is not None else 0
             token_text = f" · {tokens:,} tokens" if tokens else ""
-            lines.append(f"{'  ' * depth}- `{path}` — **{state}**{token_text}")
-            children = getattr(agent, "subagents", {})
-            values = children.values() if hasattr(children, "values") else ()
-            for child in values:
-                add_agent(child, depth + 1)
-
-        add_agent(root)
+            pending = (
+                f" ({status.pending_messages} queued)"
+                if status.pending_messages
+                else ""
+            )
+            lines.append(
+                f"{'  ' * depth}- `{status.path}` — "
+                f"**{status.state}{pending}**{token_text}"
+            )
         return "\n".join(lines)
-
-    @staticmethod
-    def _agent_state(agent: Any) -> str:
-        """Return a compact state derived from an agent's actor inbox."""
-        pending = int(getattr(agent, "pending_messages", 0) or 0)
-        working = bool(getattr(agent, "is_working", False))
-        if working:
-            return f"Working ({pending} queued)" if pending else "Working"
-        if pending:
-            return f"Queued ({pending} waiting)"
-        return "Ready"
 
     @staticmethod
     def _effective_bindings(owner: type[Any]) -> list[Binding]:
@@ -1256,7 +1248,7 @@ class UrsaTextualApp(App[None]):
         conversation = self.query_one("#conversation", VerticalScroll)
         self._reset_conversation_auto_follow(conversation)
         await conversation.remove_children()
-        await conversation.mount(WelcomeBanner(self.hitl))
+        await conversation.mount(WelcomeBanner(self.runtime))
         queued = self.query_one("#queued-messages", VerticalScroll)
         await queued.remove_children()
         queued.add_class("hidden")
@@ -1264,7 +1256,7 @@ class UrsaTextualApp(App[None]):
         self._turn_navigation_marker = None
 
 
-def run_textual(hitl: HITL) -> None:
+def run_textual(runtime: AgentRuntime) -> None:
     """Launch the experimental full-screen interface."""
     # Must run before Textual redirects ``sys.stderr`` to a proxy whose
     # ``fileno()`` is invalid; otherwise tqdm's default multiprocessing lock
@@ -1272,26 +1264,28 @@ def run_textual(hitl: HITL) -> None:
     # first time a progress bar is built (e.g. RAG document ingestion).
     install_thread_only_tqdm_lock()
     try:
-        UrsaTextualApp(hitl).run()
+        UrsaTextualApp(runtime).run()
     finally:
-        asyncio.run(hitl.aclose())
+        asyncio.run(runtime.aclose())
 
 
-def run_textual_once(hitl: HITL, prompt: str, *, stdout: Any = None) -> str:
+def prompt_agent_once(
+    runtime: AgentRuntime, prompt: str, *, stdout: Any = None
+) -> str:
     """Run one routed prompt and render its event stream to standard output."""
     install_thread_only_tqdm_lock()
     output = stdout or sys.stdout
     console = Console(file=output)
-    handler = HITLLogEventHandler(console=console, workspace=hitl.workspace)
-    agent, routed_prompt = _route_prompt(hitl, prompt)
+    handler = AgentLogEventHandler(console=console, workspace=runtime.workspace)
+    agent, routed_prompt = _route_prompt(runtime, prompt)
 
     async def invoke() -> str:
         try:
-            return await hitl.run_agent(
+            return await runtime.run_agent(
                 agent, routed_prompt, callbacks=[handler]
             )
         finally:
-            await hitl.aclose()
+            await runtime.aclose()
 
     response = asyncio.run(invoke())
     if handler.emitted_any:

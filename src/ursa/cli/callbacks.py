@@ -1,6 +1,7 @@
 # ruff: noqa: TID251
 
 import json
+import warnings
 from pathlib import Path
 from typing import Any, ClassVar, Mapping
 
@@ -52,7 +53,7 @@ def has_content(value: Any) -> bool:
 
 
 class CallbackRenderingMixin:
-    """Rendering helpers for the HITL callback handler.
+    """Rendering helpers for the agent runtime callback handler.
 
     This intentionally covers only the event families shown in the CLI:
     read/write/edit file tools, plus execute/plan/hypothesis/LAMMPS agent
@@ -620,7 +621,7 @@ class CallbackRenderingMixin:
         self.emitted_any = True
 
 
-class HITLLogEventHandler(CallbackRenderingMixin, AsyncCallbackHandler):
+class AgentLogEventHandler(CallbackRenderingMixin, AsyncCallbackHandler):
     """Render structured agent/tool progress events to the REPL console."""
 
     def __init__(self, console: Console, workspace: Path):
@@ -797,4 +798,17 @@ class HITLLogEventHandler(CallbackRenderingMixin, AsyncCallbackHandler):
             self._print_agent_event(data)
 
 
-__all__ = ["HITLLogEventHandler"]
+class HITLLogEventHandler(AgentLogEventHandler):
+    """Deprecated compatibility name for :class:`AgentLogEventHandler`."""
+
+    def __init__(self, console: Console, workspace: Path) -> None:
+        warnings.warn(
+            "HITLLogEventHandler is deprecated; use AgentLogEventHandler "
+            "instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(console=console, workspace=workspace)
+
+
+__all__ = ["AgentLogEventHandler", "HITLLogEventHandler"]

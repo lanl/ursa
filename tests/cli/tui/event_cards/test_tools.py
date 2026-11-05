@@ -2,16 +2,15 @@ from langchain_core.messages import ToolMessage
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
-from tests.cli._app_fakes import FakeHITL
-from tests.tui.utils import eventually
+from tests.cli._app_helpers import make_runtime, wait_for
 from ursa.cli.tui.app import UrsaTextualApp
-from ursa.cli.tui.event_cards import ToolCallCard
+from ursa.cli.tui.event_cards import AgentToolCard, ToolCallCard
 from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.turn import Turn
 
 
 async def test_default_tool_card_switches_from_input_to_output(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("call it", tmp_path)
@@ -52,7 +51,7 @@ async def test_default_tool_card_switches_from_input_to_output(tmp_path):
         )
         await pilot.pause()
 
-        await eventually(pilot, lambda: card.completed)
+        await wait_for(pilot, lambda: card.completed)
         assert card.completed
         assert card.query_one(".tool-call-state", Static).content == "✓"
         assert "polar" in str(
@@ -65,7 +64,7 @@ async def test_default_tool_card_switches_from_input_to_output(tmp_path):
 
 
 async def test_default_tool_card_shows_failure_output(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 24)) as pilot:
         turn = Turn("call it", tmp_path)
@@ -83,8 +82,98 @@ async def test_default_tool_card_shows_failure_output(tmp_path):
         assert card.query_one(".tool-call-state", Static).content == "✗"
 
 
+async def test_spawn_agent_card_shows_task_and_initial_reply(tmp_path):
+    app = UrsaTextualApp(make_runtime(tmp_path))
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        turn = Turn("delegate it", tmp_path)
+        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        handler = TextualEventHandler(app, turn)
+        await handler.on_tool_start(
+            {"name": "spawn_agent"},
+            "",
+            run_id="spawn-reviewer",
+            inputs={
+                "name": "reviewer",
+                "message": "Review the implementation for correctness.",
+                "agent_type": "deep_review",
+            },
+        )
+        await pilot.pause()
+
+        card = turn.query_one(AgentToolCard)
+        assert card.tool == "spawn_agent"
+        assert str(card.query_one(".agent-tool-title", Static).content) == (
+            "✦ Delegating work"
+        )
+        assert "reviewer" in str(
+            card.query_one(".agent-tool-preview", Static).content
+        )
+        assert "deep_review" in str(
+            card.query_one(".agent-tool-preview", Static).content
+        )
+        assert card.query_one(".agent-tool-details").has_class("hidden")
+
+        card.set_expanded(True)
+        assert "Review the implementation" in str(
+            card.query_one(".agent-tool-task", Markdown).source
+        )
+
+        await handler.on_tool_end(
+            "Spawned agent root/reviewer\n\nLooks correct.",
+            run_id="spawn-reviewer",
+        )
+        await pilot.pause()
+
+        assert card.completed
+        assert card.query_one(".agent-tool-state", Static).content == "✓"
+        assert "completed" in str(
+            card.query_one(".agent-tool-preview", Static).content
+        )
+        assert "Looks correct" in str(
+            card.query_one(".agent-tool-result", Markdown).source
+        )
+
+
+async def test_agent_message_and_listing_cards_render_specialized_outcomes(
+    tmp_path,
+):
+    app = UrsaTextualApp(make_runtime(tmp_path))
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        turn = Turn("coordinate it", tmp_path)
+        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        handler = TextualEventHandler(app, turn)
+        await handler.on_tool_start(
+            {"name": "send_message"},
+            "",
+            run_id="message-reviewer",
+            inputs={"target": "root/reviewer", "message": "Check tests."},
+        )
+        await handler.on_tool_end("Tests look good.", run_id="message-reviewer")
+        await handler.on_tool_start(
+            {"name": "list_agents"}, "", run_id="list", inputs={}
+        )
+        await handler.on_tool_end("root (self)\nroot/reviewer", run_id="list")
+        await pilot.pause()
+
+        cards = list(turn.query(AgentToolCard))
+        assert len(cards) == 2
+        message, listing = cards
+        assert "Reply received from root/reviewer" in str(
+            message.query_one(".agent-tool-preview", Static).content
+        )
+        assert "2 agents in the hierarchy" in str(
+            listing.query_one(".agent-tool-preview", Static).content
+        )
+        listing.set_expanded(True)
+        assert "root/reviewer" in str(
+            listing.query_one(".agent-tool-result", Markdown).source
+        )
+
+
 async def test_tool_call_preview_renders_code_brackets_as_plain_text(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
     output = "[patch={'old_code': 'ax.set_xticklabels([labels])'}]"
 
     async with app.run_test(size=(100, 24)) as pilot:
@@ -103,7 +192,7 @@ async def test_tool_call_preview_renders_code_brackets_as_plain_text(tmp_path):
 
 
 async def test_tool_message_prefers_structured_content_as_json(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 24)) as pilot:
         turn = Turn("call it", tmp_path)
@@ -133,7 +222,7 @@ async def test_tool_message_prefers_structured_content_as_json(tmp_path):
 
 
 async def test_text_only_tool_message_renders_as_markdown(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 24)) as pilot:
         turn = Turn("call it", tmp_path)

@@ -6,6 +6,7 @@ import os
 import pytest
 
 import ursa_dashboard.worker_main as worker_main
+from ursa.runtime import AgentSpec
 from ursa_dashboard.worker_main import _init_embedding, _init_llm
 
 
@@ -263,3 +264,69 @@ def test_worker_error_redaction_removes_full_secret() -> None:
         )
         == "provider rejected [REDACTED]"
     )
+
+
+@pytest.mark.asyncio
+async def test_dashboard_worker_uses_shared_agent_manager(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeManager:
+        async def register(self, spec) -> None:
+            captured["spec"] = spec
+
+        async def invoke(self, agent_id: str, inputs: object) -> str:
+            captured["agent_id"] = agent_id
+            captured["inputs"] = inputs
+            return "managed result"
+
+        async def aclose(self) -> None:
+            captured["closed"] = True
+
+    monkeypatch.setattr(worker_main, "AgentManager", FakeManager)
+    config = {
+        "agent_id": "chat_agent",
+        "run_id": "run-1",
+        "workspace_dir": str(tmp_path),
+        "agent_init": {},
+        "llm": {"model": "disabled"},
+        "embedding": {},
+        "mcp": {},
+        "credentials": {"llm_api_key": "pipe-secret"},
+    }
+
+    result = await worker_main._run_with_shared_agent_manager(config, "hello")
+
+    spec = captured["spec"]
+    assert isinstance(spec, AgentSpec)
+    assert result == "managed result"
+    assert captured["agent_id"] == "dashboard-run"
+    assert captured["inputs"] == "hello"
+    assert captured["closed"] is True
+    assert (
+        spec.factory == "ursa_dashboard.worker_main:_dashboard_process_factory"
+    )
+    assert spec.config == config
+
+
+@pytest.mark.asyncio
+async def test_dashboard_worker_runs_demo_through_shared_agent_manager(
+    tmp_path,
+) -> None:
+    result = await worker_main._run_with_shared_agent_manager(
+        {
+            "agent_id": "demo_quick",
+            "run_id": "run-1",
+            "workspace_dir": str(tmp_path),
+            "agent_init": {},
+            "llm": {"model": "disabled"},
+            "embedding": {},
+            "mcp": {},
+            "credentials": {},
+        },
+        "hello",
+    )
+
+    assert "DemoQuickAgent finished" in result
+    assert (tmp_path / "artifacts" / "demo_output.txt").is_file()

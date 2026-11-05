@@ -307,7 +307,7 @@ async def test_output_lists_scale_with_iterations(tmpdir):
 
 @pytest.mark.asyncio
 async def test_chained_runs_report_real_iterations_only(tmpdir):
-    # Chaining a second run on the first run's returned state (the HITL
+    # Chaining a second run on the first run's returned state (the AgentRuntime
     # pattern) must report exactly the real iterations, with each report
     # section attributed to its own iteration's content.
     agent = DeepReviewAgent(

@@ -219,8 +219,9 @@ class TextualEventHandler(AsyncCallbackHandler):
     async def on_llm_end(
         self, response: Any, *, metadata: Any = None, **_: Any
     ) -> None:
-        # Ollama may only expose its allocated window after the first response.
-        await asyncio.to_thread(refresh_ollama_context, self.app.hitl.model)
+        model = getattr(self.app.runtime, "model", None)
+        if model is not None:
+            await asyncio.to_thread(refresh_ollama_context, model)
         usage = _token_usage_breakdown(response)
         if self.app.is_ui_thread:
             await self.app.add_agent_tokens(

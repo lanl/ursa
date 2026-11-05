@@ -18,6 +18,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _routing_tool_error(error: BaseException) -> ToolException | None:
+    """Translate invalid hierarchy addresses into recoverable tool failures."""
+    message = str(error)
+    if isinstance(error, (KeyError, TypeError)) or any(
+        phrase in message.casefold()
+        for phrase in (
+            "unknown agent path",
+            "agent path cannot be empty",
+            "root agent has no parent",
+            "path escapes hierarchy root",
+            "cannot synchronously message",
+        )
+    ):
+        return ToolException(message)
+    return None
+
+
 async def _notify_callbacks(
     config: Mapping[str, Any] | None,
     method_name: str,
@@ -47,43 +64,7 @@ async def _notify_callbacks(
 def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
     """Build hierarchy tools bound to ``agent`` as their caller."""
 
-    @tool
-    def spawn_agent(name: str) -> str:
-        """Spawn a child agent and return its full hierarchy path.
-
-        The name is a single path component. It is joined to the launching
-        agent's path, so a child named ``reviewer`` launched by ``root`` is
-        addressed as ``root/reviewer``.
-        """
-        try:
-            child = agent.spawn_subagent(name)
-        except SubagentLimitError as exc:
-            raise ToolException(str(exc)) from exc
-        return f"Spawned agent {child.agent_path}"
-
-    @tool
-    async def send_message(target: str, message: str) -> str:
-        """Send a message to another agent and wait for its response.
-
-        Target may be a relative path, a sibling name, or a root-qualified path
-        such as ``root/reviewer``. Independent tool calls to different agents
-        may run concurrently.
-        """
-        recipient = agent.resolve_agent(target)
-        if recipient is agent:
-            raise ValueError("An agent cannot synchronously message itself")
-
-        # Waiting on an ancestor that is currently waiting for this agent would
-        # deadlock. Child and sibling requests are safe and cover delegation.
-        ancestor = agent.parent_agent
-        while ancestor is not None:
-            if recipient is ancestor:
-                raise ValueError(
-                    "Cannot synchronously message an ancestor; send work to "
-                    "a child or sibling agent instead"
-                )
-            ancestor = ancestor.parent_agent
-
+    async def request_local_agent(recipient: BaseAgent, message: str) -> Any:
         current = agent.current_message
         config = dict(current.config) if current is not None else None
         started = False
@@ -109,6 +90,7 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
                 on_start=on_start,
             )
             succeeded = True
+            return result
         finally:
             if started:
                 await _notify_callbacks(
@@ -118,22 +100,99 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
                     succeeded=succeeded,
                     message_id=message_id,
                 )
-        if isinstance(result, Mapping):
-            try:
-                return recipient.format_result(result)
-            except (
-                KeyError,
-                TypeError,
-                ValueError,
-                AttributeError,
-                NotImplementedError,
-            ):
-                pass
-        return _stringify_result(result)
 
     @tool
-    def list_agents() -> str:
+    async def spawn_agent(
+        name: str,
+        message: str,
+        agent_type: str | None = None,
+    ) -> str:
+        """Spawn a child, send its initial task immediately, and return its reply.
+
+        The name is a single path component. It is joined to the launching
+        agent's path, so a child named ``reviewer`` launched by ``root`` is
+        addressed as ``root/reviewer``. The call waits for the child's reply.
+        In a managed runtime, ``agent_type`` optionally selects the configured
+        URSA agent implementation; omit it to inherit the caller's type.
+        """
+        try:
+            runtime = getattr(agent, "_process_runtime", None)
+            if runtime is not None:
+                path, result = await runtime.spawn_subagent(
+                    name, message, agent_type
+                )
+            else:
+                if agent_type is not None:
+                    raise ToolException(
+                        "agent_type selection requires a managed AgentRuntime"
+                    )
+                child = agent.spawn_subagent(name)
+                path = child.agent_path
+                result = await request_local_agent(child, message)
+        except SubagentLimitError as exc:
+            raise ToolException(str(exc)) from exc
+        except RuntimeError as exc:
+            # Runtime policy failures cross the process boundary as a generic
+            # runtime error. They remain recoverable tool failures so the
+            # invoking model can revise its delegation plan.
+            if not any(
+                term in str(exc).casefold()
+                for term in ("subagent", "agent_type")
+            ):
+                raise
+            raise ToolException(str(exc)) from exc
+        return f"Spawned agent {path}\n\n{_format_agent_result(child if runtime is None else None, result)}"
+
+    @tool
+    async def send_message(target: str, message: str) -> str:
+        """Send a message to another agent and wait for its response.
+
+        Target may be a relative path, a sibling name, or a root-qualified path
+        such as ``root/reviewer``. Independent tool calls to different agents
+        may run concurrently.
+        """
+        runtime = getattr(agent, "_process_runtime", None)
+        if runtime is not None:
+            try:
+                return _stringify_result(
+                    await runtime.send_message(target, message)
+                )
+            except RuntimeError as exc:
+                if tool_error := _routing_tool_error(exc):
+                    raise tool_error from exc
+                raise
+
+        try:
+            recipient = agent.resolve_agent(target)
+        except (KeyError, TypeError) as exc:
+            raise ToolException(str(exc)) from exc
+        if recipient is agent:
+            raise ToolException("An agent cannot synchronously message itself")
+
+        # Waiting on an ancestor that is currently waiting for this agent would
+        # deadlock. Child and sibling requests are safe and cover delegation.
+        ancestor = agent.parent_agent
+        while ancestor is not None:
+            if recipient is ancestor:
+                raise ToolException(
+                    "Cannot synchronously message an ancestor; send work to "
+                    "a child or sibling agent instead"
+                )
+            ancestor = ancestor.parent_agent
+
+        result = await request_local_agent(recipient, message)
+        return _format_agent_result(recipient, result)
+
+    @tool
+    async def list_agents() -> str:
         """List all agents in the hierarchy and mark the calling agent."""
+        runtime = getattr(agent, "_process_runtime", None)
+        if runtime is not None:
+            paths = await runtime.list_agents()
+            return "\n".join(
+                f"{path}{' (self)' if path == agent.agent_path else ''}"
+                for path in paths
+            )
         entries = []
         for member in agent.root_agent.walk_agents():
             suffix = " (self)" if member is agent else ""
@@ -147,3 +206,18 @@ def _stringify_result(result: Any) -> str:
     if isinstance(result, str):
         return result
     return repr(result)
+
+
+def _format_agent_result(agent: BaseAgent | None, result: Any) -> str:
+    if agent is not None and isinstance(result, Mapping):
+        try:
+            return agent.format_result(result)
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            AttributeError,
+            NotImplementedError,
+        ):
+            pass
+    return _stringify_result(result)

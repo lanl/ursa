@@ -86,7 +86,7 @@ and other installations, use the same package manager that installed URSA;
 
 ## Python callback API
 
-::: ursa.cli.callbacks.HITLLogEventHandler
+::: ursa.cli.callbacks.AgentLogEventHandler
     options:
       show_root_heading: true
       show_source: true

@@ -2,7 +2,6 @@ import asyncio
 import os
 import sys
 from collections.abc import Mapping
-from copy import deepcopy
 from datetime import timedelta
 from typing import Annotated, Any
 
@@ -13,10 +12,10 @@ from mcp.client.session_group import (
     SseServerParameters,
     StreamableHttpParameters,
 )
-from pydantic import BaseModel, BeforeValidator, TypeAdapter, ValidationError
+from pydantic import BaseModel, BeforeValidator, ValidationError
 
 from ursa.util.http import build_mcp_httpx_async_client
-from ursa.util.secrets import SecretTemplate
+from ursa.util.secrets import SecretReference
 
 
 class UrsaMCPClient(MultiServerMCPClient):
@@ -73,7 +72,7 @@ def validate_server_parameters(config: dict):
     payload = {k: v for k, v in config.items() if k != "transport"}
     if isinstance(headers := payload.get("headers"), dict):
         payload["headers"] = {
-            name: SecretTemplate.maybe_validate(value)
+            name: SecretReference.maybe_validate(value)
             for name, value in headers.items()
         }
     if transport_hint == "stdio":
@@ -93,25 +92,28 @@ def validate_server_parameters(config: dict):
                 return candidate(**payload)
             except ValidationError:
                 continue
+        else:
+            raise ValueError(
+                f"Unable to determine transport for MCP server '{config}'. "
+                "Provide 'transport' with one of: stdio, sse, streamable_http."
+            )
+    else:
         raise ValueError(
-            f"Unable to determine transport for MCP server '{config}'. "
-            "Provide 'transport' with one of: stdio, sse, streamable_http."
+            f"Unsupported MCP transport '{transport_hint}' for server '{config}'."
         )
-    raise ValueError(
-        f"Unsupported MCP transport '{transport_hint}' for server '{config}'."
-    )
 
 
 ServerParameters = Annotated[
     StdioServerParameters | SseServerParameters | StreamableHttpParameters,
     BeforeValidator(validate_server_parameters),
 ]
-_SERVER_PARAMETERS_ADAPTER = TypeAdapter(ServerParameters)
 
 
 def parse_server_parameters(config: Any) -> ServerParameters:
-    """Parse one MCP server with the canonical runtime configuration type."""
-    return _SERVER_PARAMETERS_ADAPTER.validate_python(deepcopy(config))
+    """Parse one serialized MCP server configuration."""
+    if isinstance(config, BaseModel):
+        return config
+    return validate_server_parameters(dict(config))
 
 
 def transport(sp: ServerParameters) -> str:
@@ -121,16 +123,17 @@ def transport(sp: ServerParameters) -> str:
         return "streamable_http"
     elif isinstance(sp, SseServerParameters):
         return "sse"
-    raise RuntimeError("Transport for {sp} is unknown")
+    else:
+        raise RuntimeError("Transport for {sp} is unknown")
 
 
 def start_mcp_client(
-    server_configs: dict[str, ServerParameters | dict],
+    server_configs: Mapping[str, ServerParameters | dict],
 ) -> UrsaMCPClient:
     client_config = {}
     for server, config in server_configs.items():
         if not isinstance(config, BaseModel):
-            config = parse_server_parameters(config)
+            config = validate_server_parameters(dict(**config))
         connection = {
             **config.model_dump(),
             "transport": transport(config),
@@ -148,16 +151,39 @@ def start_mcp_client(
 
 def _resolve_header(value, server_name: str):
     """Resolve a typed secret template in an MCP HTTP header."""
-    if isinstance(value, dict):
-        value = SecretTemplate.model_validate(value)
-    if isinstance(value, SecretTemplate):
-        rendered = value.get_secret_value(server_name)
+    reference = (
+        SecretReference.model_validate(value)
+        if isinstance(value, dict)
+        else value
+    )
+    if isinstance(reference, SecretReference):
+        rendered = reference.bind_keyring_name(server_name).get_secret_value()
         if rendered is None:
             raise ValueError(
                 f"Secret for MCP server '{server_name}' is not set"
             )
         return rendered
     return value
+
+
+def _serialize_server_config(
+    config: ServerParameters,
+    *,
+    exclude_defaults: bool = True,
+    exclude_none: bool = True,
+):
+    """Internal: serialize MCP ServerParameters in a yaml/json compatible way"""
+    config = {
+        "transport": transport(config),
+        **config.model_dump(
+            exclude_defaults=exclude_defaults,
+            exclude_none=exclude_none,
+        ),
+    }
+    for k, v in config.items():
+        if isinstance(v, timedelta):
+            config[k] = v.total_seconds()
+    return config
 
 
 def serialize_server_parameters(
@@ -167,20 +193,13 @@ def serialize_server_parameters(
     exclude_none: bool = True,
     exclude_unset: bool = False,
 ):
-    """Serialize MCP server parameters for a YAML/JSON config boundary."""
-    serialized = {
-        "transport": transport(config),
-        **config.model_dump(
-            exclude_defaults=exclude_defaults,
-            exclude_none=exclude_none,
-            exclude_unset=exclude_unset,
-        ),
-    }
-    for k, v in serialized.items():
-        if isinstance(v, timedelta):
-            serialized[k] = v.total_seconds()
-    return serialized
-
-
-# Backwards-compatible private spelling retained for downstream imports.
-_serialize_server_config = serialize_server_parameters
+    """Serialize typed MCP parameters for configuration files."""
+    values = _serialize_server_config(
+        config,
+        exclude_defaults=exclude_defaults,
+        exclude_none=exclude_none,
+    )
+    if exclude_unset:
+        allowed = set(config.model_fields_set) | {"transport"}
+        values = {key: value for key, value in values.items() if key in allowed}
+    return values

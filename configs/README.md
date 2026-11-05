@@ -2,7 +2,7 @@
 
 > Note: The contents of this folder will be moved to the URSA documentation in the near future
 
-The Ursa HITL can be configured via CLI flags, environmental variables or by passing a configuration file:
+The URSA agents can be configured via CLI flags, environmental variables or by passing a configuration file:
 
 ```shell
 > ursa --llm_model.model openai:gpt-5
@@ -27,12 +27,12 @@ Configuration files can be provided in [JSON](https://www.json.org/) or [YAML](h
 
 ## Configuring Agents
 
-Set per-agent options under `agent_config`, keyed by the agent's HITL command
-name. See the [configuration guide](https://lanl.github.io/ursa/configuration/)
-for an example.
+Set per-agent options under `agent_config`, keyed by the agent's short name.
+See the [configuration guide](https://lanl.github.io/ursa/configuration/) for
+an example.
 
 The current agent configuration (excluding defaults) can be viewed using the `agents` command
-from URSA's HITL (run `ursa` then type `agents`).
+from URSA's interactive TUI (run `ursa` then type `/agents`).
 
 ## Configuring MCP Servers
 

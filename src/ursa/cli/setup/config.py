@@ -26,7 +26,7 @@ from ursa.cli.config import (
 )
 from ursa.util import get_keyring
 from ursa.util.mcp import ServerParameters
-from ursa.util.secrets import KEYRING_SERVICE, SecretReference, SecretTemplate
+from ursa.util.secrets import KEYRING_SERVICE, SecretReference
 
 # The compact layout keeps this setup-specific boundary proportional to the
 # canonical config machinery it delegates to.
@@ -133,7 +133,7 @@ def reject_literal_secrets(
         ):
             item["keyring"] = True
         if name and _SENSITIVE_NAME.search(name):
-            reference = SecretTemplate.maybe_validate(item)
+            reference = SecretReference.maybe_validate(item)
             if not (
                 isinstance(reference, SecretReference)
                 or isinstance(item, str)

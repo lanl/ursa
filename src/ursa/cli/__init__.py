@@ -155,12 +155,12 @@ def build_parser() -> ArgumentParser:
     return parser
 
 
-def _initialize_hitl(config: UrsaConfig):
+def _initialize_runtime(config: UrsaConfig):
     """Create the runtime and report its contextual validation error cleanly."""
-    from ursa.cli.runtime import HITL
+    from ursa.runtime import AgentRuntime
 
     try:
-        return HITL(config)
+        return AgentRuntime(config)
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
         raise SystemExit(2) from None
@@ -314,12 +314,12 @@ def main(args=None):
         case None:
             from ursa.cli.tui.app import run_textual
 
-            hitl = _initialize_hitl(ursa_config)
-            run_textual(hitl)
+            runtime = _initialize_runtime(ursa_config)
+            run_textual(runtime)
 
         case "mcp-server":
-            hitl = _initialize_hitl(ursa_config)
-            mcp = hitl.as_mcp_server()
+            runtime = _initialize_runtime(ursa_config)
+            mcp = runtime.as_mcp_server()
 
             run_kwargs = {
                 "transport": cmd_config.transport,
@@ -330,10 +330,10 @@ def main(args=None):
                 run_kwargs["port"] = cmd_config.port
             mcp.run(**run_kwargs)
         case "exec":
-            from ursa.cli.tui.app import run_textual_once
+            from ursa.cli.tui.app import prompt_agent_once
 
-            hitl = _initialize_hitl(ursa_config)
-            run_textual_once(hitl, cmd_config.prompt)
+            runtime = _initialize_runtime(ursa_config)
+            prompt_agent_once(runtime, cmd_config.prompt)
         case _:
             logging.error(f"Unknown subcommand {subcommand}")
             raise NotImplementedError

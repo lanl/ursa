@@ -380,14 +380,6 @@ ModelScreen SelectCurrent {
     text-style: bold;
 }
 
-.agent-progress-heading {
-    height: auto;
-    margin-top: 1;
-    padding: 0 2;
-    color: $text-muted;
-    text-style: bold;
-}
-
 .message-body {
     height: auto;
     background: transparent;
@@ -474,6 +466,49 @@ ModelScreen SelectCurrent {
     height: 1;
     overflow: hidden hidden;
     text-overflow: ellipsis;
+}
+
+.agent-tool-title {
+    height: 1;
+    padding: 0 1;
+    text-style: bold;
+    color: $accent;
+}
+
+.agent-tool-summary {
+    height: 1;
+    padding: 0 1;
+}
+
+.agent-tool-state {
+    width: 4;
+    color: $primary;
+}
+
+.agent-tool-preview {
+    width: 1fr;
+    height: 1;
+    overflow: hidden hidden;
+    text-overflow: ellipsis;
+}
+
+.agent-tool-details {
+    height: auto;
+    margin: 0 1;
+    padding: 0 1;
+    border-left: thick $accent-muted;
+}
+
+.agent-tool-detail-title {
+    height: 1;
+    color: $text-muted;
+    text-style: bold;
+}
+
+.agent-tool-task,
+.agent-tool-result {
+    height: auto;
+    margin-bottom: 1;
 }
 
 .tool-call-details {

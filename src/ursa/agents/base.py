@@ -26,7 +26,7 @@ import sqlite3
 from abc import ABC, abstractmethod
 from contextvars import ContextVar, copy_context
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 from pathlib import Path
 from threading import RLock
@@ -297,6 +297,8 @@ class AsyncMessageMixin:
     @property
     def agent_path(self) -> str:
         """Return this agent's slash-delimited path from the root."""
+        if runtime_path := getattr(self, "_runtime_agent_path", None):
+            return str(runtime_path)
         names: list[str] = []
         current: BaseAgent | None = self  # type: ignore[assignment]
         seen: set[int] = set()
@@ -411,6 +413,26 @@ class AsyncMessageMixin:
         queues retain their original message order without inventing an empty
         user message solely to stop the current model call.
         """
+        inbox = self._message_inbox
+        if inbox is not None:
+            pending: list[_QueuedAgentMessage | object] = []
+            while True:
+                try:
+                    item = inbox.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                inbox.task_done()
+                pending.append(item)
+            for item in pending:
+                if isinstance(item, _QueuedAgentMessage):
+                    item.message = replace(
+                        item.message,
+                        system_message=DEFAULT_INTERRUPT_MESSAGE,
+                    )
+                    break
+            for item in pending:
+                inbox.put_nowait(item)
+
         owner = self._async_invocation_owner or self._active_message_task
         current = asyncio.current_task()
         if owner is None or owner is current or owner.done():

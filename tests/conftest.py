@@ -169,12 +169,6 @@ def _stub_model_init(monkeypatch, request):
         "langchain.embeddings.init_embeddings", fake_init_embeddings
     )
     monkeypatch.setattr(
-        "ursa.cli.runtime.init_chat_model", fake_init_chat_model, raising=False
-    )
-    monkeypatch.setattr(
-        "ursa.cli.runtime.init_embeddings", fake_init_embeddings, raising=False
-    )
-    monkeypatch.setattr(
         "ursa.cli.config.init_chat_model",
         fake_init_chat_model,
         raising=False,

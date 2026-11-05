@@ -61,14 +61,25 @@ assert reviewer.agent_path == "root/reviewer"
 
 Every `ChatAgent` also exposes three hierarchy tools to its model:
 
-- `spawn_agent(name)` creates a child whose path is the caller's path joined
-  with `name`, such as `root/researcher`.
+- `spawn_agent(name, message, agent_type=None)` creates a child whose path is
+  the caller's path joined with `name`, immediately sends its initial task,
+  and returns the child's response. In `AgentRuntime`, `agent_type` selects a
+  configured URSA agent implementation; omitting it inherits the caller's
+  type. The host validates the requested type before it launches the child.
 - `send_message(target, message)` asks a child or sibling agent to handle work
   and returns its response.
 - `list_agents()` lists the current hierarchy and marks the calling agent.
 
 Multiple `send_message` tool calls targeting different agents can execute
 concurrently in one tool-calling round.
+
+When agents run through `AgentRuntime` (including the CLI and TUI), each
+dynamically spawned subagent is registered with the runtime manager and runs in
+its own supervised process. The host owns hierarchy limits, routing, status,
+and shutdown, and resolves secrets before configuration crosses a process
+boundary; model objects and agent state remain inside their processes.
+Direct library-created hierarchies retain the lightweight in-process behavior
+shown above.
 
 Call `await lead.stop_message_loop(descendants=True)` when an application owns
 the hierarchy outside a managed URSA runtime.

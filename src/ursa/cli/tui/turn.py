@@ -14,6 +14,7 @@ from textual.widgets import Static
 
 from ursa.cli.tui.event_cards import (
     AgentEventCard,
+    AgentToolCard,
     ArtifactCard,
     EditCard,
     EventCard,
@@ -57,7 +58,7 @@ class Turn(Static):
         self._commands: list[RunCommandCard] = []
         self._commands_by_id: dict[str, RunCommandCard] = {}
         self._commands_overlapped = False
-        self._tool_calls_by_id: dict[str, ToolCallCard] = {}
+        self._tool_calls_by_id: dict[str, ToolCallCard | AgentToolCard] = {}
         self._edits_by_id: dict[str, EditCard] = {}
         self._summary_count = 0
         self._summary_cards: dict[str, EventCard] = {}
@@ -72,12 +73,7 @@ class Turn(Static):
         self.card_details_expanded = False
 
     def compose(self) -> ComposeResult:
-        if self.progress_only:
-            yield Static(
-                f"Subagent progress · {self.agent_path}",
-                classes="agent-progress-heading",
-            )
-        else:
+        if not self.progress_only:
             yield MessageCard("user", self.prompt)
         yield Vertical(classes="events hidden")
         activity = ActivityIndicator()
@@ -323,7 +319,12 @@ class Turn(Static):
                 if key not in ignored
             }
             key = self._next_summary_key("tool")
-            card = ToolCallCard(key, str(payload.get("tool")), tool_input)
+            tool = str(payload.get("tool"))
+            card = (
+                AgentToolCard(key, tool, tool_input)
+                if tool in {"spawn_agent", "send_message", "list_agents"}
+                else ToolCallCard(key, tool, tool_input)
+            )
             await self._replace_or_mount(key, card)
             if run_id:
                 self._tool_calls_by_id[run_id] = card

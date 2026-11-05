@@ -48,7 +48,7 @@ from ursa.util.mcp import (
 from ursa.util.mcp import (
     serialize_server_parameters as dump_mcp,
 )
-from ursa.util.secrets import KEYRING_SERVICE, SecretReference, SecretTemplate
+from ursa.util.secrets import KEYRING_SERVICE, SecretReference
 
 CUSTOM_PROVIDER_URL = "__ursa_custom_provider_url__"
 PROVIDER_DEFAULT_URL = "__ursa_provider_default_url__"
@@ -89,10 +89,10 @@ def _quiet(callback: Callable[..., Any], *args: Any) -> Any:
     return None
 
 
-def _auth(config: ServerParameters) -> tuple[str, SecretTemplate | None]:
+def _auth(config: ServerParameters) -> tuple[str, SecretReference | None]:
     headers = getattr(config, "headers", None) or {}
     for header, value in headers.items():
-        if isinstance(value, SecretTemplate):
+        if isinstance(value, SecretReference):
             return str(header), value
     return "Authorization", None
 

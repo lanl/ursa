@@ -45,10 +45,10 @@ from ursa.cli.config import (
     InferenceProviderConfig,
     ModelConfig,
 )
-from ursa.cli.runtime import HITL
 from ursa.cli.tui.agent_info import AgentDetails, ToolDetails, load_agent_tools
 from ursa.cli.tui.helpers import _fuzzy_score
 from ursa.cli.tui.tips import random_tip
+from ursa.runtime import AgentRuntime
 from ursa.util.inference_providers import (
     ModelLister,
     ProviderConfig,
@@ -906,6 +906,18 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
             exclusive=True,
         )
 
+    def _model_discovery_config(
+        self, prefix: str, inference_provider: str
+    ) -> ModelConfig:
+        """Build a model-shaped discovery config for a provider selection."""
+        draft = self.drafts[prefix]
+        if inference_provider not in self.providers:
+            return draft
+        selected = draft.model_copy(
+            update={"inference_provider": inference_provider}
+        )
+        return selected.resolve_inference_provider(self.providers)
+
     async def _load_models(
         self,
         prefix: str,
@@ -966,7 +978,7 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
             return
         prefix = event.select.id.removesuffix("-inference-provider")
         self._structured_controls_changed(prefix)
-        config = self.providers.get(event.value, self.drafts[prefix])
+        config = self._model_discovery_config(prefix, event.value)
         self._request_model_load(prefix, config)
 
     @on(Select.Changed, "#chat-model-provider, #embedding-model-provider")
@@ -1093,8 +1105,8 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         finally:
             self._syncing_controls = False
         if inference_provider != previous_inference_provider:
-            provider_config = self.providers.get(
-                str(inference_provider), config
+            provider_config = self._model_discovery_config(
+                prefix, str(inference_provider)
             )
             self._request_model_load(prefix, provider_config)
 
@@ -1367,10 +1379,12 @@ class AgentToolDetails(Collapsible):
 class AgentsScreen(InformationScreen):
     """Tabbed descriptions and configured-tool details for all agents."""
 
-    def __init__(self, agents: tuple[AgentDetails, ...], hitl: HITL) -> None:
+    def __init__(
+        self, agents: tuple[AgentDetails, ...], runtime: AgentRuntime
+    ) -> None:
         super().__init__("Agents", "")
         self.agents = agents
-        self.hitl = hitl
+        self.runtime = runtime
         self._tool_loads_started: set[str] = set()
         self._tool_loading_frames: dict[int, int] = {}
         self._tool_loading_timers: dict[int, Timer] = {}
@@ -1496,7 +1510,7 @@ class AgentsScreen(InformationScreen):
     async def _hydrate_tools(self, index: int) -> None:
         agent = self.agents[index]
         try:
-            tools = await load_agent_tools(self.hitl, agent.name)
+            tools = await load_agent_tools(self.runtime, agent.name)
             updated = replace(
                 agent,
                 tools=tools,
@@ -1601,10 +1615,10 @@ class WelcomeBanner(Vertical):
 / /_/ / /  (__  ) /_/ /
 \__,_/_/  /____/\__,_/"""
 
-    def __init__(self, hitl: HITL) -> None:
+    def __init__(self, runtime: AgentRuntime) -> None:
         super().__init__(id="welcome")
-        self.hitl = hitl
-        workspace = Path(self.hitl.workspace).resolve()
+        self.runtime = runtime
+        workspace = Path(self.runtime.workspace).resolve()
         try:
             relative = workspace.relative_to(Path.home())
             self.workspace_text = str(Path("~") / relative)
@@ -1661,12 +1675,12 @@ class WelcomeBanner(Vertical):
         self._fit_metadata()
 
     def _config_snapshot(self) -> Text:
-        embedding = self.hitl.config.emb_model
+        embedding = self.runtime.config.emb_model
         return Text(
             "\n".join([
-                f"LLM        {self.hitl.config.llm_model.pretty_repr()}",
+                f"LLM        {self.runtime.config.llm_model.pretty_repr()}",
                 f"Embedding  {embedding.pretty_repr() if embedding else 'none'}",
-                f"Group      {getattr(self.hitl, 'group', None) or 'default'}",
+                f"Group      {getattr(self.runtime, 'group', None) or 'default'}",
             ])
         )
 
