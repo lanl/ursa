@@ -74,12 +74,16 @@ _sandbox_exec_args_template = """
 {extra_args}
 """
 
+_sandbox_exec_deny_network = """
+(deny network*)
+""".strip()
+
 _sandbox_exec_readonly_args = """
 (version 1)
 (deny default)
 (allow process*)
 (allow file-read*)
-"""
+""".strip()
 
 
 class MacSandbox(BaseSandbox):
@@ -95,16 +99,15 @@ class MacSandbox(BaseSandbox):
         self.tmpdir = tmpdir or Path(tempfile.gettempdir()).resolve()
         self.access_network = access_network
         self.workspace = str(Path.cwd().resolve())
-        self.extra_args = []
-        if self.access_network:
-            self.extra_args.append("(allow_network*)")
         self.args = [
             "-p",
             _sandbox_exec_args_template.format(
                 cwd=self.workspace,
                 tmpdir=self.tmpdir,
-                extra_args="\n".join(self.extra_args),
-            ),
+                extra_args="(allow network*)"
+                if self.access_network
+                else _sandbox_exec_deny_network,
+            ).strip(),
         ]
 
     def is_working(self) -> bool:
