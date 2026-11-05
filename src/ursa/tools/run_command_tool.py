@@ -15,7 +15,6 @@ from ursa.sandbox import (
     MacSandbox,
     NoSandbox,
     SandboxError,
-    WindowsSandbox,
 )
 from ursa.util.events import ToolEvents
 from ursa.util.rendering import event_artifact
@@ -120,14 +119,23 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
             error="Command interrupted",
             query=query,
         ) as span:
+            access_network = os.getenv("URSA_ACCESS_NETWORK", "1") == "1"
+
             match platform.system(), prompt_level.lower():
+                # NOTE:
+                # No sandbox if URSA_SAFETY_LEVEL=yolo
+                # Sandbox with no safety checks if URSA_SAFETY_LEVEL=none
+                # Sandbox with safety checks if URSA_SAFETY_LEVEL=default
                 case _, "yolo":
                     sbx = NoSandbox(cwd=workspace_dir)
                 case "Linux", _:
-                    sbx = LinuxBwrapSandbox(cwd=workspace_dir)
+                    sbx = LinuxBwrapSandbox(
+                        cwd=workspace_dir, access_network=access_network
+                    )
                 case "Darwin", _:
-                    # TODO: Implement MacSandbox
-                    sbx = NoSandbox(cwd=workspace_dir)
+                    sbx = MacSandbox(
+                        cwd=workspace_dir, access_network=access_network
+                    )
                 case "Windows", _:
                     # TODO: Implement WindowsSandbox
                     sbx = NoSandbox(cwd=workspace_dir)

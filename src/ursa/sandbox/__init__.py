@@ -63,7 +63,89 @@ class NoSandbox(BaseSandbox):
 class WindowsSandbox(BaseSandbox): ...
 
 
-class MacSandbox(BaseSandbox): ...
+_sandbox_exec_args_template = """
+(version 1)
+(deny default)
+(allow process*)
+(allow file-read*)
+(allow file-write*
+  (subpath \"{cwd}\")
+  (subpath \"{tmpdir}\"))
+{extra_args}
+"""
+
+_sandbox_exec_readonly_args = """
+(version 1)
+(deny default)
+(allow process*)
+(allow file-read*)
+"""
+
+
+class MacSandbox(BaseSandbox):
+    """Sandbox-exec Sandbox via sandbox-exec on MacOS."""
+
+    sbx_path = shutil.which("sandbox-exec")
+
+    def __init__(
+        self, cwd: Path, access_network: bool = True, tmpdir: Path | None = None
+    ):
+        self.cwd = cwd
+        self.shell = os.getenv("SHELL", "/bin/zsh")
+        self.tmpdir = tmpdir or Path(tempfile.gettempdir()).resolve()
+        self.access_network = access_network
+        self.workspace = str(Path.cwd().resolve())
+        self.extra_args = []
+        if self.access_network:
+            self.extra_args.append("(allow_network*)")
+        self.args = [
+            "-p",
+            _sandbox_exec_args_template.format(
+                cwd=self.workspace,
+                tmpdir=self.tmpdir,
+                extra_args="\n".join(self.extra_args),
+            ),
+        ]
+
+    def is_working(self) -> bool:
+        if self.sbx_path is None:
+            return False
+
+        # Test that sandboxing works.
+        result = subprocess.run(
+            [
+                self.sbx_path,
+                "-p",
+                _sandbox_exec_readonly_args,
+                "touch",
+                "foo",
+            ],
+            check=False,
+            text=True,
+            shell=False,
+            capture_output=True,
+            cwd=Path.home(),
+        )
+
+        return (
+            result.stderr is not None
+            and "Operation not permitted" in result.stderr
+        )
+
+    def execute(self, cmd: str):
+        if self.sbx_path is None:
+            raise SandboxError("sandbox-exec not on path.")
+
+        result = subprocess.run(
+            [self.sbx_path, *self.args, "--", "/bin/bash", "-c", cmd],
+            text=True,
+            shell=False,
+            capture_output=True,
+            timeout=600000,
+            cwd=Path.cwd(),
+            check=False,
+        )
+        return result
 
 
 class LinuxBwrapSandbox(BaseSandbox):
@@ -89,6 +171,7 @@ class LinuxBwrapSandbox(BaseSandbox):
             text=True,
             shell=False,
             capture_output=True,
+            cwd=Path.home(),
         )
 
         return (
@@ -131,6 +214,9 @@ class LinuxBwrapSandbox(BaseSandbox):
             self.args += "--unshare-net"
 
     def execute(self, cmd: str):
+        if self.bwrap_path is None:
+            raise SandboxError("bwrap not on path.")
+
         result = subprocess.run(
             [self.bwrap_path, *self.args, self.shell, "-c", cmd],
             text=True,
