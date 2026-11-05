@@ -1,8 +1,8 @@
-from langchain.chat_models import init_chat_model
-
+from ursa.cli.config import UrsaConfig
 from ursa.environments import AgentTeamEnvironment
 
-llm = init_chat_model("openai:gpt-5.4-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 team = AgentTeamEnvironment.from_yaml("agent_team.yaml", llm=llm)
 result = team.invoke(
     "Compare two defensible approaches to a small data-analysis task."

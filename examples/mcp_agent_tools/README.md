@@ -17,8 +17,8 @@ explains model initialization and direct agent use.
 
 ## Prepare the example
 
-Open a terminal in this folder, install the locked environment, and set your
-OpenAI key.
+Open a terminal in this folder and install the locked environment. With the
+built-in OpenAI defaults, set your OpenAI key as shown below.
 
 === "macOS/Linux"
 
@@ -36,9 +36,9 @@ OpenAI key.
     $env:OPENAI_API_KEY = "your-api-key"
     ```
 
-The example uses URSA's default OpenAI model. Follow [models and inference
-providers](../../docs/configuration/models.md) before running it with another
-provider.
+The example loads the model and credentials from your system and user
+configuration Follow [models and inference
+providers](../../docs/configuration/models.md) to use another provider.
 
 ## Inspect the server configuration
 
@@ -64,8 +64,8 @@ Leave that process running. It serves the MCP endpoint at
 
 ## Attach and use the tool
 
-Open a second terminal in the same folder, set `OPENAI_API_KEY` there as shown
-above, and run:
+Open a second terminal in the same folder, set any credential environment
+variables required by your configured model, and run:
 
 ```bash
 uv run attach_mcp_tools.py

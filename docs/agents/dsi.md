@@ -33,7 +33,7 @@ When initializing `DSIAgent`, you can customize its behavior with these paramete
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `llm` | `BaseChatModel` | `init_chat_model("openai:gpt-5.4-mini")` | The LLM model to use  |
+| `llm` | `BaseChatModel` | required | The LLM model to use  |
 | `database_path` | str | True | Path to the dataset to load |
 | `process_images` | bool | True | Whether to extract and describe images from papers |
 | `output_mode` | str | True | Jupyter for jupyter notebooks or console |
@@ -111,9 +111,8 @@ If you want, I can load nif.db next (from the same folder) and list/preview the 
 import os
 from pathlib import Path
 
-from langchain_openai import ChatOpenAI
-
 from ursa.agents import DSIAgent
+from ursa.cli.config import UrsaConfig
 from ursa.util import Checkpointer
 
 # Get the data
@@ -124,9 +123,8 @@ run_path = os.getcwd()
 dataset_path = str(current_dir / "data/oceans_11/ocean_11_datasets.db")
 print(dataset_path)
 
-model = ChatOpenAI(
-    model="gpt-5.4", max_completion_tokens=10000, timeout=None, max_retries=2
-)
+config = UrsaConfig.user_config()
+model = config.llm_model.init_chat_model()
 
 workspace = Path("dsi_agent_example")
 dsiagent_checkpointer = Checkpointer.from_workspace(workspace)

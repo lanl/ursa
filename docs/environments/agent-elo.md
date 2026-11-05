@@ -70,10 +70,11 @@ Inside an existing async event loop, use `await env.ainvoke(...)`. Calling
 You can also create an environment without a YAML file:
 
 ```python
-from langchain.chat_models import init_chat_model
+from ursa.cli.config import UrsaConfig
 from ursa.environments import AgentEloEnvironment
 
-llm = init_chat_model(model="openai:gpt-4o-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 env = AgentEloEnvironment(
     llm=llm,
     name="method_comparison",

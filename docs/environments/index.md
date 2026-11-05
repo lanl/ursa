@@ -91,10 +91,11 @@ symposia, and persistent state so named members can build continuity over time.
 ## A minimal Python example
 
 ```python
-from langchain.chat_models import init_chat_model
+from ursa.cli.config import UrsaConfig
 from ursa.environments import AgentTeamEnvironment
 
-llm = init_chat_model(model="openai:gpt-4o-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 
 team = AgentTeamEnvironment.from_yaml(
     "examples/environments/agent_team.yaml",
@@ -111,10 +112,11 @@ print(result["messages"][-1].content if "messages" in result else result)
 The same pattern works for a symposium:
 
 ```python
-from langchain.chat_models import init_chat_model
+from ursa.cli.config import UrsaConfig
 from ursa.environments import AgentSymposiumEnvironment
 
-llm = init_chat_model(model="openai:gpt-4o-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 
 symposium = AgentSymposiumEnvironment.from_yaml(
     "examples/environments/agent_symposium.yaml",
