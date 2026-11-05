@@ -131,12 +131,40 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
                 case _, _, 0:
                     sbx = NoSandbox(cwd=workspace_dir)
                 case "Linux", _, 1:
+                    extra_writable_paths = os.getenv(
+                        "URSA_EXTRA_WRITABLE_PATHS"
+                    )
+                    if extra_writable_paths is not None:
+                        extra_writable_paths = (
+                            extra_writable_paths.strip().split(":")
+                        )
+                        extra_writable_paths = [
+                            Path(p).expanduser().resolve()
+                            for p in extra_writable_paths
+                        ]
+
                     sbx = LinuxBwrapSandbox(
-                        cwd=workspace_dir, access_network=access_network
+                        cwd=workspace_dir,
+                        access_network=access_network,
+                        extra_writable_paths=extra_writable_paths,
                     )
                 case "Darwin", _, 1:
+                    extra_writable_paths = os.getenv(
+                        "URSA_EXTRA_WRITABLE_PATHS"
+                    )
+                    if extra_writable_paths is not None:
+                        extra_writable_paths = (
+                            extra_writable_paths.strip().split(":")
+                        )
+                        extra_writable_paths = [
+                            Path(p).expanduser().resolve()
+                            for p in extra_writable_paths
+                        ]
+
                     sbx = MacSandbox(
-                        cwd=workspace_dir, access_network=access_network
+                        cwd=workspace_dir,
+                        access_network=access_network,
+                        extra_writable_paths=extra_writable_paths,
                     )
                 case "Windows", _, 1:
                     # TODO: Implement WindowsSandbox

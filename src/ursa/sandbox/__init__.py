@@ -23,7 +23,7 @@ class SandboxError(Exception):
 class BaseSandbox(ABC):
     cwd: Path
     readonly_paths: list[Path]
-    write_paths: list[Path]
+    extra_writable_paths: list[str]
     extra_args: list[str]
     timeout: int = 600000
 
@@ -42,7 +42,7 @@ class NoSandbox(BaseSandbox):
     timeout: int = 600000
 
     def __init__(self, cwd: Path):
-        self.cwd = cwd
+        self.cwd = cwd.resolve()
 
     def execute(self, cmd: str):
         result = subprocess.run(
@@ -70,13 +70,9 @@ _sandbox_exec_args_template = """
 (allow file-read*)
 (allow file-write*
   (subpath \"{cwd}\")
-  (subpath \"{tmpdir}\"))
+  (subpath \"{tmpdir}\"){extra_writable_paths})
 {extra_args}
 """
-
-_sandbox_exec_deny_network = """
-(deny network*)
-""".strip()
 
 _sandbox_exec_readonly_args = """
 (version 1)
@@ -92,21 +88,38 @@ class MacSandbox(BaseSandbox):
     sbx_path = shutil.which("sandbox-exec")
 
     def __init__(
-        self, cwd: Path, access_network: bool = True, tmpdir: Path | None = None
+        self,
+        cwd: Path,
+        access_network: bool = True,
+        tmpdir: Path | None = None,
+        extra_writable_paths: list[Path] | None = None,
     ):
-        self.cwd = cwd
+        self.cwd = cwd.resolve()
         self.shell = os.getenv("SHELL", "/bin/zsh")
         self.tmpdir = tmpdir or Path(tempfile.gettempdir()).resolve()
         self.access_network = access_network
-        self.workspace = str(Path.cwd().resolve())
+        self.workspace = str(self.cwd)
+
+        self.extra_args = []
+        self.extra_args.append(
+            "(allow network*)" if self.access_network else "(deny network*)"
+        )
+
+        self.extra_writable_paths = []
+        if extra_writable_paths:
+            for p in extra_writable_paths:
+                if p.exists():
+                    self.extra_writable_paths.append(
+                        f'\n  (subpath "{p.resolve()}")'
+                    )
+
         self.args = [
             "-p",
             _sandbox_exec_args_template.format(
                 cwd=self.workspace,
                 tmpdir=self.tmpdir,
-                extra_args="(allow network*)"
-                if self.access_network
-                else _sandbox_exec_deny_network,
+                extra_args="\n".join(self.extra_args),
+                extra_writable_paths="".join(self.extra_writable_paths),
             ).strip(),
         ]
 
@@ -183,13 +196,17 @@ class LinuxBwrapSandbox(BaseSandbox):
         )
 
     def __init__(
-        self, cwd: Path, access_network: bool = True, tmpdir: Path | None = None
+        self,
+        cwd: Path,
+        access_network: bool = True,
+        tmpdir: Path | None = None,
+        extra_writable_paths: list[Path] | None = None,
     ):
-        self.cwd = cwd
+        self.cwd = cwd.resolve()
         self.shell = os.getenv("SHELL", "bash")
         self.tmpdir = tmpdir or Path(tempfile.gettempdir()).resolve()
         self.access_network = access_network
-        self.workspace = str(Path.cwd().resolve())
+        self.workspace = str(self.cwd)
         self.args = [
             "--new-session",
             "--die-with-parent",
@@ -213,8 +230,18 @@ class LinuxBwrapSandbox(BaseSandbox):
             "--chdir",
             self.workspace,
         ]
+
+        self.extra_writable_paths = []
+        if extra_writable_paths:
+            for path in extra_writable_paths:
+                if path.exists():
+                    p = str(path.resolve())
+                    self.extra_writable_paths.extend(["--bind", p, p])
+
         if not self.access_network:
-            self.args += "--unshare-net"
+            self.args.append("--unshare-net")
+
+        self.args.extend(self.extra_writable_paths)
 
     def execute(self, cmd: str):
         if self.bwrap_path is None:
