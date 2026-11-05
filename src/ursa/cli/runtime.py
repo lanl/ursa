@@ -1,6 +1,7 @@
 # ruff: noqa: TID251
 
 import asyncio
+import inspect
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
@@ -44,6 +45,10 @@ class AgentHITL:
     _initialization_task: asyncio.Task[None] | None = field(
         default=None, init=False, repr=False
     )
+    _message_lock: asyncio.Lock = field(
+        default_factory=asyncio.Lock, init=False, repr=False
+    )
+    _interrupt_next_message: bool = field(default=False, init=False, repr=False)
 
     async def instantiate(
         self,
@@ -149,20 +154,74 @@ class AgentHITL:
                 f"The user stated: {prompt}",
             ])
 
-        # Setup the agents input state from it's current state and plain text input
-        # then invoke the agent and extract a final message from it's new state
+        return await self.message(prompt, callbacks=callbacks)
+
+    async def message(
+        self,
+        prompt: str,
+        *,
+        callbacks: Sequence[Any] | None = None,
+        interrupt: bool = False,
+        on_start: Callable[[Any], Awaitable[None] | None] | None = None,
+    ) -> str:
+        """Deliver a prompt through the agent's async inbox."""
+        if interrupt:
+            self._interrupt_next_message = False
+            return await self._message_unlocked(
+                prompt,
+                callbacks=callbacks,
+                interrupt=True,
+                on_start=on_start,
+            )
+        async with self._message_lock:
+            interrupt = self._interrupt_next_message
+            self._interrupt_next_message = False
+            return await self._message_unlocked(
+                prompt,
+                callbacks=callbacks,
+                interrupt=interrupt,
+                on_start=on_start,
+            )
+
+    def interrupt_for_queued_messages(self) -> bool:
+        """Interrupt this agent and promote its oldest waiting message."""
+        if self._agent is None:
+            raise RuntimeError("Agent not yet instantiated")
+        self._interrupt_next_message = True
+        return self._agent.interrupt_for_queued_messages()
+
+    async def _message_unlocked(
+        self,
+        prompt: str,
+        *,
+        callbacks: Sequence[Any] | None,
+        interrupt: bool,
+        on_start: Callable[[Any], Awaitable[None] | None] | None,
+    ) -> str:
+        assert self._agent is not None, "Agent not yet instantiated"
+        agent = self._agent
         query = agent.format_query(prompt, state=self.state)
-
-        invoke_config = None
-        if callbacks:
-            invoke_config = {"callbacks": list(callbacks)}
-
-        new_state = await agent.ainvoke(query, config=invoke_config)
-        msg = agent.format_result(new_state)
+        invoke_config = {"callbacks": list(callbacks)} if callbacks else None
+        if interrupt and callable(getattr(agent, "interrupt", None)):
+            new_state = await agent.interrupt(
+                query,
+                config=invoke_config,
+                on_start=on_start,
+            )
+        elif callable(getattr(agent, "request", None)):
+            new_state = await agent.request(
+                query,
+                config=invoke_config,
+                on_start=on_start,
+            )
+        else:
+            if on_start is not None:
+                started = on_start(None)
+                if inspect.isawaitable(started):
+                    await started
+            new_state = await agent.ainvoke(query, config=invoke_config)
         self.state = new_state
-
-        # Return only the result message
-        return msg
+        return agent.format_result(new_state)
 
 
 def get_base_url(model: BaseChatModel) -> str | None:
@@ -193,6 +252,12 @@ class HITL:
         validate_model_provider(self.config.llm_model, "chat")
         if self.config.emb_model is not None:
             validate_model_provider(self.config.emb_model, "embedding")
+        if self.config.subagents.llm_model is not None:
+            validate_model_provider(self.config.subagents.llm_model, "chat")
+        if self.config.subagents.embedding_model is not None:
+            validate_model_provider(
+                self.config.subagents.embedding_model, "embedding"
+            )
 
         self.model: BaseChatModel = self.config.llm_model.init_chat_model()
         enforce_model_group_policy(self.model, self.group)
@@ -203,6 +268,19 @@ class HITL:
             else None
         )
         enforce_model_group_policy(self.embedding, self.group)
+
+        self.subagent_model = (
+            self.config.subagents.llm_model.init_chat_model()
+            if self.config.subagents.llm_model is not None
+            else self.model
+        )
+        enforce_model_group_policy(self.subagent_model, self.group)
+        self.subagent_embedding = (
+            self.config.subagents.embedding_model.init_embedding()
+            if self.config.subagents.embedding_model is not None
+            else self.embedding
+        )
+        enforce_model_group_policy(self.subagent_embedding, self.group)
 
         self.mcp_client = start_mcp_client(self.config.mcp_servers)
 
@@ -249,6 +327,12 @@ class HITL:
 
         self.last_agent_result = None
         self.last_agent = None
+        self.active_agent: BaseAgent | None = None
+        self._active_agent_ready = asyncio.Event()
+        self._active_agent_wrapper: AgentHITL | None = None
+        self._subagent_states: dict[int, Any] = {}
+        self._subagent_message_locks: dict[int, asyncio.Lock] = {}
+        self._interrupt_next_subagent_messages: set[int] = set()
         self._runtime_checkpointers: list[AsyncSqliteSaver] = []
         self._transition_lock = asyncio.Lock()
         self._transition_serial_lock = asyncio.Lock()
@@ -345,6 +429,10 @@ class HITL:
         agent = self.agents[name]
         await agent.instantiate(
             llm=self.model,
+            subagent_llm=self.subagent_model,
+            subagent_embedding=self.subagent_embedding,
+            subagent_max_agents=self.config.subagents.max_agents,
+            subagent_max_depth=self.config.subagents.max_depth,
             workspace=self.workspace,
             agent_name=self.agent_name,
             group=self.group,
@@ -376,17 +464,149 @@ class HITL:
         callbacks: Sequence[Any] | None = None,
     ) -> str:
         assert name in self.agents, f"Unknown agent {name}"
-        async with self.use_agent(name) as agent:
-            msg = await agent(
+        self.active_agent = None
+        self._active_agent_wrapper = None
+        self._active_agent_ready.clear()
+        self._subagent_states.clear()
+        self._subagent_message_locks.clear()
+        self._interrupt_next_subagent_messages.clear()
+        try:
+            async with self.use_agent(name) as agent:
+                assert agent._agent is not None
+                if isinstance(agent._agent, BaseAgent):
+                    self.active_agent = agent._agent
+                    self._active_agent_wrapper = agent
+                    self._active_agent_ready.set()
+                msg = await agent(
+                    prompt,
+                    last_agent_result=self.last_agent_result,
+                    last_agent=self.last_agent,
+                    callbacks=callbacks,
+                )
+                assert isinstance(msg, str)
+                self.last_agent_result = msg
+                self.last_agent = agent._agent
+                return msg
+        except BaseException:
+            self._active_agent_ready.set()
+            raise
+
+    @property
+    def active_agent_path(self) -> str | None:
+        """Path of the current hierarchy root, if an agent has been selected."""
+        return self.active_agent.agent_path if self.active_agent else None
+
+    def subagent_paths(self) -> list[str]:
+        """Return the live active hierarchy for TUI navigation."""
+        if self.active_agent is None:
+            return []
+        root = self.active_agent.root_agent
+        return [agent.agent_path for agent in root.walk_agents()]
+
+    async def wait_for_active_agent(self) -> str:
+        """Wait for the current hierarchy root to finish initializing."""
+        await self._active_agent_ready.wait()
+        if self.active_agent is None:  # pragma: no cover - defensive
+            raise RuntimeError("No active agent hierarchy")
+        return self.active_agent.agent_path
+
+    async def run_active_agent(
+        self,
+        path: str,
+        prompt: str,
+        *,
+        callbacks: Sequence[Any] | None = None,
+        interrupt: bool = False,
+        on_start: Callable[[Any], Awaitable[None] | None] | None = None,
+    ) -> str:
+        """Message the selected agent or subagent in the active hierarchy."""
+        if self.active_agent is None:
+            raise RuntimeError("No active agent hierarchy")
+        target = self.active_agent.root_agent.resolve_agent(path)
+        if (
+            target is self.active_agent.root_agent
+            and self._active_agent_wrapper is not None
+        ):
+            result = await self._active_agent_wrapper.message(
                 prompt,
-                last_agent_result=self.last_agent_result,
-                last_agent=self.last_agent,
                 callbacks=callbacks,
+                interrupt=interrupt,
+                on_start=on_start,
             )
-            assert isinstance(msg, str)
-            self.last_agent_result = msg
-            self.last_agent = agent._agent
-            return msg
+            self.last_agent_result = result
+            self.last_agent = target
+            return result
+
+        state = self._subagent_states.get(id(target))
+        if interrupt:
+            self._interrupt_next_subagent_messages.discard(id(target))
+            result = await self._run_subagent_message(
+                target,
+                prompt,
+                state=state,
+                callbacks=callbacks,
+                interrupt=True,
+                on_start=on_start,
+            )
+        else:
+            lock = self._subagent_message_locks.setdefault(
+                id(target), asyncio.Lock()
+            )
+            async with lock:
+                interrupt = id(target) in self._interrupt_next_subagent_messages
+                self._interrupt_next_subagent_messages.discard(id(target))
+                result = await self._run_subagent_message(
+                    target,
+                    prompt,
+                    state=self._subagent_states.get(id(target)),
+                    callbacks=callbacks,
+                    interrupt=interrupt,
+                    on_start=on_start,
+                )
+        self.last_agent_result = result
+        self.last_agent = target
+        return result
+
+    async def interrupt_active_agent(self, path: str) -> bool:
+        """Interrupt current work and run all waiting messages in order."""
+        if self.active_agent is None:
+            raise RuntimeError("No active agent hierarchy")
+        target = self.active_agent.root_agent.resolve_agent(path)
+        if (
+            target is self.active_agent.root_agent
+            and self._active_agent_wrapper is not None
+        ):
+            return self._active_agent_wrapper.interrupt_for_queued_messages()
+
+        self._interrupt_next_subagent_messages.add(id(target))
+        return target.interrupt_for_queued_messages()
+
+    async def _run_subagent_message(
+        self,
+        target: BaseAgent,
+        prompt: str,
+        *,
+        state: Any,
+        callbacks: Sequence[Any] | None,
+        interrupt: bool,
+        on_start: Callable[[Any], Awaitable[None] | None] | None,
+    ) -> str:
+        query = target.format_query(prompt, state=state)
+        config = {"callbacks": list(callbacks)} if callbacks else None
+        if interrupt:
+            new_state = await target.interrupt(
+                query,
+                config=config,
+                on_start=on_start,
+            )
+        else:
+            new_state = await target.request(
+                query,
+                config=config,
+                on_start=on_start,
+            )
+        self._subagent_states[id(target)] = new_state
+        return target.format_result(new_state)
 
     async def reconfigure_model(
         self, model_name: str, inference_provider: str | None
@@ -426,6 +646,8 @@ class HITL:
                 await self._close_instantiated_agents()
                 self.model = model
                 self.config.llm_model = resolved
+                if self.config.subagents.llm_model is None:
+                    self.subagent_model = model
                 self.inference_provider = inference_provider
                 self.last_agent = None
                 self.last_agent_result = None
@@ -484,6 +706,10 @@ class HITL:
                 self.embedding = new_embedding
                 self.config.llm_model = resolved_chat
                 self.config.emb_model = resolved_embedding
+                if self.config.subagents.llm_model is None:
+                    self.subagent_model = new_chat
+                if self.config.subagents.embedding_model is None:
+                    self.subagent_embedding = new_embedding
                 self.inference_provider = chat_config.inference_provider
                 self.embedding_inference_provider = (
                     embedding_config.inference_provider
@@ -508,6 +734,12 @@ class HITL:
             agent = wrapper._agent
             if agent is None:
                 continue
+            stop_messages = getattr(agent, "stop_message_loop", None)
+            if callable(stop_messages):
+                try:
+                    await stop_messages(descendants=True, cancel=True)
+                except Exception:
+                    logging.exception("Failed to stop agent message loops")
             try:
                 await agent.aclose()
             except Exception:
@@ -518,6 +750,14 @@ class HITL:
                 logging.exception("Failed to close sync agent resources")
             wrapper._agent = None
             wrapper.state = None
+            wrapper._interrupt_next_message = False
+
+        self.active_agent = None
+        self._active_agent_ready.clear()
+        self._active_agent_wrapper = None
+        self._subagent_states.clear()
+        self._subagent_message_locks.clear()
+        self._interrupt_next_subagent_messages.clear()
 
         for checkpointer in self._runtime_checkpointers:
             try:

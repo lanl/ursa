@@ -380,6 +380,14 @@ ModelScreen SelectCurrent {
     text-style: bold;
 }
 
+.agent-progress-heading {
+    height: auto;
+    margin-top: 1;
+    padding: 0 2;
+    color: $text-muted;
+    text-style: bold;
+}
+
 .message-body {
     height: auto;
     background: transparent;
@@ -593,6 +601,39 @@ RunCommandCard.command-expanded > .event-expand-hint {
     margin: 0 1;
     border: tall $border-blurred;
     background: $surface;
+}
+
+#queued-messages {
+    height: auto;
+    max-height: 10;
+    margin: 0 1;
+    overflow-y: auto;
+    scrollbar-size-vertical: 1;
+}
+
+.queued-message {
+    height: auto;
+    min-height: 2;
+    padding: 0 2;
+    border-left: thick $border;
+    background: $panel;
+    color: $text-muted;
+    opacity: 60%;
+}
+
+.queued-message-label {
+    height: 1;
+    text-style: italic;
+}
+
+.queued-message-body {
+    height: auto;
+    background: transparent;
+}
+
+.queued-message.delivery-failed {
+    border-left: thick $error-muted;
+    opacity: 80%;
 }
 
 #prompt:focus {

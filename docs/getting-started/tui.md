@@ -57,12 +57,20 @@ the allocated window may only become available after the first response.
 | Input | Action |
 |---|---|
 | `/` | Browse application commands. Use `/keymap` for every keyboard shortcut. |
+| `/subagents` | Switch the message target within the active agent hierarchy. |
 | `#` | Choose an agent and route the message to it. |
 | `@` | Insert a workspace file or directory into the message. |
-| **Enter** | Submit the message. |
+| **Enter** | Submit the message. During active work, queue it for the selected agent. |
+| **Esc** | During active work, interrupt the selected agent and immediately send every queued message, including the current draft. With no queued messages or draft, work continues unchanged. |
 | **Shift+Enter** or **Ctrl+J** | Insert a newline. Some terminals cannot distinguish Shift+Enter, so Ctrl+J is the portable option. |
 | **Ctrl+Q** or `/exit` | Exit gracefully, waiting for an active turn to finish. |
 | **Ctrl+D** | Exit immediately without cleanup; reserve this for a stuck turn. |
+
+Messages waiting for an agent appear dimmed above the prompt. They move into
+the conversation only when that agent begins processing them.
+
+See [Async messages and subagents](../agents/async-messages.md) for the Python
+API and hierarchy addressing rules.
 
 ## 3. Chat with the assistant
 

@@ -11,6 +11,7 @@ import sys
 import threading
 import traceback
 from collections.abc import Callable, Iterable, Mapping
+from functools import partial
 from math import ceil
 from pathlib import Path
 from typing import Any, ClassVar
@@ -46,6 +47,7 @@ from ursa.cli.tui.widgets import (
     ModelScreen,
     ModelSelection,
     PromptArea,
+    QueuedMessage,
     ThemeScreen,
     ToolMessage,
     WelcomeBanner,
@@ -87,6 +89,12 @@ class UrsaTextualApp(App[None]):
             "cancel_agent",
             "Explain active-turn cancellation",
             show=False,
+        ),
+        Binding(
+            "escape",
+            "message_active_agent",
+            "Message or interrupt the active agent",
+            show=True,
         ),
         Binding(
             "super+c,ctrl+shift+c",
@@ -144,6 +152,11 @@ class UrsaTextualApp(App[None]):
         self._ui_thread_id: int | None = None
         self._turn_navigation_marker: Widget | None = None
         self._quit_after_turn = False
+        self._active_agent_runs = 0
+        self._active_agent_path: str | None = None
+        self._agent_turns: dict[str, Turn] = {}
+        self._agent_turn_lock = asyncio.Lock()
+        self._message_mode = False
         self._conversation_anchor_started = False
         self._conversation_anchor_transition = False
         self._conversation_anchor_generation = 0
@@ -154,6 +167,7 @@ class UrsaTextualApp(App[None]):
             id="conversation",
             on_release=self._cancel_conversation_anchor_transition,
         )
+        yield VerticalScroll(id="queued-messages", classes="hidden")
         yield PromptArea()
         yield Static(id="status")
 
@@ -200,6 +214,8 @@ class UrsaTextualApp(App[None]):
         ]
         if agent_name := self.hitl.config.agent_name:
             items.append(Text(f"agent {agent_name}"))
+        if self._active_agent_path:
+            items.append(Text(self._active_agent_path))
         items.append(Text(state))
         # The agent worker's tail can run while teardown is pruning the
         # tree; a bare query here crashes the worker and surfaces as
@@ -224,6 +240,130 @@ class UrsaTextualApp(App[None]):
         """Add an event without disturbing a user who has scrolled up."""
         await turn.event(data)
         self.call_after_refresh(self._anchor_conversation_if_overflowing)
+
+    async def _turn_for_agent(
+        self,
+        agent_path: str | None,
+        fallback: Turn | None = None,
+    ) -> Turn:
+        """Return the live progress turn for one hierarchy member."""
+        if not agent_path:
+            if fallback is None:  # pragma: no cover - defensive
+                raise RuntimeError("An agent path or fallback turn is required")
+            return fallback
+
+        async with self._agent_turn_lock:
+            if fallback is not None and fallback.agent_path in {
+                None,
+                agent_path,
+            }:
+                fallback.agent_path = agent_path
+                self._agent_turns[agent_path] = fallback
+                if self._active_agent_path is None:
+                    self._active_agent_path = agent_path
+                self._apply_agent_turn_visibility()
+                return fallback
+
+            if existing := self._agent_turns.get(agent_path):
+                return existing
+
+            turn = Turn(
+                "",
+                self.hitl.workspace,
+                agent_path=agent_path,
+                progress_only=True,
+            )
+            self._agent_turns[agent_path] = turn
+            conversation = self.query_one("#conversation", VerticalScroll)
+            await conversation.mount(turn)
+            turn.set_card_details_expanded(self.card_details_expanded)
+            self._apply_agent_turn_visibility()
+            return turn
+
+    async def add_agent_event(
+        self,
+        fallback: Turn,
+        agent_path: str | None,
+        data: Mapping[str, Any],
+    ) -> None:
+        """Route callback data to the hierarchy member that produced it."""
+        turn = await self._turn_for_agent(agent_path, fallback)
+        await self.add_turn_event(turn, data)
+
+    async def update_agent_activity(
+        self,
+        fallback: Turn,
+        agent_path: str | None,
+        message: str,
+    ) -> None:
+        """Update the selected agent's progress indicator."""
+        turn = await self._turn_for_agent(agent_path, fallback)
+        turn.update_activity(message)
+
+    async def add_agent_tokens(
+        self,
+        fallback: Turn,
+        agent_path: str | None,
+        usage: TokenUsage,
+    ) -> None:
+        """Record tokens on both the producing agent and the whole session."""
+        turn = await self._turn_for_agent(agent_path, fallback)
+        turn.add_tokens(usage.total_tokens)
+        self.add_tokens(usage)
+
+    async def start_agent_activity(
+        self,
+        agent_path: str,
+        *,
+        message_id: str | None = None,
+    ) -> Turn:
+        """Start a fresh progress turn for one delegated message."""
+        async with self._agent_turn_lock:
+            existing = self._agent_turns.get(agent_path)
+            if (
+                existing is not None
+                and existing.progress_only
+                and not existing.activity_finished
+                and existing.delegated_message_id is None
+            ):
+                existing.delegated_message_id = message_id
+                existing.update_activity("Working…")
+                return existing
+            turn = Turn(
+                "",
+                self.hitl.workspace,
+                agent_path=agent_path,
+                progress_only=True,
+            )
+            turn.delegated_message_id = message_id
+            self._agent_turns[agent_path] = turn
+            conversation = self.query_one("#conversation", VerticalScroll)
+            await conversation.mount(turn)
+            turn.set_card_details_expanded(self.card_details_expanded)
+            self._apply_agent_turn_visibility()
+            return turn
+
+    async def finish_agent_activity(
+        self,
+        fallback: Turn,
+        agent_path: str,
+        *,
+        succeeded: bool,
+        turn: Turn | None = None,
+    ) -> None:
+        """Finish a delegated agent's progress indicator."""
+        if turn is None:
+            turn = await self._turn_for_agent(agent_path, fallback)
+        turn.finish_activity(succeeded=succeeded)
+
+    def _apply_agent_turn_visibility(self) -> None:
+        """Show only transcript turns belonging to the selected agent."""
+        selected = self._active_agent_path
+        if selected is None:
+            return
+        for turn in self.query(Turn):
+            if turn.agent_path is not None:
+                turn.set_class(turn.agent_path != selected, "hidden")
 
     def _anchor_conversation_if_overflowing(self) -> None:
         """Smoothly reach the bottom, then follow subsequent content."""
@@ -275,18 +415,93 @@ class UrsaTextualApp(App[None]):
     async def submit_prompt(self, event: PromptArea.Submitted) -> None:
         prompt_widget = self.query_one(PromptArea)
         prompt_widget.load_text("")
-        turn = Turn(event.text, self.hitl.workspace)
+        if self._message_mode:
+            if self._active_agent_path is None:
+                if active_path := getattr(self.hitl, "active_agent_path", None):
+                    self._active_agent_path = active_path
+            await self._start_agent_message(event.text, interrupt=False)
+            return
+        if self._active_agent_path and not event.text.startswith("#"):
+            await self._start_agent_message(event.text, interrupt=False)
+            return
+        await self._start_agent_turn(event.text)
+
+    async def _mount_turn(self, prompt: str) -> Turn:
+        """Mount and initialize a conversation turn."""
+        turn = Turn(prompt, self.hitl.workspace)
+        await self._mount_existing_turn(turn)
+        return turn
+
+    async def _mount_existing_turn(self, turn: Turn) -> None:
+        """Move a constructed turn into the conversation."""
         conversation = self.query_one("#conversation", VerticalScroll)
         self._reset_conversation_auto_follow(conversation)
         await conversation.mount(turn)
         self.call_after_refresh(self._anchor_conversation_if_overflowing)
         turn.set_card_details_expanded(self.card_details_expanded)
+        if turn.agent_path is not None:
+            self._agent_turns[turn.agent_path] = turn
+        self._apply_agent_turn_visibility()
         self.current_turn = turn
         self._turn_navigation_marker = turn.query_one(".events")
         self._update_status("working")
-        prompt_widget.disabled = True
+
+    async def _queue_message(self, prompt: str) -> tuple[Turn, QueuedMessage]:
+        """Show a draft above the editor until its agent starts it."""
+        turn = Turn(
+            prompt,
+            self.hitl.workspace,
+            agent_path=self._active_agent_path,
+        )
+        queued = QueuedMessage(prompt, self._active_agent_path)
+        container = self.query_one("#queued-messages", VerticalScroll)
+        container.remove_class("hidden")
+        await container.mount(queued)
+        return turn, queued
+
+    async def _promote_queued_message(
+        self, turn: Turn, queued: QueuedMessage
+    ) -> None:
+        """Move a queued draft into the transcript once delivery starts."""
+        if self._exit or turn.is_mounted:
+            return
+        container = self.query_one("#queued-messages", VerticalScroll)
+        if queued.is_mounted:
+            await queued.remove()
+        if not list(container.children):
+            container.add_class("hidden")
+        await self._mount_existing_turn(turn)
+
+    async def _start_agent_turn(self, prompt: str) -> None:
+        turn = await self._mount_turn(prompt)
+        prompt_widget = self.query_one(PromptArea)
+        self._active_agent_path = None
+        self._message_mode = True
+        prompt_widget.placeholder = (
+            "Message active agent… Enter queues, Esc interrupts and sends queue"
+        )
+        prompt_widget.focus()
+        self._active_agent_runs += 1
         self.run_worker(
-            self._run_agent(turn, event.text), exclusive=True, group="agent"
+            self._run_agent(turn, prompt), exclusive=False, group="agent"
+        )
+
+    async def _start_agent_message(
+        self, prompt: str, *, interrupt: bool
+    ) -> None:
+        turn, queued = await self._queue_message(prompt)
+        self._active_agent_runs += 1
+        self._message_mode = True
+        self.query_one(PromptArea).focus()
+        self.run_worker(
+            self._run_active_message(
+                turn,
+                queued,
+                prompt,
+                interrupt=interrupt,
+            ),
+            exclusive=False,
+            group="agent",
         )
 
     async def _run_agent(self, turn: Turn, prompt: str) -> None:
@@ -297,26 +512,106 @@ class UrsaTextualApp(App[None]):
             response = await self.hitl.run_agent(
                 name, prompt, callbacks=[handler]
             )
+        except asyncio.CancelledError:
+            succeeded = False
+            response = "_Interrupted by the user._"
         except Exception as exc:
             succeeded = False
             await turn.add_exception(
                 exc, "".join(traceback.format_exception(exc))
             )
             response = f"**Agent failed:** `{type(exc).__name__}: {exc}`"
+        active_path = getattr(self.hitl, "active_agent_path", None)
+        if active_path:
+            self._active_agent_path = active_path
+        await self._finish_agent_run(turn, response, succeeded=succeeded)
+
+    async def _run_active_message(
+        self,
+        turn: Turn,
+        queued: QueuedMessage,
+        prompt: str,
+        *,
+        interrupt: bool,
+    ) -> None:
+        handler = TextualEventHandler(self, turn)
+        succeeded = True
+
+        async def on_start(_message: Any = None) -> None:
+            await self._promote_queued_message(turn, queued)
+
+        try:
+            run_active = getattr(self.hitl, "run_active_agent", None)
+            if not self._active_agent_path:
+                self._active_agent_path = getattr(
+                    self.hitl, "active_agent_path", None
+                )
+            if not self._active_agent_path:
+                wait_for_active = getattr(
+                    self.hitl, "wait_for_active_agent", None
+                )
+                if callable(wait_for_active):
+                    self._active_agent_path = await wait_for_active()
+            if not callable(run_active) or not self._active_agent_path:
+                raise RuntimeError("No active agent hierarchy to message")
+            turn.agent_path = self._active_agent_path
+            queued.set_target(self._active_agent_path)
+            response = await run_active(
+                self._active_agent_path,
+                prompt,
+                callbacks=[handler],
+                interrupt=interrupt,
+                on_start=on_start,
+            )
+        except asyncio.CancelledError:
+            succeeded = False
+            response = "_Interrupted by the user._"
+        except Exception as exc:
+            succeeded = False
+            if turn.is_mounted:
+                await turn.add_exception(
+                    exc, "".join(traceback.format_exception(exc))
+                )
+            response = f"**Agent failed:** `{type(exc).__name__}: {exc}`"
+        await self._finish_agent_run(
+            turn,
+            response,
+            succeeded=succeeded,
+            queued=queued,
+        )
+
+    async def _finish_agent_run(
+        self,
+        turn: Turn,
+        response: str,
+        *,
+        succeeded: bool,
+        queued: QueuedMessage | None = None,
+    ) -> None:
+        self._active_agent_runs = max(0, self._active_agent_runs - 1)
         if self._exit:
-            # App-level workers survive widget pruning (only widget-bound
-            # workers are cancelled on removal); do not touch the tree
-            # mid-teardown.
+            return
+        if not turn.is_mounted:
+            if queued is not None and queued.is_mounted:
+                queued.mark_failed(response)
+            self._settle_prompt_after_run()
             return
         turn.finish_activity(succeeded=succeeded)
         await turn.add_response(response)
         self.call_after_refresh(self._anchor_conversation_if_overflowing)
         self._turn_navigation_marker = list(turn.query(MessageCard))[-1]
+        self._settle_prompt_after_run()
+
+    def _settle_prompt_after_run(self) -> None:
+        """Refresh prompt and status state after any agent worker settles."""
         prompt_widget = self.query_one(PromptArea)
         prompt_widget.disabled = False
         prompt_widget.focus()
-        self._update_status("ready")
-        if self._quit_after_turn:
+        if not self._active_agent_runs:
+            self._message_mode = False
+            prompt_widget.placeholder = "Ask URSA…"
+        self._update_status("working" if self._active_agent_runs else "ready")
+        if self._quit_after_turn and not self._active_agent_runs:
             self.exit()
 
     def _route_prompt(self, prompt: str) -> tuple[str, str]:
@@ -324,8 +619,7 @@ class UrsaTextualApp(App[None]):
 
     def action_cancel_agent(self) -> None:
         """Explain that an active agent cannot be cancelled safely."""
-        prompt = self.query_one(PromptArea)
-        if prompt.disabled:
+        if self._active_agent_runs:
             self.notify(
                 "Cancelling an active turn is not supported. "
                 "Press Ctrl+D to abruptly quit URSA.",
@@ -333,13 +627,57 @@ class UrsaTextualApp(App[None]):
                 severity="warning",
             )
 
+    async def action_message_active_agent(self) -> None:
+        """Interrupt active work and submit every waiting user message."""
+        if not self._active_agent_runs:
+            return
+        if self._active_agent_path is None:
+            if active_path := getattr(self.hitl, "active_agent_path", None):
+                self._active_agent_path = active_path
+        prompt = self.query_one(PromptArea)
+        if not self._message_mode:
+            self._message_mode = True
+            prompt.placeholder = (
+                "Message active agent… Enter queues, "
+                "Esc interrupts and sends queue"
+            )
+            prompt.focus()
+            self._update_status("message active agent")
+            return
+
+        text = prompt.text.strip()
+        queued = bool(self.query(QueuedMessage))
+        interrupt_queue = getattr(self.hitl, "interrupt_active_agent", None)
+        if not text and (not queued or not callable(interrupt_queue)):
+            prompt.focus()
+            return
+
+        if text:
+            prompt._remember(text)
+            prompt.load_text("")
+            await self._start_agent_message(
+                text,
+                interrupt=not callable(interrupt_queue),
+            )
+
+        if not callable(interrupt_queue):
+            return
+        if self._active_agent_path is None:
+            wait_for_active = getattr(self.hitl, "wait_for_active_agent", None)
+            if callable(wait_for_active):
+                self._active_agent_path = await wait_for_active()
+        if self._active_agent_path is None:
+            raise RuntimeError("No active agent hierarchy to interrupt")
+        await interrupt_queue(self._active_agent_path)
+        prompt.focus()
+
     def action_hard_quit(self) -> None:
         """Abruptly terminate URSA without waiting for active work."""
         self.exit(130)
 
     def action_quit(self) -> None:
         """Quit after the active turn, or immediately when idle."""
-        if self.query_one(PromptArea).disabled:
+        if self._active_agent_runs:
             self._quit_after_turn = True
             self.notify(
                 "URSA will quit when the active turn finishes. "
@@ -514,6 +852,29 @@ class UrsaTextualApp(App[None]):
                 callback=lambda _: self.query_one(PromptArea).focus(),
             )
             return
+        if command == "subagents":
+            paths_getter = getattr(self.hitl, "subagent_paths", None)
+            paths = paths_getter() if callable(paths_getter) else []
+            if not paths:
+                self.notify(
+                    "No active agent hierarchy is available yet.",
+                    title="Subagents",
+                    severity="information",
+                )
+                self.query_one(PromptArea).focus()
+                return
+            active = self._active_agent_path or getattr(
+                self.hitl, "active_agent_path", None
+            )
+            choices = [
+                f"{path} — {'active' if path == active else 'available'}"
+                for path in paths
+            ]
+            await self.push_screen(
+                HotlistScreen("Subagents", choices),
+                callback=self._select_subagent,
+            )
+            return
         if command == "models":
             await self.push_screen(
                 ModelScreen(
@@ -554,9 +915,30 @@ class UrsaTextualApp(App[None]):
                     if command == "status"
                     else None
                 ),
+                subagents=(
+                    self._subagents_markdown() if command == "status" else None
+                ),
             ),
             callback=lambda _: self.query_one(PromptArea).focus(),
         )
+
+    def _select_subagent(self, choice: str | None) -> None:
+        """Select a hierarchy path for both messages and live progress."""
+        if choice:
+            self._active_agent_path = choice.split(" — ", 1)[0]
+            self._apply_agent_turn_visibility()
+            self.run_worker(
+                partial(self._turn_for_agent, self._active_agent_path),
+                exclusive=True,
+                group="agent-view",
+            )
+            self._update_status(
+                "message active agent"
+                if self._message_mode
+                else ("working" if self._active_agent_runs else "ready")
+            )
+        prompt = self.query_one(PromptArea)
+        prompt.focus()
 
     def _resolved_config_yaml(self) -> str:
         """Serialize the active, already-resolved runtime configuration."""
@@ -648,7 +1030,7 @@ class UrsaTextualApp(App[None]):
             ("Input tokens", f"{self.input_tokens:,}"),
             ("Output tokens", f"{self.output_tokens:,}"),
             ("Cached tokens", f"{self.cached_tokens:,}"),
-            ("Total tokens", f"{self.total_tokens:,}"),
+            ("Total tokens (all agents)", f"{self.total_tokens:,}"),
             ("Theme", self.theme),
             ("Workspace", str(Path(self.hitl.workspace).resolve())),
             ("Group", str(getattr(self.hitl, "group", None) or "default")),
@@ -714,6 +1096,44 @@ class UrsaTextualApp(App[None]):
                 *server_rows,
             ])
         )
+
+    def _subagents_markdown(self) -> str:
+        """Render the active hierarchy and each member's live inbox state."""
+        root = getattr(self.hitl, "active_agent", None)
+        if root is None:
+            return (
+                "## Live hierarchy\n\n"
+                "No active agent hierarchy. Start an agent to inspect its "
+                "subagents here."
+            )
+
+        lines = ["## Live hierarchy", ""]
+
+        def add_agent(agent: Any, depth: int = 0) -> None:
+            path = str(getattr(agent, "agent_path", "agent"))
+            state = self._agent_state(agent)
+            turn = self._agent_turns.get(path)
+            tokens = turn.token_usage if turn is not None else 0
+            token_text = f" · {tokens:,} tokens" if tokens else ""
+            lines.append(f"{'  ' * depth}- `{path}` — **{state}**{token_text}")
+            children = getattr(agent, "subagents", {})
+            values = children.values() if hasattr(children, "values") else ()
+            for child in values:
+                add_agent(child, depth + 1)
+
+        add_agent(root)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _agent_state(agent: Any) -> str:
+        """Return a compact state derived from an agent's actor inbox."""
+        pending = int(getattr(agent, "pending_messages", 0) or 0)
+        working = bool(getattr(agent, "is_working", False))
+        if working:
+            return f"Working ({pending} queued)" if pending else "Working"
+        if pending:
+            return f"Queued ({pending} waiting)"
+        return "Ready"
 
     @staticmethod
     def _effective_bindings(owner: type[Any]) -> list[Binding]:
@@ -825,7 +1245,7 @@ class UrsaTextualApp(App[None]):
         self._navigate_turn_markers(1)
 
     async def action_clear_conversation(self) -> None:
-        if self.query_one(PromptArea).disabled:
+        if self._active_agent_runs:
             self.notify(
                 "Clearing the conversation is not allowed while a turn is "
                 "active. Press Ctrl+D to abruptly quit URSA.",
@@ -837,6 +1257,9 @@ class UrsaTextualApp(App[None]):
         self._reset_conversation_auto_follow(conversation)
         await conversation.remove_children()
         await conversation.mount(WelcomeBanner(self.hitl))
+        queued = self.query_one("#queued-messages", VerticalScroll)
+        await queued.remove_children()
+        queued.add_class("hidden")
         conversation.scroll_home(animate=False)
         self._turn_navigation_marker = None
 

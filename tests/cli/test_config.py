@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 import ursa.cli.config as config_mod
 
@@ -29,6 +30,27 @@ def test_editable_values_preserve_explicit_nulls_and_reject_secrets():
         config_mod.UrsaConfig.model_validate({
             "llm_model": {"model": "openai:gpt-test", "api_key": "secret"}
         }).editable_values()
+
+
+def test_subagent_config_defaults_and_limit_validation():
+    config = config_mod.UrsaConfig()
+
+    assert config.subagents.max_agents == 32
+    assert config.subagents.max_depth == 3
+    assert config.subagents.llm_model is None
+    assert config.subagents.embedding_model is None
+
+    unlimited = config_mod.UrsaConfig(
+        subagents={"max_agents": None, "max_depth": None}
+    )
+    assert unlimited.subagents.max_agents is None
+    assert unlimited.subagents.max_depth is None
+
+    for field in ("max_agents", "max_depth"):
+        with pytest.raises(ValidationError, match=field):
+            config_mod.UrsaConfig(subagents={field: -1})
+        with pytest.raises(ValidationError, match="non-negative integers"):
+            config_mod.UrsaConfig(subagents={field: False})
 
 
 def test_save_config_file_uses_the_path_format(tmp_path):

@@ -484,6 +484,29 @@ def test_print_config_yaml_round_trip(tmp_path):
     assert loaded_config.model_dump() == serialized
 
 
+def test_cli_parses_subagent_limits_and_model_overrides():
+    config = _resolve_args(
+        build_parser(),
+        [
+            "--subagents.max_agents",
+            "4",
+            "--subagents.max_depth",
+            "2",
+            "--subagents.llm_model.model",
+            "openai:gpt-5-mini",
+            "--subagents.embedding_model.model",
+            "openai:text-embedding-3-small",
+        ],
+    )
+
+    assert config.subagents.max_agents == 4
+    assert config.subagents.max_depth == 2
+    assert config.subagents.llm_model is not None
+    assert config.subagents.llm_model.model == "gpt-5-mini"
+    assert config.subagents.embedding_model is not None
+    assert config.subagents.embedding_model.model == "text-embedding-3-small"
+
+
 def test_config_env_cli_precedence(tmp_path, monkeypatch):
     cfg_path = tmp_path / "ursa.yml"
     cfg_path.write_text(
@@ -1295,6 +1318,12 @@ def test_print_config_includes_defaults_and_nulls(
     assert output["agent_name"] is None
     assert output["emb_model"] is None
     assert output["agent_config"] == {}
+    assert output["subagents"] == {
+        "max_agents": 32,
+        "max_depth": 3,
+        "llm_model": None,
+        "embedding_model": None,
+    }
     for key, value in expected_model.items():
         assert output["llm_model"][key] == value
     assert output["inference_providers"]["shared"] == {

@@ -19,6 +19,7 @@ from ursa.tools import (
     write_code,
     write_experience,
 )
+from ursa.tools.agent_tools import build_agent_tools
 from ursa.tools.read_image_tool import read_image_tool
 from ursa.tools.search_tools import (
     run_arxiv_search,
@@ -96,6 +97,7 @@ class ChatAgent(AgentWithTools, BasicChatAgent):
         **kwargs,
     ):
         default_tools = [
+            *build_agent_tools(self),
             run_command,
             write_code,
             edit_code,

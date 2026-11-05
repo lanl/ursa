@@ -3,6 +3,7 @@
 """Reusable widgets and modal screens for the Textual CLI."""
 
 import asyncio
+import inspect
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -125,6 +126,13 @@ class PromptArea(TextArea):
             show=False,
             priority=True,
         ),
+        Binding(
+            "escape",
+            "message_active_agent",
+            "Message or interrupt the active agent",
+            show=False,
+            priority=True,
+        ),
     ]
 
     class Submitted(Message):
@@ -185,6 +193,11 @@ class PromptArea(TextArea):
         self.insert("\n")
 
     def action_clear_prompt(self) -> None:
+        if not self.text and getattr(self.app, "_active_agent_runs", 0):
+            explain = getattr(self.app, "action_cancel_agent", None)
+            if callable(explain):
+                explain()
+            return
         self._remember(self.text)
         self._history_index = len(self.prompt_history)
         self.load_text("")
@@ -226,6 +239,14 @@ class PromptArea(TextArea):
 
     def action_command_macro(self) -> None:
         self._insert_macro("/")
+
+    async def action_message_active_agent(self) -> None:
+        """Delegate live-message handling to the application."""
+        action = getattr(self.app, "action_message_active_agent", None)
+        if callable(action):
+            result = action()
+            if inspect.isawaitable(result):
+                await result
 
 
 class HotlistScreen(ModalScreen[str | None]):
@@ -1192,11 +1213,13 @@ class InformationScreen(ModalScreen[None]):
         content: str,
         *,
         config_yaml: str | None = None,
+        subagents: str | None = None,
     ) -> None:
         super().__init__()
         self.screen_title = title
         self.content = content
         self.config_yaml = config_yaml
+        self.subagents = subagents
 
     def compose(self) -> ComposeResult:
         with Vertical(id="information"):
@@ -1223,11 +1246,20 @@ class InformationScreen(ModalScreen[None]):
                             show_line_numbers=True,
                             id="status-config-yaml",
                         )
+                    if self.subagents is not None:
+                        with TabPane("Subagents", id="status-subagents-tab"):
+                            yield VerticalScroll(
+                                Markdown(self.subagents),
+                                id="status-subagents-body",
+                            )
 
     def action_close(self) -> None:
         self.dismiss(None)
 
     def _scroll_view(self) -> VerticalScroll:
+        tabs = self.query("#status-tabs")
+        if tabs and tabs.first().active == "status-subagents-tab":
+            return self.query_one("#status-subagents-body", VerticalScroll)
         return self.query_one("#information-body", VerticalScroll)
 
     def action_scroll_up(self) -> None:
@@ -1684,6 +1716,34 @@ class MessageCard(Static):
         blocks = list(event.markdown.children)
         if blocks:
             blocks[-1].styles.margin = 0
+
+
+class QueuedMessage(Static):
+    """A dimmed user draft waiting to reach an agent inbox."""
+
+    def __init__(self, content: str, target: str | None) -> None:
+        super().__init__(classes="queued-message")
+        self.content = content
+        self.target = target or "active agent"
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            f"Queued for {self.target}", classes="queued-message-label"
+        )
+        yield Markdown(self.content, classes="queued-message-body")
+
+    def mark_failed(self, message: str) -> None:
+        """Keep an undelivered draft visible with its failure state."""
+        self.add_class("delivery-failed")
+        label = self.query_one(".queued-message-label", Static)
+        label.update(f"Not delivered to {self.target}: {message}")
+
+    def set_target(self, target: str) -> None:
+        """Refresh the destination once an initializing agent is known."""
+        self.target = target
+        labels = self.query(".queued-message-label")
+        if labels:
+            labels.first(Static).update(f"Queued for {self.target}")
 
 
 class ToolMessage(Horizontal):

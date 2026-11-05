@@ -500,6 +500,53 @@ class EmbModelConfig(ModelConfig):
         return self._parse_model_and_provider(_BUILTIN_PROVIDERS)
 
 
+class SubagentsConfig(BaseModel):
+    """Limits and optional model overrides for dynamic subagents."""
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    max_agents: int | None = Field(default=32, ge=0)
+    """Maximum total subagents; zero disables and null is unlimited."""
+
+    max_depth: int | None = Field(default=3, ge=0)
+    """Maximum depth below the root; zero disables and null is unlimited."""
+
+    llm_model: ChatModelConfig | None = None
+    """Subagent chat model; null inherits the root chat model."""
+
+    embedding_model: EmbModelConfig | None = None
+    """Subagent embedding model; null inherits the root embedding model."""
+
+    @field_validator("max_agents", "max_depth", mode="before")
+    @classmethod
+    def _reject_boolean_limits(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("subagent limits must be non-negative integers")
+        return value
+
+    def model_merge(self, other: Self | dict[str, Any]) -> Self:
+        """Merge a sparse higher-priority subagent configuration."""
+        if isinstance(other, SubagentsConfig):
+            updates = {
+                name: deepcopy(getattr(other, name))
+                for name in other.model_fields_set
+            }
+            fields_set = self.model_fields_set | other.model_fields_set
+        else:
+            updates = deepcopy(other)
+            fields_set = self.model_fields_set | set(updates)
+
+        merged = {
+            name: deepcopy(getattr(self, name))
+            for name in type(self).model_fields
+        }
+        for name, value in updates.items():
+            merged[name] = _merge_config_values(merged.get(name), value)
+        result = type(self).model_validate(merged)
+        result.__pydantic_fields_set__ = fields_set
+        return result
+
+
 def _sparse_model_values(model: BaseModel) -> dict[str, Any]:
     """Return explicitly set model values without serializing nested models."""
     values = {
@@ -576,6 +623,9 @@ class UrsaConfig(BaseModel):
     emb_model: EmbModelConfig | None = None
     """Default Embedding model"""
 
+    subagents: SubagentsConfig = Field(default_factory=SubagentsConfig)
+    """Dynamic subagent limits and optional model overrides."""
+
     rag_tools: list[str] = Field(default_factory=list)
     """Persisted RAG agent names to bind as tools."""
 
@@ -628,8 +678,16 @@ class UrsaConfig(BaseModel):
     @model_validator(mode="after")
     def _check_inference_providers(self):
         """Ensure every model references a defined, validated provider."""
-        for field_name in ("llm_model", "emb_model"):
-            model = getattr(self, field_name)
+        models = (
+            ("llm_model", self.llm_model),
+            ("emb_model", self.emb_model),
+            ("subagents.llm_model", self.subagents.llm_model),
+            (
+                "subagents.embedding_model",
+                self.subagents.embedding_model,
+            ),
+        )
+        for field_name, model in models:
             if model is None or model.inference_provider is None:
                 continue
             if model.inference_provider not in self.inference_providers:
@@ -972,13 +1030,19 @@ def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
         for name, provider in resolved.inference_providers.items()
     }
 
-    for field_name in ("llm_model", "emb_model"):
-        model = getattr(resolved, field_name)
+    models = (
+        (resolved, "llm_model"),
+        (resolved, "emb_model"),
+        (resolved.subagents, "llm_model"),
+        (resolved.subagents, "embedding_model"),
+    )
+    for owner, field_name in models:
+        model = getattr(owner, field_name)
         if model is None:
             continue
         model = model.resolve_inference_provider(resolved.inference_providers)
         enforce_group_base_url_policy(model.base_url, resolved.group)
-        setattr(resolved, field_name, model)
+        setattr(owner, field_name, model)
 
     if str(resolved.workspace) == "tmp":
         if resolved._temp_workspace is not None:

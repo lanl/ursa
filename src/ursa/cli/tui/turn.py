@@ -35,10 +35,21 @@ from ursa.util.rendering import event_artifacts
 
 
 class Turn(Static):
-    def __init__(self, prompt: str, workspace: Path) -> None:
+    def __init__(
+        self,
+        prompt: str,
+        workspace: Path,
+        *,
+        agent_path: str | None = None,
+        progress_only: bool = False,
+    ) -> None:
         super().__init__(classes="turn")
         self.prompt = prompt
         self.workspace = Path(workspace).resolve()
+        self.agent_path = agent_path
+        self.progress_only = progress_only
+        self.activity_finished = False
+        self.delegated_message_id: str | None = None
         self.cards: dict[str, EventCard] = {}
         self.started_at = monotonic()
         self.token_usage = 0
@@ -61,10 +72,17 @@ class Turn(Static):
         self.card_details_expanded = False
 
     def compose(self) -> ComposeResult:
-        yield MessageCard("user", self.prompt)
+        if self.progress_only:
+            yield Static(
+                f"Subagent progress · {self.agent_path}",
+                classes="agent-progress-heading",
+            )
+        else:
+            yield MessageCard("user", self.prompt)
         yield Vertical(classes="events hidden")
         activity = ActivityIndicator()
-        activity.add_class("activity-after-user")
+        if not self.progress_only:
+            activity.add_class("activity-after-user")
         yield activity
         yield Static("", classes="turn-end-marker")
 
@@ -297,6 +315,7 @@ class Turn(Static):
                 "tool_message",
                 "_run_id",
                 "_received_at",
+                "_agent_path",
             }
             tool_input = {
                 key: value
@@ -451,6 +470,7 @@ class Turn(Static):
         self.token_usage += count
 
     def finish_activity(self, *, succeeded: bool = True) -> None:
+        self.activity_finished = True
         for plan in self._plan_cards:
             plan.finish_pending_review(succeeded=succeeded)
         self._finalize_summaries()

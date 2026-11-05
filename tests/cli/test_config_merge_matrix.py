@@ -220,6 +220,71 @@ def test_partial_default_provider_update_is_inherited_by_default_model():
     assert resolved.llm_model.ssl_verify is False
 
 
+def test_subagent_config_layers_merge_limits_and_model_options():
+    merged = UrsaConfig().model_merge(
+        {
+            "subagents": {
+                "max_agents": 8,
+                "llm_model": {
+                    "model": "openai:gpt-5-mini",
+                    "max_completion_tokens": 512,
+                },
+            }
+        },
+        {
+            "subagents": {
+                "max_depth": 2,
+                "llm_model": {"max_completion_tokens": 1024},
+            }
+        },
+    )
+
+    assert merged.subagents.max_agents == 8
+    assert merged.subagents.max_depth == 2
+    assert merged.subagents.llm_model is not None
+    assert merged.subagents.llm_model.model == "gpt-5-mini"
+    assert merged.subagents.llm_model.max_completion_tokens == 1024
+
+
+def test_subagent_null_limit_overrides_a_finite_limit():
+    merged = UrsaConfig().model_merge(
+        {"subagents": {"max_agents": 4, "max_depth": 2}},
+        {"subagents": {"max_agents": None, "max_depth": None}},
+    )
+
+    assert merged.subagents.max_agents is None
+    assert merged.subagents.max_depth is None
+
+
+def test_subagent_models_resolve_named_inference_providers():
+    config = UrsaConfig(
+        inference_providers={
+            "children": {"base_url": "https://children.example/v1"}
+        },
+        subagents={
+            "llm_model": {
+                "model": "openai:child-chat",
+                "inference_provider": "children",
+            },
+            "embedding_model": {
+                "model": "openai:child-embedding",
+                "inference_provider": "children",
+            },
+        },
+    )
+
+    resolved = config.resolve()
+
+    assert resolved.subagents.llm_model is not None
+    assert resolved.subagents.llm_model.base_url == (
+        "https://children.example/v1"
+    )
+    assert resolved.subagents.embedding_model is not None
+    assert resolved.subagents.embedding_model.base_url == (
+        "https://children.example/v1"
+    )
+
+
 def test_ollama_provider_base_url_reaches_runtime_model():
     """Test for Issue #358, fixed in PR#352"""
 

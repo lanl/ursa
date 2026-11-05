@@ -664,7 +664,7 @@ async def open_status_from_slash_picker(pilot):
     await await_screen(pilot, HotlistScreen)
     await pilot.press("s", "t", "a", "t", "u", "s", "enter")
     screen = await await_screen(pilot, InformationScreen)
-    await await_dom(pilot, screen, "#status-tabs Tab", count=2)
+    await await_dom(pilot, screen, "#status-tabs Tab", count=3)
     return screen
 
 
@@ -683,7 +683,15 @@ async def test_slash_picker_lists_commands_and_fits_terminal(tmp_path):
         assert "agents" in screenshot
         assert [
             candidate.partition(" — ")[0] for candidate in app.screen.candidates
-        ] == ["agents", "exit", "status", "keymap", "models", "theme"]
+        ] == [
+            "agents",
+            "exit",
+            "subagents",
+            "status",
+            "keymap",
+            "models",
+            "theme",
+        ]
 
 
 async def test_slash_picker_status_shows_runtime_details(tmp_path):
@@ -2622,6 +2630,7 @@ def test_command_details_and_keymap_come_from_live_bindings(
     keymap = app._keymap_markdown()
 
     assert "1,234" in status
+    assert "Total tokens (all agents)" in status
     assert "1,000" in status
     assert "234" in status
     assert "456" in status
@@ -2643,6 +2652,61 @@ def test_command_details_and_keymap_come_from_live_bindings(
         "Open diagnostics",
     ):
         assert expected in keymap
+
+
+def test_status_subagents_tree_reports_live_states_and_tokens(tmp_path):
+    child = SimpleNamespace(
+        agent_path="root/researcher",
+        is_working=False,
+        pending_messages=2,
+        subagents={},
+    )
+    root = SimpleNamespace(
+        agent_path="root",
+        is_working=True,
+        pending_messages=1,
+        subagents={"researcher": child},
+    )
+    hitl = FakeHITL(tmp_path)
+    hitl.active_agent = root
+    app = UrsaTextualApp(hitl)
+    app._agent_turns["root"] = SimpleNamespace(token_usage=17)
+    app._agent_turns["root/researcher"] = SimpleNamespace(token_usage=29)
+
+    hierarchy = app._subagents_markdown()
+
+    assert "`root` — **Working (1 queued)** · 17 tokens" in hierarchy
+    assert (
+        "  - `root/researcher` — **Queued (2 waiting)** · 29 tokens"
+        in hierarchy
+    )
+
+
+async def test_status_subagents_tab_shows_the_live_hierarchy(tmp_path):
+    child = SimpleNamespace(
+        agent_path="root/researcher",
+        is_working=False,
+        pending_messages=0,
+        subagents={},
+    )
+    root = SimpleNamespace(
+        agent_path="root",
+        is_working=True,
+        pending_messages=0,
+        subagents={"researcher": child},
+    )
+    hitl = status_hitl(tmp_path)
+    hitl.active_agent = root
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await open_status_from_slash_picker(pilot)
+        tabs = {str(tab.label): tab for tab in screen.query(Tab)}
+        await pilot.click(f"#{tabs['Subagents'].id}")
+        await await_dom(pilot, screen, "#status-subagents-body")
+
+        assert "`root` — **Working**" in screen.subagents
+        assert "`root/researcher` — **Ready**" in screen.subagents
 
 
 def test_keymap_omits_compatibility_warning_when_kitty_is_expected(

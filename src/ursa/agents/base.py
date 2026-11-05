@@ -24,12 +24,16 @@ import logging
 import re
 import sqlite3
 from abc import ABC, abstractmethod
+from contextvars import ContextVar, copy_context
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
+from threading import RLock
+from types import MappingProxyType
 from typing import (
     Any,
+    Awaitable,
     Callable,
     Generic,
     Iterator,
@@ -98,6 +102,8 @@ logger = logging.getLogger(__name__)
 
 InputLike = str | Mapping[str, Any]
 TState = TypeVar("TState", bound=Mapping[str, Any])
+
+_INVOKE_DEPTH: ContextVar[int] = ContextVar("ursa_invoke_depth", default=0)
 
 try:
     URSA_VERSION = importlib.metadata.version("ursa-ai")
@@ -203,11 +209,784 @@ def _render_for_summary(msgs: Sequence[BaseMessage]) -> str:
     return "\n\n".join(out)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AgentMessage:
+    """A message delivered to an agent's asynchronous inbox."""
+
+    content: InputLike
+    sender: str
+    recipient: str
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    config: Mapping[str, Any] = field(default_factory=dict, repr=False)
+    system_message: str | None = None
+    message_id: str = field(default_factory=lambda: uuid4().hex)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "metadata", MappingProxyType(dict(self.metadata))
+        )
+        object.__setattr__(self, "config", MappingProxyType(dict(self.config)))
+
+
+@dataclass(slots=True)
+class _QueuedAgentMessage:
+    message: AgentMessage
+    response: asyncio.Future[Any] | None = None
+    on_start: Callable[[AgentMessage], Awaitable[None] | None] | None = None
+
+
+_STOP_MESSAGE_LOOP = object()
+DEFAULT_INTERRUPT_MESSAGE = (
+    "The user interrupted the agent's previous work. Stop pursuing the prior "
+    "direction and respond to the new user message immediately."
+)
+
+
+class SubagentLimitError(RuntimeError):
+    """A hierarchy policy rejected creation of another subagent."""
+
+
+class AsyncMessageMixin:
+    """Actor-style async messaging and dynamic agent hierarchy support.
+
+    Each agent processes one inbox message at a time. Separate agents can run
+    concurrently, so parents and siblings can exchange messages without sharing
+    mutable invocation state.
+    """
+
+    _SUBAGENT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._parent_agent: BaseAgent | None = None
+        self._subagents: dict[str, BaseAgent] = {}
+        self._subagent_hierarchy_lock = RLock()
+        self._hierarchy_name: str | None = None
+        self._message_inbox: (
+            asyncio.Queue[_QueuedAgentMessage | object] | None
+        ) = None
+        self._message_loop_task: asyncio.Task[None] | None = None
+        self._message_event_loop: asyncio.AbstractEventLoop | None = None
+        self._message_loop_stopping = False
+        self._current_agent_message: AgentMessage | None = None
+        self._active_message_task: asyncio.Task[Any] | None = None
+        self._async_invocation_lock: asyncio.Lock | None = None
+        self._async_invocation_loop: asyncio.AbstractEventLoop | None = None
+        self._async_invocation_owner: asyncio.Task[Any] | None = None
+        super().__init__(*args, **kwargs)
+
+    @property
+    def parent_agent(self) -> BaseAgent | None:
+        """Return this agent's parent, if it has one."""
+        return self._parent_agent
+
+    @property
+    def subagents(self) -> Mapping[str, BaseAgent]:
+        """Return a read-only view of this agent's immediate children."""
+        return MappingProxyType(self._subagents)
+
+    @property
+    def hierarchy_name(self) -> str:
+        # Hierarchy paths have one stable, user-facing root regardless of the
+        # configured top-level agent implementation (for example, ``chat``).
+        if self._parent_agent is None:
+            return "root"
+        if self._hierarchy_name:
+            return self._hierarchy_name
+        return _to_snake(self.__class__.__name__)
+
+    @property
+    def agent_path(self) -> str:
+        """Return this agent's slash-delimited path from the root."""
+        names: list[str] = []
+        current: BaseAgent | None = self  # type: ignore[assignment]
+        seen: set[int] = set()
+        while current is not None:
+            if id(current) in seen:
+                raise RuntimeError("Cycle detected in agent hierarchy")
+            seen.add(id(current))
+            names.append(current.hierarchy_name)
+            current = current.parent_agent
+        return "/".join(reversed(names))
+
+    @property
+    def root_agent(self) -> BaseAgent:
+        current: BaseAgent = self  # type: ignore[assignment]
+        seen: set[int] = set()
+        while current.parent_agent is not None:
+            if id(current) in seen:
+                raise RuntimeError("Cycle detected in agent hierarchy")
+            seen.add(id(current))
+            current = current.parent_agent
+        return current
+
+    async def post_message(
+        self,
+        content: InputLike,
+        *,
+        sender: str = "user",
+        metadata: Mapping[str, Any] | None = None,
+        config: Mapping[str, Any] | None = None,
+        system_message: str | None = None,
+        on_start: Callable[[AgentMessage], Awaitable[None] | None]
+        | None = None,
+    ) -> AgentMessage:
+        """Queue a one-way message to this agent."""
+        message = self._make_agent_message(
+            content,
+            sender=sender,
+            metadata=metadata,
+            config=config,
+            system_message=system_message,
+        )
+        await self._enqueue_agent_message(message, on_start=on_start)
+        return message
+
+    async def request(
+        self,
+        content: InputLike,
+        *,
+        sender: str = "user",
+        metadata: Mapping[str, Any] | None = None,
+        config: Mapping[str, Any] | None = None,
+        system_message: str | None = None,
+        on_start: Callable[[AgentMessage], Awaitable[None] | None]
+        | None = None,
+    ) -> Any:
+        """Queue a message and wait for the agent's result."""
+        message = self._make_agent_message(
+            content,
+            sender=sender,
+            metadata=metadata,
+            config=config,
+            system_message=system_message,
+        )
+        return await self._request_agent_message(
+            message,
+            on_start=on_start,
+        )
+
+    async def interrupt(
+        self,
+        content: InputLike,
+        *,
+        sender: str = "user",
+        metadata: Mapping[str, Any] | None = None,
+        config: Mapping[str, Any] | None = None,
+        system_message: str = DEFAULT_INTERRUPT_MESSAGE,
+        on_start: Callable[[AgentMessage], Awaitable[None] | None]
+        | None = None,
+    ) -> Any:
+        """Interrupt the active async invocation and handle a new message.
+
+        The replacement input is prefixed with a system instruction explaining
+        that the user interrupted the prior work. If the agent is idle, this is
+        equivalent to :meth:`request` with that instruction.
+        """
+        message = self._make_agent_message(
+            content,
+            sender=sender,
+            metadata=metadata,
+            config=config,
+            system_message=system_message,
+        )
+        response = asyncio.get_running_loop().create_future()
+        await self._enqueue_agent_message(
+            message,
+            response=response,
+            priority=True,
+            on_start=on_start,
+        )
+
+        owner = self._async_invocation_owner or self._active_message_task
+        current = asyncio.current_task()
+        if owner is not None and owner is not current and not owner.done():
+            owner.cancel()
+        return await response
+
+    def interrupt_for_queued_messages(self) -> bool:
+        """Cancel the current handler so an already-queued message can run.
+
+        The caller is responsible for marking the oldest queued message with
+        the interruption system instruction. This split lets higher-level
+        queues retain their original message order without inventing an empty
+        user message solely to stop the current model call.
+        """
+        owner = self._async_invocation_owner or self._active_message_task
+        current = asyncio.current_task()
+        if owner is None or owner is current or owner.done():
+            return False
+        owner.cancel()
+        return True
+
+    async def send_message(
+        self,
+        target: str | BaseAgent,
+        content: InputLike,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+        config: Mapping[str, Any] | None = None,
+    ) -> AgentMessage:
+        """Send a one-way message to another agent."""
+        recipient = self.resolve_agent(target)
+        return await recipient.post_message(
+            content,
+            sender=self.agent_path,
+            metadata=metadata,
+            config=config,
+        )
+
+    async def ask_agent(
+        self,
+        target: str | BaseAgent,
+        content: InputLike,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+        config: Mapping[str, Any] | None = None,
+        on_start: Callable[[AgentMessage], Awaitable[None] | None]
+        | None = None,
+    ) -> Any:
+        """Send a message to another agent and wait for its result."""
+        recipient = self.resolve_agent(target)
+        return await recipient.request(
+            content,
+            sender=self.agent_path,
+            metadata=metadata,
+            config=config,
+            on_start=on_start,
+        )
+
+    def start_message_loop(self) -> asyncio.Task[None]:
+        """Start this agent's inbox worker in the current event loop."""
+        loop = asyncio.get_running_loop()
+        if self._message_loop_stopping:
+            raise RuntimeError(
+                "Agent inbox is stopping; try again after shutdown"
+            )
+        task = self._message_loop_task
+        if task is not None and not task.done():
+            if self._message_event_loop is not loop:
+                raise RuntimeError(
+                    "Agent inbox is active in another event loop"
+                )
+            return task
+        if self._message_event_loop is not loop:
+            if (
+                self._message_inbox is not None
+                and not self._message_inbox.empty()
+            ):
+                raise RuntimeError(
+                    "Pending messages belong to another event loop"
+                )
+            self._message_inbox = asyncio.Queue()
+            self._message_event_loop = loop
+        elif self._message_inbox is None:
+            self._message_inbox = asyncio.Queue()
+        message_context = copy_context()
+        message_context.run(_INVOKE_DEPTH.set, 0)
+        task = loop.create_task(
+            self._run_message_loop(),
+            name=f"ursa-message-loop:{self.agent_path}",
+            # A child inbox may be started from inside its parent's invocation.
+            # It is an independent actor, so it must not inherit that parent's
+            # invocation depth. Preserve unrelated context such as Textual's
+            # active-app binding, which UI callbacks need while rendering.
+            context=message_context,
+        )
+        self._message_loop_task = task
+        return task
+
+    async def wait_for_messages(self) -> None:
+        """Wait for all messages accepted by the inbox to finish."""
+        if self._message_inbox is not None:
+            await self._message_inbox.join()
+
+    async def stop_message_loop(
+        self,
+        *,
+        descendants: bool = True,
+        cancel: bool = False,
+    ) -> None:
+        """Stop this inbox, gracefully unless ``cancel`` is true."""
+        if descendants and self._subagents:
+            await asyncio.gather(
+                *(
+                    child.stop_message_loop(descendants=True, cancel=cancel)
+                    for child in tuple(self._subagents.values())
+                )
+            )
+        task = self._message_loop_task
+        inbox = self._message_inbox
+        if task is None or task.done():
+            self._cancel_queued_responses()
+            return
+        if task is asyncio.current_task():
+            raise RuntimeError("An agent cannot stop its own message loop")
+        if self._message_loop_stopping:
+            await task
+            return
+        # Close admission before adding the sentinel. Otherwise a request can
+        # be queued behind the sentinel and wait forever after the worker exits.
+        self._message_loop_stopping = True
+        try:
+            if cancel:
+                task.cancel()
+            elif inbox is not None:
+                await inbox.put(_STOP_MESSAGE_LOOP)
+            try:
+                await task
+            except asyncio.CancelledError:
+                if not cancel:
+                    raise
+        finally:
+            if cancel:
+                self._cancel_queued_responses()
+            self._message_loop_task = None
+            self._message_loop_stopping = False
+
+    async def ahandle_message(self, message: AgentMessage) -> Any:
+        """Handle an inbox message; subclasses may override this hook."""
+        inputs: InputLike = message.content
+        if message.system_message:
+            inputs = self._prepend_system_message(
+                inputs, message.system_message
+            )
+        config = dict(message.config)
+        metadata = dict(config.get("metadata") or {})
+        metadata.update(message.metadata)
+        metadata.update({
+            "ursa_message_id": message.message_id,
+            "ursa_message_sender": message.sender,
+            "ursa_message_recipient": message.recipient,
+        })
+        config["metadata"] = metadata
+        return await self.ainvoke(inputs, config=config)
+
+    def _make_agent_message(
+        self,
+        content: InputLike,
+        *,
+        sender: str,
+        metadata: Mapping[str, Any] | None,
+        config: Mapping[str, Any] | None,
+        system_message: str | None,
+    ) -> AgentMessage:
+        return AgentMessage(
+            content=content,
+            sender=sender,
+            recipient=self.agent_path,
+            metadata=metadata or {},
+            config=config or {},
+            system_message=system_message,
+        )
+
+    async def _request_agent_message(
+        self,
+        message: AgentMessage,
+        *,
+        on_start: Callable[[AgentMessage], Awaitable[None] | None]
+        | None = None,
+    ) -> Any:
+        response = asyncio.get_running_loop().create_future()
+        await self._enqueue_agent_message(
+            message,
+            response=response,
+            on_start=on_start,
+        )
+        return await response
+
+    async def _enqueue_agent_message(
+        self,
+        message: AgentMessage,
+        *,
+        response: asyncio.Future[Any] | None = None,
+        priority: bool = False,
+        on_start: Callable[[AgentMessage], Awaitable[None] | None]
+        | None = None,
+    ) -> None:
+        self.start_message_loop()
+        if self._message_inbox is None:  # pragma: no cover
+            raise RuntimeError("Agent inbox failed to initialize")
+        pending: list[_QueuedAgentMessage | object] = []
+        if priority:
+            while True:
+                try:
+                    pending.append(self._message_inbox.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
+                self._message_inbox.task_done()
+        await self._message_inbox.put(
+            _QueuedAgentMessage(
+                message=message,
+                response=response,
+                on_start=on_start,
+            )
+        )
+        for item in pending:
+            await self._message_inbox.put(item)
+
+    async def _run_message_loop(self) -> None:
+        inbox = self._message_inbox
+        if inbox is None:  # pragma: no cover
+            return
+        try:
+            while True:
+                item = await inbox.get()
+                if item is _STOP_MESSAGE_LOOP:
+                    inbox.task_done()
+                    break
+                if not isinstance(item, _QueuedAgentMessage):
+                    inbox.task_done()
+                    continue
+                self._current_agent_message = item.message
+                if item.on_start is not None:
+                    try:
+                        started = item.on_start(item.message)
+                        if inspect.isawaitable(started):
+                            await started
+                    except Exception:
+                        logger.exception(
+                            "Agent %s message-start callback failed for %s",
+                            self.agent_path,
+                            item.message.message_id,
+                        )
+                handler = asyncio.create_task(
+                    self.ahandle_message(item.message)
+                )
+                self._active_message_task = handler
+                try:
+                    result = await handler
+                except asyncio.CancelledError:
+                    if item.response is not None and not item.response.done():
+                        item.response.cancel()
+                    if asyncio.current_task().cancelling():
+                        raise
+                except Exception as exc:
+                    if item.response is not None and not item.response.done():
+                        item.response.set_exception(exc)
+                    else:
+                        logger.exception(
+                            "Agent %s failed handling message %s",
+                            self.agent_path,
+                            item.message.message_id,
+                        )
+                else:
+                    if item.response is not None and not item.response.done():
+                        item.response.set_result(result)
+                finally:
+                    self._active_message_task = None
+                    self._current_agent_message = None
+                    inbox.task_done()
+        finally:
+            self._active_message_task = None
+            self._current_agent_message = None
+
+    def _cancel_queued_responses(self) -> None:
+        inbox = self._message_inbox
+        if inbox is None:
+            return
+        while True:
+            try:
+                item = inbox.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if isinstance(item, _QueuedAgentMessage):
+                if item.response is not None and not item.response.done():
+                    item.response.cancel()
+            inbox.task_done()
+
+    def _subagent_factory_kwargs(
+        self, agent_kwargs: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        kwargs = dict(agent_kwargs)
+        root = self.root_agent
+        child_llm = kwargs.setdefault("llm", self._subagent_llm)
+        kwargs.setdefault("workspace", self.workspace)
+        kwargs.setdefault("group", self.group)
+        child_embedding = kwargs.setdefault(
+            "rag_tool_embedding", self._subagent_embedding
+        )
+        kwargs.setdefault("subagent_llm", child_llm)
+        kwargs.setdefault("subagent_embedding", child_embedding)
+        kwargs.setdefault("subagent_max_agents", root._subagent_max_agents)
+        kwargs.setdefault("subagent_max_depth", root._subagent_max_depth)
+        return kwargs
+
+    def _validate_subagent_capacity(
+        self, agent: BaseAgent | None = None
+    ) -> None:
+        """Reject a prospective child that exceeds the root policy."""
+        root = self.root_agent
+        max_agents = root._subagent_max_agents
+        max_depth = root._subagent_max_depth
+        if max_agents == 0:
+            raise SubagentLimitError(
+                "Subagents are disabled by subagents.max_agents=0"
+            )
+        if max_depth == 0:
+            raise SubagentLimitError(
+                "Subagents are disabled by subagents.max_depth=0"
+            )
+
+        existing = sum(1 for _ in root.walk_agents()) - 1
+        addition = 1 if agent is None else sum(1 for _ in agent.walk_agents())
+        if max_agents is not None and existing + addition > max_agents:
+            raise SubagentLimitError(
+                f"Subagent limit reached: subagents.max_agents={max_agents}"
+            )
+
+        parent_depth = 0
+        current = self.parent_agent
+        while current is not None:
+            parent_depth += 1
+            current = current.parent_agent
+
+        subtree_depth = 0
+        if agent is not None:
+            stack = [(agent, 0)]
+            while stack:
+                member, depth = stack.pop()
+                subtree_depth = max(subtree_depth, depth)
+                stack.extend(
+                    (child, depth + 1) for child in member.subagents.values()
+                )
+        requested_depth = parent_depth + 1 + subtree_depth
+        if max_depth is not None and requested_depth > max_depth:
+            raise SubagentLimitError(
+                f"Subagent depth limit reached: subagents.max_depth={max_depth}"
+            )
+
+    @classmethod
+    def _validate_subagent_name(cls, name: str) -> None:
+        if (
+            not isinstance(name, str)
+            or name in {".", "..", "self", "parent", "root"}
+            or cls._SUBAGENT_NAME.fullmatch(name) is None
+        ):
+            raise ValueError(
+                "Subagent names must start with an alphanumeric character and "
+                "contain only letters, digits, '.', '-', or '_'"
+            )
+
+    @staticmethod
+    def _prepend_system_message(
+        inputs: InputLike, instruction: str
+    ) -> Mapping[str, Any]:
+        normalized: dict[str, Any]
+        if isinstance(inputs, str):
+            normalized = {"messages": [HumanMessage(content=inputs)]}
+        else:
+            normalized = dict(inputs)
+        messages = list(normalized.get("messages") or [])
+        if messages and isinstance(messages[0], SystemMessage):
+            existing = _message_text(messages[0])
+            messages[0] = SystemMessage(
+                content=f"{instruction}\n\n{existing}",
+                id=messages[0].id,
+            )
+        else:
+            messages.insert(0, SystemMessage(content=instruction))
+        normalized["messages"] = messages
+        return normalized
+
+    def _get_async_invocation_lock(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        if self._async_invocation_loop is not loop:
+            if (
+                self._async_invocation_lock
+                and self._async_invocation_lock.locked()
+            ):
+                raise RuntimeError(
+                    "Agent is already running in another event loop"
+                )
+            self._async_invocation_lock = asyncio.Lock()
+            self._async_invocation_loop = loop
+        elif self._async_invocation_lock is None:
+            self._async_invocation_lock = asyncio.Lock()
+        return self._async_invocation_lock
+
+    @property
+    def current_message(self) -> AgentMessage | None:
+        """Return the inbox envelope currently being handled."""
+        return self._current_agent_message
+
+    @property
+    def is_working(self) -> bool:
+        """Whether this agent is currently handling an invocation."""
+        task = self._async_invocation_owner or self._active_message_task
+        return task is not None and not task.done()
+
+    @property
+    def message_loop_running(self) -> bool:
+        task = self._message_loop_task
+        return task is not None and not task.done()
+
+    @property
+    def pending_messages(self) -> int:
+        return self._message_inbox.qsize() if self._message_inbox else 0
+
+    def walk_agents(self) -> Iterator[BaseAgent]:
+        """Yield this agent and all descendants in depth-first order."""
+        yield self  # type: ignore[misc]
+        for child in tuple(self._subagents.values()):
+            yield from child.walk_agents()
+
+    def attach_subagent(self, name: str, agent: BaseAgent) -> BaseAgent:
+        """Attach an existing agent as an immediate child."""
+        self._validate_subagent_name(name)
+        if not isinstance(agent, BaseAgent):
+            raise TypeError("subagent must be a BaseAgent instance")
+        with self.root_agent._subagent_hierarchy_lock:
+            if name in self._subagents:
+                raise ValueError(f"Subagent name already exists: {name!r}")
+            if agent is self:
+                raise ValueError("An agent cannot be its own subagent")
+            if agent.parent_agent is not None:
+                raise ValueError(
+                    f"Agent {agent.agent_path!r} already has a parent"
+                )
+            ancestor: BaseAgent | None = self  # type: ignore[assignment]
+            while ancestor is not None:
+                if ancestor is agent:
+                    raise ValueError(
+                        "Attaching this agent would create a cycle"
+                    )
+                ancestor = ancestor.parent_agent
+            self._validate_subagent_capacity(agent)
+            agent._parent_agent = self  # type: ignore[assignment]
+            agent._hierarchy_name = name
+            self._subagents[name] = agent
+        return agent
+
+    def spawn_subagent(
+        self,
+        name: str,
+        agent: BaseAgent | Callable[..., BaseAgent] | None = None,
+        /,
+        **agent_kwargs: Any,
+    ) -> BaseAgent:
+        """Construct and attach a child, inheriting common configuration."""
+        if isinstance(agent, BaseAgent):
+            if agent_kwargs:
+                raise TypeError("agent_kwargs cannot accompany an instance")
+            return self.attach_subagent(name, agent)
+        self._validate_subagent_capacity()
+        factory = agent or self.__class__
+        child = factory(**self._subagent_factory_kwargs(agent_kwargs))
+        if inspect.isawaitable(child):
+            raise TypeError(
+                "Async factories require `await aspawn_subagent(...)`"
+            )
+        if not isinstance(child, BaseAgent):
+            raise TypeError("subagent factory must return a BaseAgent")
+        return self.attach_subagent(name, child)
+
+    async def aspawn_subagent(
+        self,
+        name: str,
+        agent: BaseAgent
+        | Callable[..., BaseAgent | Awaitable[BaseAgent]]
+        | None = None,
+        /,
+        **agent_kwargs: Any,
+    ) -> BaseAgent:
+        """Async-factory variant of :meth:`spawn_subagent`."""
+        if isinstance(agent, BaseAgent):
+            if agent_kwargs:
+                raise TypeError("agent_kwargs cannot accompany an instance")
+            return self.attach_subagent(name, agent)
+        self._validate_subagent_capacity()
+        factory = agent or self.__class__
+        child = factory(**self._subagent_factory_kwargs(agent_kwargs))
+        if inspect.isawaitable(child):
+            child = await child
+        if not isinstance(child, BaseAgent):
+            raise TypeError("subagent factory must return a BaseAgent")
+        return self.attach_subagent(name, child)
+
+    def detach_subagent(self, name: str) -> BaseAgent:
+        """Detach and return an idle immediate child."""
+        with self.root_agent._subagent_hierarchy_lock:
+            try:
+                child = self._subagents[name]
+            except KeyError:
+                raise KeyError(
+                    f"Unknown immediate subagent: {name!r}"
+                ) from None
+            if child.message_loop_running:
+                raise RuntimeError(
+                    "Cannot detach a running child; use despawn_subagent"
+                )
+            del self._subagents[name]
+            child._parent_agent = None
+            child._hierarchy_name = None
+        return child
+
+    async def despawn_subagent(
+        self, name: str, *, cancel: bool = False
+    ) -> BaseAgent:
+        try:
+            child = self._subagents[name]
+        except KeyError:
+            raise KeyError(f"Unknown immediate subagent: {name!r}") from None
+        await child.stop_message_loop(descendants=True, cancel=cancel)
+        return self.detach_subagent(name)
+
+    def resolve_agent(self, target: str | BaseAgent) -> BaseAgent:
+        """Resolve an object, relative path, or root-qualified path."""
+        if isinstance(target, BaseAgent):
+            return target
+        if not isinstance(target, str) or not target.strip():
+            raise TypeError("target must be a BaseAgent or non-empty path")
+        raw = target.strip()
+        aliases = {
+            ".": self,
+            "self": self,
+            "root": self.root_agent,
+            "parent": self.parent_agent,
+        }
+        if raw in aliases:
+            resolved = aliases[raw]
+            if resolved is None:
+                raise KeyError("The root agent has no parent")
+            return resolved  # type: ignore[return-value]
+
+        root = self.root_agent
+        absolute = raw.startswith("/")
+        parts = [part for part in raw.strip("/").split("/") if part]
+        if parts and parts[0] == root.hierarchy_name:
+            absolute = True
+            parts.pop(0)
+        current: BaseAgent = root if absolute else self  # type: ignore[assignment]
+        if (
+            not absolute
+            and len(parts) == 1
+            and parts[0] not in current.subagents
+            and current.parent_agent is not None
+            and parts[0] in current.parent_agent.subagents
+        ):
+            current = current.parent_agent
+        for part in parts:
+            if part in {".", "self"}:
+                continue
+            if part in {"..", "parent"}:
+                if current.parent_agent is None:
+                    raise KeyError(f"Path escapes hierarchy root: {raw!r}")
+                current = current.parent_agent
+                continue
+            try:
+                current = current.subagents[part]
+            except KeyError:
+                raise KeyError(
+                    f"Unknown agent path {raw!r} from {self.agent_path!r}"
+                ) from None
+        return current
+
+
 class UnregisteredAgentStateWarning(UserWarning):
     """A BaseAgent subclass declares a typed state it never registers."""
 
 
-class BaseAgent(Generic[TState], ABC):
+class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
     """Abstract base class for all agent implementations in the Ursa framework.
 
     BaseAgent provides a standardized foundation for building LLM-powered agents with
@@ -246,9 +1025,6 @@ class BaseAgent(Generic[TState], ABC):
     ```
     """
 
-    # This will be shared across all BaseAgent instances.
-    _invoke_depth: int = 0
-
     _TELEMETRY_KW = {
         "raw_debug",
         "save_json",
@@ -283,6 +1059,10 @@ class BaseAgent(Generic[TState], ABC):
         rag_tool_group: str | None = None,
         rag_tool_embedding: Embeddings | None = None,
         rag_tool_return_k: int = 10,
+        subagent_llm: BaseChatModel | None = None,
+        subagent_embedding: Embeddings | None = None,
+        subagent_max_agents: int | None = 32,
+        subagent_max_depth: int | None = 3,
     ):
         """Initializes the base agent with a language model and optional configurations.
 
@@ -296,13 +1076,36 @@ class BaseAgent(Generic[TState], ABC):
             autosave_metrics: Whether to automatically save metrics to disk.
             thread_id: Unique identifier for this agent instance. Generated if not
                        provided.
+            subagent_llm: Optional model override inherited by all subagents.
+            subagent_embedding: Optional embedding override for subagent RAG.
+            subagent_max_agents: Maximum children in the whole hierarchy. Zero
+                disables subagents and None removes the count limit.
+            subagent_max_depth: Maximum depth below the root. Zero disables
+                subagents and None removes the depth limit.
         """
-        llm = llm.bind(
-            extra_headers={
-                "User-Agent": f"ursa/{URSA_VERSION}",
-                "x-ursa-user-agent": f"ursa/{URSA_VERSION}",
-            }
-        )
+        super().__init__()
+        headers = {
+            "User-Agent": f"ursa/{URSA_VERSION}",
+            "x-ursa-user-agent": f"ursa/{URSA_VERSION}",
+        }
+        root_llm = llm
+        llm = llm.bind(extra_headers=headers)
+        if subagent_llm is None or subagent_llm is root_llm:
+            subagent_llm = llm
+        else:
+            subagent_llm = subagent_llm.bind(extra_headers=headers)
+        for name, value in (
+            ("subagent_max_agents", subagent_max_agents),
+            ("subagent_max_depth", subagent_max_depth),
+        ):
+            if value is None:
+                continue
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValueError(f"{name} must be a non-negative integer")
         if otel_metrics is not None:
             import warnings
 
@@ -314,6 +1117,14 @@ class BaseAgent(Generic[TState], ABC):
                 stacklevel=2,
             )
         self.llm: BaseChatModel = llm
+        self._subagent_llm = subagent_llm
+        self._subagent_embedding = (
+            subagent_embedding
+            if subagent_embedding is not None
+            else rag_tool_embedding
+        )
+        self._subagent_max_agents = subagent_max_agents
+        self._subagent_max_depth = subagent_max_depth
         self.workspace = Path(workspace or ".")
         self.agent_name = agent_name
         self.group = validate_group_name(group)
@@ -327,6 +1138,7 @@ class BaseAgent(Generic[TState], ABC):
         self.rag_tool_embedding = rag_tool_embedding
         self.rag_tool_return_k = rag_tool_return_k
         enforce_model_group_policy(self.llm, self.group)
+        enforce_model_group_policy(self._subagent_llm, self.group)
         if (
             not group_root_dir(self.group).exists()
             and self.group != DEFAULT_GROUP_NAME
@@ -542,12 +1354,13 @@ class BaseAgent(Generic[TState], ABC):
         config: Optional[dict] = None,
         **kwargs: Any,
     ):
-        BaseAgent._invoke_depth += 1
+        depth = _INVOKE_DEPTH.get() + 1
+        depth_token = _INVOKE_DEPTH.set(depth)
         invoke_config = dict(config or {})
 
         try:
             # Start telemetry tracking for the top-level invocation
-            if BaseAgent._invoke_depth == 1:
+            if depth == 1:
                 self.telemetry.begin_run(
                     agent=self.name, thread_id=self.thread_id
                 )
@@ -586,11 +1399,8 @@ class BaseAgent(Generic[TState], ABC):
             return invoke_method(normalized, **invoke_config, **kwargs)
 
         finally:
-            # Clean up the invocation depth tracking
-            BaseAgent._invoke_depth -= 1
-
-            # For the top-level invocation, finalize telemetry and generate outputs
-            if BaseAgent._invoke_depth == 0:
+            _INVOKE_DEPTH.reset(depth_token)
+            if depth == 1:
                 self.telemetry.render(
                     raw=raw_debug,
                     save_json=save_json,
@@ -602,7 +1412,20 @@ class BaseAgent(Generic[TState], ABC):
                     save_raw_records=save_raw_records,
                 )
 
-    async def _ainvoke_engine(
+    async def _ainvoke_engine(self, *args: Any, **kwargs: Any) -> Any:
+        """Serialize async invocations of one agent instance."""
+        current = asyncio.current_task()
+        if self._async_invocation_owner is current:
+            return await self._ainvoke_engine_unlocked(*args, **kwargs)
+        lock = self._get_async_invocation_lock()
+        async with lock:
+            self._async_invocation_owner = current
+            try:
+                return await self._ainvoke_engine_unlocked(*args, **kwargs)
+            finally:
+                self._async_invocation_owner = None
+
+    async def _ainvoke_engine_unlocked(
         self,
         invoke_method,
         inputs: Optional[InputLike] = None,
@@ -617,11 +1440,12 @@ class BaseAgent(Generic[TState], ABC):
         config: Optional[dict] = None,
         **kwargs: Any,
     ):
-        BaseAgent._invoke_depth += 1
+        depth = _INVOKE_DEPTH.get() + 1
+        depth_token = _INVOKE_DEPTH.set(depth)
         invoke_config = dict(config or {})
 
         try:
-            if BaseAgent._invoke_depth == 1:
+            if depth == 1:
                 self.telemetry.begin_run(
                     agent=self.name, thread_id=self.thread_id
                 )
@@ -650,9 +1474,8 @@ class BaseAgent(Generic[TState], ABC):
             return await invoke_method(normalized, **invoke_config, **kwargs)
 
         finally:
-            BaseAgent._invoke_depth -= 1
-
-            if BaseAgent._invoke_depth == 0:
+            _INVOKE_DEPTH.reset(depth_token)
+            if depth == 1:
                 self.telemetry.render(
                     raw=raw_debug,
                     save_json=save_json,
@@ -1587,12 +2410,12 @@ class BaseAgent(Generic[TState], ABC):
             This method tracks invocation depth to properly handle nested agent calls
             and ensure telemetry is only rendered once at the top level.
         """
-        # Track invocation depth to handle nested agent calls
-        BaseAgent._invoke_depth += 1
+        depth = _INVOKE_DEPTH.get() + 1
+        depth_token = _INVOKE_DEPTH.set(depth)
 
         try:
             # Start telemetry tracking for top-level invocations only
-            if BaseAgent._invoke_depth == 1:
+            if depth == 1:
                 self.telemetry.begin_run(
                     agent=self.name, thread_id=self.thread_id
                 )
@@ -1603,11 +2426,8 @@ class BaseAgent(Generic[TState], ABC):
             yield from self._stream(normalized, **stream_config, **kwargs)
 
         finally:
-            # Decrement invocation depth when exiting
-            BaseAgent._invoke_depth -= 1
-
-            # Render telemetry data only for top-level invocations
-            if BaseAgent._invoke_depth == 0:
+            _INVOKE_DEPTH.reset(depth_token)
+            if depth == 1:
                 self.telemetry.render(
                     raw=raw_debug,
                     save_json=save_json,

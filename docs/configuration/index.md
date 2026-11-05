@@ -68,6 +68,11 @@ tokens_before_summarize: 50000
 llm_model:
   model: openai:gpt-5.4
 emb_model: null
+subagents:
+  max_agents: 32
+  max_depth: 3
+  llm_model: null
+  embedding_model: null
 rag_tools: []
 agent_config: {}
 mcp_servers: {}
@@ -77,6 +82,30 @@ Model names normally use `<provider>:<model-name>`. See
 [Models and inference providers][models-and-inference-providers] for complete,
 tabbed examples covering OpenAI, OpenAI-compatible services, Anthropic, Google,
 Ollama, and Azure OpenAI.
+
+## Subagents
+
+Use the `subagents` section to bound dynamic agent hierarchies. `max_agents`
+counts every agent below the root, while `max_depth` counts hierarchy edges
+below the root. Setting either limit to `0` disables subagent creation.
+Set a limit to `null` to remove that limit while retaining the other one.
+
+By default, subagents inherit the root chat and embedding models. Configure
+either model independently when delegated work should use different inference:
+
+```yaml
+subagents:
+  max_agents: 16
+  max_depth: 2
+  llm_model:
+    model: openai:gpt-5-mini
+  embedding_model:
+    model: openai:text-embedding-3-small
+```
+
+The nested model entries accept the same provider, endpoint, credential, and
+model-specific options as top-level `llm_model` and `emb_model`. Leave either
+entry `null` to inherit its root model.
 
 ## `use_web` and `agent_config`
 

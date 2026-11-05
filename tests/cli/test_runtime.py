@@ -19,7 +19,7 @@ from mcp import StdioServerParameters
 from pydantic import ValidationError
 from rich.console import Console as RealConsole
 
-from ursa.agents.base import AgentWithTools
+from ursa.agents.base import AgentWithTools, BaseAgent
 from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import ChatModelConfig, EmbModelConfig, UrsaConfig
 from ursa.cli.runtime import HITL, AgentHITL
@@ -81,6 +81,119 @@ async def test_default_config_smoke(ursa_config):
     out = await hitl.run_agent("chat", "Hello! What is your name?")
     print("chat out:", out)
     assert len(out) > 0
+
+
+async def test_active_agent_result_updates_handoff_state(ursa_config):
+    hitl = HITL(ursa_config)
+    await hitl.run_agent("chat", "First message")
+
+    result = await hitl.run_active_agent("root", "Follow-up message")
+
+    assert hitl.active_agent_path == "root"
+    assert hitl.last_agent is hitl.active_agent
+    assert hitl.last_agent_result == result
+    await hitl.aclose()
+
+
+async def test_wrapper_interrupts_oldest_waiting_message_only_once():
+    class FakeAgent:
+        def __init__(self):
+            self.cancelled = 0
+            self.calls = []
+            self.active = None
+            self.started = asyncio.Event()
+
+        def interrupt_for_queued_messages(self):
+            self.cancelled += 1
+            self.active.cancel()
+            return True
+
+        def format_query(self, prompt, state=None):
+            return prompt
+
+        async def interrupt(self, query, *, config=None, on_start=None):
+            self.calls.append(("interrupt", query))
+            if on_start is not None:
+                await on_start(None)
+            return query
+
+        async def request(self, query, *, config=None, on_start=None):
+            self.calls.append(("request", query))
+            if query == "original":
+                self.active = asyncio.current_task()
+                self.started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    self.active = None
+            if on_start is not None:
+                await on_start(None)
+            return query
+
+        def format_result(self, state):
+            return state
+
+    wrapper = AgentHITL(object)
+    agent = FakeAgent()
+    wrapper._agent = agent
+
+    original = asyncio.create_task(wrapper.message("original"))
+    await agent.started.wait()
+    first = asyncio.create_task(wrapper.message("first"))
+    await asyncio.sleep(0)
+    assert wrapper.interrupt_for_queued_messages()
+    with pytest.raises(asyncio.CancelledError):
+        await original
+    assert await first == "first"
+    assert await wrapper.message("second") == "second"
+
+    assert agent.cancelled == 1
+    assert agent.calls == [
+        ("request", "original"),
+        ("interrupt", "first"),
+        ("request", "second"),
+    ]
+
+
+async def test_active_subagent_route_uses_live_hierarchy(
+    ursa_config, chat_model, tmp_path
+):
+    class HierarchyAgent(BaseAgent):
+        def _noop(self, state):
+            return state
+
+        def _build_graph(self):
+            self.add_node(self._noop, "noop")
+            self.graph.set_entry_point("noop")
+            self.graph.set_finish_point("noop")
+
+        def format_query(self, prompt, state=None):
+            return prompt
+
+        def format_result(self, state):
+            return state["result"]
+
+        async def ahandle_message(self, message):
+            return {"result": f"{self.agent_path}: {message.content}"}
+
+    root = HierarchyAgent(
+        llm=chat_model,
+        workspace=tmp_path,
+        enable_metrics=False,
+    )
+    child = root.spawn_subagent(
+        "researcher", HierarchyAgent, enable_metrics=False
+    )
+    hitl = HITL(ursa_config)
+    hitl.active_agent = root
+
+    try:
+        assert hitl.subagent_paths() == ["root", "root/researcher"]
+        result = await hitl.run_active_agent(child.agent_path, "review")
+    finally:
+        await root.stop_message_loop(descendants=True)
+
+    assert result == "root/researcher: review"
 
 
 DOCS_ROOT = Path(__file__).resolve().parents[2]
@@ -1156,6 +1269,88 @@ async def test_global_summarization_fallback_and_agent_override(
     execute = await hitl.get_agent("execute")
     assert chat._agent.tokens_before_summarize == 8000
     assert execute._agent.tokens_before_summarize == 12000
+
+
+async def test_subagent_config_reaches_runtime_and_spawned_agents(
+    tmp_path, monkeypatch
+):
+    root_chat = MagicMock(name="root-chat")
+    child_chat = MagicMock(name="child-chat")
+    root_embedding = MagicMock(name="root-embedding")
+    child_embedding = MagicMock(name="child-embedding")
+    chat_models = {
+        "root-chat": root_chat,
+        "child-chat": child_chat,
+    }
+    embedding_models = {
+        "root-embedding": root_embedding,
+        "child-embedding": child_embedding,
+    }
+    monkeypatch.setattr(
+        "ursa.cli.config.init_chat_model",
+        lambda **kwargs: chat_models[kwargs["model"]],
+    )
+    monkeypatch.setattr(
+        "ursa.cli.config.init_embeddings",
+        lambda **kwargs: embedding_models[kwargs["model"]],
+    )
+    monkeypatch.setattr(
+        "ursa.cli.runtime.start_mcp_client", lambda _servers: None
+    )
+    config = UrsaConfig(
+        workspace=tmp_path,
+        llm_model={"model": "root-chat", "model_provider": "fake"},
+        emb_model={
+            "model": "root-embedding",
+            "model_provider": "fake",
+        },
+        subagents={
+            "max_agents": 5,
+            "max_depth": 2,
+            "llm_model": {
+                "model": "child-chat",
+                "model_provider": "fake",
+            },
+            "embedding_model": {
+                "model": "child-embedding",
+                "model_provider": "fake",
+            },
+        },
+    )
+
+    hitl = HITL(config)
+    assert hitl.model is root_chat
+    assert hitl.embedding is root_embedding
+    assert hitl.subagent_model is child_chat
+    assert hitl.subagent_embedding is child_embedding
+
+    wrapper = await hitl.get_agent("chat")
+    assert wrapper._agent is not None
+    root = wrapper._agent
+    assert root._subagent_llm is child_chat.bind.return_value
+    assert root._subagent_embedding is child_embedding
+    assert root._subagent_max_agents == 5
+    assert root._subagent_max_depth == 2
+
+    child = root.spawn_subagent("reviewer")
+    assert child.rag_tool_embedding is child_embedding
+    await hitl.aclose()
+
+
+def test_subagent_models_default_to_root_models(tmp_path, monkeypatch):
+    _stub_hitl_dependencies(monkeypatch)
+    hitl = HITL(
+        UrsaConfig(
+            workspace=tmp_path,
+            emb_model={
+                "model": "root-embedding",
+                "model_provider": "fake",
+            },
+        )
+    )
+
+    assert hitl.subagent_model is hitl.model
+    assert hitl.subagent_embedding is hitl.embedding
 
 
 @pytest.mark.asyncio

@@ -73,6 +73,10 @@ Common flags include:
 --llm_model.ssl_verify
 --llm_model.max_completion_tokens
 --emb_model
+--subagents.max_agents
+--subagents.max_depth
+--subagents.llm_model.model
+--subagents.embedding_model.model
 --mcp_servers
 --rag-tools
 ```
