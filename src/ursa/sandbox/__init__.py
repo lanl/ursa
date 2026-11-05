@@ -12,27 +12,39 @@ import os
 import shutil
 import subprocess
 import tempfile
+from abc import ABC, abstractmethod
 from pathlib import Path
 
 
-class BaseSandbox:
+class SandboxError(Exception):
+    """Raised when sandbox run is unsuccessful."""
+
+
+class BaseSandbox(ABC):
     cwd: Path
     readonly_paths: list[Path]
     write_paths: list[Path]
     extra_args: list[str]
     timeout: int = 600000
 
-    def __init__(self, cwd: Path):
-        self.cwd = cwd
-
-    def _execute(self, cmd: str):
-        raise NotImplementedError("Sandbox not implemented")
+    @abstractmethod
+    def execute(self, cmd: str): ...
 
     @property
     def backend(self) -> str:
         return type(self).__name__
 
-    def _fallback_execute(self, cmd: str):
+    @abstractmethod
+    def is_working(self) -> bool: ...
+
+
+class NoSandbox(BaseSandbox):
+    timeout: int = 600000
+
+    def __init__(self, cwd: Path):
+        self.cwd = cwd
+
+    def execute(self, cmd: str):
         result = subprocess.run(
             cmd,
             text=True,
@@ -44,12 +56,8 @@ class BaseSandbox:
         )
         return result
 
-    def execute(self, cmd: str):
-        try:
-            return self._execute(cmd)
-        except Exception:
-            print(f"Sandbox {self.backend} failed")
-            return self._fallback_execute(cmd)
+    def is_working(self) -> bool:
+        return True
 
 
 class WindowsSandbox(BaseSandbox): ...
@@ -59,7 +67,34 @@ class MacSandbox(BaseSandbox): ...
 
 
 class LinuxBwrapSandbox(BaseSandbox):
-    bwrap_path = str(shutil.which("bwrap"))
+    """Bubblewrap Sandbox via bwrap on Linux."""
+
+    bwrap_path = shutil.which("bwrap")
+
+    def is_working(self) -> bool:
+        if self.bwrap_path is None:
+            return False
+
+        # Test that sandboxing works.
+        result = subprocess.run(
+            [
+                self.bwrap_path,
+                "--ro-bind",
+                "/",
+                "/",
+                "touch",
+                "foo",
+            ],
+            check=False,
+            text=True,
+            shell=False,
+            capture_output=True,
+        )
+
+        return (
+            result.stderr is not None
+            and "Read-only file system" in result.stderr
+        )
 
     def __init__(
         self, cwd: Path, access_network: bool = True, tmpdir: Path | None = None
@@ -95,7 +130,7 @@ class LinuxBwrapSandbox(BaseSandbox):
         if not self.access_network:
             self.args += "--unshare-net"
 
-    def _execute(self, cmd: str):
+    def execute(self, cmd: str):
         result = subprocess.run(
             [self.bwrap_path, *self.args, self.shell, "-c", cmd],
             text=True,

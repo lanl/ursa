@@ -11,9 +11,10 @@ from ursa.prompt_library.safety_prompts import (
     get_safety_prompt,
 )
 from ursa.sandbox import (
-    BaseSandbox,
     LinuxBwrapSandbox,
     MacSandbox,
+    NoSandbox,
+    SandboxError,
     WindowsSandbox,
 )
 from ursa.util.events import ToolEvents
@@ -119,15 +120,24 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
             error="Command interrupted",
             query=query,
         ) as span:
-            match platform.system():
-                case "Linux":
+            match platform.system(), prompt_level.lower():
+                case _, "yolo":
+                    sbx = NoSandbox(cwd=workspace_dir)
+                case "Linux", _:
                     sbx = LinuxBwrapSandbox(cwd=workspace_dir)
-                case "Darwin":
-                    sbx = MacSandbox(cwd=workspace_dir)
-                case "Windows":
-                    sbx = WindowsSandbox(cwd=workspace_dir)
-                case _:
-                    sbx = BaseSandbox(cwd=workspace_dir)
+                case "Darwin", _:
+                    # TODO: Implement MacSandbox
+                    sbx = NoSandbox(cwd=workspace_dir)
+                case "Windows", _:
+                    # TODO: Implement WindowsSandbox
+                    sbx = NoSandbox(cwd=workspace_dir)
+
+            if not sbx.is_working():
+                raise SandboxError(
+                    f"Could not start sandbox: {sbx.backend}. "
+                    "Try setting the environment variable: "
+                    "URSA_SAFETY_LEVEL=yolo to disable the sandbox."
+                )
 
             result = sbx.execute(query)
             stdout, stderr = result.stdout, result.stderr
