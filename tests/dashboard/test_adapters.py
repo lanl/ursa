@@ -4,7 +4,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
-from ursa.cli.callbacks import HITLLogEventHandler
+from ursa.cli.callbacks import AgentLogEventHandler
 from ursa.workflows.planning_execution_workflow import PlanningExecutorWorkflow
 from ursa_dashboard.adapters import (
     BaseAgentInProcessAdapter,
@@ -50,7 +50,7 @@ def test_base_agent_adapter_attaches_cli_callback_handler(tmp_path: Path):
     assert isinstance(config, dict)
     callbacks = config["callbacks"]
     assert len(callbacks) == 1
-    assert isinstance(callbacks[0], HITLLogEventHandler)
+    assert isinstance(callbacks[0], AgentLogEventHandler)
     assert callbacks[0].workspace == tmp_path.resolve()
 
 
@@ -99,7 +99,7 @@ def test_direct_invoke_adapter_attaches_cli_handler_when_supported(
     assert isinstance(config, dict)
     callbacks = config["callbacks"]
     assert len(callbacks) == 1
-    assert isinstance(callbacks[0], HITLLogEventHandler)
+    assert isinstance(callbacks[0], AgentLogEventHandler)
 
 
 def test_planning_executor_workflow_propagates_callbacks(

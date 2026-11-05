@@ -130,6 +130,22 @@ def test_validate_model_provider_accepts_advertised_model(monkeypatch):
     )
 
 
+def test_validate_model_provider_accepts_implicit_latest_tag(monkeypatch):
+    monkeypatch.setattr(
+        inference_providers,
+        "list_provider_models",
+        lambda _provider: [ProviderModel("gemma4:latest", "ollama")],
+    )
+
+    assert (
+        inference_providers.validate_model_provider(
+            ModelConfig(model="gemma4", model_provider="ollama"),
+            "chat",
+        )
+        is None
+    )
+
+
 def test_validate_model_provider_rejects_unadvertised_model(monkeypatch):
     monkeypatch.setattr(
         inference_providers,

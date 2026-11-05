@@ -41,21 +41,21 @@ def _isolate_xdg_config(monkeypatch, tmp_path):
 
 def _stub_mcp_server(monkeypatch):
     mcp = MagicMock()
-    hitl = MagicMock()
-    hitl.as_mcp_server.return_value = mcp
-    hitl_class = MagicMock(return_value=hitl)
-    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
+    runtime = MagicMock()
+    runtime.as_mcp_server.return_value = mcp
+    runtime_class = MagicMock(return_value=runtime)
+    monkeypatch.setattr("ursa.runtime.AgentRuntime", runtime_class)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
-    return hitl, mcp
+    return runtime, mcp
 
 
 def _stub_textual(monkeypatch):
-    hitl_class = MagicMock()
+    runtime_class = MagicMock()
     run_textual = MagicMock()
-    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
+    monkeypatch.setattr("ursa.runtime.AgentRuntime", runtime_class)
     monkeypatch.setattr("ursa.cli.tui.app.run_textual", run_textual)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
-    return hitl_class, run_textual
+    return runtime_class, run_textual
 
 
 def _parse_config_args(parser, args):
@@ -115,25 +115,27 @@ def test_cli_does_not_warn_without_legacy_checkpoint(
 
 
 def test_exec_uses_textual_one_shot_renderer(monkeypatch):
-    hitl = MagicMock()
+    runtime = MagicMock()
     run_once = MagicMock()
-    monkeypatch.setattr("ursa.cli.runtime.HITL", MagicMock(return_value=hitl))
-    monkeypatch.setattr("ursa.cli.tui.app.run_textual_once", run_once)
+    monkeypatch.setattr(
+        "ursa.runtime.AgentRuntime", MagicMock(return_value=runtime)
+    )
+    monkeypatch.setattr("ursa.cli.tui.app.prompt_agent_once", run_once)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     main(["exec", "#plan inspect this"])
 
-    run_once.assert_called_once_with(hitl, "#plan inspect this")
+    run_once.assert_called_once_with(runtime, "#plan inspect this")
 
 
 @pytest.mark.parametrize("mode", ["interactive", "exec"])
 def test_named_agent_reaches_textual_runtime(monkeypatch, mode):
-    hitl_class = MagicMock()
+    runtime_class = MagicMock()
     run_textual = MagicMock()
     run_once = MagicMock()
-    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
+    monkeypatch.setattr("ursa.runtime.AgentRuntime", runtime_class)
     monkeypatch.setattr("ursa.cli.tui.app.run_textual", run_textual)
-    monkeypatch.setattr("ursa.cli.tui.app.run_textual_once", run_once)
+    monkeypatch.setattr("ursa.cli.tui.app.prompt_agent_once", run_once)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
     args = ["--name", "lab-assistant"]
     if mode == "exec":
@@ -141,13 +143,13 @@ def test_named_agent_reaches_textual_runtime(monkeypatch, mode):
 
     main(args)
 
-    config = hitl_class.call_args.args[0]
+    config = runtime_class.call_args.args[0]
     assert config.agent_name == "lab-assistant"
     if mode == "interactive":
-        run_textual.assert_called_once_with(hitl_class.return_value)
+        run_textual.assert_called_once_with(runtime_class.return_value)
     else:
         run_once.assert_called_once_with(
-            hitl_class.return_value, "#plan inspect this"
+            runtime_class.return_value, "#plan inspect this"
         )
 
 
@@ -156,7 +158,7 @@ def test_cli_reports_runtime_initialization_error_without_traceback(
     monkeypatch, capsys, args
 ):
     monkeypatch.setattr(
-        "ursa.cli.runtime.HITL",
+        "ursa.runtime.AgentRuntime",
         MagicMock(side_effect=ValueError("API credentials are invalid")),
     )
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
@@ -170,16 +172,16 @@ def test_cli_reports_runtime_initialization_error_without_traceback(
 
 
 def test_exec_runs_prompt_with_textual_runtime(monkeypatch):
-    hitl_class = MagicMock()
+    runtime_class = MagicMock()
     run_once = MagicMock()
-    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
-    monkeypatch.setattr("ursa.cli.tui.app.run_textual_once", run_once)
+    monkeypatch.setattr("ursa.runtime.AgentRuntime", runtime_class)
+    monkeypatch.setattr("ursa.cli.tui.app.prompt_agent_once", run_once)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     main(["exec", "summarize this"])
 
-    hitl = hitl_class.return_value
-    run_once.assert_called_once_with(hitl, "summarize this")
+    runtime = runtime_class.return_value
+    run_once.assert_called_once_with(runtime, "summarize this")
 
 
 @pytest.mark.parametrize(
@@ -193,7 +195,7 @@ def test_exec_runs_prompt_with_textual_runtime(monkeypatch):
 def test_legacy_ursa_name_is_supported_with_deprecation_warning(
     monkeypatch, modern_env, cli_args, expected
 ):
-    hitl_class, _ = _stub_textual(monkeypatch)
+    runtime_class, _ = _stub_textual(monkeypatch)
     monkeypatch.setenv("URSA_NAME", "legacy-agent")
     if modern_env is not None:
         monkeypatch.setenv("URSA_AGENT_NAME", modern_env)
@@ -201,7 +203,7 @@ def test_legacy_ursa_name_is_supported_with_deprecation_warning(
     with pytest.warns(FutureWarning, match="URSA_NAME is deprecated"):
         main(cli_args)
 
-    (config,), _ = hitl_class.call_args
+    (config,), _ = runtime_class.call_args
     assert config.agent_name == expected
 
 
@@ -267,11 +269,11 @@ def test_rag_model_commands_resolve_with_subcommand_group(
 
 
 def test_mcp_server_passes_only_stdio_run_options(monkeypatch):
-    hitl, mcp = _stub_mcp_server(monkeypatch)
+    runtime, mcp = _stub_mcp_server(monkeypatch)
 
     main(["mcp-server"])
 
-    hitl.as_mcp_server.assert_called_once_with()
+    runtime.as_mcp_server.assert_called_once_with()
     mcp.run.assert_called_once_with(transport="stdio", log_level="INFO")
 
 
@@ -281,12 +283,12 @@ def test_mcp_server_config_flag_sets_hosted_llm(monkeypatch, tmp_path):
     Regression: previously the mcp-server subparser had no --config option, so
     `ursa mcp-server --config foo.yaml` failed with "Unrecognized arguments".
     The subcommand-local --config should feed the LLM model/endpoint (and other
-    UrsaConfig fields) into the HITL instance backing the MCP server.
+    UrsaConfig fields) into the AgentRuntime instance backing the MCP server.
     """
-    hitl_class = MagicMock()
-    hitl_class.return_value = MagicMock()
-    hitl_class.return_value.as_mcp_server.return_value = MagicMock()
-    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
+    runtime_class = MagicMock()
+    runtime_class.return_value = MagicMock()
+    runtime_class.return_value.as_mcp_server.return_value = MagicMock()
+    monkeypatch.setattr("ursa.runtime.AgentRuntime", runtime_class)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     config_file = tmp_path / "mcp.yaml"
@@ -301,8 +303,8 @@ def test_mcp_server_config_flag_sets_hosted_llm(monkeypatch, tmp_path):
 
     main(["mcp-server", "--config", str(config_file)])
 
-    # HITL should be constructed with the config loaded from --config.
-    (ursa_config,), _ = hitl_class.call_args
+    # AgentRuntime should be constructed with the config loaded from --config.
+    (ursa_config,), _ = runtime_class.call_args
     assert ursa_config.llm_model.model == "llama3.1"
     assert ursa_config.llm_model.model_provider == "ollama"
     assert ursa_config.llm_model.base_url == "http://localhost:11434"
@@ -312,11 +314,11 @@ def test_mcp_server_config_flag_parses_alongside_transport(
     monkeypatch, tmp_path
 ):
     """--config coexists with MCP transport options on the subcommand."""
-    hitl_class = MagicMock()
-    hitl_class.return_value = MagicMock()
+    runtime_class = MagicMock()
+    runtime_class.return_value = MagicMock()
     mcp = MagicMock()
-    hitl_class.return_value.as_mcp_server.return_value = mcp
-    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
+    runtime_class.return_value.as_mcp_server.return_value = mcp
+    monkeypatch.setattr("ursa.runtime.AgentRuntime", runtime_class)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     config_file = tmp_path / "mcp.yaml"
@@ -334,7 +336,7 @@ def test_mcp_server_config_flag_parses_alongside_transport(
         "9001",
     ])
 
-    (ursa_config,), _ = hitl_class.call_args
+    (ursa_config,), _ = runtime_class.call_args
     assert ursa_config.llm_model.model == "llama3.1"
     assert ursa_config.llm_model.model_provider == "ollama"
     mcp.run.assert_called_once_with(
@@ -346,7 +348,7 @@ def test_mcp_server_config_flag_parses_alongside_transport(
 
 
 def test_mcp_server_passes_http_options_when_running(monkeypatch):
-    hitl, mcp = _stub_mcp_server(monkeypatch)
+    runtime, mcp = _stub_mcp_server(monkeypatch)
 
     main([
         "mcp-server",
@@ -360,7 +362,7 @@ def test_mcp_server_passes_http_options_when_running(monkeypatch):
         "warning",
     ])
 
-    hitl.as_mcp_server.assert_called_once_with()
+    runtime.as_mcp_server.assert_called_once_with()
     mcp.run.assert_called_once_with(
         transport="streamable-http",
         log_level="WARNING",

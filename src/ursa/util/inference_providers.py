@@ -292,8 +292,16 @@ def list_provider_models(
 
 
 def _matches_model(configured: str, advertised: str) -> bool:
-    return (
-        configured == advertised or configured == advertised.rsplit("/", 1)[-1]
+    advertised_name = advertised.rsplit("/", 1)[-1]
+    if configured == advertised or configured == advertised_name:
+        return True
+
+    # Ollama accepts an omitted ``:latest`` tag, while its model-list API
+    # returns the canonical tagged name.  Validate the same alias the server
+    # itself accepts.
+    configured_name = configured.rsplit("/", 1)[-1]
+    return ":" not in configured_name and advertised_name == (
+        f"{configured_name}:latest"
     )
 
 

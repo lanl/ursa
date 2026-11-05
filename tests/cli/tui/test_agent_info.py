@@ -45,9 +45,9 @@ async def test_agent_details_preserve_runtime_order_without_loading_agents():
         wrapper._agent = SimpleNamespace(tools={"search": Tool()})
         return wrapper
 
-    hitl = SimpleNamespace(agents=wrappers, get_agent=get_agent)
+    runtime = SimpleNamespace(agents=wrappers, get_agent=get_agent)
 
-    details = load_agent_details(hitl)
+    details = load_agent_details(runtime)
 
     assert [agent.name for agent in details] == ["execute", "chat"]
     assert calls == []
@@ -55,7 +55,7 @@ async def test_agent_details_preserve_runtime_order_without_loading_agents():
     assert details[0].tools == ()
     assert not details[0].tools_loaded
 
-    tools = await load_agent_tools(hitl, "execute")
+    tools = await load_agent_tools(runtime, "execute")
 
     assert calls == ["execute"]
     assert [tool.name for tool in tools] == ["search"]

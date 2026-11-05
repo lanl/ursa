@@ -12,7 +12,7 @@ from typing import Any, Protocol
 
 from rich.console import Console
 
-from ursa.cli.callbacks import HITLLogEventHandler
+from ursa.cli.callbacks import AgentLogEventHandler
 
 from .events import Event
 
@@ -97,7 +97,6 @@ class BaseAgentInProcessAdapter:
                 ctx.workspace_dir,
             )
 
-        async_resources = await _ensure_async_checkpointer(agent)
         try:
             if self._setup_hook is not None:
                 await _maybe_await(self._setup_hook(agent, ctx, inputs))
@@ -110,7 +109,7 @@ class BaseAgentInProcessAdapter:
             # Prefer BaseAgent.format_result if available; else just string-ify.
             return _format_agent_result(agent, result)
         finally:
-            await _close_async_resources(async_resources)
+            await _close_agent(agent)
 
 
 class DirectInvokeAdapter:
@@ -158,7 +157,6 @@ class DirectInvokeAdapter:
                 ctx.workspace_dir,
             )
 
-        async_resources = await _ensure_async_checkpointer(agent)
         try:
             if self._setup_hook is not None:
                 await _maybe_await(self._setup_hook(agent, ctx, inputs))
@@ -169,7 +167,7 @@ class DirectInvokeAdapter:
             )
             return _format_agent_result(agent, result)
         finally:
-            await _close_async_resources(async_resources)
+            await _close_agent(agent)
 
 
 def _dashboard_console() -> Console:
@@ -234,76 +232,14 @@ def _format_agent_result(agent: Any, result: Any) -> str:
     return str(result)
 
 
-async def _ensure_async_checkpointer(agent: Any) -> list[Any]:
-    """Replace a persistent agent's sync SQLite checkpointer for async execution.
-
-    Dashboard workers now intentionally run BaseAgent targets through ``ainvoke``.
-    Named/persistent URSA agents are constructed with a sync ``SqliteSaver`` by the
-    shared BaseAgent initialization path, so swap that saver for LangGraph's
-    ``AsyncSqliteSaver`` before the graph is compiled/invoked.
-
-    Returns async resources that must be closed after the run.
-    """
-
-    checkpointer = getattr(agent, "checkpointer", None)
-    den = getattr(agent, "den", None)
-    if checkpointer is None or den is None:
-        return []
-
-    checkpointer_cls = checkpointer.__class__
-    if checkpointer_cls.__name__ == "AsyncSqliteSaver":
-        return []
-    if not (
-        checkpointer_cls.__name__ == "SqliteSaver"
-        and checkpointer_cls.__module__.startswith(
-            "langgraph.checkpoint.sqlite"
-        )
-    ):
-        return []
-
-    try:
-        import aiosqlite  # type: ignore
-        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-    except ImportError as exc:
-        raise ImportError(
-            "Dashboard async agent execution requires aiosqlite and "
-            "langgraph.checkpoint.sqlite.aio.AsyncSqliteSaver. Install the "
-            "dashboard/runtime dependencies, including aiosqlite."
-        ) from exc
-
-    checkpoint_path = Path(den) / "db" / "checkpointer.db"
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = await aiosqlite.connect(str(checkpoint_path))
-    setattr(agent, "checkpointer", AsyncSqliteSaver(conn))
-
-    # If a compiled_graph cached property was materialized with the old saver,
-    # discard it so the subsequent ainvoke uses the async saver.
-    try:
-        agent.__dict__.pop("compiled_graph", None)
-    except AttributeError:
-        pass
-
-    old_conn = getattr(checkpointer, "conn", None)
-    if old_conn is not None:
-        try:
-            old_conn.close()
-        except Exception:
-            pass
-
-    return [conn]
-
-
-async def _close_async_resources(resources: list[Any]) -> None:
-    for resource in resources:
-        if resource is None:
-            continue
-        close = getattr(resource, "close", None)
-        if close is None:
-            continue
-        try:
-            await _maybe_await(close())
-        except Exception:
-            pass
+async def _close_agent(agent: Any) -> None:
+    """Close resources through the agent's native async/sync lifecycle."""
+    async_close = getattr(agent, "aclose", None)
+    if callable(async_close):
+        await _maybe_await(async_close())
+    close = getattr(agent, "close", None)
+    if callable(close):
+        await asyncio.to_thread(close)
 
 
 def _invoke_sync_target_with_setup(
@@ -334,7 +270,7 @@ def _invoke_with_cli_handler(
     """Invoke a dashboard target, attaching the shared CLI callback when supported."""
     if not _supports_invoke_config(agent):
         return agent.invoke(inputs)
-    handler = HITLLogEventHandler(
+    handler = AgentLogEventHandler(
         console=_dashboard_console(),
         workspace=workspace_dir,
     )
@@ -350,7 +286,7 @@ async def _ainvoke_with_cli_handler(
     """Async invoke a dashboard target with the shared CLI callback when supported."""
     if not _supports_ainvoke_config(agent):
         return await _maybe_await(agent.ainvoke(inputs))
-    handler = HITLLogEventHandler(
+    handler = AgentLogEventHandler(
         console=_dashboard_console(),
         workspace=workspace_dir,
     )

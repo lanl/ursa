@@ -8,7 +8,7 @@ from textual.widgets import Markdown, Static
 
 import ursa.cli.tui.app as app_module
 import ursa.util.crossplatform as crossplatform
-from tests.cli._app_fakes import FakeHITL, emit_event, wait_for
+from tests.cli._app_helpers import emit_event, make_runtime, wait_for
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import EventCard, ExceptionCard, RunCommandCard
 from ursa.cli.tui.turn import Turn
@@ -33,7 +33,7 @@ def test_copy_bindings_are_uniform_and_global():
 
 
 async def test_welcome_banner_starts_at_top_of_conversation(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.pause()
@@ -54,10 +54,11 @@ async def test_welcome_banner_starts_at_top_of_conversation(tmp_path):
 
 
 async def test_prompt_submission_events_and_history(tmp_path):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
+    calls = []
 
     async def run_agent(name, prompt, callbacks=None):
-        hitl.calls.append((name, prompt))
+        calls.append((name, prompt))
         handler = callbacks[0]
         await emit_event(
             handler,
@@ -80,15 +81,15 @@ async def test_prompt_submission_events_and_history(tmp_path):
         )
         return "**Finished**"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("h", "e", "l", "l", "o", "enter")
         await pilot.pause()
 
-        await wait_for(pilot, lambda: hitl.calls == [("chat", "hello")])
-        assert hitl.calls == [("chat", "hello")]
+        await wait_for(pilot, lambda: calls == [("chat", "hello")])
+        assert calls == [("chat", "hello")]
         messages = list(app.query(MessageCard))
         assert len(messages) == 2
         assert messages[0].styles.background != messages[1].styles.background
@@ -121,13 +122,13 @@ async def test_prompt_submission_events_and_history(tmp_path):
 
 
 async def test_agent_exception_card_expands_to_full_traceback(tmp_path):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
 
     async def run_agent(_name, _prompt, callbacks=None):
         raise RuntimeError("provider disconnected")
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("h", "e", "l", "l", "o", "enter")
@@ -160,7 +161,7 @@ async def test_agent_exception_card_expands_to_full_traceback(tmp_path):
 
 
 async def test_command_events_from_a_worker_thread_update_the_ui(tmp_path):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
 
     async def run_agent(_name, _prompt, callbacks=None):
         handler = callbacks[0]
@@ -182,8 +183,8 @@ async def test_command_events_from_a_worker_thread_update_the_ui(tmp_path):
         await asyncio.to_thread(emit_command_event)
         return "Command finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("r", "u", "n", "enter")
@@ -198,7 +199,7 @@ async def test_command_events_from_a_worker_thread_update_the_ui(tmp_path):
 async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
     tmp_path,
 ):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
     release_agent = asyncio.Event()
 
     async def run_agent(_name, _prompt, callbacks=None):
@@ -215,8 +216,8 @@ async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
         await release_agent.wait()
         return "Finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("w", "a", "i", "t", "enter")
@@ -254,10 +255,10 @@ async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
         assert activity.has_class("hidden")
 
 
-async def test_ctrl_c_reports_that_running_agent_cannot_be_cancelled(
+async def test_ctrl_c_stops_managed_agent_at_committed_state(
     tmp_path, monkeypatch
 ):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
     started = asyncio.Event()
     release = asyncio.Event()
 
@@ -266,8 +267,8 @@ async def test_ctrl_c_reports_that_running_agent_cannot_be_cancelled(
         await release.wait()
         return "Finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
     notifications = []
     monkeypatch.setattr(
         app,
@@ -286,8 +287,9 @@ async def test_ctrl_c_reports_that_running_agent_cannot_be_cancelled(
 
         assert prompt.disabled
         assert any(worker.group == "agent" for worker in app.workers)
-        assert "not supported" in notifications[0][0]
-        assert "Ctrl+D" in notifications[0][0]
+        assert notifications[0][0] == (
+            "Stopped chat at its last committed state."
+        )
         assert notifications[0][1]["severity"] == "warning"
 
         release.set()
@@ -298,7 +300,7 @@ async def test_ctrl_c_reports_that_running_agent_cannot_be_cancelled(
 async def test_clear_conversation_is_refused_during_active_turn(
     tmp_path, monkeypatch
 ):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
     started = asyncio.Event()
     release = asyncio.Event()
 
@@ -307,8 +309,8 @@ async def test_clear_conversation_is_refused_during_active_turn(
         await release.wait()
         return "Finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
     notifications = []
     monkeypatch.setattr(
         app,
@@ -335,7 +337,7 @@ async def test_clear_conversation_is_refused_during_active_turn(
 async def test_quitting_waits_for_active_agent_then_exits(
     tmp_path, monkeypatch
 ):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
     started = asyncio.Event()
     release = asyncio.Event()
     finished = asyncio.Event()
@@ -346,8 +348,8 @@ async def test_quitting_waits_for_active_agent_then_exits(
         finished.set()
         return "Finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
     notifications = []
     monkeypatch.setattr(
         app,
@@ -375,14 +377,19 @@ async def test_quitting_waits_for_active_agent_then_exits(
 
 
 async def test_command_arrows_navigate_turn_markers_and_end_anchor(tmp_path):
-    hitl = FakeHITL(tmp_path)
-    app = UrsaTextualApp(hitl)
+    runtime = make_runtime(tmp_path)
+
+    async def run_agent(_name, _prompt, callbacks=None):
+        return "Finished"
+
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("o", "n", "e", "enter")
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.press("t", "w", "o", "enter")
-        await pilot.pause()
+        await app.workers.wait_for_complete()
 
         markers = app._turn_markers()
         assert len(markers) == 8
@@ -417,12 +424,18 @@ async def test_command_arrows_navigate_turn_markers_and_end_anchor(tmp_path):
 
 
 async def test_turn_navigation_changes_real_scroll_position(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    runtime = make_runtime(tmp_path)
+
+    async def run_agent(_name, _prompt, callbacks=None):
+        return "Finished"
+
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 20)) as pilot:
         for index in range(6):
             await pilot.press(*str(index), "enter")
-            await pilot.pause()
+            await app.workers.wait_for_complete()
         conversation = app.query_one("#conversation", VerticalScroll)
         bottom = conversation.scroll_y
         assert bottom > 0
@@ -446,7 +459,7 @@ async def test_turn_navigation_changes_real_scroll_position(tmp_path):
 
 
 async def test_new_cards_follow_bottom_without_moving_scrolled_view(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 20)) as pilot:
         conversation = app.query_one("#conversation", VerticalScroll)
@@ -492,7 +505,7 @@ async def test_new_cards_follow_bottom_without_moving_scrolled_view(tmp_path):
 
 
 async def test_user_scroll_cancels_initial_anchor_transition(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 20)) as pilot:
         conversation = app.query_one("#conversation", VerticalScroll)
@@ -554,7 +567,7 @@ async def test_user_scroll_cancels_initial_anchor_transition(tmp_path):
 def test_hash_agent_routing_accepts_whitespace_and_multiline_prompts(
     tmp_path, prompt, expected
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     assert app._route_prompt(prompt) == expected
 
@@ -562,7 +575,7 @@ def test_hash_agent_routing_accepts_whitespace_and_multiline_prompts(
 def test_copy_to_clipboard_prefers_platform_tool_when_available(
     tmp_path, monkeypatch
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
     fallback = []
     monkeypatch.setattr(crossplatform, "copy_to_clipboard", lambda text: True)
     monkeypatch.setattr(
@@ -580,7 +593,7 @@ def test_copy_to_clipboard_prefers_platform_tool_when_available(
 def test_copy_to_clipboard_uses_osc52_when_platform_copy_unavailable(
     tmp_path, monkeypatch
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
     fallback = []
     monkeypatch.setattr(crossplatform, "copy_to_clipboard", lambda text: False)
     monkeypatch.setattr(
@@ -596,21 +609,23 @@ def test_copy_to_clipboard_uses_osc52_when_platform_copy_unavailable(
 
 
 def test_one_shot_routes_hash_agent_and_writes_response(tmp_path):
-    class OneShotHITL(FakeHITL):
-        async def run_agent(self, name, prompt, callbacks=None):
-            self.calls.append((name, prompt))
-            return "One-shot result"
+    runtime = make_runtime(tmp_path)
+    calls = []
 
-    hitl = OneShotHITL(tmp_path)
+    async def run_agent(name, prompt, callbacks=None):
+        calls.append((name, prompt))
+        return "One-shot result"
+
+    runtime.run_agent = run_agent
     output = io.StringIO()
 
-    result = app_module.run_textual_once(
-        hitl, "#plan inspect this", stdout=output
+    result = app_module.prompt_agent_once(
+        runtime, "#plan inspect this", stdout=output
     )
 
     assert result == "One-shot result"
-    assert hitl.calls == [("plan", "inspect this")]
-    assert hitl.closed
+    assert calls == [("plan", "inspect this")]
+    assert runtime._closed
     assert "One-shot result" in output.getvalue()
 
 
@@ -619,7 +634,7 @@ async def test_user_scroll_during_anchor_start_gap_is_not_overridden(tmp_path):
     # its flag; a user scroll in the gap before a deferred start could
     # not stop an animation that had not begun, and the late start then
     # drove the viewport away from the user's position.
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 20)) as pilot:
         conversation = app.query_one("#conversation", VerticalScroll)
@@ -649,7 +664,7 @@ async def test_update_status_survives_absent_status_widget(tmp_path):
     # already pruned the status widget, the bare query crashed the
     # worker and surfaced as WorkerFailed at run_test exit, after every
     # test assertion had passed (the recurring Windows CI signature).
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         await app.query_one("#status").remove()

@@ -3,7 +3,7 @@ import asyncio
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
-from tests.cli._app_fakes import FakeHITL, emit_event, wait_for
+from tests.cli._app_helpers import emit_event, make_runtime, wait_for
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import PlanCard
 from ursa.cli.tui.turn import Turn
@@ -23,7 +23,7 @@ def plan_steps(count=7):
 
 
 async def test_plan_card_renders_drafting_and_collapsed_steps(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("make a plan", tmp_path)
@@ -77,7 +77,7 @@ async def test_plan_card_renders_drafting_and_collapsed_steps(tmp_path):
 
 
 async def test_plan_card_tracks_revisions_approval_and_expansion(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("make a plan", tmp_path)
@@ -166,7 +166,7 @@ async def test_plan_card_tracks_revisions_approval_and_expansion(tmp_path):
 
 
 async def test_agent_completion_stops_pending_plan_review_spinner(tmp_path):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
 
     async def run_agent(_name, _prompt, callbacks=None):
         handler = callbacks[0]
@@ -181,8 +181,8 @@ async def test_agent_completion_stops_pending_plan_review_spinner(tmp_path):
         )
         return "Final plan"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("p", "l", "a", "n", "enter")
@@ -199,7 +199,7 @@ async def test_agent_completion_stops_pending_plan_review_spinner(tmp_path):
 
 
 async def test_failed_agent_stops_drafting_plan_spinner(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("make a plan", tmp_path)

@@ -212,7 +212,7 @@ the top-level invocation when possible so nested agents and tools share one
 event stream.
 
 The TUI uses
-[`HITLLogEventHandler`][ursa.cli.callbacks.HITLLogEventHandler]. The
+[`AgentLogEventHandler`][ursa.cli.callbacks.AgentLogEventHandler]. The
 default
 [`EventLoggingHandler`][ursa.util.events.EventLoggingHandler]
 forwards structured events into Python logging, and

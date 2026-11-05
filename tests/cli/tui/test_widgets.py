@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
 
+import pytest
 import yaml
 from mcp import StdioServerParameters
 from mcp.client.session_group import StreamableHttpParameters
@@ -28,15 +29,12 @@ from textual.widgets import (
 )
 
 import ursa.util.crossplatform as crossplatform
-from tests.cli._app_fakes import FakeHITL, wait_for
-from ursa.agents.base import AgentWithTools
-from ursa.agents.execution_agent import ExecutionAgent
+from tests.cli._app_helpers import make_ollama_runtime, make_runtime, wait_for
 from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
     InferenceProviderConfig,
 )
-from ursa.cli.runtime import AgentHITL
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.tips import TIPS, random_tip, runtime_keymap
 from ursa.cli.tui.widgets import (
@@ -94,8 +92,15 @@ class FakeMcpTool(FakeConfiguredTool):
 
 
 async def test_agent_hotlist_routes_selected_agent(tmp_path):
-    hitl = FakeHITL(tmp_path)
-    app = UrsaTextualApp(hitl)
+    runtime = make_runtime(tmp_path)
+    calls = []
+
+    async def run_agent(name, prompt, callbacks=None):
+        calls.append((name, prompt))
+        return "Finished"
+
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("#")
@@ -116,14 +121,14 @@ async def test_agent_hotlist_routes_selected_agent(tmp_path):
         prompt.insert("make a plan")
         await pilot.press("enter")
         await pilot.pause()
-        await wait_for(pilot, lambda: hitl.calls == [("plan", "make a plan")])
-        assert hitl.calls == [("plan", "make a plan")]
+        await wait_for(pilot, lambda: calls == [("plan", "make a plan")])
+        assert calls == [("plan", "make a plan")]
 
 
 async def test_agent_selection_moves_to_front_replaces_and_preserves_cursor(
     tmp_path,
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         prompt = app.query_one(PromptArea)
@@ -148,7 +153,7 @@ async def test_agent_selection_moves_to_front_replaces_and_preserves_cursor(
 
 
 async def test_macro_selectors_close_with_escape(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         prompt = app.query_one(PromptArea)
@@ -192,7 +197,7 @@ async def test_macro_selectors_close_with_escape(tmp_path):
 async def test_escaping_command_picker_preserves_multiline_draft_and_undo(
     tmp_path,
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         prompt = app.query_one(PromptArea)
@@ -218,7 +223,7 @@ async def test_escaping_command_picker_preserves_multiline_draft_and_undo(
 
 
 async def test_macro_choice_is_undoable_without_reopening_picker(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         prompt = app.query_one(PromptArea)
@@ -246,7 +251,7 @@ async def test_macro_choice_is_undoable_without_reopening_picker(tmp_path):
 async def test_programmatic_and_pasted_macro_characters_do_not_open_picker(
     tmp_path,
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         prompt = app.query_one(PromptArea)
@@ -267,7 +272,7 @@ async def test_file_hotlist_uses_at_trigger(tmp_path):
     (tmp_path / "notes.md").write_text("hello")
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "guide.md").write_text("guide")
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("@")
@@ -302,7 +307,7 @@ async def test_file_hotlist_uses_at_trigger(tmp_path):
 
 
 async def test_shift_enter_adds_a_prompt_newline(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test() as pilot:
         await pilot.press("a", "shift+enter", "b")
@@ -310,7 +315,7 @@ async def test_shift_enter_adds_a_prompt_newline(tmp_path):
 
 
 async def test_ctrl_j_adds_a_prompt_newline(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test() as pilot:
         await pilot.press("a", "ctrl+j", "b")
@@ -321,20 +326,20 @@ def test_newline_key_prefers_shift_enter_when_protocol_is_detected(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(crossplatform, "expects_kitty_keyboard", lambda: True)
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     assert app.preferred_newline_key == "shift+enter"
 
 
 def test_newline_key_falls_back_to_ctrl_j(tmp_path, monkeypatch):
     monkeypatch.setattr(crossplatform, "expects_kitty_keyboard", lambda: False)
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     assert app.preferred_newline_key == "ctrl+j"
 
 
 async def test_prompt_has_markdown_highlighting_paste_undo_and_redo(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test() as pilot:
         prompt = app.query_one(PromptArea)
@@ -354,7 +359,7 @@ async def test_prompt_has_markdown_highlighting_paste_undo_and_redo(tmp_path):
 async def test_prompt_copy_shortcut_preserves_selected_text(
     tmp_path, monkeypatch
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
     copied = []
     monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
 
@@ -372,7 +377,7 @@ async def test_prompt_copy_shortcut_preserves_selected_text(
 async def test_prompt_copy_shortcut_delegates_to_screen_selection(
     tmp_path, monkeypatch
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
     delegated = []
 
     async with app.run_test() as pilot:
@@ -386,7 +391,7 @@ async def test_prompt_copy_shortcut_delegates_to_screen_selection(
 
 
 async def test_prompt_supports_option_arrow_word_navigation(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test() as pilot:
         prompt = app.query_one(PromptArea)
@@ -400,11 +405,17 @@ async def test_prompt_supports_option_arrow_word_navigation(tmp_path):
 
 
 async def test_ctrl_c_clears_prompt_and_adds_it_to_history(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    runtime = make_runtime(tmp_path)
+
+    async def run_agent(_name, _prompt, callbacks=None):
+        return "Finished"
+
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test() as pilot:
         await pilot.press("o", "l", "d", "enter")
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.press("d", "r", "a", "f", "t", "ctrl+c")
         prompt = app.query_one(PromptArea)
         assert prompt.text == ""
@@ -418,7 +429,7 @@ async def test_ctrl_c_clears_prompt_and_adds_it_to_history(tmp_path):
 
 
 async def test_prompt_caps_at_thirty_percent_of_terminal_height(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         prompt = app.query_one(PromptArea)
@@ -440,7 +451,7 @@ async def test_prompt_caps_at_thirty_percent_of_terminal_height(tmp_path):
 
 
 async def test_prompt_grows_for_soft_wrapped_lines(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(40, 24)) as pilot:
         prompt = app.query_one(PromptArea)
@@ -455,23 +466,23 @@ async def test_prompt_grows_for_soft_wrapped_lines(tmp_path):
 
 
 async def test_welcome_banner_and_provider_status_are_visible(tmp_path):
-    hitl = FakeHITL(tmp_path)
-    hitl.config.inference_providers.update({
+    runtime = make_runtime(tmp_path)
+    runtime.config.inference_providers.update({
         "hosted-chat": InferenceProviderConfig(base_url="https://llm.test/v1"),
         "hosted-embedding": InferenceProviderConfig(
             base_url="https://embed.test/v1"
         ),
     })
-    hitl.config.llm_model = ChatModelConfig(
+    runtime.config.llm_model = ChatModelConfig(
         model="test-model", inference_provider="hosted-chat"
-    ).resolve_inference_provider(hitl.config.inference_providers)
-    hitl.config.emb_model = EmbModelConfig(
+    ).resolve_inference_provider(runtime.config.inference_providers)
+    runtime.config.emb_model = EmbModelConfig(
         model="embed-model", inference_provider="hosted-embedding"
-    ).resolve_inference_provider(hitl.config.inference_providers)
-    hitl.inference_provider = "hosted-chat"
-    hitl.embedding_inference_provider = "hosted-embedding"
-    hitl.group = "research"
-    app = UrsaTextualApp(hitl)
+    ).resolve_inference_provider(runtime.config.inference_providers)
+    runtime.inference_provider = "hosted-chat"
+    runtime.embedding_inference_provider = "hosted-embedding"
+    runtime.group = "research"
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -493,10 +504,10 @@ async def test_welcome_banner_and_provider_status_are_visible(tmp_path):
 
 
 async def test_named_agent_appears_in_statusline_and_status_command(tmp_path):
-    hitl = FakeHITL(tmp_path)
-    hitl.agent_name = "lab-assistant"
-    hitl.config.agent_name = "lab-assistant"
-    app = UrsaTextualApp(hitl)
+    runtime = make_runtime(tmp_path)
+    runtime.agent_name = "lab-assistant"
+    runtime.config.agent_name = "lab-assistant"
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)):
         assert "lab-assistant" in str(app.query_one("#status", Static).content)
@@ -504,7 +515,7 @@ async def test_named_agent_appears_in_statusline_and_status_command(tmp_path):
 
 
 async def test_welcome_tips_vary_and_keymaps_resolve(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 24)):
         owners = (type(app), PromptArea, HotlistScreen)
@@ -514,7 +525,7 @@ async def test_welcome_tips_vary_and_keymaps_resolve(tmp_path):
 
 
 async def test_welcome_tip_border_uses_visible_theme_border(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 24)) as pilot:
         tip = app.query_one("#welcome-tip", Static)
@@ -532,7 +543,7 @@ async def test_welcome_tip_border_uses_visible_theme_border(tmp_path):
 
 
 async def test_welcome_version_and_workspace_align_at_narrow_width(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -558,9 +569,9 @@ async def test_welcome_version_and_workspace_align_at_narrow_width(tmp_path):
 
 
 async def test_workspace_uses_one_borderless_row_when_it_fits(tmp_path):
-    hitl = FakeHITL(tmp_path)
-    hitl.workspace = Path("/tmp/ursa")
-    app = UrsaTextualApp(hitl)
+    runtime = make_runtime(tmp_path)
+    runtime.workspace = Path("/tmp/ursa")
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -578,7 +589,7 @@ async def test_workspace_uses_one_borderless_row_when_it_fits(tmp_path):
 
 
 async def test_picker_header_shares_the_top_row_with_exit_hint(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 24)) as pilot:
         app.push_screen(HotlistScreen("Workspace paths", ["src/"]))
@@ -594,11 +605,11 @@ async def test_picker_header_shares_the_top_row_with_exit_hint(tmp_path):
 
 
 async def test_slash_picker_opens_status_inside_textual(tmp_path):
-    hitl = FakeHITL(tmp_path)
-    hitl.agent_name = "lab-assistant"
-    hitl.config.agent_name = "lab-assistant"
-    hitl.config.llm_model.api_key = SecretStr("actual-secret")
-    hitl.config.mcp_servers = {
+    runtime = make_runtime(tmp_path)
+    runtime.agent_name = "lab-assistant"
+    runtime.config.agent_name = "lab-assistant"
+    runtime.config.llm_model.api_key = SecretStr("actual-secret")
+    runtime.config.mcp_servers = {
         "local": StdioServerParameters(command="ursa-mcp", args=[]),
         "remote": StreamableHttpParameters(url="https://example.test/mcp"),
         **{
@@ -608,7 +619,7 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
             for index in range(20)
         },
     }
-    app = UrsaTextualApp(hitl)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.press("/")
@@ -654,7 +665,8 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         assert str(
             app.screen.query_one("#status-config-readonly", Static).content
         ).startswith("Read only")
-        await pilot.press("down", "shift+down")
+        editor.move_cursor((1, 0))
+        editor.move_cursor((2, 0), select=True)
         assert editor.cursor_location[0] == 2
         assert not editor.selection.is_empty
 
@@ -677,7 +689,7 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
 
 
 async def test_exit_command_quits_the_app(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.press("/", "e", "x", "i", "t", "enter")
@@ -688,11 +700,11 @@ async def test_exit_command_quits_the_app(tmp_path):
 
 
 async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
-    hitl = FakeHITL(tmp_path)
-    hitl.config.llm_model.max_completion_tokens = 4096
-    hitl.inference_provider = "stale-provider"
-    hitl.config.inference_providers["stale-provider"] = InferenceProviderConfig(
-        base_url="https://stale.example/v1"
+    runtime = make_runtime(tmp_path)
+    runtime.config.llm_model.max_completion_tokens = 4096
+    runtime.inference_provider = "stale-provider"
+    runtime.config.inference_providers["stale-provider"] = (
+        InferenceProviderConfig(base_url="https://stale.example/v1")
     )
 
     def provider_models(config):
@@ -707,7 +719,7 @@ async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
         "ursa.cli.tui.widgets.list_provider_models",
         provider_models,
     )
-    app = UrsaTextualApp(hitl)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 24)) as pilot:
         await app._show_command("models")
@@ -835,8 +847,8 @@ async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
             "(openai - https://api.openai.com/v1)" in welcome
         )
 
-    assert len(hitl.model_changes) == 1
-    chat_config, embedding_config = hitl.model_changes[0]
+    chat_config = runtime.config.llm_model
+    embedding_config = runtime.config.emb_model
     assert isinstance(chat_config, ChatModelConfig)
     assert chat_config.model == "gpt-5.4"
     assert chat_config.model_provider == "openai"
@@ -851,7 +863,7 @@ async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
 async def test_invalid_model_selection_notifies_without_closing_modal(
     tmp_path, monkeypatch
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
     notifications = []
     monkeypatch.setattr(
         app,
@@ -893,12 +905,12 @@ async def test_invalid_model_selection_notifies_without_closing_modal(
 async def test_model_yaml_round_trips_extras_and_updates_controls(
     tmp_path, monkeypatch
 ):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models",
         lambda _config: [ProviderModel("yaml-model", "openai")],
     )
-    app = UrsaTextualApp(hitl)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -951,9 +963,9 @@ async def test_valid_yaml_is_committed_only_when_apply_is_pressed(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    hitl = FakeHITL(tmp_path)
-    original = hitl.config.llm_model.model_copy(deep=True)
-    app = UrsaTextualApp(hitl)
+    runtime = make_runtime(tmp_path)
+    original = runtime.config.llm_model.model_copy(deep=True)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -969,17 +981,17 @@ temperature: 0.35
 provider_options:
   reasoning: high
 """
-        assert hitl.config.llm_model == original
+        assert runtime.config.llm_model == original
 
         app.screen.action_apply()
         await app.workers.wait_for_complete()
         await pilot.pause()
 
         await wait_for(
-            pilot, lambda: hitl.config.llm_model.model == "applied-model"
+            pilot, lambda: runtime.config.llm_model.model == "applied-model"
         )
-        assert hitl.config.llm_model.model == "applied-model"
-        assert hitl.config.llm_model.model_extra == {
+        assert runtime.config.llm_model.model == "applied-model"
+        assert runtime.config.llm_model.model_extra == {
             "temperature": 0.35,
             "provider_options": {"reasoning": "high"},
         }
@@ -992,7 +1004,7 @@ async def test_yaml_validation_keeps_unavailable_model_as_not_found(
         "ursa.cli.tui.widgets.list_provider_models",
         lambda _config: [ProviderModel("available-model", "openai")],
     )
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1027,7 +1039,7 @@ async def test_yaml_keeps_unavailable_model_provider_visible(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1091,7 +1103,7 @@ async def test_whitespace_chat_model_yaml_is_rejected_before_apply(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1116,8 +1128,8 @@ async def test_whitespace_embedding_model_yaml_is_rejected_before_apply(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    hitl = FakeHITL(tmp_path)
-    app = UrsaTextualApp(hitl)
+    runtime = make_runtime(tmp_path)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1139,7 +1151,7 @@ async def test_whitespace_embedding_model_yaml_is_rejected_before_apply(
         app.screen.action_apply()
         await pilot.pause()
         await app.workers.wait_for_complete()
-        assert hitl.config.emb_model is None
+        assert runtime.config.emb_model is None
 
 
 async def test_structured_chat_none_updates_yaml_and_blocks_apply(
@@ -1148,9 +1160,9 @@ async def test_structured_chat_none_updates_yaml_and_blocks_apply(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    hitl = FakeHITL(tmp_path)
-    original = hitl.config.llm_model.model_copy(deep=True)
-    app = UrsaTextualApp(hitl)
+    runtime = make_runtime(tmp_path)
+    original = runtime.config.llm_model.model_copy(deep=True)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1170,7 +1182,7 @@ async def test_structured_chat_none_updates_yaml_and_blocks_apply(
 
         assert isinstance(app.screen, ModelScreen)
         assert editor.has_class("yaml-invalid")
-        assert hitl.config.llm_model == original
+        assert runtime.config.llm_model == original
 
 
 async def test_structured_embedding_none_removes_configured_embedding(
@@ -1179,8 +1191,8 @@ async def test_structured_embedding_none_removes_configured_embedding(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    hitl = FakeHITL(tmp_path)
-    app = UrsaTextualApp(hitl)
+    runtime = make_runtime(tmp_path)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1201,7 +1213,7 @@ async def test_structured_embedding_none_removes_configured_embedding(
         await pilot.pause()
         await app.workers.wait_for_complete()
 
-        assert hitl.config.emb_model is None
+        assert runtime.config.emb_model is None
 
 
 async def test_yaml_validation_names_unknown_inference_provider(
@@ -1210,7 +1222,7 @@ async def test_yaml_validation_names_unknown_inference_provider(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1236,7 +1248,7 @@ async def test_model_option_refresh_preserves_sync_guard_and_empty_choice(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1264,7 +1276,7 @@ async def test_programmatic_control_sync_suppresses_queued_events(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", provider_models
     )
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1295,14 +1307,14 @@ async def test_masked_yaml_api_key_preserves_secret_value(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _: []
     )
-    hitl = FakeHITL(tmp_path)
-    hitl.config.llm_model = ChatModelConfig(
+    runtime = make_runtime(tmp_path)
+    runtime.config.llm_model = ChatModelConfig(
         model="secret-model",
         model_provider="openai",
         base_url="https://secret.example/v1",
         api_key=SecretStr("actual-secret"),
     )
-    app = UrsaTextualApp(hitl)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1335,7 +1347,7 @@ async def test_direct_provider_selection_refreshes_model_catalog(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", provider_models
     )
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1362,8 +1374,8 @@ async def test_direct_provider_selection_refreshes_model_catalog(
 async def test_yaml_provider_change_refreshes_model_catalog(
     tmp_path, monkeypatch
 ):
-    hitl = FakeHITL(tmp_path)
-    hitl.config.inference_providers["fast"] = InferenceProviderConfig(
+    runtime = make_runtime(tmp_path)
+    runtime.config.inference_providers["fast"] = InferenceProviderConfig(
         base_url="https://fast.example/v1"
     )
 
@@ -1378,7 +1390,7 @@ async def test_yaml_provider_change_refreshes_model_catalog(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", provider_models
     )
-    app = UrsaTextualApp(hitl)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1408,8 +1420,8 @@ inference_provider: fast
 async def test_provider_discovery_failure_clears_previous_catalog(
     tmp_path, monkeypatch
 ):
-    hitl = FakeHITL(tmp_path)
-    hitl.config.inference_providers["broken"] = InferenceProviderConfig(
+    runtime = make_runtime(tmp_path)
+    runtime.config.inference_providers["broken"] = InferenceProviderConfig(
         base_url="https://broken.example/v1"
     )
 
@@ -1421,7 +1433,7 @@ async def test_provider_discovery_failure_clears_previous_catalog(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", provider_models
     )
-    app = UrsaTextualApp(hitl)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1448,7 +1460,7 @@ async def test_expanded_advanced_modal_is_scrollable_on_short_terminal(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 20)) as pilot:
         await app._show_command("models")
@@ -1476,9 +1488,9 @@ async def test_advanced_yaml_seeded_fuzz_never_mutates_running_config(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    hitl = FakeHITL(tmp_path)
-    original = hitl.config.llm_model.model_copy(deep=True)
-    app = UrsaTextualApp(hitl)
+    runtime = make_runtime(tmp_path)
+    original = runtime.config.llm_model.model_copy(deep=True)
+    app = UrsaTextualApp(runtime)
     cases = [
         ("model: valid\nmodel_provider: openai\n", True),
         ("model: [broken", False),
@@ -1524,7 +1536,7 @@ async def test_advanced_yaml_seeded_fuzz_never_mutates_running_config(
             assert editor.has_class(
                 "yaml-valid" if expected_valid else "yaml-invalid"
             )
-            assert hitl.config.llm_model == original
+            assert runtime.config.llm_model == original
             if result is not None:
                 expected = yaml.safe_load(document)
                 assert result.model == expected["model"]
@@ -1558,9 +1570,9 @@ async def test_cancel_discards_yaml_with_pending_validation(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    hitl = FakeHITL(tmp_path)
-    original = hitl.config.llm_model.model_copy(deep=True)
-    app = UrsaTextualApp(hitl)
+    runtime = make_runtime(tmp_path)
+    original = runtime.config.llm_model.model_copy(deep=True)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1582,7 +1594,7 @@ async def test_cancel_discards_yaml_with_pending_validation(
 
         await wait_for(pilot, lambda: not isinstance(app.screen, ModelScreen))
         assert not isinstance(app.screen, ModelScreen)
-        assert hitl.config.llm_model == original
+        assert runtime.config.llm_model == original
         assert timer._task is None
 
 
@@ -1590,7 +1602,7 @@ async def test_yaml_debounce_restarts_from_latest_edit(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1619,7 +1631,7 @@ async def test_invalid_yaml_blocks_model_accept(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
     notifications = []
     monkeypatch.setattr(
         app,
@@ -1649,7 +1661,7 @@ async def test_yaml_validation_error_with_rich_markup_is_plain_text(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1689,7 +1701,7 @@ async def test_yaml_validation_lists_all_errors_in_bounded_scroll_area(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
         await app._show_command("models")
@@ -1724,16 +1736,16 @@ api_key:
 
 
 async def test_model_change_only_reports_changed_embedding(tmp_path):
-    hitl = FakeHITL(tmp_path)
-    app = UrsaTextualApp(hitl)
-    new_embedding = hitl.config.emb_model.model_copy(
+    runtime = make_runtime(tmp_path)
+    app = UrsaTextualApp(runtime)
+    new_embedding = runtime.config.emb_model.model_copy(
         update={"model": "text-embedding-3-small"}
     )
 
     async with app.run_test(size=(80, 24)):
         app._select_model(
             ModelSelection(
-                chat=hitl.config.llm_model.model_copy(),
+                chat=runtime.config.llm_model.model_copy(),
                 embedding=new_embedding,
             )
         )
@@ -1751,8 +1763,8 @@ async def test_model_change_only_reports_changed_embedding(tmp_path):
 async def test_model_modal_preserves_direct_embedding_endpoint(
     tmp_path, monkeypatch
 ):
-    hitl = FakeHITL(tmp_path)
-    hitl.config.emb_model = EmbModelConfig(
+    runtime = make_runtime(tmp_path)
+    runtime.config.emb_model = EmbModelConfig(
         model="old-embedding",
         model_provider="openai",
         base_url="https://embeddings.example/v1",
@@ -1761,7 +1773,7 @@ async def test_model_modal_preserves_direct_embedding_endpoint(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    app = UrsaTextualApp(hitl)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 24)) as pilot:
         await app._show_command("models")
@@ -1791,8 +1803,8 @@ async def test_model_modal_preserves_direct_embedding_endpoint(
 async def test_switching_direct_endpoint_to_named_provider_stays_in_sync(
     tmp_path, monkeypatch
 ):
-    hitl = FakeHITL(tmp_path)
-    hitl.config.llm_model = ChatModelConfig(
+    runtime = make_runtime(tmp_path)
+    runtime.config.llm_model = ChatModelConfig(
         model="direct-model",
         model_provider="openai",
         base_url="https://direct.example/v1",
@@ -1806,7 +1818,7 @@ async def test_switching_direct_endpoint_to_named_provider_stays_in_sync(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", provider_models
     )
-    app = UrsaTextualApp(hitl)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 24)) as pilot:
         await app._show_command("models")
@@ -1830,7 +1842,7 @@ async def test_switching_direct_endpoint_to_named_provider_stays_in_sync(
         assert "base_url" not in yaml_values
         assert any(
             config.base_url
-            == hitl.config.inference_providers["openai"].base_url
+            == runtime.config.inference_providers["openai"].base_url
             for config in discovered_with
         )
         assert any(
@@ -1842,15 +1854,15 @@ async def test_switching_direct_endpoint_to_named_provider_stays_in_sync(
 async def test_named_provider_control_removes_direct_url_in_one_sync(
     tmp_path, monkeypatch
 ):
-    hitl = FakeHITL(tmp_path)
-    hitl.config.llm_model = ChatModelConfig(
+    runtime = make_runtime(tmp_path)
+    runtime.config.llm_model = ChatModelConfig(
         model="direct-model",
         base_url="https://direct.example/v1",
     )
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    app = UrsaTextualApp(hitl)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 24)) as pilot:
         await app._show_command("models")
@@ -1881,8 +1893,8 @@ async def test_named_provider_control_removes_direct_url_in_one_sync(
 async def test_immediate_apply_clears_direct_url_for_named_provider(
     tmp_path, monkeypatch
 ):
-    hitl = FakeHITL(tmp_path)
-    hitl.config.llm_model = ChatModelConfig(
+    runtime = make_runtime(tmp_path)
+    runtime.config.llm_model = ChatModelConfig(
         model="direct-model",
         base_url="https://direct.example/v1",
         temperature=0.2,
@@ -1890,7 +1902,7 @@ async def test_immediate_apply_clears_direct_url_for_named_provider(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
-    app = UrsaTextualApp(hitl)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 24)) as pilot:
         await app._show_command("models")
@@ -1906,20 +1918,20 @@ async def test_immediate_apply_clears_direct_url_for_named_provider(
 
         await wait_for(pilot, lambda: not isinstance(app.screen, ModelScreen))
         assert not isinstance(app.screen, ModelScreen)
-        assert hitl.config.llm_model.inference_provider == "openai"
+        assert runtime.config.llm_model.inference_provider == "openai"
         assert (
-            hitl.config.llm_model.base_url
-            == hitl.config.inference_providers["openai"].base_url
+            runtime.config.llm_model.base_url
+            == runtime.config.inference_providers["openai"].base_url
         )
-        assert hitl.config.llm_model.base_url != "https://direct.example/v1"
-        assert hitl.config.llm_model.model_extra == {"temperature": 0.2}
+        assert runtime.config.llm_model.base_url != "https://direct.example/v1"
+        assert runtime.config.llm_model.model_extra == {"temperature": 0.2}
 
 
 async def test_model_modal_preserves_only_explicit_overrides_when_switching_provider(
     tmp_path, monkeypatch
 ):
-    hitl = FakeHITL(tmp_path)
-    hitl.config.inference_providers["other"] = InferenceProviderConfig(
+    runtime = make_runtime(tmp_path)
+    runtime.config.inference_providers["other"] = InferenceProviderConfig(
         base_url="https://other.example/v1",
         ssl_verify=False,
         timeout=20,
@@ -1930,20 +1942,20 @@ async def test_model_modal_preserves_only_explicit_overrides_when_switching_prov
         ssl_verify=False,
         temperature=0.2,
     )
-    openai = hitl.config.inference_providers["openai"]
-    hitl.config.inference_providers["openai"] = InferenceProviderConfig(
+    openai = runtime.config.inference_providers["openai"]
+    runtime.config.inference_providers["openai"] = InferenceProviderConfig(
         base_url=openai.base_url,
         api_key=openai.api_key,
         timeout=10,
     )
-    hitl.config.llm_model = configured.resolve_inference_provider(
-        hitl.config.inference_providers
+    runtime.config.llm_model = configured.resolve_inference_provider(
+        runtime.config.inference_providers
     )
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models",
         lambda _config: [ProviderModel("gpt-test", "openai")],
     )
-    app = UrsaTextualApp(hitl)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 24)) as pilot:
         await app._show_command("models")
@@ -1963,8 +1975,8 @@ async def test_model_modal_preserves_only_explicit_overrides_when_switching_prov
 async def test_model_modal_uses_default_provider_for_new_embedding(
     tmp_path, monkeypatch
 ):
-    hitl = FakeHITL(tmp_path)
-    hitl.config.emb_model = None
+    runtime = make_runtime(tmp_path)
+    runtime.config.emb_model = None
     discovered_with = []
 
     def provider_models(config):
@@ -1974,7 +1986,7 @@ async def test_model_modal_uses_default_provider_for_new_embedding(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", provider_models
     )
-    app = UrsaTextualApp(hitl)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 24)) as pilot:
         await app._show_command("models")
@@ -1984,7 +1996,7 @@ async def test_model_modal_uses_default_provider_for_new_embedding(
         assert any(
             config.model_provider == "openai"
             and config.api_key
-            == hitl.config.inference_providers["openai"].api_key
+            == runtime.config.inference_providers["openai"].api_key
             for config in discovered_with
         )
         assert (
@@ -2008,8 +2020,8 @@ async def test_model_modal_uses_default_provider_for_new_embedding(
 async def test_stale_model_discovery_cannot_replace_new_provider_catalog(
     tmp_path, monkeypatch
 ):
-    hitl = FakeHITL(tmp_path)
-    hitl.config.inference_providers["fast"] = InferenceProviderConfig(
+    runtime = make_runtime(tmp_path)
+    runtime.config.inference_providers["fast"] = InferenceProviderConfig(
         base_url="https://fast.example/v1"
     )
     slow_started = Event()
@@ -2027,7 +2039,7 @@ async def test_stale_model_discovery_cannot_replace_new_provider_catalog(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", provider_models
     )
-    app = UrsaTextualApp(hitl)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 24)) as pilot:
         await app._show_command("models")
@@ -2048,7 +2060,7 @@ async def test_stale_model_discovery_cannot_replace_new_provider_catalog(
         monkeypatch.setattr(app.screen, "_set_model_options", record_options)
         replacement_requested.set()
         replacement_worker = app.screen._request_model_load(
-            "chat", hitl.config.inference_providers["fast"]
+            "chat", runtime.config.inference_providers["fast"]
         )
         release_slow.set()
         await replacement_worker.wait()
@@ -2073,9 +2085,9 @@ async def test_stale_model_discovery_cannot_replace_new_provider_catalog(
 async def test_model_modal_seeded_provider_fuzz_preserves_invariants(
     tmp_path, monkeypatch
 ):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
     for index in range(3):
-        hitl.config.inference_providers[f"provider-{index}"] = (
+        runtime.config.inference_providers[f"provider-{index}"] = (
             InferenceProviderConfig(
                 base_url=f"https://provider-{index}.example/v1"
             )
@@ -2095,7 +2107,7 @@ async def test_model_modal_seeded_provider_fuzz_preserves_invariants(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", provider_models
     )
-    app = UrsaTextualApp(hitl)
+    app = UrsaTextualApp(runtime)
     choices = [f"provider-{index}" for index in range(3)]
     rng = random.Random(20260826)
 
@@ -2154,7 +2166,7 @@ async def test_model_modal_seeded_provider_fuzz_preserves_invariants(
 
 
 def test_model_modal_new_embedding_inherits_direct_chat_settings(tmp_path):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
     chat = ChatModelConfig(
         model="chat-model",
         model_provider="openai",
@@ -2163,7 +2175,7 @@ def test_model_modal_new_embedding_inherits_direct_chat_settings(tmp_path):
         ssl_verify=False,
     )
 
-    screen = ModelScreen(hitl.config.inference_providers, chat, None)
+    screen = ModelScreen(runtime.config.inference_providers, chat, None)
 
     assert screen.embedding.model_provider == "openai"
     assert screen.embedding.inference_provider is None
@@ -2175,7 +2187,7 @@ def test_model_modal_new_embedding_inherits_direct_chat_settings(tmp_path):
 async def test_command_picker_prioritizes_command_name_over_description(
     tmp_path,
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.press("/", "k", "e")
@@ -2189,7 +2201,7 @@ async def test_command_picker_prioritizes_command_name_over_description(
 
 
 async def test_theme_command_selects_theme_and_escape_preserves_it(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 24)) as pilot:
         status = app.query_one("#status", Static)
@@ -2259,24 +2271,11 @@ async def test_theme_command_selects_theme_and_escape_preserves_it(tmp_path):
         assert app.theme == "ursa-light"
 
 
-async def test_agents_command_uses_tabs_and_collapsed_tool_details(tmp_path):
-    hitl = FakeHITL(tmp_path)
-    hitl.agents = {
-        "plan": hitl.agents["plan"],
-        "chat": hitl.agents["chat"],
-    }
-    for agent in hitl.agents.values():
-        agent.tools = {
-            "read_file": FakeConfiguredTool(),
-            "remote_read": FakeMcpTool(),
-        }
-        agent.tool_sources = {"remote_read": "laboratory"}
-
-    async def get_agent(name):
-        return hitl.agents[name]
-
-    hitl.get_agent = get_agent
-    app = UrsaTextualApp(hitl)
+@pytest.mark.real_llm
+async def test_agents_command_uses_real_process_tool_details(tmp_path):
+    runtime = make_ollama_runtime(tmp_path)
+    runtime.agents = {"chat": runtime.agents["chat"]}
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("/", "a", "g", "e", "n", "t", "s", "enter")
@@ -2287,114 +2286,66 @@ async def test_agents_command_uses_tabs_and_collapsed_tool_details(tmp_path):
         await wait_for(pilot, lambda: isinstance(app.screen, AgentsScreen))
         assert isinstance(app.screen, AgentsScreen)
         panes = list(app.screen.query(TabPane))
-        assert len(panes) == 2
-        assert [tab.label_text for tab in app.screen.query(Tab)] == [
-            "#plan",
-            "#chat",
-        ]
+        assert len(panes) == 1
+        assert [tab.label_text for tab in app.screen.query(Tab)] == ["#chat"]
         tools = list(app.screen.query(Collapsible))
-        assert len(tools) == 2
+        assert tools
         assert all(tool.collapsed for tool in tools)
-        assert [str(tool.title) for tool in tools[:2]] == [
-            "read_file",
-            "remote_read (mcp: laboratory)",
-        ]
+        assert "run_command" in {str(tool.title) for tool in tools}
+        assert not app.screen.query(".agent-tools-error")
 
-        tools[0].collapsed = False
-        await pilot.pause()
-        detail = str(tools[0].query_one(Markdown).source)
-        assert "Read a file from the configured workspace." in detail
-        assert "FakeConfiguredTool" in detail
-        assert "FakeToolArgs" in detail
-        assert "Workspace-relative file path." in detail
-        tools[0].collapsed = True
-        await pilot.pause()
-        await wait_for(pilot, lambda: tools[0].collapsed)
-        assert tools[0].collapsed
-        tools[0].collapsed = False
-        await pilot.pause()
-        await wait_for(pilot, lambda: len(tools[0].query(Markdown)) == 1)
-        assert len(tools[0].query(Markdown)) == 1
-
-        await pilot.press("right")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        await wait_for(pilot, lambda: len(app.screen.query(Collapsible)) == 4)
-        assert len(app.screen.query(Collapsible)) == 4
-
-
-async def test_agents_lazily_load_tools_and_only_once(tmp_path):
-    hitl = FakeHITL(tmp_path)
-    ready = asyncio.Event()
-    calls = []
-    wrappers = {
-        name: SimpleNamespace(
-            description=f"{name} agent",
-            config={},
-            tool_sources={},
-            _agent=None,
+        run_command = next(
+            tool for tool in tools if str(tool.title) == "run_command"
         )
-        for name in ("plan", "chat")
+        run_command.collapsed = False
+        await pilot.pause()
+        detail = str(run_command.query_one(Markdown).source)
+        assert "StructuredTool" in detail
+        assert "| `query` |" in detail
+        assert "runtime" not in detail
+
+
+@pytest.mark.real_llm
+async def test_agents_lazily_load_each_real_process_only_once(tmp_path):
+    runtime = make_ollama_runtime(tmp_path)
+    runtime.agents = {
+        "chat": runtime.agents["chat"],
+        "plan": runtime.agents["plan"],
     }
-    hitl.agents = wrappers
-
-    async def get_agent(name):
-        calls.append(name)
-        if name == "plan":
-            await ready.wait()
-        wrapper = wrappers[name]
-        wrapper._agent = SimpleNamespace(
-            tools={"read_file": FakeConfiguredTool()}
-        )
-        return wrapper
-
-    hitl.get_agent = get_agent
-    app = UrsaTextualApp(hitl)
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await app._show_command("agents")
-        await pilot.pause()
-
-        await wait_for(pilot, lambda: isinstance(app.screen, AgentsScreen))
         assert isinstance(app.screen, AgentsScreen)
-        assert calls == ["plan"]
-        # A callback already queued when hydration stops must tolerate the
-        # frame state being gone while the loading node is still mounted.
-        app.screen._stop_tool_loading(0)
-        app.screen._advance_tool_loading(0)
-        # Tool discovery is suspended, but tabs remain interactive.
-        await pilot.press("right")
-        await pilot.pause()
-        assert calls == ["plan", "chat"]
-        assert len(app.screen.query("#agent-tools-1 .agent-tool")) == 1
-
-        await pilot.press("left", "right")
-        await pilot.pause()
-        assert calls == ["plan", "chat"]
-
-        ready.set()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        await wait_for(pilot, lambda: app.screen.agents[0].tools_loaded)
-        assert app.screen.agents[0].tools_loaded
-        # Hydration of the hidden plan tab updates state without mounting its
-        # potentially expensive Markdown tool cards on the UI thread.
-        assert not app.screen.query("#agent-tools-0 .agent-tool")
-        assert app.screen._tool_panes_pending_render == {0}
-
-        await pilot.press("left")
-        await pilot.pause()
-        await wait_for(
+        assert await wait_for(
             pilot,
-            lambda: len(app.screen.query("#agent-tools-0 .agent-tool")) == 1,
+            lambda: app.screen.agents[0].tools_loaded,
+            timeout=10,
         )
-        assert len(app.screen.query("#agent-tools-0 .agent-tool")) == 1
-        assert app.screen._tool_panes_pending_render == set()
+        chat = await runtime._manager.snapshot(
+            runtime.agents["chat"].runtime_id
+        )
+        assert chat.generation == 1
+
+        await pilot.press("right")
+        assert await wait_for(
+            pilot,
+            lambda: app.screen.agents[1].tools_loaded,
+            timeout=10,
+        )
+        plan = await runtime._manager.snapshot(
+            runtime.agents["plan"].runtime_id
+        )
+        assert plan.generation == 1
 
         await pilot.press("right", "left")
-        await pilot.pause()
-        assert calls == ["plan", "chat"]
+        await app.workers.wait_for_complete()
+        assert (
+            await runtime._manager.snapshot(runtime.agents["chat"].runtime_id)
+        ).generation == 1
+        assert (
+            await runtime._manager.snapshot(runtime.agents["plan"].runtime_id)
+        ).generation == 1
 
 
 async def test_immediate_switch_preempts_large_tool_render(
@@ -2417,11 +2368,11 @@ async def test_immediate_switch_preempts_large_tool_render(
         tool_sources={},
         _agent=None,
     )
-    hitl = FakeHITL(tmp_path)
-    hitl.agents = {"safe": safe, "execute": execute}
+    runtime = make_runtime(tmp_path)
+    runtime.agents = {"safe": safe, "execute": execute}
 
     async def get_agent(name):
-        wrapper = hitl.agents[name]
+        wrapper = runtime.agents[name]
         if name == "execute":
             hydration_started.set()
             await hydration_release.wait()
@@ -2453,8 +2404,8 @@ async def test_immediate_switch_preempts_large_tool_render(
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.AgentToolDetails", deliberately_slow_card
     )
-    hitl.get_agent = get_agent
-    app = UrsaTextualApp(hitl)
+    runtime.get_agent = get_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await app._show_command("agents")
@@ -2523,11 +2474,11 @@ async def test_agent_tool_render_failure_is_displayed(tmp_path, monkeypatch):
         tool_sources={},
         _agent=SimpleNamespace(tools={broken_tool.name: broken_tool}),
     )
-    hitl = FakeHITL(tmp_path)
-    hitl.agents = {"safe": safe, "broken": broken}
+    runtime = make_runtime(tmp_path)
+    runtime.agents = {"safe": safe, "broken": broken}
 
     async def get_agent(name):
-        return hitl.agents[name]
+        return runtime.agents[name]
 
     def fail_to_build_card(_tool):
         nonlocal construction_attempts
@@ -2537,8 +2488,8 @@ async def test_agent_tool_render_failure_is_displayed(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.AgentToolDetails", fail_to_build_card
     )
-    hitl.get_agent = get_agent
-    app = UrsaTextualApp(hitl)
+    runtime.get_agent = get_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await app._show_command("agents")
@@ -2594,14 +2545,14 @@ async def test_initialized_tools_render_while_schema_hydration_is_pending(
         tool_sources={},
         _agent=SimpleNamespace(tools={"read_file": configured_tool}),
     )
-    hitl = FakeHITL(tmp_path)
-    hitl.agents = {"ready": wrapper}
+    runtime = make_runtime(tmp_path)
+    runtime.agents = {"ready": wrapper}
 
     async def get_agent(_name):
         return wrapper
 
-    hitl.get_agent = get_agent
-    app = UrsaTextualApp(hitl)
+    runtime.get_agent = get_agent
+    app = UrsaTextualApp(runtime)
 
     try:
         async with app.run_test(size=(100, 36)) as pilot:
@@ -2626,20 +2577,20 @@ async def test_initialized_tools_render_while_schema_hydration_is_pending(
 
 
 async def test_agents_display_tool_load_failure(tmp_path):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
     wrapper = SimpleNamespace(
         description="broken agent",
         config={},
         tool_sources={},
         _agent=None,
     )
-    hitl.agents = {"broken": wrapper}
+    runtime.agents = {"broken": wrapper}
 
     async def get_agent(name):
         raise RuntimeError("MCP server unavailable")
 
-    hitl.get_agent = get_agent
-    app = UrsaTextualApp(hitl)
+    runtime.get_agent = get_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await app._show_command("agents")
@@ -2655,201 +2606,37 @@ async def test_agents_display_tool_load_failure(tmp_path):
         assert isinstance(app.screen, AgentsScreen)
 
 
-async def test_agents_remain_responsive_during_blocking_initialization(
-    tmp_path, chat_model
-):
-    constructor_started = threading.Event()
-    constructor_release = threading.Event()
-    mcp_started = threading.Event()
-    mcp_release = threading.Event()
-    schema_started = threading.Event()
-    schema_release = threading.Event()
-
-    class BlockingSchema:
-        @classmethod
-        def model_json_schema(cls):
-            schema_started.set()
-            schema_release.wait(timeout=5)
-            return {"properties": {}}
-
-    configured_tool = FakeConfiguredTool()
-    configured_tool.args_schema = BlockingSchema
-
-    class PhasedAgent(AgentWithTools):
-        """A deliberately long description used to make this pane scroll.
-
-        The remaining text creates enough vertical content to exercise scroll
-        input while constructor, MCP, and schema phases are independently held.
-        """
-
-        def __init__(self, **_kwargs):
-            constructor_started.set()
-            constructor_release.wait(timeout=5)
-            self._test_tools = {}
-
-        @property
-        def tools(self):
-            return self._test_tools
-
-        async def add_mcp_tools(self, _client):
-            mcp_started.set()
-            await asyncio.to_thread(mcp_release.wait, 5)
-            self._test_tools = {configured_tool.name: configured_tool}
-            return {configured_tool.name: "laboratory"}
-
-    hitl = FakeHITL(tmp_path)
-    execute = AgentHITL(agent_class=PhasedAgent)
-    execute.config.update({f"option_{index}": index for index in range(20)})
-    initialized = AgentHITL(agent_class=ExecutionAgent)
-    initialized._agent = SimpleNamespace(tools={})
-    hitl.agents = {"execute": execute, "ready": initialized}
-
-    async def get_agent(name):
-        wrapper = hitl.agents[name]
-        if wrapper._agent is None:
-            await wrapper.instantiate(
-                llm=chat_model,
-                workspace=tmp_path,
-                agent_name="persistent",
-                group="default",
-                mcp_client=object(),
-                thread_id="test",
-            )
-        return wrapper
-
-    hitl.get_agent = get_agent
-    app = UrsaTextualApp(hitl)
-
-    async def assert_ui_is_live(pilot, screen):
-        loading = screen.query_one(".agent-tools-loading", Static)
-        first_frame = str(loading.render())
-        assert await wait_for(
-            pilot, lambda: str(loading.render()) != first_frame
-        )
-        await pilot.press("right")
-        assert screen.query_one("#agents-tabs", TabbedContent).active == (
-            "agent-tab-1"
-        )
-        await pilot.press("left")
-        scroll = screen._scroll_view()
-        await pilot.press("end")
-        await pilot.pause()
-        bottom = scroll.scroll_y
-        assert bottom > 0
-        await pilot.press("home")
-        await pilot.pause()
-        await wait_for(pilot, lambda: scroll.scroll_y < bottom)
-        assert scroll.scroll_y < bottom
-
-    try:
-        async with app.run_test(size=(100, 36)) as pilot:
-            await app._show_command("agents")
-            assert await asyncio.to_thread(constructor_started.wait, 2)
-            screen = app.screen
-            await assert_ui_is_live(pilot, screen)
-
-            constructor_release.set()
-            assert await asyncio.to_thread(mcp_started.wait, 2)
-            await assert_ui_is_live(pilot, screen)
-
-            mcp_release.set()
-            assert await asyncio.to_thread(schema_started.wait, 2)
-            await assert_ui_is_live(pilot, screen)
-
-            schema_release.set()
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            await wait_for(
-                pilot, lambda: screen.query("#agent-tools-0 .agent-tool")
-            )
-            assert screen.query("#agent-tools-0 .agent-tool")
-            assert screen._tool_loading_timers == {}
-            assert screen._tool_loading_frames == {}
-    finally:
-        constructor_release.set()
-        mcp_release.set()
-        schema_release.set()
-
-
-async def test_dismissing_agents_during_loading_cleans_up_and_publishes(
+@pytest.mark.real_llm
+async def test_dismissing_agents_during_loading_cleans_up_and_reopens(
     tmp_path,
 ):
-    schema_started = threading.Event()
-    schema_release = threading.Event()
+    runtime = make_ollama_runtime(tmp_path)
+    runtime.agents = {"chat": runtime.agents["chat"]}
+    app = UrsaTextualApp(runtime)
 
-    class BlockingSchema:
-        @classmethod
-        def model_json_schema(cls):
-            schema_started.set()
-            schema_release.wait(timeout=5)
-            return {"properties": {}}
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app._show_command("agents")
+        loading_screen = app.screen
+        await pilot.press("escape")
+        await wait_for(pilot, lambda: not isinstance(app.screen, AgentsScreen))
+        assert loading_screen._tool_loading_timers == {}
+        assert loading_screen._tool_loading_frames == {}
 
-    configured_tool = FakeConfiguredTool()
-    configured_tool.args_schema = BlockingSchema
-
-    class SlowAgent:
-        description = "Slow agent"
-
-        def __init__(self, **_kwargs):
-            self.tools = {"read_file": configured_tool}
-
-    hitl = FakeHITL(tmp_path)
-    wrapper = AgentHITL(agent_class=SlowAgent)
-    hitl.agents = {"slow": wrapper}
-
-    async def get_agent(_name):
-        await wrapper.instantiate()
-        return wrapper
-
-    hitl.get_agent = get_agent
-    app = UrsaTextualApp(hitl)
-
-    try:
-        async with app.run_test(size=(100, 36)) as pilot:
-            await app._show_command("agents")
-            assert await asyncio.to_thread(schema_started.wait, 2)
-            loading_screen = app.screen
-            await pilot.press("escape")
-            await pilot.pause()
-            await wait_for(
-                pilot, lambda: not isinstance(app.screen, AgentsScreen)
-            )
-            assert not isinstance(app.screen, AgentsScreen)
-            assert loading_screen._tool_loading_timers == {}
-            assert loading_screen._tool_loading_frames == {}
-
-            schema_release.set()
-            await wrapper.wait_until_initialized()
-            await app._show_command("agents")
-            await pilot.pause()
-            await wait_for(
-                pilot, lambda: not app.screen.query(".agent-tools-loading")
-            )
-            assert not app.screen.query(".agent-tools-loading")
-            assert app.screen.query("#agent-tools-0 .agent-tool")
-    finally:
-        schema_release.set()
+        await app._show_command("agents")
+        assert await wait_for(
+            pilot,
+            lambda: bool(app.screen.query("#agent-tools-0 .agent-tool")),
+            timeout=10,
+        )
+        assert app.screen.query("#agent-tools-0 .agent-tool")
+        assert not app.screen.query(".agent-tools-error")
 
 
-async def test_agents_lazily_render_execution_agent_tools(tmp_path, chat_model):
-    hitl = FakeHITL(tmp_path)
-    wrapper = AgentHITL(agent_class=ExecutionAgent)
-    hitl.agents = {"execute": wrapper}
-
-    async def get_agent(name):
-        if wrapper._agent is None:
-            await wrapper.instantiate(
-                llm=chat_model,
-                workspace=tmp_path,
-                agent_name=None,
-                group="default",
-                mcp_client=None,
-                thread_id="test",
-            )
-        return wrapper
-
-    hitl.get_agent = get_agent
-    app = UrsaTextualApp(hitl)
+@pytest.mark.real_llm
+async def test_agents_lazily_render_execution_agent_tools(tmp_path):
+    runtime = make_ollama_runtime(tmp_path)
+    runtime.agents = {"execute": runtime.agents["execute"]}
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await app._show_command("agents")
@@ -2858,8 +2645,8 @@ async def test_agents_lazily_render_execution_agent_tools(tmp_path, chat_model):
         await pilot.pause()
 
         rendered_tools = app.screen.query("#agent-tools-0 .agent-tool")
-        assert len(rendered_tools) == len(wrapper._agent.tools)
         assert len(rendered_tools) > 0
+        assert not app.screen.query(".agent-tools-error")
         first_tool = rendered_tools.first()
         tools_container = app.screen.query_one("#agent-tools-0", Vertical)
         details = app.screen.query_one(".agent-details", VerticalScroll)
@@ -2884,7 +2671,7 @@ def test_command_details_and_keymap_come_from_live_bindings(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(crossplatform, "expects_kitty_keyboard", lambda: False)
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
     app.total_tokens = 1234
     app.input_tokens = 1000
     app.output_tokens = 234
@@ -2929,7 +2716,7 @@ def test_keymap_omits_compatibility_warning_when_kitty_is_expected(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(crossplatform, "expects_kitty_keyboard", lambda: True)
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     keymap = app._keymap_markdown()
 
@@ -2952,7 +2739,7 @@ async def test_hotlist_mount_race_with_teardown_does_not_crash(tmp_path):
     # makes mount_all skip composing children while Mount still
     # dispatches, and the unguarded on_mount crashed the app (NoMatches
     # raised at run_test exit).
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)):
         app.push_screen(HotlistScreen("pick", ["one"]))

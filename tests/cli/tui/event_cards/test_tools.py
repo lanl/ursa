@@ -2,7 +2,7 @@ from langchain_core.messages import ToolMessage
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
-from tests.cli._app_fakes import FakeHITL, wait_for
+from tests.cli._app_helpers import make_runtime, wait_for
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import ToolCallCard
 from ursa.cli.tui.event_handler import TextualEventHandler
@@ -10,7 +10,7 @@ from ursa.cli.tui.turn import Turn
 
 
 async def test_default_tool_card_switches_from_input_to_output(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("call it", tmp_path)
@@ -64,7 +64,7 @@ async def test_default_tool_card_switches_from_input_to_output(tmp_path):
 
 
 async def test_default_tool_card_shows_failure_output(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 24)) as pilot:
         turn = Turn("call it", tmp_path)
@@ -83,7 +83,7 @@ async def test_default_tool_card_shows_failure_output(tmp_path):
 
 
 async def test_tool_call_preview_renders_code_brackets_as_plain_text(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
     output = "[patch={'old_code': 'ax.set_xticklabels([labels])'}]"
 
     async with app.run_test(size=(100, 24)) as pilot:
@@ -102,7 +102,7 @@ async def test_tool_call_preview_renders_code_brackets_as_plain_text(tmp_path):
 
 
 async def test_tool_message_prefers_structured_content_as_json(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 24)) as pilot:
         turn = Turn("call it", tmp_path)
@@ -132,7 +132,7 @@ async def test_tool_message_prefers_structured_content_as_json(tmp_path):
 
 
 async def test_text_only_tool_message_renders_as_markdown(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 24)) as pilot:
         turn = Turn("call it", tmp_path)

@@ -121,7 +121,7 @@ def transport(sp: ServerParameters) -> str:
 
 
 def start_mcp_client(
-    server_configs: dict[str, ServerParameters | dict],
+    server_configs: Mapping[str, ServerParameters | dict],
 ) -> UrsaMCPClient:
     client_config = {}
     for server, config in server_configs.items():

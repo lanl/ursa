@@ -1,7 +1,7 @@
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
-from tests.cli._app_fakes import FakeHITL
+from tests.cli._app_helpers import make_runtime
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import (
     AgentEventCard,
@@ -15,7 +15,7 @@ from ursa.cli.tui.turn import Turn
 async def test_multiple_edit_rows_expand_independently_under_one_heading(
     tmp_path,
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 60)) as pilot:
         turn = Turn("edit two files", tmp_path)
@@ -51,7 +51,7 @@ async def test_multiple_edit_rows_expand_independently_under_one_heading(
 
 
 async def test_specialized_agent_events_and_artifacts_update_live(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("investigate", tmp_path)
@@ -111,7 +111,7 @@ async def test_specialized_agent_events_and_artifacts_update_live(tmp_path):
 
 
 async def test_search_and_lammps_events_render_specialized_details(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("search then simulate", tmp_path)

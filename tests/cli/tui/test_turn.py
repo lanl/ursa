@@ -7,7 +7,7 @@ from textual.widgets import Static
 
 import ursa.cli.tui.event_handler as event_handler_module
 import ursa.cli.tui.turn as turn_module
-from tests.cli._app_fakes import FakeHITL, emit_event, wait_for
+from tests.cli._app_helpers import emit_event, make_runtime, wait_for
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import EditCard, FileActivityCard, RunCommandCard
 from ursa.cli.tui.event_handler import TextualEventHandler
@@ -17,7 +17,7 @@ from ursa.util.events import DEFAULT_EVENT_NAME
 
 
 async def test_turn_spacing_is_one_row_with_or_without_events(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 40)) as pilot:
         conversation = app.query_one("#conversation", VerticalScroll)
@@ -66,7 +66,7 @@ async def test_turn_spacing_is_one_row_with_or_without_events(tmp_path):
 
 
 async def test_files_are_grouped_by_read_write_and_edit_operations(tmp_path):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
 
     async def run_agent(_name, _prompt, callbacks=None):
         handler = callbacks[0]
@@ -100,8 +100,8 @@ async def test_files_are_grouped_by_read_write_and_edit_operations(tmp_path):
             await handler.on_custom_event(DEFAULT_EVENT_NAME, event)
         return "Finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("g", "o", "enter")
@@ -134,7 +134,7 @@ async def test_files_are_grouped_by_read_write_and_edit_operations(tmp_path):
 
 
 async def test_event_summary_groups_follow_activity_order(tmp_path):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
 
     async def run_agent(_name, _prompt, callbacks=None):
         handler = callbacks[0]
@@ -166,8 +166,8 @@ async def test_event_summary_groups_follow_activity_order(tmp_path):
         )
         return "Finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("g", "o", "enter")
@@ -218,7 +218,7 @@ async def test_activity_kinds_keep_independent_cards_open(
         return timer
 
     monkeypatch.setattr(Turn, "set_timer", capture_timer)
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
     reading_started = asyncio.Event()
     switch_to_editing = asyncio.Event()
     editing_started = asyncio.Event()
@@ -254,8 +254,8 @@ async def test_activity_kinds_keep_independent_cards_open(
         await finish_agent.wait()
         return "Finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("g", "o", "enter")
@@ -306,7 +306,7 @@ async def test_event_group_grace_period_resets_after_each_update(
     clock = [100.0]
     monkeypatch.setattr(turn_module, "monotonic", lambda: clock[0])
     monkeypatch.setattr(event_handler_module, "monotonic", lambda: clock[0])
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
 
     async def run_agent(_name, _prompt, callbacks=None):
         handler = callbacks[0]
@@ -333,8 +333,8 @@ async def test_event_group_grace_period_resets_after_each_update(
         )
         return "Finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("g", "o", "enter")
@@ -382,7 +382,7 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
         return timer
 
     monkeypatch.setattr(Turn, "set_timer", capture_timer)
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
     first_emitted = asyncio.Event()
     emit_second = asyncio.Event()
     second_emitted = asyncio.Event()
@@ -412,8 +412,8 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
         await finish_agent.wait()
         return "Finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("g", "o", "enter")
@@ -459,7 +459,7 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
 
 
 async def test_stale_summary_timer_cannot_finalize_replacement_card(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)):
         turn = Turn("read", tmp_path)
@@ -476,7 +476,7 @@ async def test_stale_summary_timer_cannot_finalize_replacement_card(tmp_path):
 
 
 async def test_parallel_read_callbacks_render_as_one_group(tmp_path):
-    hitl = FakeHITL(tmp_path)
+    runtime = make_runtime(tmp_path)
 
     async def run_agent(_name, _prompt, callbacks=None):
         handler = callbacks[0]
@@ -533,8 +533,8 @@ async def test_parallel_read_callbacks_render_as_one_group(tmp_path):
         )
         return "Finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("r", "e", "a", "d", "enter")
@@ -555,7 +555,7 @@ async def test_parallel_read_callbacks_render_as_one_group(tmp_path):
 
 
 async def test_file_failure_is_retained_on_its_activity_card(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("read it", tmp_path)
@@ -583,7 +583,7 @@ async def test_file_failure_is_retained_on_its_activity_card(tmp_path):
 
 
 async def test_unchanged_file_result_is_retained_on_activity_card(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("edit it", tmp_path)
@@ -610,7 +610,7 @@ async def test_unchanged_file_result_is_retained_on_activity_card(tmp_path):
 
 @pytest.mark.parametrize("outcome", ["failed", "unchanged"])
 async def test_rich_edit_outcome_updates_existing_diff_row(tmp_path, outcome):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("edit it", tmp_path)
