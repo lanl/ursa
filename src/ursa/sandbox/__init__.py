@@ -25,14 +25,14 @@ class BaseSandbox:
     def __init__(self, cwd: Path):
         self.cwd = cwd
 
-    def _run(self, cmd: str):
+    def _execute(self, cmd: str):
         raise NotImplementedError("Sandbox not implemented")
 
     @property
     def backend(self) -> str:
         return type(self).__name__
 
-    def _fallback_run(self, cmd: str):
+    def _fallback_execute(self, cmd: str):
         result = subprocess.run(
             cmd,
             text=True,
@@ -44,12 +44,12 @@ class BaseSandbox:
         )
         return result
 
-    def run(self, cmd: str):
+    def execute(self, cmd: str):
         try:
-            return self._run(cmd)
+            return self._execute(cmd)
         except Exception:
             print(f"Sandbox {self.backend} failed")
-            return self._fallback_run(cmd)
+            return self._fallback_execute(cmd)
 
 
 class WindowsSandbox(BaseSandbox): ...
@@ -95,7 +95,7 @@ class LinuxBwrapSandbox(BaseSandbox):
         if not self.access_network:
             self.args += "--unshare-net"
 
-    def _run(self, cmd: str):
+    def _execute(self, cmd: str):
         result = subprocess.run(
             [self.bwrap_path, *self.args, self.shell, "-c", cmd],
             text=True,

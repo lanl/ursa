@@ -129,7 +129,7 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
                 case _:
                     sbx = BaseSandbox(cwd=workspace_dir)
 
-            result = sbx.run(query)
+            result = sbx.execute(query)
             stdout, stderr = result.stdout, result.stderr
             stdout = stdout.encode("utf-8", errors="ignore").decode("utf-8")
             stderr = stderr.encode("utf-8", errors="ignore").decode("utf-8")
