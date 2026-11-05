@@ -457,6 +457,7 @@ async def test_named_agent_restores_state_in_a_new_instance(
     first = BasicChatAgent(
         llm=TinyCountingModel(),
         agent_name="resumed-agent",
+        thread_id="resumed-thread",
         enable_metrics=False,
     )
     try:
@@ -468,6 +469,7 @@ async def test_named_agent_restores_state_in_a_new_instance(
     resumed = BasicChatAgent(
         llm=TinyCountingModel(),
         agent_name="resumed-agent",
+        thread_id="resumed-thread",
         enable_metrics=False,
     )
     try:
@@ -581,7 +583,7 @@ async def test_persistent_agent_prunes_after_async_terminal_success(
         await agent.aclose()
         agent.close()
 
-    assert calls == ["ursa"]
+    assert calls == [agent.thread_id]
 
 
 def test_user_supplied_checkpointer_is_not_automatically_pruned(
