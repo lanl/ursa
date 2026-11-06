@@ -6,7 +6,7 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.geometry import Region
 from textual.widgets import Button, Markdown, Static
 
-from tests.cli._app_helpers import wait_for
+from tests.cli._app_helpers import emit_tool_start, wait_for
 from ursa.cli.tui.event_cards import (
     AgentToolCard,
     CoordinationCard,
@@ -36,15 +36,13 @@ async def test_parallel_coordination_calls_share_one_card_across_entire_turn(
         message = "large exact task\n" * 5000
         await asyncio.gather(
             *(
-                handler.on_tool_start(
-                    {"name": tool},
-                    "",
-                    run_id=tool,
-                    inputs={
-                        "name": "a",
-                        "target": "root/a",
-                        "message": message,
-                    },
+                emit_tool_start(
+                    handler,
+                    tool,
+                    tool,
+                    name="a",
+                    target="root/a",
+                    message=message,
                 )
                 for tool in tools
             )
@@ -70,11 +68,8 @@ async def test_parallel_coordination_calls_share_one_card_across_entire_turn(
         )
         for tool in tools[:-1]:
             await handler.on_tool_end("[role=Villager] accepted", run_id=tool)
-        await handler.on_tool_start(
-            {"name": "send_message"},
-            "",
-            run_id="late",
-            inputs={"target": "root/b", "message": "hello"},
+        await emit_tool_start(
+            handler, "send_message", "late", target="root/b", message="hello"
         )
         await handler.on_tool_end("queued", run_id="late")
         assert len(turn.query(CoordinationCard)) == 1
@@ -142,15 +137,13 @@ async def test_coordination_actions_have_clear_status_and_keyboard_expansion(
     async with app.run_test(size=(100, 36)) as pilot:
         turn = await app._mount_turn("coordinate")
         handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "wait_for"},
-            "",
-            run_id="wait",
-            inputs={
-                "target": ["root/a", "root/b"],
-                "timeout_seconds": 120,
-                "wait_all": True,
-            },
+        await emit_tool_start(
+            handler,
+            "wait_for",
+            "wait",
+            target=["root/a", "root/b"],
+            timeout_seconds=120,
+            wait_all=True,
         )
         group = turn.query_one(CoordinationCard)
         assert group.can_focus
@@ -435,18 +428,13 @@ async def test_coordination_errors_keep_exact_body_and_two_visible_rows(
         turn = await app._mount_turn("coordinate")
         handler = TextualEventHandler(app, turn)
         error = "[Unknown target=../foo] " + "explanation " * 1000
-        await handler.on_tool_start(
-            {"name": "send_message"},
-            "",
-            run_id="bad",
-            inputs={"target": "../foo", "message": "hello"},
+        await emit_tool_start(
+            handler, "send_message", "bad", target="../foo", message="hello"
         )
         await handler.on_tool_end(
             ToolMessage(error, tool_call_id="bad", status="error"), run_id="bad"
         )
-        await handler.on_tool_start(
-            {"name": "wait_for"}, "", run_id="wait", inputs={"target": "root/a"}
-        )
+        await emit_tool_start(handler, "wait_for", "wait", target="root/a")
         group = turn.query_one(CoordinationCard)
         await pilot.pause()
         rows = list(group.query(".coordination-action-preview"))

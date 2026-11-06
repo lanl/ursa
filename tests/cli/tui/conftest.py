@@ -1,9 +1,13 @@
 """Shared TUI setup; individual tests retain control of the event loop."""
 
+from contextlib import asynccontextmanager
+
 import pytest
+from textual.containers import VerticalScroll
 
 from tests.cli._app_helpers import make_runtime
 from ursa.cli.tui.app import UrsaTextualApp
+from ursa.cli.tui.turn import Turn
 
 
 @pytest.fixture
@@ -21,3 +25,17 @@ def model_discovery(monkeypatch):
         )
 
     return install
+
+
+@pytest.fixture
+def event_turn(app, tmp_path):
+    """Run a mounted conversation turn for tests that drive events directly."""
+
+    @asynccontextmanager
+    async def mounted(prompt, *, size):
+        async with app.run_test(size=size) as pilot:
+            turn = Turn(prompt, tmp_path)
+            await app.query_one("#conversation", VerticalScroll).mount(turn)
+            yield pilot, turn
+
+    return mounted

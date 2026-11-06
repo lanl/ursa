@@ -1,4 +1,3 @@
-from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from ursa.cli.tui.event_cards import (
@@ -7,16 +6,12 @@ from ursa.cli.tui.event_cards import (
     EditCard,
     SearchEventCard,
 )
-from ursa.cli.tui.turn import Turn
 
 
 async def test_multiple_edit_rows_expand_independently_under_one_heading(
-    tmp_path,
-    app,
+    event_turn,
 ):
-    async with app.run_test(size=(100, 60)) as pilot:
-        turn = Turn("edit two files", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+    async with event_turn("edit two files", size=(100, 60)) as (pilot, turn):
         for event in (
             {
                 "tool": "edit_code",
@@ -47,12 +42,8 @@ async def test_multiple_edit_rows_expand_independently_under_one_heading(
         assert "+value = 2" in expanded
 
 
-async def test_specialized_agent_events_and_artifacts_update_live(
-    tmp_path, app
-):
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("investigate", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+async def test_specialized_agent_events_and_artifacts_update_live(event_turn):
+    async with event_turn("investigate", size=(100, 36)) as (pilot, turn):
         await turn.event({
             "agent": "HypothesizerAgent",
             "stage": "generate",
@@ -107,12 +98,11 @@ async def test_specialized_agent_events_and_artifacts_update_live(
         )
 
 
-async def test_search_and_lammps_events_render_specialized_details(
-    tmp_path, app
-):
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("search then simulate", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+async def test_search_and_lammps_events_render_specialized_details(event_turn):
+    async with event_turn("search then simulate", size=(100, 36)) as (
+        pilot,
+        turn,
+    ):
         await turn.event({
             "tool": "run_web_search",
             "stage": "search_result",

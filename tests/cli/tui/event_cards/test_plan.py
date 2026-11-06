@@ -1,12 +1,10 @@
 import asyncio
 
-from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
 from tests.cli._app_helpers import emit_event, make_runtime, wait_for
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import PlanCard
-from ursa.cli.tui.turn import Turn
 
 
 def plan_steps(count=7):
@@ -22,10 +20,8 @@ def plan_steps(count=7):
     ]
 
 
-async def test_plan_card_renders_drafting_and_collapsed_steps(tmp_path, app):
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("make a plan", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+async def test_plan_card_renders_drafting_and_collapsed_steps(event_turn):
+    async with event_turn("make a plan", size=(100, 36)) as (pilot, turn):
         await turn.event({
             "agent": "PlanningAgent",
             "stage": "generate",
@@ -74,10 +70,8 @@ async def test_plan_card_renders_drafting_and_collapsed_steps(tmp_path, app):
         assert "lazy river" in wide_first_step
 
 
-async def test_plan_card_tracks_revisions_approval_and_expansion(tmp_path, app):
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("make a plan", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+async def test_plan_card_tracks_revisions_approval_and_expansion(event_turn):
+    async with event_turn("make a plan", size=(100, 36)) as (pilot, turn):
         await turn.event({
             "agent": "PlanningAgent",
             "stage": "generate_result",
@@ -194,10 +188,8 @@ async def test_agent_completion_stops_pending_plan_review_spinner(tmp_path):
         assert plan._frame == frame
 
 
-async def test_failed_agent_stops_drafting_plan_spinner(tmp_path, app):
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("make a plan", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+async def test_failed_agent_stops_drafting_plan_spinner(event_turn):
+    async with event_turn("make a plan", size=(100, 36)) as (pilot, turn):
         await turn.event({
             "agent": "PlanningAgent",
             "stage": "generate",

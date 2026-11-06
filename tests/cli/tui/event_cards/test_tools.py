@@ -5,7 +5,7 @@ from langchain_core.messages import ToolMessage
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
-from tests.cli._app_helpers import make_runtime, wait_for
+from tests.cli._app_helpers import emit_tool_start, make_runtime, wait_for
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import (
     AgentToolCard,
@@ -16,16 +16,11 @@ from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.turn import Turn
 
 
-async def test_default_tool_card_switches_from_input_to_output(tmp_path, app):
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("call it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+async def test_default_tool_card_switches_from_input_to_output(app, event_turn):
+    async with event_turn("call it", size=(100, 36)) as (pilot, turn):
         handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "lookup_widget"},
-            "",
-            run_id="tool-one",
-            inputs={"query": "bear", "limit": 5},
+        await emit_tool_start(
+            handler, "lookup_widget", "tool-one", query="bear", limit=5
         )
         await pilot.pause()
 
@@ -69,21 +64,17 @@ async def test_default_tool_card_switches_from_input_to_output(tmp_path, app):
 
 
 async def test_spawn_agent_card_shows_task_and_queue_acknowledgement(
-    tmp_path, app
+    app, event_turn
 ):
-    async with app.run_test(size=(100, 30)) as pilot:
-        turn = Turn("delegate it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+    async with event_turn("delegate it", size=(100, 30)) as (pilot, turn):
         handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "spawn_agent"},
-            "",
-            run_id="spawn-reviewer",
-            inputs={
-                "name": "reviewer",
-                "message": "Review the implementation for correctness.",
-                "agent_type": "deep_review",
-            },
+        await emit_tool_start(
+            handler,
+            "spawn_agent",
+            "spawn-reviewer",
+            name="reviewer",
+            message="Review the implementation for correctness.",
+            agent_type="deep_review",
         )
         await pilot.pause()
 
@@ -132,26 +123,23 @@ async def test_spawn_agent_card_shows_task_and_queue_acknowledgement(
 
 
 async def test_agent_message_and_listing_cards_render_specialized_outcomes(
-    tmp_path,
     app,
+    event_turn,
 ):
-    async with app.run_test(size=(100, 30)) as pilot:
-        turn = Turn("coordinate it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+    async with event_turn("coordinate it", size=(100, 30)) as (pilot, turn):
         handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "send_message"},
-            "",
-            run_id="message-reviewer",
-            inputs={"target": "root/reviewer", "message": "Check tests."},
+        await emit_tool_start(
+            handler,
+            "send_message",
+            "message-reviewer",
+            target="root/reviewer",
+            message="Check tests.",
         )
         await handler.on_tool_end(
             "Message queued for root/reviewer.",
             run_id="message-reviewer",
         )
-        await handler.on_tool_start(
-            {"name": "list_agents"}, "", run_id="list", inputs={}
-        )
+        await emit_tool_start(handler, "list_agents", "list")
         await handler.on_tool_end("root (self)\nroot/reviewer", run_id="list")
         await pilot.pause()
 
@@ -174,19 +162,18 @@ async def test_agent_message_and_listing_cards_render_specialized_outcomes(
         )
 
 
-async def test_agent_message_card_summarizes_broadcast_results(tmp_path, app):
-    async with app.run_test(size=(100, 30)) as pilot:
-        turn = Turn("coordinate everyone", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+async def test_agent_message_card_summarizes_broadcast_results(app, event_turn):
+    async with event_turn("coordinate everyone", size=(100, 30)) as (
+        pilot,
+        turn,
+    ):
         handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "send_message"},
-            "",
-            run_id="broadcast",
-            inputs={
-                "target": ["root/analyst", "root/reviewer", "root/missing"],
-                "message": "Compare findings.",
-            },
+        await emit_tool_start(
+            handler,
+            "send_message",
+            "broadcast",
+            target=["root/analyst", "root/reviewer", "root/missing"],
+            message="Compare findings.",
         )
         await handler.on_tool_end(
             "root/analyst: Message queued for root/analyst.\n\n"
@@ -220,11 +207,8 @@ async def test_wait_card_renders_batched_agent_messages_as_plain_text(tmp_path):
         turn = Turn("coordinate", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
         handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "wait_for"},
-            "",
-            run_id="batched-wait",
-            inputs={"target": ["root/p08", "root/p20"]},
+        await emit_tool_start(
+            handler, "wait_for", "batched-wait", target=["root/p08", "root/p20"]
         )
         await handler.on_tool_end(output, run_id="batched-wait")
         # Rendering the mounted card used to raise MarkupError here.
@@ -242,13 +226,11 @@ async def test_wait_card_renders_batched_agent_messages_as_plain_text(tmp_path):
         assert '"sender": "root/p08"' in str(preview.content)
 
 
-async def test_agent_tool_card_survives_unavailable_lazy_details(tmp_path, app):
+async def test_agent_tool_card_survives_unavailable_lazy_details(event_turn):
     async def unavailable():
         raise LookupError("action was pruned")
 
-    async with app.run_test(size=(100, 30)) as pilot:
-        turn = Turn("coordinate", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+    async with event_turn("coordinate", size=(100, 30)) as (pilot, turn):
         card = AgentToolCard(
             "missing-details",
             "send_message",
@@ -310,15 +292,11 @@ async def test_agent_tool_card_survives_unavailable_lazy_details(tmp_path, app):
     ],
 )
 async def test_tool_card_output_formats_and_failure_state(
-    tmp_path, app, tool, output, expected
+    app, event_turn, tool, output, expected
 ):
-    async with app.run_test(size=(100, 24)) as pilot:
-        turn = Turn("call it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+    async with event_turn("call it", size=(100, 24)) as (pilot, turn):
         handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": tool}, "", run_id="result", inputs={}
-        )
+        await emit_tool_start(handler, tool, "result")
         failed = isinstance(output, Exception)
         if failed:
             await handler.on_tool_error(output, run_id="result")

@@ -63,6 +63,13 @@ async def emit_event(handler, payload=None, **details):
     )
 
 
+async def emit_tool_start(handler, tool, run_id, /, **inputs):
+    """Send a structured tool start through the real Textual callback handler."""
+    await handler.on_tool_start(
+        {"name": tool}, "", run_id=run_id, inputs=inputs
+    )
+
+
 async def wait_for(pilot, condition, *, timeout=3.0, interval=0.05):
     """Poll a condition instead of trusting one fixed pause."""
     import asyncio

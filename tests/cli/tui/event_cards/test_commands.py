@@ -1,13 +1,16 @@
 import asyncio
 
-from textual.containers import VerticalScroll
 from textual.widgets import Static
 
-from tests.cli._app_helpers import emit_event, make_runtime, wait_for
+from tests.cli._app_helpers import (
+    emit_event,
+    emit_tool_start,
+    make_runtime,
+    wait_for,
+)
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import CommandSafetyIndicator, RunCommandCard
 from ursa.cli.tui.event_handler import TextualEventHandler
-from ursa.cli.tui.turn import Turn
 from ursa.cli.tui.widgets import ActivityIndicator
 from ursa.util.events import DEFAULT_EVENT_NAME
 
@@ -25,12 +28,9 @@ def test_long_command_preview_keeps_top_and_bottom_eight_lines():
 
 
 async def test_overlapping_commands_stay_compact_and_complete_independently(
-    tmp_path,
-    app,
+    event_turn,
 ):
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("run both", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+    async with event_turn("run both", size=(100, 36)) as (pilot, turn):
         for command_id, query in (("one", "sleep 1"), ("two", "sleep 2")):
             await turn.event({
                 "tool": "run_command",
@@ -68,18 +68,13 @@ async def test_overlapping_commands_stay_compact_and_complete_independently(
 
 
 async def test_identical_concurrent_commands_are_correlated_by_run_id(
-    tmp_path, app
+    app, event_turn
 ):
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("run both", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+    async with event_turn("run both", size=(100, 36)) as (pilot, turn):
         handler = TextualEventHandler(app, turn)
         for run_id in ("one", "two"):
-            await handler.on_tool_start(
-                {"name": "run_command"},
-                "",
-                run_id=run_id,
-                inputs={"query": "echo same"},
+            await emit_tool_start(
+                handler, "run_command", run_id, query="echo same"
             )
         await handler.on_tool_error(RuntimeError("first failed"), run_id="one")
         await handler.on_custom_event(
@@ -106,12 +101,8 @@ async def test_identical_concurrent_commands_are_correlated_by_run_id(
         )
 
 
-async def test_command_completion_finishes_pending_safety_indicator(
-    tmp_path, app
-):
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("run it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+async def test_command_completion_finishes_pending_safety_indicator(event_turn):
+    async with event_turn("run it", size=(100, 36)) as (pilot, turn):
         await turn.event({
             "tool": "run_command",
             "phase": "start",
@@ -132,12 +123,9 @@ async def test_command_completion_finishes_pending_safety_indicator(
 
 
 async def test_solitary_command_after_overlap_returns_to_detailed_layout(
-    tmp_path,
-    app,
+    event_turn,
 ):
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("run commands", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+    async with event_turn("run commands", size=(100, 36)) as (pilot, turn):
         for command_id in ("one", "two"):
             await turn.event({
                 "tool": "run_command",
@@ -178,11 +166,8 @@ async def test_run_command_card_tracks_safety_and_collapses_on_result(tmp_path):
 
     async def run_agent(_name, _prompt, callbacks=None):
         handler = callbacks[0]
-        await handler.on_tool_start(
-            {"name": "run_command"},
-            "",
-            run_id="command-1",
-            inputs={"query": command},
+        await emit_tool_start(
+            handler, "run_command", "command-1", query=command
         )
         await pass_safety.wait()
         await emit_event(
@@ -199,11 +184,8 @@ async def test_run_command_card_tracks_safety_and_collapses_on_result(tmp_path):
         await handler.on_tool_end(
             "STDOUT:\ncommand output\nSTDERR:\n", run_id="command-1"
         )
-        await handler.on_tool_start(
-            {"name": "run_command"},
-            "",
-            run_id="command-2",
-            inputs={"query": "echo second"},
+        await emit_tool_start(
+            handler, "run_command", "command-2", query="echo second"
         )
         await emit_event(
             handler,
@@ -278,11 +260,8 @@ async def test_single_command_output_preserves_top_and_bottom_until_expanded(
 
     async def run_agent(_name, _prompt, callbacks=None):
         handler = callbacks[0]
-        await handler.on_tool_start(
-            {"name": "run_command"},
-            "",
-            run_id="long-output",
-            inputs={"query": "generate output"},
+        await emit_tool_start(
+            handler, "run_command", "long-output", query="generate output"
         )
         await emit_event(
             handler,
@@ -327,12 +306,7 @@ async def test_collapsed_commands_retain_execution_outcomes(tmp_path):
             returncode=None,
             output="",
         ):
-            await handler.on_tool_start(
-                {"name": "run_command"},
-                "",
-                run_id=run_id,
-                inputs={"query": query},
-            )
+            await emit_tool_start(handler, "run_command", run_id, query=query)
             await emit_event(
                 handler,
                 {

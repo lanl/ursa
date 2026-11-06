@@ -8,7 +8,7 @@ from textual.widgets import Static
 
 import ursa.cli.tui.event_handler as event_handler_module
 import ursa.cli.tui.turn as turn_module
-from tests.cli._app_helpers import emit_event
+from tests.cli._app_helpers import emit_event, emit_tool_start
 from ursa.cli.tui.event_cards import EditCard, FileActivityCard, RunCommandCard
 from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.turn import Turn
@@ -144,11 +144,8 @@ async def test_event_summary_groups_follow_activity_order(app):
                     "deletions": 1,
                 },
             )
-            await handler.on_tool_start(
-                {"name": "run_command"},
-                "",
-                run_id="ordered-command",
-                inputs={"query": "pwd"},
+            await emit_tool_start(
+                handler, "run_command", "ordered-command", query="pwd"
             )
             await handler.on_tool_end("", run_id="ordered-command")
             await emit_event(
@@ -341,12 +338,8 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
         assert groups[1].done
 
 
-async def test_stale_summary_timer_cannot_finalize_replacement_card(
-    tmp_path, app
-):
-    async with app.run_test(size=(100, 36)):
-        turn = Turn("read", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+async def test_stale_summary_timer_cannot_finalize_replacement_card(event_turn):
+    async with event_turn("read", size=(100, 36)) as (_pilot, turn):
         old = FileActivityCard("files:old")
         replacement = FileActivityCard("files:new")
         await turn.query_one(".events").mount(old, replacement)
@@ -363,11 +356,8 @@ async def test_parallel_read_callbacks_render_as_one_group(app):
         async with running_turn(app, pilot) as handler:
 
             async def read(run_id, path):
-                await handler.on_tool_start(
-                    {"name": "read_file"},
-                    "",
-                    run_id=run_id,
-                    inputs={"filename": path},
+                await emit_tool_start(
+                    handler, "read_file", run_id, filename=path
                 )
                 await emit_event(
                     handler,
@@ -384,11 +374,8 @@ async def test_parallel_read_callbacks_render_as_one_group(app):
                 read("read-b", "tests/cli/test_config.py"),
                 read("read-c", "pyproject.toml"),
             )
-            await handler.on_tool_start(
-                {"name": "run_command"},
-                "",
-                run_id="command-after-reads",
-                inputs={"query": "pwd"},
+            await emit_tool_start(
+                handler, "run_command", "command-after-reads", query="pwd"
             )
             await handler.on_tool_end("output", run_id="command-after-reads")
             # These delayed completions belong to the original Reading group and
@@ -426,16 +413,11 @@ async def test_parallel_read_callbacks_render_as_one_group(app):
         ]
 
 
-async def test_file_failure_is_retained_on_its_activity_card(tmp_path, app):
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("read it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+async def test_file_failure_is_retained_on_its_activity_card(app, event_turn):
+    async with event_turn("read it", size=(100, 36)) as (pilot, turn):
         handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "read_file"},
-            "",
-            run_id="broken-read",
-            inputs={"filename": "broken.txt"},
+        await emit_tool_start(
+            handler, "read_file", "broken-read", filename="broken.txt"
         )
         await handler.on_tool_error(
             PermissionError("permission denied"), run_id="broken-read"
@@ -453,17 +435,12 @@ async def test_file_failure_is_retained_on_its_activity_card(tmp_path, app):
 
 
 async def test_unchanged_file_result_is_retained_on_activity_card(
-    tmp_path, app
+    app, event_turn
 ):
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("edit it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+    async with event_turn("edit it", size=(100, 36)) as (pilot, turn):
         handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "edit_code"},
-            "",
-            run_id="unchanged-edit",
-            inputs={"filename": "same.txt"},
+        await emit_tool_start(
+            handler, "edit_code", "unchanged-edit", filename="same.txt"
         )
         await handler.on_tool_end(
             "No changes made: content already matches",
@@ -480,21 +457,17 @@ async def test_unchanged_file_result_is_retained_on_activity_card(
 
 @pytest.mark.parametrize("outcome", ["failed", "unchanged"])
 async def test_rich_edit_outcome_updates_existing_diff_row(
-    tmp_path, app, outcome
+    app, event_turn, outcome
 ):
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("edit it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+    async with event_turn("edit it", size=(100, 36)) as (pilot, turn):
         handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "edit_code"},
-            "",
-            run_id="rich-edit",
-            inputs={
-                "filename": "same.txt",
-                "old_code": "before",
-                "new_code": "after",
-            },
+        await emit_tool_start(
+            handler,
+            "edit_code",
+            "rich-edit",
+            filename="same.txt",
+            old_code="before",
+            new_code="after",
         )
         if outcome == "failed":
             await handler.on_tool_error(
