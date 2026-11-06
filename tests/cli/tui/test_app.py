@@ -12,6 +12,7 @@ import ursa.cli.tui.app as app_module
 import ursa.util.crossplatform as crossplatform
 from tests.cli._app_fakes import FakeHITL, emit_event
 from tests.tui.utils import await_event, await_screen, await_workers, eventually
+from ursa.cli.config import UrsaConfig
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import EventCard, ExceptionCard, RunCommandCard
 from ursa.cli.tui.turn import Turn
@@ -96,8 +97,9 @@ def test_keychain_unlock_precedes_tui_startup(monkeypatch, cancel_unlock):
     calls = []
 
     def read_password(service, username):
-        assert (service, username) == ("ursa", "__unlock__")
-        calls.append("unlock")
+        assert service == "ursa"
+        assert username in {"hosted", "tools"}
+        calls.append(username)
         if cancel_unlock:
             raise KeyringLocked("Unlock cancelled")
 
@@ -113,14 +115,24 @@ def test_keychain_unlock_precedes_tui_startup(monkeypatch, cancel_unlock):
         "UrsaTextualApp",
         lambda hitl: SimpleNamespace(run=lambda: calls.append("run")),
     )
-    hitl = SimpleNamespace(aclose=close)
+    config = UrsaConfig(
+        inference_providers={"hosted": {"api_key": {"keyring": True}}},
+        llm_model={"inference_provider": "hosted"},
+        mcp_servers={
+            "tools": {
+                "url": "https://example.test/mcp",
+                "headers": {"Authorization": {"keyring": True}},
+            }
+        },
+    ).resolve()
+    hitl = SimpleNamespace(config=config, aclose=close)
     if cancel_unlock:
         with pytest.raises(KeyringLocked, match="Unlock cancelled"):
             app_module.run_textual(hitl)
-        assert calls == ["unlock", "close"]
+        assert calls == ["hosted", "close"]
     else:
         app_module.run_textual(hitl)
-        assert calls == ["unlock", "run", "close"]
+        assert calls == ["hosted", "tools", "run", "close"]
 
 
 def test_copy_bindings_are_uniform_and_global():

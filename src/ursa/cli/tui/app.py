@@ -863,7 +863,7 @@ def run_textual(hitl: HITL) -> None:
     # first time a progress bar is built (e.g. RAG document ingestion).
     install_thread_only_tqdm_lock()
     try:
-        unlock_keychain()
+        unlock_keychain(hitl.config)
         UrsaTextualApp(hitl).run()
     finally:
         asyncio.run(hitl.aclose())
