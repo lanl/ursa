@@ -604,66 +604,59 @@ class UrsaTextualApp(App[None]):
         self._message_mode = True
         self.query_one(PromptArea).focus()
         self.run_worker(
-            self._run_active_message(turn, queued, prompt),
+            self._run_agent(turn, prompt, queued=queued),
             exclusive=False,
             group="agent",
         )
 
-    async def _run_agent(self, turn: Turn, prompt: str) -> None:
-        name, prompt = self._route_prompt(prompt)
-        self._active_agent_name = name
-        handler = TextualEventHandler(self, turn)
-        succeeded = True
-        try:
-            response = await self.runtime.run_agent(
-                name, prompt, callbacks=[handler]
-            )
-        except Exception as exc:
-            succeeded = False
-            await turn.add_exception(
-                exc, "".join(traceback.format_exception(exc))
-            )
-            response = f"**Agent failed:** `{type(exc).__name__}: {exc}`"
-        finally:
-            if self._active_agent_name == name:
-                self._active_agent_name = None
-        if active_path := self.runtime.active_agent_path:
-            self._active_agent_path = active_path
-            self._associate_turn_with_agent(turn, active_path)
-        await self._finish_agent_run(turn, response, succeeded=succeeded)
-
-    async def _run_active_message(
+    async def _run_agent(
         self,
         turn: Turn,
-        queued: QueuedMessage,
         prompt: str,
+        *,
+        queued: QueuedMessage | None = None,
     ) -> None:
+        if queued is None:
+            name, prompt = self._route_prompt(prompt)
+            self._active_agent_name = name
         handler = TextualEventHandler(self, turn)
         succeeded = True
 
-        async def on_start(_message: Any = None) -> None:
-            await self._promote_queued_message(turn, queued)
-
         try:
-            if not self._active_agent_path:
-                self._active_agent_path = (
-                    await self.runtime.wait_for_active_agent()
+            if queued is None:
+                response = await self.runtime.run_agent(
+                    name, prompt, callbacks=[handler]
                 )
-            turn.agent_path = self._active_agent_path
-            queued.set_target(self._active_agent_path)
-            response = await self.runtime.run_active_agent(
-                self._active_agent_path,
-                prompt,
-                callbacks=[handler],
-                on_start=on_start,
-            )
+            else:
+
+                async def on_start(_message: Any = None) -> None:
+                    await self._promote_queued_message(turn, queued)
+
+                if not self._active_agent_path:
+                    self._active_agent_path = (
+                        await self.runtime.wait_for_active_agent()
+                    )
+                turn.agent_path = self._active_agent_path
+                queued.set_target(self._active_agent_path)
+                response = await self.runtime.run_active_agent(
+                    self._active_agent_path,
+                    prompt,
+                    callbacks=[handler],
+                    on_start=on_start,
+                )
         except Exception as exc:
             succeeded = False
-            if turn.is_mounted:
+            if queued is None or turn.is_mounted:
                 await turn.add_exception(
                     exc, "".join(traceback.format_exception(exc))
                 )
             response = f"**Agent failed:** `{type(exc).__name__}: {exc}`"
+        finally:
+            if queued is None and self._active_agent_name == name:
+                self._active_agent_name = None
+        if queued is None and (active_path := self.runtime.active_agent_path):
+            self._active_agent_path = active_path
+            self._associate_turn_with_agent(turn, active_path)
         await self._finish_agent_run(
             turn,
             response,
