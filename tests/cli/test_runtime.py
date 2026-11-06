@@ -1758,3 +1758,152 @@ async def test_unnamed_session_shares_history_across_agent_types(
         assert _saw(built[-1], "PINEAPPLE")
     finally:
         await hitl.aclose()
+
+
+class _SharedState(dict):
+    __annotations__ = {"messages": list}
+
+
+class _PlainState(dict):
+    __annotations__ = {"context": str}
+
+
+def _fake_agent_class(state_type, checkpointer=True):
+    """Minimal agent: records the query it is given and returns a fixed answer."""
+
+    class FakeAgent:
+        def __init__(self):
+            self.state_type = state_type
+            self.checkpointer = object() if checkpointer else None
+            self.queries = []
+
+        def format_query(self, prompt, state=None):
+            query = {"prompt": prompt, "state": state}
+            self.queries.append(query)
+            return query
+
+        async def ainvoke(self, query, config=None):
+            return {"messages": ["new"], "extra": "kept"}
+
+        def format_result(self, result):
+            return "answer"
+
+    return FakeAgent
+
+
+SharedA = _fake_agent_class(_SharedState)
+SharedB = _fake_agent_class(_SharedState)
+Plain = _fake_agent_class(_PlainState)
+PlainOther = _fake_agent_class(_PlainState)
+Unpersisted = _fake_agent_class(_SharedState, checkpointer=False)
+
+
+@pytest.mark.parametrize(
+    ("previous", "current", "handoff"),
+    [
+        # Both share the checkpointed history: the output is already there.
+        (SharedA, SharedB, False),
+        # Either side outside the shared history: the handoff is the only copy.
+        (Plain, SharedA, True),  # e.g. /web -> /chat
+        (SharedA, Plain, True),  # e.g. /chat -> /web
+        (Plain, PlainOther, True),  # e.g. /web -> /lammps
+        # Messages schema but no checkpointer: history is not shared.
+        (Unpersisted, SharedA, True),
+        # Same class (e.g. rebuilt after a model switch) never hands off to itself.
+        (Plain, Plain, False),
+        (SharedA, SharedA, False),
+    ],
+    ids=[
+        "shared-to-shared",
+        "plain-to-shared",
+        "shared-to-plain",
+        "plain-to-plain",
+        "unpersisted-to-shared",
+        "same-plain-class",
+        "same-shared-class",
+    ],
+)
+async def test_handoff_only_when_output_is_not_already_shared(
+    previous, current, handoff
+):
+    wrapper = AgentHITL(agent_class=current)
+    wrapper._agent = current()
+
+    await wrapper(
+        "next request", last_agent_result="PREVIOUS", last_agent=previous()
+    )
+
+    prompt = wrapper._agent.queries[-1]["prompt"]
+    assert ("The last agent output was: PREVIOUS" in prompt) is handoff
+    assert "next request" in prompt
+
+
+@pytest.mark.parametrize("checkpointer", [True, False])
+async def test_cached_messages_are_not_resent_to_checkpointed_agents(
+    checkpointer,
+):
+    wrapper = AgentHITL(
+        agent_class=_fake_agent_class(_SharedState, checkpointer=checkpointer)
+    )
+    wrapper._agent = wrapper.agent_class()
+    cached = {"messages": ["old-1", "old-2"], "extra": "kept"}
+    wrapper.state = cached
+
+    await wrapper("hi")
+
+    sent = wrapper._agent.queries[-1]["state"]
+    assert sent["extra"] == "kept"  # non-message state is still passed
+    # The checkpoint holds the history; only unpersisted agents need the copy.
+    assert sent["messages"] == ([] if checkpointer else ["old-1", "old-2"])
+    assert cached["messages"] == ["old-1", "old-2"]  # cache not mutated
+
+
+@pytest.mark.asyncio
+async def test_summarized_messages_are_not_resurrected_by_another_agent(
+    tmp_path, monkeypatch
+):
+    # Regression: chat's cached copy re-sent messages that the prompt agent had
+    # since summarized away, putting them back next to their own summary.
+    _recording_models(monkeypatch)
+    hitl = HITL(UrsaConfig(workspace=tmp_path))
+    try:
+        await hitl.run_agent("chat", "Turn one mentions PINEAPPLE.")
+        prompt = await hitl.get_agent("prompt")
+        prompt._agent.tokens_before_summarize = 1
+        prompt._agent.messages_to_keep = 1
+        await hitl.run_agent("prompt", "Second turn from another agent.")
+        await hitl.run_agent("chat", "Third turn, back on chat.")
+
+        graph = await hitl.agents["chat"]._agent._aget_async_compiled_graph()
+        snapshot = await graph.aget_state({
+            "configurable": {"thread_id": hitl.thread_id}
+        })
+        messages = snapshot.values["messages"]
+        raw = [
+            m
+            for m in messages
+            if "PINEAPPLE" in str(m.content)
+            and "[Summary" not in str(m.content)
+        ]
+        assert any("[Summary" in str(m.content) for m in messages)
+        assert raw == []
+    finally:
+        await hitl.aclose()
+
+
+@pytest.mark.asyncio
+async def test_shared_history_agents_get_no_duplicate_handoff(
+    tmp_path, monkeypatch
+):
+    built = _recording_models(monkeypatch)
+    hitl = HITL(UrsaConfig(workspace=tmp_path))
+    try:
+        await hitl.run_agent("chat", "My secret word is PINEAPPLE.")
+        await hitl.run_agent("prompt", "Unrelated request.")
+        sent = built[-1].calls[-1]
+        assert not any(
+            "The last agent output was" in str(m.content) for m in sent
+        )
+        assert _saw(built[-1], "PINEAPPLE")  # it still has the history
+    finally:
+        await hitl.aclose()

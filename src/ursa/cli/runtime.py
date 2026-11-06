@@ -38,6 +38,19 @@ from ursa.util.mcp import start_mcp_client
 EPHEMERAL_AGENT_PREFIX = "tmp_"
 
 
+def _shares_message_history(agent: Any) -> bool:
+    """Whether ``agent`` reads and writes the session's shared message history.
+
+    True only for checkpointed agents whose state schema has a ``messages``
+    channel. Decided by class, not by runtime state, so it is also correct on
+    an agent's first turn. Unknown schemas count as not sharing.
+    """
+    state_type = getattr(agent, "state_type", None)
+    return getattr(
+        agent, "checkpointer", None
+    ) is not None and "messages" in getattr(state_type, "__annotations__", {})
+
+
 @dataclass
 class AgentHITL:
     """Wrapper for BaseAgent to delay instantiation and async method calls"""
@@ -148,16 +161,37 @@ class AgentHITL:
         assert self._agent is not None, "Agent not yet instantiated"
         agent = self._agent
 
-        # Inject the previous agent's response into the query
-        if (last_agent_result is not None) and (last_agent != agent):
+        # Hand the previous agent's output over only when it is not already in
+        # this agent's context: both agents must share the checkpointed message
+        # history for it to be redundant (it would otherwise be duplicated).
+        # Compared by class so rebuilt agents (e.g. after a model switch) still
+        # count as the same agent.
+        if (
+            last_agent_result is not None
+            and type(last_agent) is not type(agent)
+            and not (
+                _shares_message_history(last_agent)
+                and _shares_message_history(agent)
+            )
+        ):
             prompt = "\n".join([
                 f"The last agent output was: {last_agent_result}\n\n",
                 f"The user stated: {prompt}",
             ])
 
         # Setup the agents input state from it's current state and plain text input
-        # then invoke the agent and extract a final message from it's new state
-        query = agent.format_query(prompt, state=self.state)
+        # then invoke the agent and extract a final message from it's new state.
+        # For checkpointed agents the history already lives in the checkpoint, so
+        # the cached copy is sent without its messages: re-sending them could
+        # resurrect messages another agent has since summarized away.
+        state = self.state
+        if (
+            state is not None
+            and "messages" in state
+            and getattr(agent, "checkpointer", None) is not None
+        ):
+            state = {**state, "messages": []}
+        query = agent.format_query(prompt, state=state)
 
         invoke_config = None
         if callbacks:
@@ -447,8 +481,9 @@ class HITL:
                 self.model = model
                 self.config.llm_model = resolved
                 self.inference_provider = inference_provider
-                self.last_agent = None
-                self.last_agent_result = None
+                # The handoff is kept: like the history it survives a model
+                # switch, and AgentHITL compares agents by class, so the
+                # rebuilt agents still match their pre-switch counterparts.
 
         await self._run_runtime_task(apply_reconfiguration())
 
@@ -513,8 +548,6 @@ class HITL:
                 for wrapper in self.agents.values():
                     if "rag_tool_embedding" in wrapper.config:
                         wrapper.config["rag_tool_embedding"] = new_embedding
-                self.last_agent = None
-                self.last_agent_result = None
 
         await self._run_runtime_task(apply_reconfiguration())
 
