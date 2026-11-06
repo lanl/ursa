@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import sqlite3
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import aiosqlite
-from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+if TYPE_CHECKING:
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from ursa.util.secrets import get_keyring as get_keyring
 
@@ -16,6 +19,8 @@ class Checkpointer:
         db_dir: str = "db",
         db_name: str = "checkpointer.db",
     ) -> SqliteSaver:
+        from langgraph.checkpoint.sqlite import SqliteSaver
+
         (db_path := workspace / db_dir).mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(db_path / db_name), check_same_thread=False)
         return SqliteSaver(conn)
@@ -28,6 +33,9 @@ class Checkpointer:
         db_name: str = "checkpointer.db",
     ) -> AsyncSqliteSaver:
         """Make an async SQLite checkpointer under a workspace directory."""
+        import aiosqlite
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
         (db_path := workspace / db_dir).mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(str(db_path / db_name))
         return AsyncSqliteSaver(conn)
@@ -42,6 +50,7 @@ class Checkpointer:
         ====
         * db_path: The path to the SQLite database file (e.g. ./checkpoint.db) to be created.
         """
+        from langgraph.checkpoint.sqlite import SqliteSaver
 
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(db_path / db_name), check_same_thread=False)
@@ -52,6 +61,9 @@ class Checkpointer:
         cls, db_path: Path, db_name: str = "checkpointer.db"
     ) -> AsyncSqliteSaver:
         """Make an async SQLite checkpointer under a database path."""
+        import aiosqlite
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(str(db_path / db_name))
         return AsyncSqliteSaver(conn)

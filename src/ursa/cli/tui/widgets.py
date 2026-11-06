@@ -2,6 +2,8 @@
 
 """Reusable widgets and modal screens for the Textual CLI."""
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
@@ -9,7 +11,7 @@ from dataclasses import dataclass, replace
 from itertools import islice
 from math import ceil
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import yaml
 from pydantic import SecretStr, ValidationError
@@ -37,14 +39,13 @@ from textual.widgets import (
 from textual.widgets._select import SelectCurrent, SelectOverlay
 from textual.widgets.option_list import Option
 
-from ursa.agents.base import URSA_VERSION
+from ursa import __version__ as URSA_VERSION
 from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
     InferenceProviderConfig,
     ModelConfig,
 )
-from ursa.cli.runtime import HITL
 from ursa.cli.tui.agent_info import AgentDetails, ToolDetails, load_agent_tools
 from ursa.cli.tui.helpers import _fuzzy_score
 from ursa.cli.tui.tips import random_tip
@@ -56,6 +57,9 @@ from ursa.util.inference_providers import (
     sort_provider_models,
     supported_model_providers,
 )
+
+if TYPE_CHECKING:
+    from ursa.cli.runtime import HITL
 
 
 class PromptArea(TextArea):

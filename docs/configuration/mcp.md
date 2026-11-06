@@ -62,6 +62,11 @@ the configured secret is unavailable.
 ursa --config config.yaml
 ```
 
+URSA validates server settings at startup without loading the MCP SDK. Clients
+and connections are created when the first request initializes an agent with
+MCP tools, so configured servers do not delay the initial prompt. That first
+request includes the time needed to start or connect to the servers.
+
 ## Security notes
 
 MCP servers can expose powerful tools. Only connect MCP servers that you trust, and prefer dedicated workspaces and endpoint allowlists for sensitive workflows.

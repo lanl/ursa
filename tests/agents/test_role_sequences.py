@@ -26,7 +26,7 @@ from ursa.agents.planning_agent import PlanningAgent
 from ursa.agents.prompting_agent import PromptingAgent
 from ursa.agents.rag_agent import RAGAgent
 from ursa.agents.recall_agent import RecallAgent
-from ursa.util.has_optional_dep_group import has_optional_dep_group
+from ursa.util.has_extra import has_extra
 
 
 class StubMemory:
@@ -127,9 +127,7 @@ async def test_hypothesizer_agent_role_sequences(tmp_path):
     assert_requests_provider_valid(llm.calls)
 
 
-@pytest.mark.skipif(
-    not has_optional_dep_group("dsi"), reason="dsi extra not installed"
-)
+@pytest.mark.skipif(not has_extra("dsi"), reason="dsi extra not installed")
 async def test_dsi_agent_role_sequences(tmp_path):
     from ursa.agents.dsi_agent import DSIAgent
 

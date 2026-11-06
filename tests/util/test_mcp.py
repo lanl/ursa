@@ -12,6 +12,7 @@ from mcp.client.session_group import (
     StreamableHttpParameters,
 )
 
+from ursa.cli.config import UrsaConfig
 from ursa.util import mcp as mcp_mod
 from ursa.util.secrets import SecretTemplate
 
@@ -185,13 +186,21 @@ def test_stdio_proxy_launches_windows_command_shim(tmp_path, extension):
     assert stderr_path.read_text().strip() == "shim diagnostic"
 
 
-async def test_upstream_adapter_puts_structured_content_in_tool_artifact():
-    client = mcp_mod.start_mcp_client({
-        "demo": StdioServerParameters(
-            command=sys.executable,
-            args=[str(DUMMY_SERVER)],
-        )
-    })
+@pytest.mark.parametrize("from_config", [False, True])
+async def test_upstream_adapter_puts_structured_content_in_tool_artifact(
+    from_config,
+):
+    server = StdioServerParameters(
+        command=sys.executable,
+        args=[str(DUMMY_SERVER)],
+    )
+    if from_config:
+        server = UrsaConfig.model_validate({
+            "mcp_servers": {
+                "demo": {"transport": "stdio", **server.model_dump()}
+            }
+        }).mcp_servers["demo"]
+    client = mcp_mod.start_mcp_client({"demo": server})
     tools = await client.get_tools(server_name="demo")
     add = next(tool for tool in tools if tool.name == "add")
     result = await add.ainvoke({

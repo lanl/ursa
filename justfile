@@ -9,6 +9,10 @@ help:
 test:
     uv run pytest -s
 
+# Measure fresh-process time to the first usable prompt with ASV.
+benchmark *flags:
+    uv run --no-sync asv run --environment existing --show-stderr {{ flags }}
+
 clean-workspaces:
     rm -rf workspace
     rm -rf workspace_*/

@@ -103,6 +103,14 @@ uv sync --all-extras --group dev
 uv run pytest
 ```
 
+## Startup benchmarks
+
+Run `uv run --no-sync asv machine --yes` once, then `just benchmark` after
+syncing development dependencies. ASV records the slowest of five fresh-process
+starts per scenario, measured through the rendered, focused prompt. The target
+is under one second. See [benchmark/README.md](benchmark/README.md) for filtering,
+saving results, and measurement limits.
+
 ## Building Documentation
 
 Install the documentation dependency group and preview changes locally:

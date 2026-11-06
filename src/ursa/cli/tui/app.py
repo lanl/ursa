@@ -13,7 +13,7 @@ import traceback
 from collections.abc import Callable, Iterable, Mapping
 from math import ceil
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import yaml
 from rich.console import Console
@@ -26,11 +26,8 @@ from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Static, TextArea
 
-from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import config_file_value
-from ursa.cli.runtime import HITL
 from ursa.cli.tui.agent_info import load_agent_details
-from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.helpers import (
     COMMAND_CHOICES,
     TokenUsage,
@@ -51,12 +48,14 @@ from ursa.cli.tui.widgets import (
     WelcomeBanner,
 )
 from ursa.util import crossplatform
-from ursa.util import mcp as ursa_mcp
 from ursa.util.model_context import (
     model_context_window,
     summarization_threshold,
 )
 from ursa.util.tqdm_lock import install_thread_only_tqdm_lock
+
+if TYPE_CHECKING:
+    from ursa.cli.runtime import HITL
 
 
 class ConversationScroll(VerticalScroll):
@@ -290,6 +289,8 @@ class UrsaTextualApp(App[None]):
         )
 
     async def _run_agent(self, turn: Turn, prompt: str) -> None:
+        from ursa.cli.tui.event_handler import TextualEventHandler
+
         name, prompt = self._route_prompt(prompt)
         handler = TextualEventHandler(self, turn)
         succeeded = True
@@ -695,8 +696,11 @@ class UrsaTextualApp(App[None]):
         servers = self.hitl.config.mcp_servers
         if not servers:
             return model_table + "\n\n## MCP servers\n\nNone configured."
+        from ursa.util import mcp_config as ursa_mcp
+
         server_rows = []
         for name, server in servers.items():
+            server = ursa_mcp.parse_server_parameters(server)
             location = (
                 server.command
                 if isinstance(server, ursa_mcp.StdioServerParameters)
@@ -856,6 +860,8 @@ def run_textual(hitl: HITL) -> None:
 
 def run_textual_once(hitl: HITL, prompt: str, *, stdout: Any = None) -> str:
     """Run one routed prompt and render its event stream to standard output."""
+    from ursa.cli.callbacks import HITLLogEventHandler
+
     install_thread_only_tqdm_lock()
     output = stdout or sys.stdout
     console = Console(file=output)

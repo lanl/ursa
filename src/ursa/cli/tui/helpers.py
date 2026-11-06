@@ -1,13 +1,16 @@
 """Pure helpers and constants shared by the Textual CLI."""
 
+from __future__ import annotations
+
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.cells import cell_len, chop_cells  # noqa: TID251
 
-from ursa.cli.runtime import HITL
+if TYPE_CHECKING:
+    from ursa.cli.runtime import HITL
 
 SUMMARY_GROUP_GRACE_SECONDS = 3.0
 FILE_TOOLS = {

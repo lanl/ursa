@@ -59,6 +59,7 @@ dependencies = [
     "textual[syntax]>=8.2.8,<9.0",
     "keyring>=25.0.0,<26.0.0",
     "filelock>=3.20.3,<4.0",
+    "packaging>=25.0",
 ]
 classifiers = [
     "Operating System :: OS Independent",
@@ -168,6 +169,7 @@ dev = [
     "pytest-xdist",
     "scikit-optimize>=0.10.2",
     "ruff==0.12.10",
+    "asv>=0.6.6,<0.7",
 ]
 docs = [
     "mike>=2.1.3,<3",

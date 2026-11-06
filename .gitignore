@@ -17,6 +17,7 @@ wheels/
 
 # Virtual environments
 .venv/
+.asv/
 workspace/
 workspace_*/
 examples/**/uv.lock

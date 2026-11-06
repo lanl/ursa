@@ -6,13 +6,11 @@ from dataclasses import dataclass
 from os import environ
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Annotated, Any, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self
 
 import yaml
 from filelock import FileLock
 from jsonargparse import Namespace
-from langchain.chat_models import BaseChatModel, init_chat_model
-from langchain.embeddings import Embeddings, init_embeddings
 from pydantic import (
     AfterValidator,
     BaseModel,
@@ -35,13 +33,27 @@ from ursa.util.http import (
     build_httpx_client,
     httpx_verify_value,
 )
-from ursa.util.mcp import (
-    ServerParameters,
-    parse_server_parameters,
-    serialize_server_parameters,
-)
+from ursa.util.mcp_config import ServerParameters as MCPServerParameters
 from ursa.util.model_context import DEFAULT_SUMMARIZATION_THRESHOLD
 from ursa.util.secrets import SecretReference
+
+if TYPE_CHECKING:
+    from langchain.chat_models import BaseChatModel
+    from langchain.embeddings import Embeddings
+
+
+def init_chat_model(**kwargs):
+    """Import the model factory only when a model is actually requested."""
+    from langchain.chat_models import init_chat_model as factory
+
+    return factory(**kwargs)
+
+
+def init_embeddings(**kwargs):
+    from langchain.embeddings import init_embeddings as factory
+
+    return factory(**kwargs)
+
 
 logger = logging.getLogger(__name__)
 
@@ -461,7 +473,7 @@ class ChatModelConfig(ModelConfig):
                 kwargs.setdefault("use_responses_api", True)
         return kwargs
 
-    def init_chat_model(self) -> BaseChatModel:
+    def init_chat_model(self) -> "BaseChatModel":
         from ursa.util.model_metadata import load_model_context
         from ursa.util.openai_compat import with_responses_fallback
 
@@ -474,6 +486,10 @@ class ChatModelConfig(ModelConfig):
 
     @model_validator(mode="after")
     def parse_model_and_provider(self):
+        if ":" not in self.model and (
+            self.model_provider or self.inference_provider
+        ):
+            return self._parse_model_and_provider({})
         from langchain.chat_models.base import _BUILTIN_PROVIDERS
 
         return self._parse_model_and_provider(_BUILTIN_PROVIDERS)
@@ -489,13 +505,17 @@ class EmbModelConfig(ModelConfig):
         kwargs["provider"] = kwargs.pop("model_provider", None)
         return kwargs
 
-    def init_embedding(self) -> Embeddings:
+    def init_embedding(self) -> "Embeddings":
         emb = init_embeddings(**self.kwargs)
         self.check_instantiated_model(emb)
         return emb
 
     @model_validator(mode="after")
     def parse_model_and_provider(self):
+        if ":" not in self.model and (
+            self.model_provider or self.inference_provider
+        ):
+            return self._parse_model_and_provider({})
         from langchain.embeddings.base import _BUILTIN_PROVIDERS
 
         return self._parse_model_and_provider(_BUILTIN_PROVIDERS)
@@ -583,7 +603,7 @@ class UrsaConfig(BaseModel):
     agent_config: dict[str, dict[str, Any]] = Field(default_factory=dict)
     """ Configuration options for URSA Agents """
 
-    mcp_servers: dict[str, ServerParameters] = Field(default_factory=dict)
+    mcp_servers: dict[str, MCPServerParameters] = Field(default_factory=dict)
     """MCP Servers to connect to Ursa."""
 
     @field_validator("inference_providers", mode="before")
@@ -700,8 +720,12 @@ class UrsaConfig(BaseModel):
 
     @field_serializer("mcp_servers")
     def serialize_mcp_servers(
-        self, mcp_servers: dict[str, ServerParameters], info
+        self, mcp_servers: dict[str, MCPServerParameters], info
     ):
+        if not mcp_servers:
+            return {}
+        from ursa.util.mcp_config import serialize_server_parameters
+
         include_defaults = bool(
             info.context and info.context.get("include_defaults")
         )
@@ -716,8 +740,13 @@ class UrsaConfig(BaseModel):
         }
 
 
-def interpolate_mcp_server(config: ServerParameters) -> ServerParameters:
+def interpolate_mcp_server(config: MCPServerParameters) -> MCPServerParameters:
     """Apply config-file environment interpolation to a typed MCP server."""
+    from ursa.util.mcp_config import (
+        parse_server_parameters,
+        serialize_server_parameters,
+    )
+
     values = serialize_server_parameters(
         config,
         exclude_defaults=False,

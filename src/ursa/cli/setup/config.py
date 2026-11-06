@@ -25,7 +25,7 @@ from ursa.cli.config import (
     save_config_file,
 )
 from ursa.util import get_keyring
-from ursa.util.mcp import ServerParameters
+from ursa.util.mcp_config import ServerParameters
 from ursa.util.secrets import KEYRING_SERVICE, SecretReference, SecretTemplate
 
 # The compact layout keeps this setup-specific boundary proportional to the

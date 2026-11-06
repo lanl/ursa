@@ -1,5 +1,7 @@
 # ruff: noqa: TID251
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import shutil
@@ -7,19 +9,11 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
-from typing import Any
-
-import aiosqlite
-from fastmcp import FastMCP
-from langchain.chat_models import BaseChatModel
-from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from typing import TYPE_CHECKING, Any
 
 from ursa import agents
-from ursa.agents import BaseAgent
-from ursa.agents.base import AgentWithTools
 from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
@@ -30,9 +24,15 @@ from ursa.security import (
     enforce_model_group_policy,
     group_agents_dir,
 )
-from ursa.util.has_optional_dep_group import has_optional_dep_group
+from ursa.util.has_extra import has_extra
 from ursa.util.inference_providers import validate_model_provider
-from ursa.util.mcp import start_mcp_client
+
+if TYPE_CHECKING:
+    from langchain.chat_models import BaseChatModel
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+    from ursa.agents import BaseAgent
 
 # Reserved name prefix of the throwaway agents backing unnamed sessions.
 EPHEMERAL_AGENT_PREFIX = "tmp_"
@@ -51,11 +51,18 @@ def _shares_message_history(agent: Any) -> bool:
     ) is not None and "messages" in getattr(state_type, "__annotations__", {})
 
 
-@dataclass
+def start_mcp_client(server_configs):
+    """Load MCP clients only when an agent first needs them."""
+    from ursa.util.mcp import start_mcp_client as factory
+
+    return factory(server_configs)
+
+
+@dataclass(init=False)
 class AgentHITL:
     """Wrapper for BaseAgent to delay instantiation and async method calls"""
 
-    agent_class: Any
+    _agent_class: Any = field(repr=False)
     config: dict = field(default_factory=dict)
     state: Any | None = None
     tool_sources: dict[str, str] = field(default_factory=dict, init=False)
@@ -63,6 +70,23 @@ class AgentHITL:
     _initialization_task: asyncio.Task[None] | None = field(
         default=None, init=False, repr=False
     )
+
+    def __init__(
+        self, agent_class: Any, config: dict | None = None, state: Any = None
+    ):
+        self._agent_class = agent_class
+        self.config = {} if config is None else config
+        self.state = state
+        self.tool_sources = {}
+        self._agent = None
+        self._initialization_task = None
+
+    @property
+    def agent_class(self):
+        """Import an agent implementation only when requested."""
+        if isinstance(self._agent_class, str):
+            self._agent_class = getattr(agents, self._agent_class)
+        return self._agent_class
 
     async def instantiate(
         self,
@@ -100,6 +124,8 @@ class AgentHITL:
         finalizer: Callable[[Any], Awaitable[None]] | None = None,
         **kwargs,
     ) -> None:
+        from ursa.agents.base import AgentWithTools
+
         kwargs |= self.config
 
         def build_agent():
@@ -244,27 +270,6 @@ class HITL:
         )
         self.group = self.config.group
 
-        validate_model_provider(self.config.llm_model, "chat")
-        if self.config.emb_model is not None:
-            validate_model_provider(self.config.emb_model, "embedding")
-
-        self.model: BaseChatModel = self.config.llm_model.init_chat_model()
-        enforce_model_group_policy(self.model, self.group)
-
-        self.embedding = (
-            self.config.emb_model.init_embedding()
-            if self.config.emb_model is not None
-            else None
-        )
-        enforce_model_group_policy(self.embedding, self.group)
-
-        self.mcp_client = start_mcp_client(self.config.mcp_servers)
-
-        rag_tool_config = {
-            "rag_tools": self.config.rag_tools,
-            "rag_tool_embedding": self.embedding,
-        }
-
         self.agents: dict[str, AgentHITL] = {}
         for agent_name, agent_class_name, deps in [
             ("chat", "ChatAgent", None),
@@ -278,16 +283,16 @@ class HITL:
             ("web", "WebSearchAgent", None),
             ("lammps", "LammpsAgent", "lammps"),
         ]:
-            if deps is not None and not has_optional_dep_group(deps):
+            if deps is not None and not has_extra(deps):
                 continue
 
             config = {
                 "tokens_before_summarize": self.config.tokens_before_summarize
             }
             if agent_name in {"chat", "execute", "deep_review", "dsi"}:
-                config.update(rag_tool_config)
+                config["rag_tools"] = self.config.rag_tools
             self.agents[agent_name] = AgentHITL(
-                agent_class=getattr(agents, agent_class_name),
+                agent_class=agent_class_name,
                 config=config,
             )
 
@@ -304,6 +309,7 @@ class HITL:
         self.last_agent_result = None
         self.last_agent = None
         self._runtime_checkpointers: list[AsyncSqliteSaver] = []
+        self._dependencies_task: asyncio.Task | None = None
         self._transition_lock = asyncio.Lock()
         self._transition_serial_lock = asyncio.Lock()
         self._loads_allowed = asyncio.Event()
@@ -314,9 +320,40 @@ class HITL:
         self._close_task: asyncio.Task[None] | None = None
         self._closed = False
 
+    @cached_property
+    def model(self):
+        validate_model_provider(self.config.llm_model, "chat")
+        model = self.config.llm_model.init_chat_model()
+        enforce_model_group_policy(model, self.group)
+        return model
+
+    @cached_property
+    def embedding(self):
+        if self.config.emb_model is None:
+            return None
+        validate_model_provider(self.config.emb_model, "embedding")
+        embedding = self.config.emb_model.init_embedding()
+        enforce_model_group_policy(embedding, self.group)
+        return embedding
+
+    @cached_property
+    def mcp_client(self):
+        return start_mcp_client(self.config.mcp_servers)
+
+    def _agent_dependencies(self):
+        return self.model, self.embedding, self.mcp_client
+
+    def _dependencies_done(self, task: asyncio.Task) -> None:
+        if task.cancelled() or task.exception() is not None:
+            if self._dependencies_task is task:
+                self._dependencies_task = None
+
     async def _get_checkpointer(
         self, checkpoint_path: Path
     ) -> AsyncSqliteSaver:
+        import aiosqlite
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
         checkpoint_path = checkpoint_path / "db" / "checkpointer.db"
         await asyncio.to_thread(
             checkpoint_path.parent.mkdir, parents=True, exist_ok=True
@@ -383,6 +420,8 @@ class HITL:
         return await asyncio.shield(task)
 
     async def _finalize_named_agent(self, built_agent: Any) -> None:
+        from langgraph.checkpoint.sqlite import SqliteSaver
+
         # Custom agent classes from the config need not be persistent
         # BaseAgents; without a den there is nothing to checkpoint.
         if getattr(built_agent, "den", None) is None:
@@ -401,12 +440,24 @@ class HITL:
 
     async def _get_agent(self, name: str) -> AgentHITL:
         agent = self.agents[name]
+        # First-use imports and connectivity checks must not block the TUI.
+        # Share the initialized dependencies across concurrent agent requests.
+        task = self._dependencies_task
+        if task is None:
+            task = asyncio.create_task(
+                asyncio.to_thread(self._agent_dependencies)
+            )
+            self._dependencies_task = task
+            task.add_done_callback(self._dependencies_done)
+        model, embedding, mcp_client = await asyncio.shield(task)
+        if "rag_tools" in agent.config:
+            agent.config.setdefault("rag_tool_embedding", embedding)
         await agent.instantiate(
-            llm=self.model,
+            llm=model,
             workspace=self.workspace,
             agent_name=self.session_agent_name,
             group=self.group,
-            mcp_client=self.mcp_client,
+            mcp_client=mcp_client,
             finalizer=self._finalize_named_agent,
             thread_id=f"{self.thread_id}",
         )
@@ -553,6 +604,15 @@ class HITL:
 
     async def _close_instantiated_agents(self) -> None:
         """Close and reset agents so they bind to the configured model."""
+        task = self._dependencies_task
+        if task is not None:
+            try:
+                await asyncio.shield(task)
+            except Exception:
+                logging.exception(
+                    "Dependency initialization failed during cleanup"
+                )
+            self._dependencies_task = None
         for wrapper in self.agents.values():
             try:
                 await wrapper.wait_until_initialized()
@@ -625,6 +685,8 @@ class HITL:
         await self.aclose()
 
     def as_mcp_server(self, **kwargs):
+        from fastmcp import FastMCP
+
         from ursa import __version__ as ursa_version
 
         mcp = FastMCP(

@@ -40,12 +40,12 @@ from ursa.cli.setup.config import (
 )
 from ursa.cli.tui.widgets import AdvancedYamlEditor, FuzzySelect, HelpLabel
 from ursa.util import get_keyring
-from ursa.util.mcp import (
+from ursa.util.mcp_config import (
     ServerParameters,
     parse_server_parameters,
     transport,
 )
-from ursa.util.mcp import (
+from ursa.util.mcp_config import (
     serialize_server_parameters as dump_mcp,
 )
 from ursa.util.secrets import KEYRING_SERVICE, SecretReference, SecretTemplate

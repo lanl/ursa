@@ -26,7 +26,7 @@ from ursa.cli.config import ChatModelConfig, EmbModelConfig, UrsaConfig
 from ursa.cli.runtime import EPHEMERAL_AGENT_PREFIX, HITL, AgentHITL
 from ursa.cli.tui.agent_info import load_agent_tools
 from ursa.util.events import DEFAULT_EVENT_NAME
-from ursa.util.has_optional_dep_group import has_optional_dep_group
+from ursa.util.has_extra import has_extra
 from ursa.util.rendering import event_artifact
 
 LOGGER = logging.getLogger(__name__)
@@ -879,9 +879,10 @@ async def test_reconfigure_waits_for_active_agent_run(tmp_path, monkeypatch):
 async def test_cancelled_reconfigure_waiter_does_not_interrupt_transition(
     tmp_path, monkeypatch
 ):
-    _stub_hitl_dependencies(monkeypatch)
+    initial_model, _ = _stub_hitl_dependencies(monkeypatch)
     replacement_model = MagicMock(name="replacement-llm")
     hitl = HITL(UrsaConfig(workspace=tmp_path))
+    assert hitl.model is initial_model
     close_started = threading.Event()
     close_release = threading.Event()
 
@@ -1099,7 +1100,7 @@ def _stub_hitl_dependencies(monkeypatch):
     return fake_llm, fake_embedding
 
 
-def test_hitl_startup_reports_provider_validation_failure(
+async def test_hitl_first_use_reports_provider_validation_failure(
     tmp_path, monkeypatch
 ):
     _stub_hitl_dependencies(monkeypatch)
@@ -1108,11 +1109,13 @@ def test_hitl_startup_reports_provider_validation_failure(
         MagicMock(side_effect=ValueError("API key is missing")),
     )
 
+    hitl = HITL(UrsaConfig(workspace=tmp_path))
     with pytest.raises(
         ValueError,
         match="API key is missing",
     ):
-        HITL(UrsaConfig(workspace=tmp_path))
+        await hitl.get_agent("chat")
+    await hitl.aclose()
 
 
 async def test_reconfigure_models_reports_validation_failure_without_change(
@@ -1120,6 +1123,7 @@ async def test_reconfigure_models_reports_validation_failure_without_change(
 ):
     initial_model, _ = _stub_hitl_dependencies(monkeypatch)
     hitl = HITL(UrsaConfig(workspace=tmp_path))
+    assert hitl.model is initial_model
     monkeypatch.setattr(
         "ursa.cli.runtime.validate_model_provider",
         MagicMock(side_effect=ValueError("model is unavailable")),
@@ -1152,7 +1156,7 @@ async def test_reconfigure_models_reports_validation_failure_without_change(
         "plan",
         "web",
     ]
-    + (["dsi"] if has_optional_dep_group("dsi") else []),
+    + (["dsi"] if has_extra("dsi") else []),
 )
 async def test_agents_apply_agent_config_overrides(
     agent_name, tmp_path, monkeypatch

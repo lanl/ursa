@@ -16,6 +16,15 @@ from mcp.client.session_group import (
 from pydantic import BaseModel, BeforeValidator, TypeAdapter, ValidationError
 
 from ursa.util.http import build_mcp_httpx_async_client
+from ursa.util.mcp_config import (
+    SseServerParameters as SseConfig,
+)
+from ursa.util.mcp_config import (
+    StdioServerParameters as StdioConfig,
+)
+from ursa.util.mcp_config import (
+    StreamableHttpParameters as HttpConfig,
+)
 from ursa.util.secrets import SecretTemplate
 
 
@@ -115,11 +124,11 @@ def parse_server_parameters(config: Any) -> ServerParameters:
 
 
 def transport(sp: ServerParameters) -> str:
-    if isinstance(sp, StdioServerParameters):
+    if isinstance(sp, (StdioServerParameters, StdioConfig)):
         return "stdio"
-    elif isinstance(sp, StreamableHttpParameters):
+    elif isinstance(sp, (StreamableHttpParameters, HttpConfig)):
         return "streamable_http"
-    elif isinstance(sp, SseServerParameters):
+    elif isinstance(sp, (SseServerParameters, SseConfig)):
         return "sse"
     raise RuntimeError("Transport for {sp} is unknown")
 
@@ -140,7 +149,7 @@ def start_mcp_client(
                 name: _resolve_header(value, server)
                 for name, value in headers.items()
             }
-        if isinstance(config, (SseServerParameters, StreamableHttpParameters)):
+        if connection["transport"] != "stdio":
             connection["httpx_client_factory"] = build_mcp_httpx_async_client
         client_config[server] = connection
     return UrsaMCPClient(client_config)
