@@ -301,15 +301,30 @@ async def test_summarize_false_skips_rag(chat_model, tmp_path, monkeypatch):
     assert "final_summary" not in result
 
 
-async def test_summary_cache_write_failure_does_not_abort_source(
-    chat_model, tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    "method, args, response",
+    [
+        (
+            "_summarize_source",
+            ({"id": "a", "full_text": "content"}, 0, "compare"),
+            "useful summary",
+        ),
+        (
+            "_aggregate_sources",
+            ([{"id": "a"}], ["source summary"], "compare"),
+            "reduced answer",
+        ),
+    ],
+)
+async def test_cache_write_failure_preserves_model_answer(
+    chat_model, tmp_path, monkeypatch, method, args, response
 ):
     class FakeChain:
         def __or__(self, _other):
             return self
 
         async def ainvoke(self, _values, config=None):
-            return "useful summary"
+            return response
 
     monkeypatch.setattr(
         acquisition_module.ChatPromptTemplate,
@@ -323,11 +338,7 @@ async def test_summary_cache_write_failure_does_not_abort_source(
 
     monkeypatch.setattr(acquisition_module.Path, "write_text", fail_write)
 
-    summary = await agent._summarize_source(
-        {"id": "a", "full_text": "content"}, 0, "compare"
-    )
-
-    assert summary == "useful summary"
+    assert await getattr(agent, method)(*args) == response
 
 
 def test_synchronous_stream_is_explicitly_unsupported(chat_model, tmp_path):
@@ -340,32 +351,3 @@ def test_synchronous_stream_is_explicitly_unsupported(chat_model, tmp_path):
 
     with pytest.raises(RuntimeError, match="do not support synchronous"):
         list(agent.stream({"query": "ursa", "context": "compare"}))
-
-
-async def test_aggregate_cache_write_failure_keeps_model_answer(
-    chat_model, tmp_path, monkeypatch
-):
-    class FakeChain:
-        def __or__(self, _other):
-            return self
-
-        async def ainvoke(self, _values, config=None):
-            return "reduced answer"
-
-    monkeypatch.setattr(
-        acquisition_module.ChatPromptTemplate,
-        "from_template",
-        lambda _template: FakeChain(),
-    )
-    agent = FakeAcquisitionAgent(llm=chat_model, workspace=tmp_path)
-
-    def fail_write(*_args, **_kwargs):
-        raise OSError("read-only cache")
-
-    monkeypatch.setattr(acquisition_module.Path, "write_text", fail_write)
-
-    answer = await agent._aggregate_sources(
-        [{"id": "a"}], ["source summary"], "compare"
-    )
-
-    assert answer == "reduced answer"

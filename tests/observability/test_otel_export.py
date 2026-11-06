@@ -87,16 +87,6 @@ def _export(telemetry, payload=None, *, headers=None):
     )
 
 
-def test_d3_span_exported_before_save_otel_returns():
-    telemetry = _telemetry()
-    _export(telemetry)
-
-    assert _EXPORTERS, "no exporter constructed"
-    assert len(_EXPORTERS[-1].captured) >= 1, (
-        "span not exported by the time _save_otel returned (no flush)"
-    )
-
-
 def test_d4_headers_accept_env_style_string_and_mapping():
     telemetry = _telemetry()
     _export(telemetry, headers="authorization=Bearer abc,x-extra=1")
@@ -330,12 +320,19 @@ def _payload_with_events(events):
     return payload
 
 
-def test_t2_root_span_uses_real_run_timestamps():
+def test_root_export_is_flushed_with_run_timestamps_and_no_extra_spans():
     telemetry = _telemetry()
-    _export(telemetry)
+    result = _export(telemetry)
 
-    assert _EXPORTERS
-    (root,) = _EXPORTERS[-1].captured
+    assert _EXPORTERS, "no exporter constructed"
+    captured = _EXPORTERS[-1].captured
+    assert len(captured) >= 1, (
+        "span not exported by the time _save_otel returned (no flush)"
+    )
+    assert len(captured) == 1
+    (root,) = captured
+    assert root.parent is None
+    assert result["span_count"] == 1
     assert root.start_time == _iso_ns(_T2_START), (
         "root span start is not the run's real started_at"
     )
@@ -382,7 +379,7 @@ def test_t2_child_span_per_llm_event_within_root():
     assert result["span_count"] == 3
 
 
-def test_t2_child_attributes_follow_genai_semconv():
+def test_t2_child_attributes_and_kind_follow_genai_semconv():
     base = _epoch(_T2_START)
     telemetry = _telemetry()
     _export(
@@ -393,6 +390,7 @@ def test_t2_child_attributes_follow_genai_semconv():
     children = [s for s in _EXPORTERS[-1].captured if s.parent is not None]
     assert len(children) == 1
     child = children[0]
+    assert child.kind is SpanKind.CLIENT
     assert child.name == "chat test-model"
     attrs = dict(child.attributes)
     assert attrs["gen_ai.operation.name"] == "chat"
@@ -421,18 +419,6 @@ def test_t2_error_event_child_has_error_status():
         "ok=False event did not produce an ERROR-status span"
     )
     assert ok_child.status.status_code is StatusCode.UNSET
-
-
-def test_t2_no_events_root_only():
-    # Guard (green before and after T1.2): empty llm_events yields exactly
-    # one root span and span_count 1.
-    telemetry = _telemetry()
-    result = _export(telemetry)
-
-    captured = _EXPORTERS[-1].captured
-    assert len(captured) == 1
-    assert captured[0].parent is None
-    assert result["span_count"] == 1
 
 
 def test_t2_missing_run_timestamps_still_exports():
@@ -521,19 +507,6 @@ def test_t2_timestampless_events_logged_as_skipped(caplog):
 
     assert result["span_count"] == 2
     assert any("Skipped 1" in r.message for r in caplog.records)
-
-
-def test_t2_child_spans_are_client_kind():
-    # GenAI semconv: inference spans SHOULD be SpanKind.CLIENT.
-    base = _epoch(_T2_START)
-    telemetry = _telemetry()
-    _export(
-        telemetry,
-        _payload_with_events([_event(t_start=base + 1.0, t_end=base + 2.0)]),
-    )
-
-    children = [s for s in _EXPORTERS[-1].captured if s.parent is not None]
-    assert children[0].kind is SpanKind.CLIENT
 
 
 def test_t4_no_atexit_providers_registered():

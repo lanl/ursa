@@ -60,7 +60,7 @@ def _long(text: str) -> str:
     return text + " filler" * 50
 
 
-def test_keep_zero_state_does_not_end_on_assistant(tmp_path):
+def test_keep_zero_summary_is_framed_human_context(tmp_path):
     log: list = []
     agent = _agent(log, keep=0, workspace=tmp_path)
     state = {
@@ -79,23 +79,6 @@ def test_keep_zero_state_does_not_end_on_assistant(tmp_path):
         "messages_to_keep=0 must not leave the history ending on the "
         "assistant summary (the request shape Claude 4.6+ rejects)"
     )
-
-
-def test_summary_lands_as_framed_human_message(tmp_path):
-    log: list = []
-    agent = _agent(log, keep=0, workspace=tmp_path)
-    state = {
-        "messages": [
-            SystemMessage("sys prompt"),
-            HumanMessage(_long("first question")),
-            AIMessage(_long("first answer")),
-            HumanMessage(_long("second question")),
-        ]
-    }
-
-    new_state, changed = agent._summarize_context(state)
-
-    assert changed is True
     summary_message = new_state["messages"][1]
     assert isinstance(summary_message, HumanMessage), (
         "the summary must land as human-role context"
