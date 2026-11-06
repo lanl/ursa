@@ -7,7 +7,6 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from ursa.agents.base import AgentContext
-from ursa.cli.config import UrsaConfig
 from ursa.prompt_library.safety_prompts import (
     get_safety_prompt,
 )
@@ -16,6 +15,7 @@ from ursa.sandbox import (
     MacSandbox,
     NoSandbox,
     SandboxError,
+    _disable_sbx_suggestion,
     parse_extra_writable_paths,
 )
 from ursa.util.events import ToolEvents
@@ -148,22 +148,19 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
                 case "Windows", _, 1:
                     # TODO: Implement WindowsSandbox
                     raise SandboxError(
-                        f"Unsupported platform {pf} for sandboxing."
-                        "Consider setting the environment variable "
-                        "URSA_SBX=0 to disable sandboxing"
+                        f"Unsupported platform {pf} for sandboxing. "
+                        + _disable_sbx_suggestion
                     )
                 case _, _, _:
                     raise SandboxError(
                         f"Unsupported platform {pf} for sandboxing."
-                        "Consider setting the environment variable "
-                        "URSA_SBX=0 to disable sandboxing"
+                        + _disable_sbx_suggestion
                     )
 
             if not sbx.is_working():
                 raise SandboxError(
                     f"Could not start sandbox: {sbx.backend}. "
-                    "Consider setting the environment variable "
-                    "URSA_SBX=0 to disable sandboxing"
+                    + _disable_sbx_suggestion
                 )
 
             result = sbx.execute(query)

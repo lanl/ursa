@@ -15,18 +15,10 @@ import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-# class UnixSandboxMixin:
-#     def parse_extra_writable_paths(
-#         paths: list[Path] | None = None,
-#     ) -> list[Path]:
-#         if paths is None:
-#             return []
-#         else:
-#             return [
-#                 r
-#                 for p in extra_writable_paths.strip().split(delim)
-#                 if (r := Path(p).expanduser().resolve()).exists()
-#             ]
+_disable_sbx_suggestion = """
+Consider setting the environment variable \
+URSA_SBX=0 to disable sandboxing.
+""".strip()
 
 
 def parse_extra_writable_paths(
@@ -62,8 +54,8 @@ class BaseSandbox(ABC):
     @abstractmethod
     def is_working(self) -> bool: ...
 
-    # @abstractmethod
-    # def extract_extra_writable_paths(self)
+    @abstractmethod
+    def register_extra_writable_paths(self, paths: list[Path] | None): ...
 
     @property
     def backend(self) -> str:
@@ -94,6 +86,9 @@ class NoSandbox(BaseSandbox):
     def is_working(self) -> bool:
         return True
 
+    def register_extra_writable_paths(self, paths: list[Path] | None):
+        pass
+
 
 class WindowsSandbox(BaseSandbox): ...
 
@@ -106,6 +101,7 @@ _sandbox_exec_args_template = """
 (allow file-read*)
 (allow file-write*
   (subpath \"{cwd}\")
+  (literal \"/dev/null\")
   (subpath \"{tmpdir}\"){extra_writable_paths})
 {extra_args}
 """
@@ -122,6 +118,15 @@ class MacSandbox(BaseSandbox):
     """Sandbox-exec Sandbox via sandbox-exec on MacOS."""
 
     sbx_path = shutil.which("sandbox-exec")
+
+    def register_extra_writable_paths(self, paths: list[Path] | None):
+        self.extra_writable_paths = []
+        if paths:
+            for p in paths:
+                if p.exists():
+                    self.extra_writable_paths.append(
+                        f'\n  (subpath "{p.expanduser().resolve()}")'
+                    )
 
     def __init__(
         self,
@@ -141,14 +146,7 @@ class MacSandbox(BaseSandbox):
         self.extra_args.append(
             "(allow network*)" if self.access_network else "(deny network*)"
         )
-
-        self.extra_writable_paths = []
-        if extra_writable_paths:
-            for p in extra_writable_paths:
-                if p.exists():
-                    self.extra_writable_paths.append(
-                        f'\n  (subpath "{p.resolve()}")'
-                    )
+        self.register_extra_writable_paths(extra_writable_paths)
 
         self.args = [
             "-p",
@@ -187,7 +185,9 @@ class MacSandbox(BaseSandbox):
 
     def execute(self, cmd: str):
         if self.sbx_path is None:
-            raise SandboxError("sandbox-exec not on path.")
+            raise SandboxError(
+                f"sandbox-exec not on path. {_disable_sbx_suggestion}"
+            )
 
         result = subprocess.run(
             [self.sbx_path, *self.args, "--", self.shell, "-c", cmd],
@@ -205,6 +205,14 @@ class LinuxBwrapSandbox(BaseSandbox):
     """Bubblewrap Sandbox via bwrap on Linux."""
 
     bwrap_path = shutil.which("bwrap")
+
+    def register_extra_writable_paths(self, paths: list[Path] | None):
+        self.extra_writable_paths = []
+        if paths:
+            for path in paths:
+                if path.exists():
+                    p = str(path.resolve())
+                    self.extra_writable_paths.extend(["--bind", p, p])
 
     def is_working(self) -> bool:
         if self.bwrap_path is None:
@@ -268,13 +276,7 @@ class LinuxBwrapSandbox(BaseSandbox):
             "--chdir",
             self.workspace,
         ]
-
-        self.extra_writable_paths = []
-        if extra_writable_paths:
-            for path in extra_writable_paths:
-                if path.exists():
-                    p = str(path.resolve())
-                    self.extra_writable_paths.extend(["--bind", p, p])
+        self.register_extra_writable_paths(extra_writable_paths)
 
         if not self.access_network:
             self.args.append("--unshare-net")
@@ -283,7 +285,7 @@ class LinuxBwrapSandbox(BaseSandbox):
 
     def execute(self, cmd: str):
         if self.bwrap_path is None:
-            raise SandboxError("bwrap not on path.")
+            raise SandboxError(f"bwrap not on path. {_disable_sbx_suggestion}")
 
         result = subprocess.run(
             [self.bwrap_path, *self.args, self.shell, "-c", cmd],
