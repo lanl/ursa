@@ -142,7 +142,9 @@ ModelScreen SelectCurrent {
     color: $accent;
 }
 
-.settings-title {
+.settings-title,
+#information-title,
+#coordination-title {
     height: 2;
     text-style: bold;
     color: $accent;
@@ -163,20 +165,7 @@ ModelScreen SelectCurrent {
     margin-left: 1;
 }
 
-#information {
-    width: 90%;
-    height: 85%;
-    padding: 1 2;
-    border: round $accent;
-    background: $surface;
-}
-
-#information-title {
-    height: 2;
-    text-style: bold;
-    color: $accent;
-}
-
+#information,
 #coordination-dialog {
     width: 90%;
     height: 85%;
@@ -185,19 +174,15 @@ ModelScreen SelectCurrent {
     background: $surface;
 }
 
-#coordination-title {
-    height: 2;
-    text-style: bold;
-    color: $accent;
-}
-
 #coordination-tabs,
 #coordination-messages-tab,
-#coordination-subagents-tab {
-    height: 1fr;
-}
-
-#messages-dialog {
+#coordination-subagents-tab,
+#messages-dialog,
+#information-body,
+#status-tabs,
+#status-summary-tab,
+#status-config-tab,
+#agents-tabs {
     height: 1fr;
 }
 
@@ -237,12 +222,14 @@ ModelScreen SelectCurrent {
     content-align: right middle;
 }
 
-#messages-body {
+#messages-body,
+.agent-details {
     height: 1fr;
     padding: 0 1;
 }
 
-#messages-empty {
+#messages-empty,
+#status-config-readonly {
     height: 1;
     color: $text-muted;
     text-style: italic;
@@ -287,16 +274,6 @@ ModelScreen SelectCurrent {
     height: auto;
 }
 
-#information-body {
-    height: 1fr;
-}
-
-#status-tabs,
-#status-summary-tab,
-#status-config-tab {
-    height: 1fr;
-}
-
 #coordination-subagents-summary {
     height: 1;
     color: $text-muted;
@@ -313,24 +290,9 @@ ModelScreen SelectCurrent {
     background: $surface;
 }
 
-#status-config-readonly {
-    height: 1;
-    color: $text-muted;
-    text-style: italic;
-}
-
 #status-config-yaml {
     height: 1fr;
     border: round $accent;
-}
-
-#agents-tabs {
-    height: 1fr;
-}
-
-.agent-details {
-    height: 1fr;
-    padding: 0 1;
 }
 
 .agent-tools-title {
@@ -340,10 +302,7 @@ ModelScreen SelectCurrent {
     color: $accent;
 }
 
-.agent-tools {
-    height: auto;
-}
-
+.agent-tools,
 .agent-tool {
     height: auto;
 }
@@ -353,11 +312,7 @@ ModelScreen SelectCurrent {
     color: $error;
 }
 
-.agent-tools-empty {
-    height: 1;
-    color: $text-muted;
-}
-
+.agent-tools-empty,
 .agent-tools-loading {
     height: 1;
     color: $text-muted;

@@ -18,7 +18,8 @@ from ursa.util.secrets import SecretReference
 DUMMY_SERVER = Path(__file__).parents[1] / "tools" / "dummy_mcp_server.py"
 
 
-def test_start_mcp_client_adds_httpx_factory_for_sse(monkeypatch):
+@pytest.fixture
+def captured_connections(monkeypatch):
     captured = {}
 
     class DummyClient:
@@ -26,42 +27,32 @@ def test_start_mcp_client_adds_httpx_factory_for_sse(monkeypatch):
             captured["connections"] = connections
 
     monkeypatch.setattr(mcp_mod, "UrsaMCPClient", DummyClient)
+    return captured
 
-    mcp_mod.start_mcp_client({
-        "demo": SseServerParameters(url="https://example.com/sse")
-    })
 
-    conn = captured["connections"]["demo"]
-    assert conn["transport"] == "sse"
+@pytest.mark.parametrize(
+    "parameters, transport",
+    [
+        (SseServerParameters(url="https://example.com/sse"), "sse"),
+        (
+            StreamableHttpParameters(url="https://example.com/mcp"),
+            "streamable_http",
+        ),
+    ],
+)
+def test_start_mcp_client_adds_httpx_factory(
+    captured_connections, parameters, transport
+):
+    mcp_mod.start_mcp_client({"demo": parameters})
+
+    conn = captured_connections["connections"]["demo"]
+    assert conn["transport"] == transport
     assert conn["httpx_client_factory"] is mcp_mod.build_mcp_httpx_async_client
 
 
-def test_start_mcp_client_adds_httpx_factory_for_streamable_http(monkeypatch):
-    captured = {}
-
-    class DummyClient:
-        def __init__(self, connections):
-            captured["connections"] = connections
-
-    monkeypatch.setattr(mcp_mod, "UrsaMCPClient", DummyClient)
-
-    mcp_mod.start_mcp_client({
-        "demo": StreamableHttpParameters(url="https://example.com/mcp")
-    })
-
-    conn = captured["connections"]["demo"]
-    assert conn["transport"] == "streamable_http"
-    assert conn["httpx_client_factory"] is mcp_mod.build_mcp_httpx_async_client
-
-
-def test_mcp_header_resolves_keyring_secret_template(monkeypatch):
-    captured = {}
-
-    class DummyClient:
-        def __init__(self, connections):
-            captured["connections"] = connections
-
-    monkeypatch.setattr(mcp_mod, "UrsaMCPClient", DummyClient)
+def test_mcp_header_resolves_keyring_secret_template(
+    monkeypatch, captured_connections
+):
     monkeypatch.setattr(
         "ursa.util.secrets.get_keyring",
         lambda: SimpleNamespace(
@@ -83,7 +74,7 @@ def test_mcp_header_resolves_keyring_secret_template(monkeypatch):
         )
     })
 
-    assert captured["connections"]["demo"]["headers"] == {
+    assert captured_connections["connections"]["demo"]["headers"] == {
         "Authorization": "Bearer token"
     }
 
@@ -125,14 +116,18 @@ def test_mcp_header_rejects_invalid_secret_mapping():
         })
 
 
-async def test_stdio_server_stderr_is_discarded(capsys):
-    client = mcp_mod.start_mcp_client({
+@pytest.fixture
+async def stdio_client():
+    return mcp_mod.start_mcp_client({
         "demo": StdioServerParameters(
             command=sys.executable,
             args=[str(DUMMY_SERVER)],
         )
     })
-    tools, sources = await mcp_mod.load_mcp_tools_with_sources(client)
+
+
+async def test_stdio_server_stderr_is_discarded(capsys, stdio_client):
+    tools, sources = await mcp_mod.load_mcp_tools_with_sources(stdio_client)
 
     assert tools
     assert sources["add"] == "demo"
@@ -198,15 +193,9 @@ def test_cached_mcp_specs_reject_unknown_server():
         )
 
 
-async def test_cached_mcp_tool_invokes_through_a_fresh_session():
-    client = mcp_mod.start_mcp_client({
-        "demo": StdioServerParameters(
-            command=sys.executable,
-            args=[str(DUMMY_SERVER)],
-        )
-    })
+async def test_cached_mcp_tool_invokes_through_a_fresh_session(stdio_client):
     tools, sources = mcp_mod.mcp_tools_from_specs(
-        client,
+        stdio_client,
         [
             {
                 "server": "demo",
@@ -282,14 +271,10 @@ def test_stdio_proxy_launches_windows_command_shim(tmp_path, extension):
     assert stderr_path.read_text().strip() == "shim diagnostic"
 
 
-async def test_upstream_adapter_puts_structured_content_in_tool_artifact():
-    client = mcp_mod.start_mcp_client({
-        "demo": StdioServerParameters(
-            command=sys.executable,
-            args=[str(DUMMY_SERVER)],
-        )
-    })
-    tools = await client.get_tools(server_name="demo")
+async def test_upstream_adapter_puts_structured_content_in_tool_artifact(
+    stdio_client,
+):
+    tools = await stdio_client.get_tools(server_name="demo")
     add = next(tool for tool in tools if tool.name == "add")
     result = await add.ainvoke({
         "type": "tool_call",
