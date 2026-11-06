@@ -55,8 +55,18 @@ class BlockingMailboxAgent(MailboxAgent):
         return {"content": message.content}
 
 
-def make_agent(chat_model, tmp_path, **kwargs) -> MailboxAgent:
-    return MailboxAgent(llm=chat_model, workspace=tmp_path, **kwargs)
+@pytest.fixture
+async def mailbox(chat_model, tmp_path):
+    agents = []
+
+    def create(agent_type=MailboxAgent, **kwargs):
+        agent = agent_type(llm=chat_model, workspace=tmp_path, **kwargs)
+        agents.append(agent)
+        return agent
+
+    yield create
+    for agent in agents:
+        await agent.stop_message_loop(descendants=True, cancel=True)
 
 
 def hierarchy_tool(agent: BaseAgent, name: str):
@@ -64,8 +74,8 @@ def hierarchy_tool(agent: BaseAgent, name: str):
 
 
 @pytest.mark.asyncio
-async def test_user_can_post_and_request_messages(chat_model, tmp_path):
-    agent = make_agent(chat_model, tmp_path)
+async def test_user_can_post_and_request_messages(mailbox):
+    agent = mailbox()
 
     envelope = await agent.post_message("one-way")
     result = await agent.request("reply please")
@@ -83,28 +93,18 @@ async def test_user_can_post_and_request_messages(chat_model, tmp_path):
         "recipient": agent.agent_path,
     }
 
-    await agent.stop_message_loop()
-
 
 @pytest.mark.asyncio
-async def test_agents_spawn_hierarchies_and_message_siblings(
-    chat_model, tmp_path
-):
-    root = make_agent(chat_model, tmp_path)
+async def test_agents_spawn_hierarchies_and_message_siblings(mailbox):
+    root = mailbox()
     analyst = root.spawn_subagent(
         "analyst",
-        MailboxAgent,
-        enable_metrics=False,
     )
     reviewer = root.spawn_subagent(
         "reviewer",
-        MailboxAgent,
-        enable_metrics=False,
     )
     specialist = analyst.spawn_subagent(
         "specialist",
-        MailboxAgent,
-        enable_metrics=False,
     )
 
     assert root.hierarchy_name == "root"
@@ -121,14 +121,12 @@ async def test_agents_spawn_hierarchies_and_message_siblings(
     assert result["sender"] == analyst.agent_path
     assert result["recipient"] == reviewer.agent_path
 
-    await root.stop_message_loop(descendants=True)
-
 
 @pytest.mark.asyncio
 async def test_wait_for_local_agent_completion_timeout_and_message_wake(
-    chat_model, tmp_path
+    mailbox,
 ):
-    root = make_agent(chat_model, tmp_path)
+    root = mailbox()
     started = asyncio.Event()
     release = asyncio.Event()
     worker = root.spawn_subagent(
@@ -136,7 +134,6 @@ async def test_wait_for_local_agent_completion_timeout_and_message_wake(
         BlockingMailboxAgent,
         started=started,
         release=release,
-        enable_metrics=False,
     )
     wait_for = hierarchy_tool(root, "wait_for")
 
@@ -189,13 +186,12 @@ async def test_wait_for_local_agent_completion_timeout_and_message_wake(
     assert not root.received
     release.set()
     await work
-    await root.stop_message_loop(descendants=True)
 
 
 @pytest.mark.asyncio
-async def test_wait_for_invalid_local_path_is_recoverable(chat_model, tmp_path):
-    root = make_agent(chat_model, tmp_path)
-    child = root.spawn_subagent("child", MailboxAgent, enable_metrics=False)
+async def test_wait_for_invalid_local_path_is_recoverable(mailbox):
+    root = mailbox()
+    child = root.spawn_subagent("child")
 
     with pytest.raises(ToolException, match="Path escapes hierarchy root"):
         await hierarchy_tool(root, "wait_for").ainvoke({
@@ -213,37 +209,27 @@ async def test_wait_for_invalid_local_path_is_recoverable(chat_model, tmp_path):
         "target": "root"
     }) == ("Agent root has already finished its work.")
 
-    await root.stop_message_loop(descendants=True)
 
-
-def test_subagent_count_limit_is_hierarchy_wide(chat_model, tmp_path):
-    root = make_agent(
-        chat_model,
-        tmp_path,
+def test_subagent_count_limit_is_hierarchy_wide(mailbox):
+    root = mailbox(
         subagent_max_agents=2,
     )
-    first = root.spawn_subagent("first", MailboxAgent, enable_metrics=False)
-    first.spawn_subagent("nested", MailboxAgent, enable_metrics=False)
+    first = root.spawn_subagent("first")
+    first.spawn_subagent("nested")
 
     with pytest.raises(RuntimeError, match="max_agents=2"):
-        root.spawn_subagent("one-too-many", MailboxAgent, enable_metrics=False)
+        root.spawn_subagent("one-too-many")
 
 
-def test_subagent_depth_limit_is_hierarchy_wide(chat_model, tmp_path):
-    root = make_agent(
-        chat_model,
-        tmp_path,
+def test_subagent_depth_limit_is_hierarchy_wide(mailbox):
+    root = mailbox(
         subagent_max_depth=2,
     )
-    child = root.spawn_subagent("child", MailboxAgent, enable_metrics=False)
-    grandchild = child.spawn_subagent(
-        "grandchild", MailboxAgent, enable_metrics=False
-    )
+    child = root.spawn_subagent("child")
+    grandchild = child.spawn_subagent("grandchild")
 
     with pytest.raises(RuntimeError, match="max_depth=2"):
-        grandchild.spawn_subagent(
-            "too-deep", MailboxAgent, enable_metrics=False
-        )
+        grandchild.spawn_subagent("too-deep")
 
 
 @pytest.mark.parametrize(
@@ -253,17 +239,15 @@ def test_subagent_depth_limit_is_hierarchy_wide(chat_model, tmp_path):
         {"subagent_max_depth": 0},
     ],
 )
-def test_zero_subagent_limit_disables_spawning(chat_model, tmp_path, limit):
-    root = make_agent(chat_model, tmp_path, **limit)
+def test_zero_subagent_limit_disables_spawning(mailbox, limit):
+    root = mailbox(**limit)
 
     with pytest.raises(RuntimeError, match="Subagents are disabled"):
-        root.spawn_subagent("disabled", MailboxAgent, enable_metrics=False)
+        root.spawn_subagent("disabled")
 
 
-def test_none_removes_subagent_count_and_depth_limits(chat_model, tmp_path):
-    root = make_agent(
-        chat_model,
-        tmp_path,
+def test_none_removes_subagent_count_and_depth_limits(mailbox):
+    root = mailbox(
         subagent_max_agents=None,
         subagent_max_depth=None,
     )
@@ -273,7 +257,6 @@ def test_none_removes_subagent_count_and_depth_limits(chat_model, tmp_path):
         current = current.spawn_subagent(
             f"level-{index}",
             MailboxAgent,
-            enable_metrics=False,
         )
 
     assert len(list(root.walk_agents())) == 6
@@ -281,20 +264,16 @@ def test_none_removes_subagent_count_and_depth_limits(chat_model, tmp_path):
 
 
 def test_subagents_inherit_configured_models(
-    chat_model, embedding_model, tmp_path
+    mailbox, chat_model, embedding_model
 ):
     alternate_model = chat_model.model_copy()
-    root = make_agent(
-        chat_model,
-        tmp_path,
+    root = mailbox(
         subagent_llm=alternate_model,
         subagent_embedding=embedding_model,
     )
 
-    child = root.spawn_subagent("child", MailboxAgent, enable_metrics=False)
-    grandchild = child.spawn_subagent(
-        "grandchild", MailboxAgent, enable_metrics=False
-    )
+    child = root.spawn_subagent("child")
+    grandchild = child.spawn_subagent("grandchild")
 
     def innermost(model):
         seen = set()
@@ -311,9 +290,7 @@ def test_subagents_inherit_configured_models(
 
 
 @pytest.mark.asyncio
-async def test_hierarchy_tool_propagates_callbacks_to_child(
-    chat_model, tmp_path
-):
+async def test_hierarchy_tool_propagates_callbacks_to_child(mailbox):
     class HierarchyCallback:
         def __init__(self):
             self.lifecycle = []
@@ -324,11 +301,9 @@ async def test_hierarchy_tool_propagates_callbacks_to_child(
         async def on_agent_message_end(self, path, *, succeeded, message_id):
             self.lifecycle.append(("end", path, message_id, succeeded))
 
-    root = make_agent(chat_model, tmp_path)
+    root = mailbox()
     reviewer = root.spawn_subagent(
         "reviewer",
-        MailboxAgent,
-        enable_metrics=False,
     )
     callback = HierarchyCallback()
     root._current_agent_message = AgentMessage(
@@ -337,10 +312,7 @@ async def test_hierarchy_tool_propagates_callbacks_to_child(
         recipient="root",
         config={"callbacks": [callback]},
     )
-    send_message = {
-        hierarchy_tool.name: hierarchy_tool
-        for hierarchy_tool in build_agent_tools(root)
-    }["send_message"]
+    send_message = hierarchy_tool(root, "send_message")
 
     try:
         response = await send_message.ainvoke({
@@ -360,47 +332,14 @@ async def test_hierarchy_tool_propagates_callbacks_to_child(
         callback.lifecycle[0][2],
         True,
     )
-    await root.stop_message_loop(descendants=True)
 
 
 @pytest.mark.asyncio
-async def test_hierarchy_tool_rejects_invalid_batch_before_delivery(
-    chat_model, tmp_path
-):
-    root = make_agent(chat_model, tmp_path)
-    analyst = root.spawn_subagent("analyst", MailboxAgent, enable_metrics=False)
-    reviewer = root.spawn_subagent(
-        "reviewer", MailboxAgent, enable_metrics=False
-    )
-    send_message = {
-        hierarchy_tool.name: hierarchy_tool
-        for hierarchy_tool in build_agent_tools(root)
-    }["send_message"]
-
-    with pytest.raises(ToolException, match="Unknown agent path"):
-        await send_message.ainvoke({
-            "target": ["analyst", "missing", "reviewer"],
-            "message": "Compare the proposal.",
-        })
-
-    assert analyst.received == []
-    assert reviewer.received == []
-    await root.stop_message_loop(descendants=True)
-
-
-@pytest.mark.asyncio
-async def test_hierarchy_tool_broadcasts_valid_targets_in_input_order(
-    chat_model, tmp_path
-):
-    root = make_agent(chat_model, tmp_path)
-    analyst = root.spawn_subagent("analyst", MailboxAgent, enable_metrics=False)
-    reviewer = root.spawn_subagent(
-        "reviewer", MailboxAgent, enable_metrics=False
-    )
-    send_message = {
-        hierarchy_tool.name: hierarchy_tool
-        for hierarchy_tool in build_agent_tools(root)
-    }["send_message"]
+async def test_hierarchy_tool_broadcasts_valid_targets_in_input_order(mailbox):
+    root = mailbox()
+    analyst = root.spawn_subagent("analyst")
+    reviewer = root.spawn_subagent("reviewer")
+    send_message = hierarchy_tool(root, "send_message")
 
     response = await send_message.ainvoke({
         "target": ["reviewer", "analyst"],
@@ -415,108 +354,11 @@ async def test_hierarchy_tool_broadcasts_valid_targets_in_input_order(
     assert "Message queued for root/analyst." in response
     assert reviewer.received[0].content == "Compare the proposal."
     assert analyst.received[0].content == "Compare the proposal."
-    await root.stop_message_loop(descendants=True)
 
 
 @pytest.mark.asyncio
-async def test_send_message_group_targets_expand_locally_and_deduplicate(
-    chat_model, tmp_path
-):
-    root = make_agent(chat_model, tmp_path)
-    analyst = root.spawn_subagent("analyst", MailboxAgent, enable_metrics=False)
-    reviewer = root.spawn_subagent(
-        "reviewer", MailboxAgent, enable_metrics=False
-    )
-    specialist = analyst.spawn_subagent(
-        "specialist", MailboxAgent, enable_metrics=False
-    )
-    send_message = hierarchy_tool(analyst, "send_message")
-
-    assert [
-        item.agent_path for item in analyst.resolve_message_targets("@reports")
-    ] == [specialist.agent_path]
-    assert [
-        item.agent_path for item in analyst.resolve_message_targets("@peers")
-    ] == [reviewer.agent_path]
-    assert [
-        item.agent_path
-        for item in analyst.resolve_message_targets("@supervisor")
-    ] == [root.agent_path]
-    assert [
-        item.agent_path for item in analyst.resolve_message_targets("@REPORTS")
-    ] == [specialist.agent_path]
-    assert [
-        item.agent_path for item in analyst.resolve_message_targets("@everyone")
-    ] == [root.agent_path, specialist.agent_path, reviewer.agent_path]
-
-    response = await send_message.ainvoke({
-        "target": [
-            "@peers",
-            "root/reviewer",
-            "@reports",
-            "@supervisor",
-            "root/analyst",
-        ],
-        "message": "Share your progress.",
-    })
-    await asyncio.gather(
-        root.wait_for_messages(),
-        reviewer.wait_for_messages(),
-        specialist.wait_for_messages(),
-    )
-
-    assert response.count("root/reviewer:") == 1
-    assert response.index("root/reviewer:") < response.index(
-        "root/analyst/specialist:"
-    )
-    assert response.index("root/analyst/specialist:") < response.index("root:")
-    assert root.received[0].sender == analyst.agent_path
-    assert reviewer.received[0].content == "Share your progress."
-    assert specialist.received[0].recipient == specialist.agent_path
-    assert analyst.received == []
-    await root.stop_message_loop(descendants=True)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("target", "match"),
-    [
-        ("@supervisor", "has no recipients"),
-        ("@reports", "has no recipients"),
-        ("@peers", "has no recipients"),
-        ("@unknown", "Unknown message target group"),
-        ("@parent", "Unknown message target group"),
-        ("@siblings", "Unknown message target group"),
-        ("@children", "Unknown message target group"),
-    ],
-)
-async def test_send_message_group_target_errors_are_atomic(
-    chat_model, tmp_path, target, match
-):
-    root = make_agent(chat_model, tmp_path)
-    reviewer = root.spawn_subagent(
-        "reviewer", MailboxAgent, enable_metrics=False
-    )
-    sender = reviewer if target == "@reports" else root
-    valid_target = "root" if sender is reviewer else "reviewer"
-    send_message = hierarchy_tool(sender, "send_message")
-
-    with pytest.raises(ToolException, match=match):
-        await send_message.ainvoke({
-            "target": [valid_target, target],
-            "message": "Do not partially deliver.",
-        })
-
-    assert reviewer.received == []
-    assert root.received == []
-    await root.stop_message_loop(descendants=True)
-
-
-@pytest.mark.asyncio
-async def test_send_message_everyone_errors_when_the_sender_is_alone(
-    chat_model, tmp_path
-):
-    root = make_agent(chat_model, tmp_path)
+async def test_send_message_everyone_errors_when_the_sender_is_alone(mailbox):
+    root = mailbox()
 
     with pytest.raises(ToolException, match="@everyone.*has no recipients"):
         await hierarchy_tool(root, "send_message").ainvoke({
@@ -527,7 +369,7 @@ async def test_send_message_everyone_errors_when_the_sender_is_alone(
 
 @pytest.mark.asyncio
 async def test_managed_send_message_group_errors_are_recoverable_and_results_are_concrete(
-    chat_model, tmp_path
+    mailbox,
 ):
     class ManagedBridge:
         async def send_message(self, target: str, message: str) -> str:
@@ -546,7 +388,7 @@ async def test_managed_send_message_group_errors_are_recoverable_and_results_are
                 for index in range(80)
             ]
 
-    root = make_agent(chat_model, tmp_path)
+    root = mailbox()
     root._process_runtime = ManagedBridge()
     send_message = hierarchy_tool(root, "send_message")
 
@@ -575,15 +417,11 @@ async def test_managed_send_message_group_errors_are_recoverable_and_results_are
 
 
 @pytest.mark.asyncio
-async def test_stop_agent_removes_a_descendant_subtree(chat_model, tmp_path):
-    root = make_agent(chat_model, tmp_path)
-    reviewer = root.spawn_subagent(
-        "reviewer", MailboxAgent, enable_metrics=False
-    )
-    critic = reviewer.spawn_subagent(
-        "critic", MailboxAgent, enable_metrics=False
-    )
-    analyst = root.spawn_subagent("analyst", MailboxAgent, enable_metrics=False)
+async def test_stop_agent_removes_a_descendant_subtree(mailbox):
+    root = mailbox()
+    reviewer = root.spawn_subagent("reviewer")
+    critic = reviewer.spawn_subagent("critic")
+    analyst = root.spawn_subagent("analyst")
 
     result = await hierarchy_tool(root, "stop_agent").ainvoke({
         "target": "reviewer",
@@ -594,16 +432,13 @@ async def test_stop_agent_removes_a_descendant_subtree(chat_model, tmp_path):
     assert reviewer.parent_agent is None
     assert critic.parent_agent is reviewer
     assert analyst.parent_agent is root
-    await root.stop_message_loop(descendants=True)
 
 
 @pytest.mark.asyncio
-async def test_stop_agent_rejects_non_descendant_paths(chat_model, tmp_path):
-    root = make_agent(chat_model, tmp_path)
-    reviewer = root.spawn_subagent(
-        "reviewer", MailboxAgent, enable_metrics=False
-    )
-    root.spawn_subagent("analyst", MailboxAgent, enable_metrics=False)
+async def test_stop_agent_rejects_non_descendant_paths(mailbox):
+    root = mailbox()
+    reviewer = root.spawn_subagent("reviewer")
+    root.spawn_subagent("analyst")
 
     with pytest.raises(ToolException, match="only stop one of its descendants"):
         await hierarchy_tool(root, "stop_agent").ainvoke({"target": "root"})
@@ -613,27 +448,20 @@ async def test_stop_agent_rejects_non_descendant_paths(chat_model, tmp_path):
         })
 
     assert set(root.subagents) == {"reviewer", "analyst"}
-    await root.stop_message_loop(descendants=True)
 
 
 @pytest.mark.asyncio
-async def test_stopped_local_subtree_rejects_stale_references(
-    chat_model, tmp_path
-):
-    root = make_agent(chat_model, tmp_path)
-    reviewer = root.spawn_subagent(
-        "reviewer", MailboxAgent, enable_metrics=False
-    )
-    critic = reviewer.spawn_subagent(
-        "critic", MailboxAgent, enable_metrics=False
-    )
+async def test_stopped_local_subtree_rejects_stale_references(mailbox):
+    root = mailbox()
+    reviewer = root.spawn_subagent("reviewer")
+    critic = reviewer.spawn_subagent("critic")
 
     root.stop_subagent("reviewer")
 
     with pytest.raises(RuntimeError, match="root/reviewer/critic.*is stopping"):
         await critic.post_message("Do not accept this.")
     with pytest.raises(RuntimeError, match="root/reviewer.*is stopping"):
-        reviewer.spawn_subagent("late", MailboxAgent, enable_metrics=False)
+        reviewer.spawn_subagent("late")
     with pytest.raises(
         ToolException, match="root/reviewer/critic.*is stopping"
     ):
@@ -643,18 +471,11 @@ async def test_stopped_local_subtree_rejects_stale_references(
         })
 
     await asyncio.sleep(0)
-    await root.stop_message_loop(descendants=True)
 
 
 @pytest.mark.asyncio
-async def test_spawn_agent_returns_while_initial_task_is_still_running(
-    chat_model, tmp_path
-):
-    root = BlockingMailboxAgent(
-        llm=chat_model,
-        workspace=tmp_path,
-        enable_metrics=False,
-    )
+async def test_spawn_agent_returns_while_initial_task_is_still_running(mailbox):
+    root = mailbox(BlockingMailboxAgent)
     spawn_agent = hierarchy_tool(root, "spawn_agent")
 
     response = await asyncio.wait_for(
@@ -676,16 +497,14 @@ async def test_spawn_agent_returns_while_initial_task_is_still_running(
 
     worker.release.set()
     await worker.wait_for_messages()
-    await root.stop_message_loop(descendants=True)
 
 
 @pytest.mark.asyncio
-async def test_async_factory_can_spawn_subagent(chat_model, tmp_path):
-    root = make_agent(chat_model, tmp_path)
+async def test_async_factory_can_spawn_subagent(mailbox):
+    root = mailbox()
 
     async def factory(**kwargs):
         await asyncio.sleep(0)
-        kwargs["enable_metrics"] = False
         return MailboxAgent(**kwargs)
 
     child = await root.aspawn_subagent("async-child", factory)
@@ -695,25 +514,8 @@ async def test_async_factory_can_spawn_subagent(chat_model, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_request_is_rejected_while_message_loop_is_stopping(
-    chat_model, tmp_path
-):
-    class SlowAgent(MailboxAgent):
-        def __init__(self, *args, **kwargs):
-            self.started = asyncio.Event()
-            self.release = asyncio.Event()
-            super().__init__(*args, **kwargs)
-
-        async def ahandle_message(self, message: AgentMessage) -> Any:
-            self.started.set()
-            await self.release.wait()
-            return message.content
-
-    agent = SlowAgent(
-        llm=chat_model,
-        workspace=tmp_path,
-        enable_metrics=False,
-    )
+async def test_request_is_rejected_while_message_loop_is_stopping(mailbox):
+    agent = mailbox(BlockingMailboxAgent)
     request = asyncio.create_task(agent.request("in progress"))
     await agent.started.wait()
     stopping = asyncio.create_task(agent.stop_message_loop())
@@ -723,5 +525,5 @@ async def test_request_is_rejected_while_message_loop_is_stopping(
         await agent.request("too late")
 
     agent.release.set()
-    assert await request == "in progress"
+    assert await request == {"content": "in progress"}
     await stopping

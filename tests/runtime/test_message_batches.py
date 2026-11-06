@@ -8,8 +8,6 @@ import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from tests.runtime.fixtures import runtime_request
-from ursa.cli.config import UrsaConfig
-from ursa.runtime import AgentManager, AgentRuntime
 from ursa.runtime.agent_runtime import _BufferedAgentMessage
 
 
@@ -67,26 +65,14 @@ async def test_process_delivers_batch_in_one_turn_with_separate_envelopes(
 
 
 @pytest.fixture
-async def runtime(tmp_path, monkeypatch):
-    manager = AgentManager()
-    runtime = AgentRuntime(
-        UrsaConfig(workspace=tmp_path, llm_model={"model": "fake:chat"}),
-        manager=manager,
-    )
-
-    async def start(_agent_id):
-        pass
-
-    monkeypatch.setattr(manager, "start_agent", start)
+async def runtime(runtime_factory, monkeypatch):
+    runtime, manager = runtime_factory()
+    monkeypatch.setattr(manager, "start_agent", AsyncMock())
     await runtime._ensure_registered("chat")
     root = runtime.agents["chat"].runtime_id
-    await runtime._spawn_runtime_subagent(root, "first")
-    await runtime._spawn_runtime_subagent(root, "second")
-    try:
-        yield runtime, root
-    finally:
-        await runtime.aclose()
-        await manager.aclose()
+    for name in ("first", "second"):
+        await runtime._spawn_runtime_subagent(root, name)
+    return runtime, root
 
 
 async def queue_peer_messages(runtime, root, callbacks=()):
@@ -150,7 +136,6 @@ async def test_busy_recipient_runs_one_batch_with_one_activity(
     assert lifecycle == [("start", "root"), ("end", "root", True)]
     assert runtime._buffered_agent_messages == {}
     assert runtime._working_counts == {}
-    assert runtime._buffered_agent_messages == {}
 
 
 @pytest.mark.asyncio
@@ -341,6 +326,7 @@ async def test_cancelled_before_start_settles_user_delivery_future(runtime):
     [
         ("format_query", ValueError, "cannot format this message"),
         ("snapshot", TypeError, "cannot snapshot root state"),
+        ("on_start", ValueError, "cannot start request"),
         ("ainvoke", ValueError, "model failed"),
         ("format_result", ValueError, "cannot format result"),
     ],
@@ -360,14 +346,18 @@ async def test_bad_message_does_not_kill_the_root_inbox_worker(
                 __deepcopy__ = fail
 
             runner.state = UncopyableState()
-        else:
+        elif stage != "on_start":
             patch.setattr(
                 runner.agent,
                 stage,
                 AsyncMock(side_effect=fail) if stage == "ainvoke" else fail,
             )
         with pytest.raises(error_type, match=message):
-            await runner.ainvoke("bad message")
+            await runner._submit(
+                "bad message", on_start=fail if stage == "on_start" else None
+            )
+        if stage == "format_result":
+            assert runner.state["messages"][-1].content == "bad message"
     runner.state = None
     assert await runner.ainvoke("root survives") == "root survives"
     assert runner._worker is not None and not runner._worker.done()

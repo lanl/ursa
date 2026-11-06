@@ -30,7 +30,80 @@ def _json(value: Any, *, compact: bool) -> str:
     )
 
 
-class ToolCallCard(EventCard):
+class ToolEventCard(EventCard):
+    """Shared lifecycle and literal text handling for live tool cards."""
+
+    STATE_CLASS = "tool-call-state"
+
+    def __init__(self, key: str, label: str) -> None:
+        super().__init__(key, label)
+        self.completed = False
+        self.failed = False
+        self._frame = 0
+        self._spinner_timer = None
+
+    def on_mount(self) -> None:
+        if not self.completed:
+            self._spinner_timer = self.set_interval(0.08, self._advance_spinner)
+        self._render_card()
+        self._update_expand_hint()
+
+    def _render_card(self) -> None:
+        raise NotImplementedError
+
+    def _advance_spinner(self) -> None:
+        if (
+            not self.is_mounted
+            or self.completed
+            or self.screen is not self.app.screen
+        ):
+            return
+        self.query_one(f".{self.STATE_CLASS}", Static).update(
+            ActivityIndicator.FRAMES[self._frame]
+        )
+        self._frame = (self._frame + 1) % len(ActivityIndicator.FRAMES)
+
+    def complete(self, output: Any, *, failed: bool = False) -> None:
+        self.completed = True
+        self.failed = failed
+        self.done = True
+        if self._spinner_timer is not None:
+            self._spinner_timer.pause()
+
+    def update_event(self, payload: Mapping[str, Any]) -> None:
+        phase = str(payload.get("phase") or "")
+        if phase not in {"end", "error"}:
+            return
+        failed = phase == "error" or payload.get("status") == "error"
+        output = (
+            payload.get("error")
+            if failed
+            else payload.get("tool_message", payload.get("result"))
+        )
+        self.complete(output, failed=failed)
+
+    @staticmethod
+    def _text_content(content: Any) -> Any:
+        if isinstance(content, ToolMessage):
+            content = content.content
+        if not isinstance(content, list):
+            return content
+        parts = [
+            item
+            if isinstance(item, str)
+            else item.get("text")
+            if isinstance(item, Mapping) and item.get("type") == "text"
+            else None
+            for item in content
+        ]
+        return (
+            "\n".join(parts)
+            if all(isinstance(part, str) for part in parts)
+            else content
+        )
+
+
+class ToolCallCard(ToolEventCard):
     """Live JSON input/output inspector for a single tool invocation."""
 
     def __init__(self, key: str, tool: str, tool_input: Any) -> None:
@@ -40,10 +113,6 @@ class ToolCallCard(EventCard):
         self.output: Any = None
         self.structured_output: Any = None
         self.has_structured_output = False
-        self.completed = False
-        self.failed = False
-        self._frame = 0
-        self._spinner_timer = None
 
     def compose(self) -> ComposeResult:
         yield Static(Text(f"🛠️ {self.tool}"), classes="tool-call-title")
@@ -62,11 +131,6 @@ class ToolCallCard(EventCard):
                 yield Markdown(classes="tool-output-markdown hidden")
         yield Static("Click to expand", classes="event-expand-hint")
 
-    def on_mount(self) -> None:
-        self._spinner_timer = self.set_interval(0.08, self._advance_spinner)
-        self._render_details()
-        self._update_expand_hint()
-
     @staticmethod
     def _preview(value: Any, limit: int = 120) -> Text:
         preview = _json(value, compact=True)
@@ -83,14 +147,6 @@ class ToolCallCard(EventCard):
             background_color="default",
         )
 
-    def _advance_spinner(self) -> None:
-        if not self.is_mounted or self.screen is not self.app.screen:
-            return
-        self.query_one(".tool-call-state", Static).update(
-            ActivityIndicator.FRAMES[self._frame]
-        )
-        self._frame = (self._frame + 1) % len(ActivityIndicator.FRAMES)
-
     def complete(self, output: Any, *, failed: bool = False) -> None:
         if isinstance(output, ToolMessage):
             failed = failed or output.status == "error"
@@ -104,11 +160,7 @@ class ToolCallCard(EventCard):
                 self.has_structured_output = True
         else:
             self.output = output
-        self.completed = True
-        self.failed = failed
-        self.done = True
-        if self._spinner_timer is not None:
-            self._spinner_timer.pause()
+        super().complete(output, failed=failed)
         self.query_one(".tool-call-state", Static).update(
             "✗" if failed else "✓"
         )
@@ -119,48 +171,18 @@ class ToolCallCard(EventCard):
                 else self.output
             )
         )
-        self._render_details()
-
-    def update_event(self, payload: Mapping[str, Any]) -> None:
-        phase = str(payload.get("phase") or "")
-        if phase not in {"end", "error"}:
-            return
-        failed = phase == "error" or payload.get("status") == "error"
-        output = (
-            payload.get("error")
-            if failed
-            else payload.get("tool_message", payload.get("result"))
-        )
-        self.complete(output, failed=failed)
-
-    @staticmethod
-    def _text_content(content: Any) -> Any:
-        if not isinstance(content, list):
-            return content
-        parts = [
-            item
-            if isinstance(item, str)
-            else item.get("text")
-            if isinstance(item, Mapping) and item.get("type") == "text"
-            else None
-            for item in content
-        ]
-        return (
-            "\n".join(parts)
-            if all(isinstance(part, str) for part in parts)
-            else content
-        )
+        self._render_card()
 
     def set_expanded(self, expanded: bool) -> None:
         self.expanded = expanded
         if self.is_mounted:
-            self._render_details()
+            self._render_card()
             self.query_one(".tool-call-details").set_class(
                 not expanded, "hidden"
             )
         self._update_expand_hint()
 
-    def _render_details(self) -> None:
+    def _render_card(self) -> None:
         if not self.is_mounted:
             return
         self.query_one(".tool-input-json", Static).update(

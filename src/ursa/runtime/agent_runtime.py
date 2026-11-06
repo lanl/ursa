@@ -401,68 +401,48 @@ class _UrsaProcessAgent:
                 self._inbox.task_done()
                 return
             request_token = None
-            # Keep the original available if a custom state cannot be copied.
-            # The copy itself belongs to this item's failure domain, rather
-            # than the long-lived inbox worker's.
-            state_before_prompt = self.state
-            task: asyncio.Task[Any] | None = None
+            # Formatting and copying are part of this request's failure domain;
+            # neither may terminate the inbox worker and strand later requests.
+            committed_state = self.state
             try:
                 request_token = self.context._enter_request(
                     item.request_id or ""
                 )
-                state_before_prompt = deepcopy(self.state)
+                committed_state = deepcopy(self.state)
                 if item.on_start is not None:
                     started = item.on_start()
                     if inspect.isawaitable(started):
                         await started
-                query = self._format_prompt(item)
-                task = asyncio.create_task(
-                    self.agent.ainvoke(query, config=item.config or None)
+                self._active_task = asyncio.create_task(
+                    self.agent.ainvoke(
+                        self._format_prompt(item), config=item.config or None
+                    )
                 )
-                self._active_task = task
-                try:
-                    self.state = await task
-                except asyncio.CancelledError:
-                    # Preserve worker cancellation for shutdown. If the model
-                    # task was cancelled independently, retain committed state
-                    # and fail this request without killing the inbox worker.
-                    if asyncio.current_task().cancelling():
-                        raise
-                    self.state = state_before_prompt
-                    if not item.response.done():
+                self.state = await self._active_task
+                # Rendering failures must preserve the completed model state.
+                committed_state = self.state
+                if not item.response.done():
+                    item.response.set_result(
+                        str(self.agent.format_result(self.state))
+                    )
+            except asyncio.CancelledError:
+                self.state = committed_state
+                stopping = asyncio.current_task().cancelling()
+                if not item.response.done():
+                    if stopping:
+                        item.response.cancel()
+                    else:
                         item.response.set_exception(
                             RuntimeError("Agent invocation was cancelled")
                         )
-                except Exception as exc:
-                    self.state = state_before_prompt
-                    if not item.response.done():
-                        item.response.set_exception(exc)
-                else:
-                    if not item.response.done():
-                        try:
-                            item.response.set_result(
-                                str(self.agent.format_result(self.state))
-                            )
-                        except Exception as exc:
-                            item.response.set_exception(exc)
-                finally:
-                    self._active_task = None
-            except asyncio.CancelledError:
-                # The current item has already left ``_inbox``, so aclose()
-                # cannot drain its response future.  Resolve it before
-                # passing through the worker cancellation.
-                self.state = state_before_prompt
-                if not item.response.done():
-                    item.response.cancel()
-                raise
+                if stopping:
+                    raise
             except Exception as exc:
-                # Formatting and lifecycle hooks run before ``task`` exists.
-                # Never let a bad incoming message kill the sole inbox worker:
-                # that leaves every later root message waiting forever.
-                self.state = state_before_prompt
+                self.state = committed_state
                 if not item.response.done():
                     item.response.set_exception(exc)
             finally:
+                self._active_task = None
                 if request_token is not None:
                     self.context._leave_request(request_token)
                 self._inbox.task_done()
@@ -901,12 +881,8 @@ class AgentRuntime:
             self._registered.add(name)
 
     async def get_agent(self, name: str) -> RuntimeAgent:
-        async with self._operation_lock:
-            await self._ensure_registered(name)
-            runtime_id = self.agents[name].runtime_id
-            await self._manager.start_agent(runtime_id)
-            await self._capture_mcp_tool_specs(runtime_id)
-            return self.agents[name]
+        async with self.use_agent(name) as agent:
+            return agent
 
     @asynccontextmanager
     async def use_agent(self, name: str) -> AsyncGenerator[RuntimeAgent]:
@@ -924,11 +900,8 @@ class AgentRuntime:
         callbacks: Sequence[Any] | None = None,
     ) -> str:
         """Run one agent without blocking lifecycle control operations."""
-        async with self._operation_lock:
-            await self._ensure_registered(name)
-            runtime_id = self.agents[name].runtime_id
-            await self._manager.start_agent(runtime_id)
-            await self._capture_mcp_tool_specs(runtime_id)
+        async with self.use_agent(name) as agent:
+            runtime_id = agent.runtime_id
             self._active_root_id = runtime_id
             self._active_agent_ready.set()
         configured = tuple(callbacks or ())
@@ -1268,27 +1241,24 @@ class AgentRuntime:
         if action == "wake_waiters":
             self._wake_runtime_waiters(sender_runtime_id)
             return None
-        if action == "invoke":
-            resolved = self._resolve_message_targets(
-                sender_runtime_id, [str(payload.get("target") or "")]
+        if action in {"invoke", "invoke_many"}:
+            targets = (
+                [str(payload.get("target") or "")]
+                if action == "invoke"
+                else payload.get("targets")
             )
-            acknowledgements = await self._queue_message_targets(
-                sender_runtime_id,
-                resolved,
-                str(payload.get("message") or ""),
-                callbacks,
-            )
-            return "\n\n".join(acknowledgements)
-        if action == "invoke_many":
-            targets = payload.get("targets")
-            if not isinstance(targets, list) or not targets:
-                raise ValueError(
-                    "targets must be a non-empty list of agent paths"
-                )
-            if not all(
-                isinstance(target, str) and target.strip() for target in targets
-            ):
-                raise ValueError("each target must be a non-empty agent path")
+            if action == "invoke_many":
+                if not isinstance(targets, list) or not targets:
+                    raise ValueError(
+                        "targets must be a non-empty list of agent paths"
+                    )
+                if not all(
+                    isinstance(target, str) and target.strip()
+                    for target in targets
+                ):
+                    raise ValueError(
+                        "each target must be a non-empty agent path"
+                    )
 
             resolved = self._resolve_message_targets(sender_runtime_id, targets)
             acknowledgements = await self._queue_message_targets(
@@ -1297,6 +1267,8 @@ class AgentRuntime:
                 str(payload.get("message") or ""),
                 callbacks,
             )
+            if action == "invoke":
+                return "\n\n".join(acknowledgements)
             return [
                 {"result": acknowledgement}
                 for acknowledgement in acknowledgements

@@ -64,7 +64,7 @@ async def process_runner():
 async def runtime_factory(tmp_path, monkeypatch):
     runtimes = []
 
-    def create(*, fork=False, **config):
+    def create(*, manager=None, fork=False, **config):
         options = {}
         if fork:
             monkeypatch.setattr(
@@ -76,7 +76,7 @@ async def runtime_factory(tmp_path, monkeypatch):
                 heartbeat_interval=0.05,
                 heartbeat_timeout=1,
             )
-        manager = AgentManager(**options)
+        manager = manager or AgentManager(**options)
         values = dict(workspace=tmp_path, llm_model={"model": "fake:chat"})
         runtime = AgentRuntime(UrsaConfig(**(values | config)), manager=manager)
         runtimes.append((runtime, manager))

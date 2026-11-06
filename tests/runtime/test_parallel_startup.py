@@ -6,28 +6,14 @@ import pytest
 
 from tests.runtime.fixtures import runtime_request
 from ursa.agents.base import SubagentLimitError
-from ursa.cli.config import UrsaConfig
-from ursa.runtime import AgentManager, AgentRuntime
 
 
 @pytest.fixture
-async def runtime(tmp_path):
-    manager = AgentManager()
-    runtime = AgentRuntime(
-        UrsaConfig(
-            workspace=tmp_path,
-            llm_model={"model": "fake:chat"},
-            subagents={"max_agents": 2},
-        ),
-        manager=manager,
-    )
+async def runtime(runtime_factory):
+    runtime, _ = runtime_factory(subagents={"max_agents": 2})
     await runtime._ensure_registered("chat")
     runtime._active_root_id = runtime.agents["chat"].runtime_id
-    try:
-        yield runtime
-    finally:
-        await runtime.aclose()
-        await manager.aclose()
+    return runtime
 
 
 @pytest.mark.asyncio

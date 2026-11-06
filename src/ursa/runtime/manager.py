@@ -422,8 +422,6 @@ class AgentContext:
         self, *, timeout: float | None = None
     ) -> AgentMessage:
         """Wait for a message delivered by the manager."""
-        if timeout is None:
-            return await self._messages.get()
         async with asyncio.timeout(timeout):
             return await self._messages.get()
 
@@ -1012,8 +1010,6 @@ class AgentManager:
             callbacks=bool(callbacks),
             host_callbacks=tuple(callbacks or ()),
         )
-        if timeout is None:
-            return await asyncio.shield(result)
         async with asyncio.timeout(timeout):
             return await asyncio.shield(result)
 
@@ -1034,8 +1030,6 @@ class AgentManager:
             args=args,
             kwargs=kwargs,
         )
-        if timeout is None:
-            return await asyncio.shield(result)
         async with asyncio.timeout(timeout):
             return await asyncio.shield(result)
 
@@ -1125,8 +1119,6 @@ class AgentManager:
         self, *, timeout: float | None = None
     ) -> AgentMessage:
         """Receive a child message addressed to ``"host"``."""
-        if timeout is None:
-            return await self._host_messages.get()
         async with asyncio.timeout(timeout):
             return await self._host_messages.get()
 

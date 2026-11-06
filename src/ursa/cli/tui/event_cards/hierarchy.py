@@ -8,22 +8,22 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
-from langchain_core.messages import ToolMessage
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Markdown, Static
 
-from ursa.cli.tui.event_cards.base import EventCard
+from ursa.cli.tui.event_cards.tools import ToolEventCard
 from ursa.cli.tui.widgets import ActivityIndicator
 
 LOGGER = logging.getLogger(__name__)
 
 
-class AgentToolCard(EventCard):
+class AgentToolCard(ToolEventCard):
     """Show the intent and outcome of a hierarchy-management tool call."""
 
+    STATE_CLASS = "agent-tool-state"
     _PRESENTATION = {
         "spawn_agent": ("✦", "Delegating work", "subagent"),
         "send_message": ("↗", "Messaging agent", "recipient"),
@@ -56,10 +56,6 @@ class AgentToolCard(EventCard):
         self._details_error: str | None = None
         self._compact_input = self.tool_input
         self._compact_output = ""
-        self.completed = False
-        self.failed = False
-        self._frame = 0
-        self._spinner_timer = None
 
     @property
     def target(self) -> str:
@@ -172,24 +168,6 @@ class AgentToolCard(EventCard):
             yield Markdown("", classes="agent-tool-result hidden")
         yield Static("Click to expand", classes="event-expand-hint")
 
-    def on_mount(self) -> None:
-        if not self.completed:
-            self._spinner_timer = self.set_interval(0.08, self._advance_spinner)
-        self._render_card()
-        self._update_expand_hint()
-
-    def _advance_spinner(self) -> None:
-        if (
-            not self.is_mounted
-            or self.completed
-            or self.screen is not self.app.screen
-        ):
-            return
-        self.query_one(".agent-tool-state", Static).update(
-            ActivityIndicator.FRAMES[self._frame]
-        )
-        self._frame = (self._frame + 1) % len(ActivityIndicator.FRAMES)
-
     def _summary(self) -> str:
         if not self.completed:
             if self.tool == "spawn_agent":
@@ -221,46 +199,18 @@ class AgentToolCard(EventCard):
 
     @staticmethod
     def _text_content(value: Any) -> str:
-        if isinstance(value, ToolMessage):
-            value = value.content
-        if isinstance(value, list):
-            parts = [
-                item
-                if isinstance(item, str)
-                else item.get("text")
-                if isinstance(item, Mapping) and item.get("type") == "text"
-                else None
-                for item in value
-            ]
-            if all(isinstance(part, str) for part in parts):
-                return "\n".join(parts)
-        return str(value or "")
+        return str(ToolEventCard._text_content(value) or "")
 
     def complete(self, output: Any, *, failed: bool = False) -> None:
         self.output = self._text_content(output)
         self._compact_output = self.output
         self._details_loaded = False
-        self.completed = True
-        self.failed = failed
-        self.set_class(failed, "agent-tool-failed")
         self.mark_done()
-        if self._spinner_timer is not None:
-            self._spinner_timer.pause()
+        super().complete(output, failed=failed)
+        self.set_class(failed, "agent-tool-failed")
         self._render_card()
         if self._details_loader and self.expanded and self.is_mounted:
             self._request_details()
-
-    def update_event(self, payload: Mapping[str, Any]) -> None:
-        phase = str(payload.get("phase") or "")
-        if phase not in {"end", "error"}:
-            return
-        failed = phase == "error" or payload.get("status") == "error"
-        self.complete(
-            payload.get("error")
-            if failed
-            else payload.get("tool_message", payload.get("result")),
-            failed=failed,
-        )
 
     def set_expanded(self, expanded: bool) -> None:
         self.expanded = expanded
