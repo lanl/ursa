@@ -7,6 +7,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from ursa.agents.base import AgentContext
+from ursa.cli.config import UrsaConfig
 from ursa.prompt_library.safety_prompts import (
     get_safety_prompt,
 )
@@ -48,8 +49,6 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
         A formatted string with "STDOUT:" followed by the truncated stdout and
         "STDERR:" followed by the truncated stderr.
     """
-    (Path.home() / "ursa.log").write_text(str(list(runtime.context.__dict__)))
-
     try:
         query = validate_ascii(query)
     except AsciiValidationError as exc:
