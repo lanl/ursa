@@ -146,7 +146,6 @@ class Turn(Static):
         }:
             await self._plan_event(payload)
             return
-        edit_card = None
         additions = payload.get("additions")
         deletions = payload.get("deletions")
         outcome = self._file_outcome(payload)
@@ -190,7 +189,6 @@ class Turn(Static):
                 *change,
                 show_heading=not has_edit_heading,
             )
-        if edit_card is not None:
             edit_key = self._next_summary_key("edit")
             await self._replace_or_mount(edit_key, edit_card)
             if edit_id:
@@ -218,17 +216,8 @@ class Turn(Static):
                 card.record_outcome(operation, path, state, detail)
                 return
             summary_kind = f"files:{operation}"
-            self._prepare_summary(summary_kind)
-            card = (
-                self._summary_cards.get(summary_kind)
-                if self._can_reuse_summary(summary_kind)
-                and isinstance(
-                    self._summary_cards.get(summary_kind),
-                    FileActivityCard,
-                )
-                else None
-            )
-            if card is None:
+            card = self._reusable_summary(summary_kind)
+            if not isinstance(card, FileActivityCard):
                 key = self._next_summary_key("files")
                 card = FileActivityCard(key)
                 await self._replace_or_mount(key, card)
@@ -255,14 +244,8 @@ class Turn(Static):
             if tool in SEARCH_TOOLS
             else EventCard
         )
-        self._prepare_summary(summary_kind)
-        card = (
-            self._summary_cards.get(summary_kind)
-            if self._can_reuse_summary(summary_kind)
-            and type(self._summary_cards.get(summary_kind)) is card_type
-            else None
-        )
-        if card is None:
+        card = self._reusable_summary(summary_kind)
+        if type(card) is not card_type:
             key = self._next_summary_key("progress")
             card = (
                 AgentEventCard(key, agent)
@@ -361,20 +344,20 @@ class Turn(Static):
         self._summary_count += 1
         return f"{prefix}:{self._summary_count}"
 
-    def _can_reuse_summary(self, kind: str) -> bool:
-        card = self._summary_cards.get(kind)
-        deadline = self._summary_deadlines.get(kind)
-        return (
-            card is not None
-            and not card.done
-            and deadline is not None
-            and self._current_event_at < deadline
-        )
-
-    def _prepare_summary(self, kind: str) -> None:
+    def _reusable_summary(self, kind: str) -> EventCard | None:
+        """Finalize an expired group and return any still-active card."""
         deadline = self._summary_deadlines.get(kind)
         if deadline is not None and self._current_event_at >= deadline:
             self._finalize_summary(kind)
+        card = self._summary_cards.get(kind)
+        return (
+            card
+            if card is not None
+            and not card.done
+            and deadline is not None
+            and self._current_event_at < deadline
+            else None
+        )
 
     def _mark_summary(self, kind: str, card: EventCard) -> None:
         self._summary_cards[kind] = card
