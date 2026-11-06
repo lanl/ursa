@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
@@ -17,6 +16,7 @@ from ursa.messaging.coordination import (
     wait_targets,
     wait_timeout,
 )
+from ursa.util.async_utils import maybe_await
 
 if TYPE_CHECKING:
     from ursa.agents.base import BaseAgent
@@ -69,9 +69,7 @@ async def _notify_callbacks(
         if not callable(method):
             continue
         try:
-            result = method(*args, **kwargs)
-            if inspect.isawaitable(result):
-                await result
+            await maybe_await(method(*args, **kwargs))
         except Exception:
             logger.exception("Agent hierarchy callback %s failed", method_name)
 

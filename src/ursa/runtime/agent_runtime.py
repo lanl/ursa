@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import inspect
 import json
 import logging
 from collections import deque
@@ -41,6 +40,7 @@ from ursa.messaging.messages import (
     attach_agent_message_instructions,
 )
 from ursa.security import enforce_model_group_policy
+from ursa.util.async_utils import maybe_await
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.inference_providers import validate_model_provider
 from ursa.util.mcp import (
@@ -389,9 +389,7 @@ class _UrsaProcessAgent(_ProcessRuntimeBridge):
                 )
                 committed_state = deepcopy(self.state)
                 if item.on_start is not None:
-                    started = item.on_start()
-                    if inspect.isawaitable(started):
-                        await started
+                    await maybe_await(item.on_start())
                 # Keep model cancellation separate from worker shutdown.
                 self.state = await asyncio.create_task(
                     self.agent.ainvoke(
@@ -701,9 +699,7 @@ class _MessageStartCallback:
         if self.started:
             return
         self.started = True
-        result = self.callback(None)
-        if inspect.isawaitable(result):
-            await result
+        await maybe_await(self.callback(None))
 
 
 class AgentRuntime:
@@ -1882,9 +1878,7 @@ class AgentRuntime:
             method = getattr(callback, method_name, None)
             if not callable(method):
                 continue
-            result = method(*args, **kwargs)
-            if inspect.isawaitable(result):
-                await result
+            await maybe_await(method(*args, **kwargs))
 
     async def reconfigure_model(
         self, model_name: str, inference_provider: str | None

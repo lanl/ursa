@@ -1224,18 +1224,10 @@ class LiveHierarchyTree(Tree[HierarchyTreeRow]):
         super().__init__("Live hierarchy", id="status-subagents-tree")
         self._snapshot = snapshot
         self._signature: tuple[HierarchyTreeRow, ...] | None = None
-        self._refresh_timer: Timer | None = None
 
     def on_mount(self) -> None:
         self.refresh_hierarchy(force=True)
-        self._refresh_timer = self.set_interval(
-            self.REFRESH_INTERVAL, self.refresh_hierarchy
-        )
-
-    def on_unmount(self) -> None:
-        if self._refresh_timer is not None:
-            self._refresh_timer.stop()
-            self._refresh_timer = None
+        self.set_interval(self.REFRESH_INTERVAL, self.refresh_hierarchy)
 
     def refresh_hierarchy(self, *, force: bool = False) -> None:
         """Redraw only after the host snapshot changes."""
@@ -1361,7 +1353,6 @@ class InformationScreen(ModalScreen[None]):
         self.subagent_rows = subagent_rows
         self.status_content = status_content
         self._status_content_signature = content
-        self._status_refresh_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="information"):
@@ -1398,15 +1389,10 @@ class InformationScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         if self.status_content is not None:
-            self._status_refresh_timer = self.set_interval(
+            self.set_interval(
                 LiveHierarchyTree.REFRESH_INTERVAL,
                 self._refresh_status_content,
             )
-
-    def on_unmount(self) -> None:
-        if self._status_refresh_timer is not None:
-            self._status_refresh_timer.stop()
-            self._status_refresh_timer = None
 
     async def _refresh_status_content(self) -> None:
         """Keep the overview token totals current without needless rerenders."""
@@ -2051,7 +2037,6 @@ class MessagesScreen(ModalScreen[None]):
         self._resume_generation = 0
         self._has_newer = False
         self._sync_lock = asyncio.Lock()
-        self._refresh_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="messages-dialog"):
@@ -2069,12 +2054,7 @@ class MessagesScreen(ModalScreen[None]):
 
     async def on_mount(self) -> None:
         await self._sync_messages()
-        self._refresh_timer = self.set_interval(0.5, self._sync_messages)
-
-    def on_unmount(self) -> None:
-        if self._refresh_timer is not None:
-            self._refresh_timer.stop()
-            self._refresh_timer = None
+        self.set_interval(0.5, self._sync_messages)
 
     def on_resize(self) -> None:
         if self.is_mounted:

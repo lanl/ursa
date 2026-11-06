@@ -45,7 +45,6 @@ Tool usage from a ``ToolRuntime``:
 
 from __future__ import annotations
 
-import inspect
 import json
 import logging
 from dataclasses import dataclass, field
@@ -61,6 +60,7 @@ from langchain_core.callbacks.manager import (
 )
 from langchain_core.runnables import RunnableConfig
 
+from ursa.util.async_utils import maybe_await
 from ursa.util.rendering import EventConsoleFormatter, event_artifacts
 
 DEFAULT_EVENT_NAME = "ursa_agent_progress"
@@ -533,9 +533,7 @@ class EnvironmentEvents(ProgressEvents):
             handler = getattr(callback, "on_custom_event", None)
             if handler is None:
                 continue
-            result = handler(self.event_name, body, run_id=run_id)
-            if inspect.isawaitable(result):
-                await result
+            await maybe_await(handler(self.event_name, body, run_id=run_id))
 
 
 class ToolEvents(ProgressEvents):

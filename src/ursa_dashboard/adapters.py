@@ -13,6 +13,7 @@ from typing import Any, Protocol
 from rich.console import Console
 
 from ursa.cli.callbacks import AgentLogEventHandler
+from ursa.util.async_utils import maybe_await
 
 from .events import Event
 
@@ -88,7 +89,7 @@ class DirectInvokeAdapter:
 
         try:
             if self._setup_hook is not None:
-                await _maybe_await(self._setup_hook(agent, ctx, inputs))
+                await maybe_await(self._setup_hook(agent, ctx, inputs))
             result = await _ainvoke_with_cli_handler(
                 agent,
                 inputs,
@@ -157,12 +158,6 @@ def _callback_config(invoke: Callable, workspace_dir: Path) -> dict[str, Any]:
     }
 
 
-async def _maybe_await(value: Any) -> Any:
-    if inspect.isawaitable(value):
-        return await value
-    return value
-
-
 def _format_agent_result(agent: Any, result: Any) -> str:
     if hasattr(agent, "format_result"):
         try:
@@ -183,7 +178,7 @@ async def _close_agent(agent: Any) -> None:
     """Close resources through the agent's native async/sync lifecycle."""
     async_close = getattr(agent, "aclose", None)
     if callable(async_close):
-        await _maybe_await(async_close())
+        await maybe_await(async_close())
     close = getattr(agent, "close", None)
     if callable(close):
         await asyncio.to_thread(close)
@@ -225,6 +220,6 @@ async def _ainvoke_with_cli_handler(
     workspace_dir: Path,
 ) -> Any:
     """Async invoke a dashboard target with the shared CLI callback when supported."""
-    return await _maybe_await(
+    return await maybe_await(
         agent.ainvoke(inputs, **_callback_config(agent.ainvoke, workspace_dir))
     )

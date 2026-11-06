@@ -98,8 +98,11 @@ async def test_message_screen_pages_without_retaining_full_bodies(
         )
         assert len(screen.query(HierarchyMessageCard)) == 50
 
+        timers = tuple(screen._timers)
+        assert timers
         await pilot.press("escape")
         assert not app.query(HierarchyMessageCard)
+        assert all(timer._task is None for timer in timers)
         await app._show_command("messages")
         assert await wait_for(
             pilot, lambda: len(app.screen.query(HierarchyMessageCard)) == 50

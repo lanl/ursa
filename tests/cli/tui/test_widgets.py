@@ -796,12 +796,15 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         await wait_for(pilot, lambda: body.scroll_y > 0)
         assert body.scroll_y > 0
 
+        timers = (*app.screen._timers, *tree._timers)
+        assert app.screen._timers and tree._timers
         await pilot.press("escape")
         await pilot.pause()
         await wait_for(
             pilot, lambda: not isinstance(app.screen, InformationScreen)
         )
         assert not isinstance(app.screen, InformationScreen)
+        assert all(timer._task is None for timer in timers)
 
 
 async def test_exit_command_quits_the_app(app):

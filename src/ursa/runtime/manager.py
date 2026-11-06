@@ -30,6 +30,8 @@ from uuid import uuid4
 
 from langchain_core.callbacks import AsyncCallbackHandler
 
+from ursa.util.async_utils import maybe_await
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -312,17 +314,13 @@ def _load_factory(reference: AgentFactory | str) -> AgentFactory:
     return value
 
 
-async def _maybe_await(value: Any) -> Any:
-    return await value if inspect.isawaitable(value) else value
-
-
 async def _call_without_blocking(
     function: Callable[..., Any], *args: Any, **kwargs: Any
 ) -> Any:
     if inspect.iscoroutinefunction(function):
         return await function(*args, **kwargs)
     value = await asyncio.to_thread(function, *args, **kwargs)
-    return await _maybe_await(value)
+    return await maybe_await(value)
 
 
 def _picklable(value: Any) -> Any:
@@ -776,7 +774,7 @@ class AgentProcess:
         async_close = getattr(self.agent, "aclose", None)
         if callable(async_close):
             try:
-                await _maybe_await(async_close())
+                await maybe_await(async_close())
             except Exception:
                 LOGGER.exception("Failed to close isolated agent")
         close = getattr(self.agent, "close", None)

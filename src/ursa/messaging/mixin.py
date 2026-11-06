@@ -20,6 +20,8 @@ from typing import (
     Sequence,
 )
 
+from ursa.util.async_utils import maybe_await
+
 from .coordination import (
     MessageWait,
     check_capacity,
@@ -427,9 +429,7 @@ class AsyncMessageMixin:
                 self._current_agent_message = item.message
                 if item.on_start is not None:
                     try:
-                        started = item.on_start(item.message)
-                        if inspect.isawaitable(started):
-                            await started
+                        await maybe_await(item.on_start(item.message))
                     except Exception:
                         logger.exception(
                             "Agent %s message-start callback failed for %s",
@@ -464,9 +464,9 @@ class AsyncMessageMixin:
                 finally:
                     if item.on_end is not None:
                         try:
-                            ended = item.on_end(item.message, succeeded)
-                            if inspect.isawaitable(ended):
-                                await ended
+                            await maybe_await(
+                                item.on_end(item.message, succeeded)
+                            )
                         except Exception:
                             logger.exception(
                                 "Agent %s message-end callback failed for %s",
@@ -689,8 +689,7 @@ class AsyncMessageMixin:
         self._validate_subagent_capacity()
         factory = agent or self.__class__
         child = factory(**self._subagent_factory_kwargs(agent_kwargs))
-        if inspect.isawaitable(child):
-            child = await child
+        child = await maybe_await(child)
         if not isinstance(child, BaseAgent):
             raise TypeError("subagent factory must return a BaseAgent")
         return self.attach_subagent(name, child)
