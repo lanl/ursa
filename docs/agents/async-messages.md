@@ -1,16 +1,14 @@
 # Async messages and subagents
 
-Every `BaseAgent` has an asynchronous inbox and can own a dynamic hierarchy of
-subagents. Inbox processing is serialized per agent, while different agents may
-run concurrently. The inbox and hierarchy lifecycle live in
-`ursa.messaging.AsyncMessageMixin`; shared coordination rules live in
-`ursa.messaging.coordination`. `BaseAgent` uses the mixin to validate subagent
-limits and serialize async invocations, including reentrant calls.
+Every `BaseAgent` has a serialized asynchronous inbox and can own a hierarchy of
+concurrently running subagents. `ursa.messaging.AsyncMessageMixin` manages inbox
+and hierarchy lifecycles, validates limits, and serializes async invocations
+while allowing reentrant calls. Shared rules live in `ursa.messaging.coordination`.
 
 ## User messages
 
-Use `request` when the caller needs the result, or `post_message` for one-way
-delivery:
+Use `request` to await a result, `post_message` for one-way delivery, and
+`wait_for_messages` to drain the inbox:
 
 ```python
 result = await agent.request("Analyze the latest measurements")
@@ -18,12 +16,15 @@ await agent.post_message("Also check the calibration notes")
 await agent.wait_for_messages()
 ```
 
-A message arriving while that agent is already running waits in its inbox.
-Messages do not cancel ongoing model or tool calls.
+User and agent messages share a FIFO queue. Arrivals wait while the agent is
+busy; they do not cancel model or tool calls. On delivery, the receiving model
+gets a trusted system envelope naming the sender and recipient, followed by the
+exact, unchanged human message. A message can also reach a running `wait_for`,
+as described below.
 
 ## Dynamic hierarchies
 
-Attach an existing agent or construct one on demand:
+Construct children on demand or attach existing agents:
 
 ```python
 researcher = lead.spawn_subagent("researcher", ResearchAgent)
@@ -32,19 +33,14 @@ specialist = researcher.spawn_subagent("specialist", SpecialistAgent)
 ```
 
 Constructed children inherit the parent's model, workspace, and group unless
-those arguments are supplied explicitly. Async factories use
-`await lead.aspawn_subagent(...)`.
+explicitly overridden. Use `await lead.aspawn_subagent(...)` for async factories.
+The top-level `subagents` configuration defaults to 32 subagents and three levels.
+Either `max_agents: 0` or `max_depth: 0` disables creation; `null` removes that
+limit. Optional `llm_model` and `embedding_model` settings apply to all descendants;
+`null` inherits the root model. Reaching a limit produces a recoverable
+`spawn_agent` tool error, allowing the parent to continue.
 
-The top-level `subagents` configuration limits the hierarchy to 32 agents and
-three levels by default. Setting either `max_agents` or `max_depth` to `0`
-disables subagent creation; setting one to `null` removes that limit. Optional
-`llm_model` and `embedding_model` entries
-select models for every child and descendant; `null` inherits the root model.
-If a model calls `spawn_agent` after reaching a configured limit, the tool
-returns a recoverable error to that model; the parent agent continues running.
-
-Paths are slash-delimited and the hierarchy root is always named `root`.
-Agents can address children, parents, and siblings:
+Slash-delimited paths start at `root` and can address children, parents, or siblings:
 
 ```python
 await lead.send_message("researcher", "Gather supporting evidence")
@@ -53,47 +49,31 @@ root = specialist.resolve_agent("../..")
 assert reviewer.agent_path == "root/reviewer"
 ```
 
-Every `ChatAgent` also exposes five hierarchy tools to its model:
+Every `ChatAgent` exposes these five tools to its model:
 
-- `spawn_agent(name, message, agent_type=None)` creates a child whose path is
-  the caller's path joined with `name`, immediately sends its initial task,
-  and returns as soon as that task is queued. In `AgentRuntime`, `agent_type`
-  selects a configured URSA agent implementation; omitting it inherits the
-  caller's type. The host validates the requested type before launch. Use
-  `wait_for` when the caller needs to synchronize with the child's completion.
-- `send_message(target, message)` queues a one-way message and returns without
-  waiting for the receiving agent to reply. Agents send replies explicitly
-  with their own `send_message` calls. `target` accepts paths, message groups,
-  or a list mixing both. URSA expands and validates the entire list before
-  delivering anything, then acknowledges each concrete recipient once.
-- `wait_for(target, timeout_seconds=120, wait_all=False)` waits for one
-  agent, or a non-empty list of agents, for at most two minutes. A list returns
-  when any target is ready by default; pass `wait_all=True` to wait for every
-  target. Prefer a single list-target wait when synchronizing several agents,
-  rather than several independent waits. A timeout is returned as a normal
-  tool result. A still-working target is considered ready only when that wait
-  would close a dependency cycle, so reciprocal waits cannot deadlock while
-  unrelated agents still wait for real work to finish. If the waiting agent
-  receives a new agent-to-agent message, the wait ends immediately and returns
-  its sender,
-  recipient, and exact content to the waiting model. That delivery is consumed
-  by the wait and is not replayed as a duplicate turn. Replies that reach the
-  host immediately before the model enters `wait_for` are buffered for that
-  wait instead of starting a second activity turn for the busy recipient.
-  A managed wait returns all messages already buffered when it starts. If an
-  agent finishes its invocation instead, those messages are delivered together
-  in its next invocation, retaining a separate trusted sender/recipient envelope
-  for each message. This avoids one model turn per queued peer message and lets
-  the model consider newer instructions alongside earlier discussion.
-- `stop_agent(target)` atomically marks a child, grandchild, or deeper subtree
-  as stopping and returns immediately. The host then hard-stops every process
-  in that subtree in the background, without waiting for agents to finish or
-  respond. New messages and spawns into a stopping subtree are rejected. An
-  agent cannot stop itself, an ancestor, a sibling, or an unrelated agent.
-- `list_agents()` lists the current hierarchy and marks the calling agent.
+- `spawn_agent(name, message, agent_type=None)` creates a child at the caller's
+  path plus `name`, queues its initial task, and returns without waiting for its
+  reply. In `AgentRuntime`, the host validates an optional configured URSA
+  `agent_type`; omission inherits the caller's type. Use `wait_for` to synchronize.
+- `send_message(target, message)` queues one-way delivery to a path, group, or
+  mixed list. The whole list is expanded and validated before delivery; each
+  concrete recipient is acknowledged once. Replies require an explicit
+  `send_message`: ordinary final responses are not automatically routed back.
+- `wait_for(target, timeout_seconds=120, wait_all=False)` accepts one path or a
+  non-empty list and waits at most two minutes. A list returns when any target
+  is ready; `wait_all=True` requires all targets. Timeouts are normal tool results.
+  A working target counts as ready only if the wait would close a dependency
+  cycle, preventing reciprocal deadlocks without releasing unrelated waits.
+- `stop_agent(target)` marks a descendant subtree as stopping and returns
+  immediately. The host hard-stops its processes in the background without
+  waiting for responses or completion. New messages and spawns into that subtree
+  are rejected. Agents cannot stop themselves, ancestors, siblings, or unrelated
+  agents.
+- `list_agents()` lists the hierarchy and marks the caller.
 
-`send_message` supports these group targets, using supervisor/peer/report
-terminology for the delegation hierarchy:
+### Group targets
+
+`send_message` uses supervisor/peer/report terminology:
 
 | Target | Recipients |
 |---|---|
@@ -103,115 +83,95 @@ terminology for the delegation hierarchy:
 | `@reports` | Agents directly launched by the caller, excluding deeper descendants |
 
 For example, `send_message(target="@reports", message="Report your progress.")`
-sends to the caller's immediate reports. A mixed target list such as
-`["@peers", "root/reviewer"]` sends only once to each resolved agent, preserving
-first-occurrence order. Group names are case-insensitive; agent paths retain
-their normal case-sensitive spelling.
+addresses immediate reports. A mixed list such as `["@peers", "root/reviewer"]`
+deduplicates recipients in first-occurrence order. Groups are case-insensitive;
+agent paths remain case-sensitive. Group broadcasts always exclude the sender,
+even when its explicit path appears in the list.
 
-Group expansions always exclude the sender, including an explicit sender path
-mixed into a group broadcast. Each group must resolve to at
-least one other agent: an empty group, unknown group, invalid path, or stopping
-recipient rejects the whole send before delivery. This also applies when an
-empty group is mixed with valid paths. These are recoverable tool errors, so
-the agent can revise the target and continue. The message log records the
-concrete recipients. Group targets are specific to `send_message`; `wait_for`
-and `stop_agent` continue to accept their existing path-based targets.
+Every group must contain another agent. An empty or unknown group, invalid path,
+or stopping recipient rejects the entire send, including lists with otherwise
+valid paths. These are recoverable tool errors. The message log records concrete
+recipients. Groups apply only to `send_message`; `wait_for` and `stop_agent` retain
+path-based targets.
 
-Multiple `send_message` tool calls targeting different agents can be queued in
-one tool-calling round while the sending agent continues its own work. Chat
-agents are instructed to batch independent spawns, different messages, and
-identical group announcements in the same model response. Use one list-target
-`wait_for` call to synchronize several outstanding agents. Dependent actions
-and conflicting writes remain sequential. Tools use the model's normal
-`bind_tools` method without overriding provider settings. OpenAI allows
+### Waiting and parallel work
+
+Agents can coordinate directly with peers without routing through the root.
+Chat prompts encourage independent spawns, different messages, and identical
+announcements to be batched in one model response. Use a target list for an
+identical announcement and one list-target `wait_for` to synchronize several
+agents. Dependent actions and conflicting writes stay sequential. Tools use
+normal `bind_tools` without overriding provider settings. OpenAI allows
 [parallel function calls by default](https://developers.openai.com/api/docs/guides/function-calling#parallel-function-calling);
-the model chooses which calls to emit, and LangGraph executes each batch.
+the model chooses the calls and LangGraph executes each batch.
 
-Peers can send directly to siblings or broadcast to explicit target lists;
-communication does not have to pass through the root. Exclude the sender from
-group recipients and explicitly request `send_message` replies. An ordinary
-agent final response is not automatically routed to its caller. Concurrent
-waits share the caller's inbox: a returned message may come from any sender,
-and another wait may only report that a message woke it. Count replies by the
-returned sender and task identifier, not by the wait target or completion flag.
+A message received during `wait_for` ends the wait immediately and returns its
+sender, recipient, and exact content. That delivery is consumed, never replayed
+as another turn. The host also buffers arrivals to busy agents before they enter
+`wait_for`; a managed wait returns all messages already buffered at its start.
+If the invocation finishes instead, those messages arrive together in the next
+invocation, each with its own trusted envelope. The model can consider newer
+instructions alongside earlier discussion without one turn per queued message.
 
-When agents run through `AgentRuntime` (including the CLI and TUI), each
-dynamically spawned subagent is registered with the runtime manager and runs in
-its own supervised process. Independent subprocess starts run concurrently.
-The host reserves names and capacity before starting them, releases reservations
-on failure or cancellation, and reports unfinished startup as `Starting`.
-The root discovers MCP tools once; children with the same resolved server
-configuration reuse those tool schemas and metadata, opening their own sessions
-when invoking tools. Restarting the root or reconfiguring invalidates that cache.
-The first root startup still includes MCP discovery.
-The host owns hierarchy limits, routing, status,
-and shutdown, and resolves secrets before configuration crosses a process
-boundary; model objects and agent state remain inside their processes.
-When durable persistence is enabled with `agent_name`, all members share the
-root agent's checkpoint database while using distinct hierarchy-derived thread
-IDs.
-Direct library-created hierarchies retain the lightweight in-process behavior
-shown above.
+Concurrent waits share an inbox: a message may come from any sender, and another
+wait may only report that it was awakened. Count replies by their actual sender
+and task identifier, not by the wait target or completion flag.
 
-Call `await lead.stop_message_loop(descendants=True)` when an application owns
-the hierarchy outside a managed URSA runtime.
+## Managed runtime
+
+`AgentRuntime`, including the CLI and TUI, registers each dynamic subagent with
+its manager and runs it in a supervised process. Independent starts run
+concurrently; the host reserves names and capacity first, releases reservations
+on failure or cancellation, and reports pending launches as `Starting`.
+
+The root discovers MCP tools once. Children with identical resolved server
+configuration reuse those schemas and metadata, opening their own tool sessions.
+Root restart or reconfiguration invalidates the cache; initial root startup still
+includes discovery. The host owns limits, routing, status, shutdown, and secret
+resolution before configuration crosses process boundaries. Models and agent
+state stay inside their processes. With durable `agent_name` persistence, all
+members share the root checkpoint database and use distinct hierarchy-derived
+thread IDs.
+
+Direct library hierarchies run in-process. Their application owner should call
+`await lead.stop_message_loop(descendants=True)` to shut them down.
 
 ## TUI controls
 
-The Textual interface exposes `/subagents` once an agent hierarchy is active.
-Choose any listed path to make it the target of subsequent messages and show
-that agent's live progress. Switch back to the root path to restore the root
-conversation view.
+- `/subagents` switches the message target and conversation to any active agent,
+  including `root`, and shows its live progress.
+- `/coordination` opens **Messages** and **Subagents** tabs. The live tree shows
+  per-agent tokens, state, and latest activity. **Enter** switches to an agent;
+  **Space** expands or collapses its details. States include Starting, Working,
+  Waiting, Stopping, Queued, and Ready. `/status` totals usage across all agents.
+- In the editor, **Enter** queues a message without stopping current work. It
+  stays dimmed above the editor until accepted. Accepted follow-ups appear before
+  subsequent replies, including when delivered through `wait_for` without a
+  separate model turn.
 
-The **Subagents** tab in `/coordination` shows the hierarchy as a tree with
-each agent's current Working, Waiting, Stopping, Queued, or Ready state. The
-status summary's total token count includes model calls made by every agent in
-the hierarchy. Select an agent with **Enter** to switch to it; use **Space** to
-expand or collapse its details.
+The read-only message log includes initial `spawn_agent` tasks and explicit
+replies. Cards show sender, recipients, stable agent colors, and live relative
+timestamps. Bodies collapse to one line; **Tab** focuses a card and **Enter**,
+**Space**, or a click expands it. Shared footer hints describe these controls.
 
-Use `/coordination` for a live, read-only log of messages across the hierarchy.
-Each card identifies the sender and recipients, assigns every agent a stable
-color, shows a live relative timestamp, and collapses the message body to one
-line until expanded. The shared footer describes the click and close controls.
-Initial `spawn_agent` tasks and explicit agent-to-agent replies are included.
+Messages live in the `hierarchy_messages` SQLite table, scoped to the root thread:
+`db/checkpointer.db` for named agents or the workspace's `graph_store.sqlite`
+otherwise. The UI loads at most 50 previews, fetching full bodies on expansion
+and releasing them on collapse. **Older**/**Newer** or left/right keys page through
+history; **Home** goes to the beginning. Scrolling back, expanding a card, or
+reading history pauses live following so incoming traffic cannot move the page.
+The footer shows Live, Paused, or newer messages available. **Latest** or **End**
+resumes live traffic.
 
-Messages are stored in the `hierarchy_messages` SQLite table, scoped to the
-root thread. Named agents use their shared `db/checkpointer.db`; unnamed
-sessions use the workspace's `graph_store.sqlite`. The UI reads at most 50
-message previews at a time and fetches a complete body only when expanded.
-Collapsing the message releases that body. Use **Older**, **Newer**, or the
-left/right keys to page through history, **Home** for the beginning, and
-**Latest** or **End** to return to live traffic. Incoming traffic does not
-move the page while you are reading older messages.
-Scrolling back or expanding a message pauses live following; the header shows
-whether you are live, paused, or reading history with newer messages available.
-Press **End** or select **Latest** to resume. Message cards support **Tab** focus
-and **Enter** or **Space** expansion, with their full text released on collapse.
+Within each turn, `send_message`, `wait_for`, `spawn_agent`, and `stop_agent` share
+one **Coordination** card. It shows action, running, and failure counts plus two
+recent actions. Expansion reveals individual tool cards, with 20 actions per
+page; incoming actions do not displace a historical page. Full inputs and results
+live in `coordination_actions`, load only when an individual card expands, and
+are released when that card or its group collapses. Failed actions have an
+explicit error state. **Shift+Tab** from the editor reaches cards; **Enter** or
+**Space** toggles them. `/keymap` lists every shortcut.
 
-Within each conversation turn, `send_message`, `wait_for`, `spawn_agent`, and
-`stop_agent` share one **Coordination** card. Its summary shows the action,
-running, and failure counts, followed by the two latest actions. Expand it
-to inspect the individual tool cards, with 20 actions per page. Full tool
-inputs and results live in the `coordination_actions` table and are loaded
-only when an individual tool card is expanded. Collapsing that card or the
-group releases those details.
-The group and its action cards also support **Enter** or **Space** expansion;
-use **Shift+Tab** from the prompt editor to reach them. Failed actions have an
-explicit error state, and new actions do not displace a historical action page
-being read. All card shortcuts are included in `/keymap`.
-
-On delivery, the runtime gives the receiving model a trusted system envelope
-with the sender and recipient paths. The original payload remains the exact
-human message that follows that envelope, so an agent can report who sent it,
-who received it, and what was sent without relying on prompt conventions.
-
-While an agent is working, press `Enter` in the message editor to queue a draft
-without stopping current work. User and agent messages share the same FIFO
-delivery queue. A queued user message stays dimmed above the editor until it
-reaches the selected agent; if that agent is in `wait_for`, the message becomes
-that wait's exact tool result instead of starting a duplicate model turn.
-
-`Esc` closes open pickers and dialogs; it does not submit messages or cancel
-agent work. Interrupt-and-send support is deferred until the work in
-[PR #404](https://github.com/lanl/ursa/pull/404) is available.
-
+**Esc** closes pickers and dialogs; it neither submits messages nor cancels work.
+Interrupt-and-send support remains deferred pending follow-up work based on
+[PR #404](https://github.com/lanl/ursa/pull/404).

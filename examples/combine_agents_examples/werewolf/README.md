@@ -20,8 +20,8 @@ uv run ursa --name werewolf --thread_id werewolf-1 \
 ```
 
 Use a new name and thread ID for each game so earlier messages do not enter the
-new game. Twenty players can make many model calls; `/status` shows total and
-per-agent token usage while they work.
+new game. Twenty players can make many model calls. `/status` shows total token
+usage; the Subagents tab in `/coordination` shows each player's usage.
 
 ## 2. Submit the game prompt
 
