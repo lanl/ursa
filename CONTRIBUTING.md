@@ -103,13 +103,8 @@ uv sync --all-extras --group dev
 uv run pytest
 ```
 
-## Startup benchmarks
-
-After syncing development dependencies, run `just asv machine --yes` once and
-`just benchmark` to measure CLI startup and exec response latency. Use
-`just asv check --environment existing` to validate the suite. See
-[benchmark/README.md](benchmark/README.md) for filtering, saved results, and
-measurement boundaries.
+Run `just benchmark` for CLI latency measurements; see
+[benchmark/README.md](benchmark/README.md) for setup and measurement boundaries.
 
 ## Building Documentation
 

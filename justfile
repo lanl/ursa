@@ -15,7 +15,7 @@ benchmark *flags:
 
 # Run an ASV command using the benchmark project's configuration.
 asv *args:
-    uv run --no-sync asv {{ args }} --config benchmark/asv.conf.json
+    uv run --no-sync asv {{ args }}
 
 clean-workspaces:
     rm -rf workspace

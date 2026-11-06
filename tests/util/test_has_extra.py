@@ -1,179 +1,129 @@
-from email.message import Message
-from importlib import import_module, metadata
-from pathlib import PurePosixPath
-from types import SimpleNamespace
+from importlib import import_module
 
 import pytest
 
 extras = import_module("ursa.util.has_extra")
 
 
-def distribution(
-    *, provides=(), requires=(), modules=(), files=(), version="1.0"
-):
-    headers = Message()
-    for name in provides:
-        headers["Provides-Extra"] = name
-    return SimpleNamespace(
-        metadata=headers,
-        requires=requires,
-        version=version,
-        files=[PurePosixPath(path) for path in files],
-        read_text=lambda name: "\n".join(modules)
-        if name == "top_level.txt"
-        else None,
-    )
-
-
 @pytest.fixture
-def catalog(monkeypatch):
-    packages = {}
+def install(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(tmp_path))
 
-    def get_distribution(name):
-        try:
-            return packages[name]
-        except KeyError:
-            raise metadata.PackageNotFoundError(name) from None
+    def write(
+        name,
+        *,
+        provides=("feature",),
+        requires=(),
+        modules=(),
+        files=(),
+        version="1.0",
+    ):
+        info = tmp_path / f"{name.replace('-', '_')}-{version}.dist-info"
+        info.mkdir()
+        headers = [f"Name: {name}", f"Version: {version}"]
+        headers += [f"Provides-Extra: {extra}" for extra in provides]
+        headers += [f"Requires-Dist: {req}" for req in requires]
+        (info / "METADATA").write_text("\n".join(headers) + "\n")
+        (info / "top_level.txt").write_text("\n".join(modules))
+        (info / "RECORD").write_text("\n".join(f"{path},," for path in files))
+        for path in files:
+            module = tmp_path / path
+            module.parent.mkdir(parents=True, exist_ok=True)
+            module.write_text(
+                "raise RuntimeError('availability must not import')"
+            )
+        return info
 
-    monkeypatch.setattr(extras.metadata, "distribution", get_distribution)
-    return packages
-
-
-def test_default_package_uses_actual_extra_dependencies(catalog, monkeypatch):
-    catalog["ursa-ai"] = distribution(
-        provides=["lammps"],
-        requires=[
-            'atomman>=1; extra == "lammps"',
-            'trafilatura>=1; extra == "lammps"',
-        ],
-    )
-    for name in ("atomman", "trafilatura"):
-        catalog[name] = distribution(modules=[name])
-    checked = []
-    monkeypatch.setattr(
-        extras, "find_spec", lambda name: checked.append(name) or object()
-    )
-    assert extras.has_extra("lammps")
-    assert checked == ["atomman", "trafilatura"]
-    del catalog["trafilatura"]
-    assert not extras.has_extra("lammps")
-
-
-def test_distribution_and_import_names_can_differ(catalog, monkeypatch):
-    catalog["other-package"] = distribution(
-        provides=["office-readers"],
-        requires=['python-docx>=1; extra == "office-readers"'],
-    )
-    catalog["python-docx"] = distribution(modules=["docx"])
-    monkeypatch.setattr(
-        extras, "find_spec", lambda name: object() if name == "docx" else None
-    )
-    assert extras.has_extra("office_readers", package="other-package")
-
-
-def test_markers_ignore_base_and_inactive_dependencies(catalog):
-    catalog["ursa-ai"] = distribution(
-        provides=["example"],
-        requires=[
-            "missing-base-dependency>=1",
-            'missing-platform-dependency; extra == "example" and python_version < "2"',
-        ],
-    )
-    assert extras.has_extra("example")
-
-
-def test_missing_distribution_and_unknown_extra(catalog):
-    assert not extras.has_extra("missing")
-    catalog["ursa-ai"] = distribution(provides=["known"])
-    with pytest.raises(ValueError, match="Unknown extra"):
-        extras.has_extra("unknown")
+    return write
 
 
 @pytest.mark.parametrize(
-    "version, discoverable", [("0.9", True), ("1.0", False)]
+    "requirement, installed, module, expected",
+    [
+        ('benchmark-dep>=1; extra == "feature"', True, "json", True),
+        ('benchmark-dep>=1; extra == "feature"', False, "json", False),
+        (
+            'benchmark-dep>=1; extra == "feature"',
+            True,
+            "absent_benchmark_module",
+            False,
+        ),
+        ('benchmark-dep>=2; extra == "feature"', True, "json", False),
+        (
+            'benchmark-dep; extra == "feature" and python_version < "2"',
+            False,
+            "json",
+            True,
+        ),
+        ("benchmark-dep", False, "json", True),
+    ],
 )
-def test_requires_compatible_version_and_import_spec(
-    catalog, monkeypatch, version, discoverable
+def test_declared_requirements(
+    install, requirement, installed, module, expected
 ):
-    catalog["ursa-ai"] = distribution(
-        provides=["feature"], requires=['dependency>=1; extra == "feature"']
-    )
-    catalog["dependency"] = distribution(
-        modules=["dependency"], version=version
-    )
-    monkeypatch.setattr(
-        extras, "find_spec", lambda name: object() if discoverable else None
-    )
-    assert not extras.has_extra("feature")
+    install("ursa-ai", requires=[requirement])
+    if installed:
+        install("benchmark-dep", modules=[module])
+    assert extras.has_extra("feature") is expected
 
 
-def test_list_and_nested_extras_with_cycle(catalog, monkeypatch):
-    catalog["ursa-ai"] = distribution(
-        provides=["one", "two"],
-        modules=["ursa"],
+def test_all_dependencies_and_nested_extras(install):
+    install(
+        "ursa-ai",
+        provides=["lammps", "missing"],
+        modules=["json"],
         requires=[
-            'dependency[more]>=1; extra == "one"',
-            'absent; extra == "two"',
+            'benchmark-atomman[more]; extra == "lammps"',
+            'benchmark-trafilatura; extra == "lammps"',
+            'absent-benchmark-dep; extra == "missing"',
         ],
     )
-    catalog["dependency"] = distribution(
+    install(
+        "benchmark-atomman",
         provides=["more"],
-        modules=["dependency"],
-        requires=['ursa-ai[one]; extra == "more"'],
+        modules=["json"],
+        requires=[
+            'ursa-ai[lammps]; extra == "more"',
+        ],
     )
-    monkeypatch.setattr(extras, "find_spec", lambda name: object())
-    assert extras.has_extra("one")
-    assert not extras.has_extra(["one", "two"])
+    assert not extras.has_extra("lammps")
+    install("benchmark-trafilatura", modules=["json"])
+    assert extras.has_extra("lammps")
+    assert not extras.has_extra(["lammps", "missing"])
 
 
-def test_namespace_discovery_does_not_execute_parent(
-    catalog, monkeypatch, tmp_path
-):
-    root = tmp_path / "demo_namespace"
-    root.mkdir()
-    (root / "__init__.py").write_text("raise RuntimeError('must not import')")
-    child = root / "feature"
-    child.mkdir()
-    (child / "__init__.py").write_text("raise RuntimeError('must not import')")
-    monkeypatch.syspath_prepend(str(tmp_path))
-    catalog["ursa-ai"] = distribution(
-        provides=["feature"], requires=['namespace-feature; extra == "feature"']
+def test_namespace_discovery_without_imports(install, tmp_path):
+    install(
+        "benchmark-parent", requires=['benchmark-child; extra == "feature"']
     )
-    catalog["namespace-feature"] = distribution(
-        modules=["demo_namespace"],
-        files=["demo_namespace/feature/__init__.py"],
+    install(
+        "benchmark-child",
+        modules=["benchmark_namespace"],
+        files=["benchmark_namespace/feature/__init__.py"],
     )
-    assert extras.has_extra("feature")
-    (child / "__init__.py").unlink()
-    child.rmdir()
-    assert not extras.has_extra("feature")
-
-
-def test_import_names_from_record_and_missing_metadata():
-    dist = distribution(
-        files=[
-            "PIL/__init__.py",
-            "PIL/Image.py",
-            "PIL/nested/__init__.py",
-            "pillow.dist-info/METADATA",
-        ]
+    (tmp_path / "benchmark_namespace/__init__.py").write_text(
+        "raise RuntimeError('availability must not import')"
     )
-    assert extras._import_names(dist) == {"PIL"}
-    assert extras._import_names(distribution()) == set()
+    assert extras.has_extra("feature", package="benchmark-parent")
 
 
-def test_extraskip_checks_custom_package_and_rejects_unknown_extras(catalog):
+def test_custom_package_extra_normalization_and_extraskip(install):
     from tests.conftest import extraskip
 
-    catalog["example"] = distribution(
-        provides=["available", "missing"],
-        requires=['missing-dependency; extra == "missing"'],
+    install(
+        "benchmark-package",
+        provides=["office-readers", "missing"],
+        requires=[
+            'absent-benchmark-dep; extra == "missing"',
+        ],
     )
-    extraskip("available", package="example")
+    assert extras.has_extra("office_readers", package="benchmark-package")
+    assert not extras.has_extra("feature", package="absent-benchmark-package")
+    extraskip("office-readers", package="benchmark-package")
     with pytest.raises(
-        pytest.skip.Exception, match=r"example\[missing\]"
+        pytest.skip.Exception, match=r"benchmark-package\[missing\]"
     ) as exc:
-        extraskip("missing", package="example")
+        extraskip("missing", package="benchmark-package")
     assert exc.value.allow_module_level
     with pytest.raises(ValueError, match="Unknown extra"):
-        extraskip("typo", package="example")
+        extraskip("typo", package="benchmark-package")

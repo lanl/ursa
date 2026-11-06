@@ -1,9 +1,4 @@
-"""Validate MCP configuration without importing clients or server runtimes.
-
-URSA owns these configuration models so reading a config does not load the MCP
-SDK. Their fields and defaults are checked against the installed SDK in tests.
-The client adapter consumes their serialized values when connecting to a server.
-"""
+"""MCP configuration validated without importing the SDK or connecting."""
 
 from datetime import timedelta
 from pathlib import Path
@@ -15,8 +10,6 @@ from ursa.util.secrets import SecretTemplate
 
 
 class StdioServerParameters(BaseModel):
-    """Configuration for launching a local MCP process."""
-
     command: str
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] | None = None
@@ -26,8 +19,6 @@ class StdioServerParameters(BaseModel):
 
 
 class SseServerParameters(BaseModel):
-    """Configuration for an MCP SSE endpoint; timeouts are in seconds."""
-
     url: str
     headers: dict[str, Any] | None = None
     timeout: float = 5.0
@@ -35,8 +26,6 @@ class SseServerParameters(BaseModel):
 
 
 class StreamableHttpParameters(BaseModel):
-    """Configuration for an MCP streamable HTTP endpoint."""
-
     url: str
     headers: dict[str, Any] | None = None
     timeout: timedelta = timedelta(seconds=30)
@@ -44,98 +33,76 @@ class StreamableHttpParameters(BaseModel):
     terminate_on_close: bool = True
 
 
-_PARAMETER_TYPES = (
-    StdioServerParameters,
-    StreamableHttpParameters,
-    SseServerParameters,
-)
+_PARAMETER_TYPES = {
+    "stdio": StdioServerParameters,
+    "streamable_http": StreamableHttpParameters,
+    "sse": SseServerParameters,
+}
 
 
-def validate_server_parameters(config: Any):
-    if isinstance(config, _PARAMETER_TYPES):
+def parse_server_parameters(config: Any):
+    if isinstance(config, tuple(_PARAMETER_TYPES.values())):
         return config
     if isinstance(config, BaseModel):
-        # Python callers may already have SDK parameter instances. Only this
-        # compatibility path needs the SDK; config files never take it.
-        from mcp import StdioServerParameters as SDKStdio
-        from mcp.client.session_group import (
-            SseServerParameters as SDKSse,
+        # SDK instances can be supplied by Python callers. Preserve explicit
+        # fields and secret objects without importing the SDK on the file path.
+        kind = next(
+            (
+                key
+                for base in type(config).__mro__
+                for key, cls in _PARAMETER_TYPES.items()
+                if base.__module__.startswith("mcp.")
+                and base.__name__ == cls.__name__
+            ),
+            None,
         )
-        from mcp.client.session_group import (
-            StreamableHttpParameters as SDKHttp,
-        )
-
-        for cls, kind in (
-            (SDKStdio, "stdio"),
-            (SDKSse, "sse"),
-            (SDKHttp, "streamable_http"),
-        ):
-            if isinstance(config, cls):
-                # Preserve which fields were explicit, including secret objects.
-                config = {
-                    "transport": kind,
-                    **{
-                        name: getattr(config, name)
-                        for name in config.model_fields_set
-                    },
-                }
-                break
+        if kind is not None:
+            config = {
+                "transport": kind,
+                **{
+                    name: getattr(config, name)
+                    for name in config.model_fields_set
+                },
+            }
     if not isinstance(config, dict):
         raise ValueError(
             "MCP server configuration must be a mapping or parameters"
         )
-    kind = config.get("transport")
-    payload = {
-        key: value for key, value in config.items() if key != "transport"
-    }
+    payload = dict(config)
+    kind = payload.pop("transport", None)
     if isinstance(headers := payload.get("headers"), dict):
         payload["headers"] = {
             name: SecretTemplate.maybe_validate(value)
             for name, value in headers.items()
         }
-    cls = (
-        {
-            "stdio": StdioServerParameters,
-            "sse": SseServerParameters,
-            "streamable_http": StreamableHttpParameters,
-            "streamable-http": StreamableHttpParameters,
-        }.get(kind)
-        if isinstance(kind, str)
-        else None
-    )
-    if cls is not None:
+    if kind is not None:
+        cls = _PARAMETER_TYPES.get(str(kind).replace("-", "_"))
+        if cls is None:
+            raise ValueError(f"Unsupported MCP transport {kind!r}")
         return cls(**payload)
-    if kind is None:
-        # Preserve legacy inference: command first, then HTTP, then SSE.
-        for cls in _PARAMETER_TYPES:
-            try:
-                return cls(**payload)
-            except ValidationError:
-                continue
-        raise ValueError(
-            "Unable to determine transport for MCP server. "
-            "Provide 'transport' with one of: stdio, sse, streamable_http."
-        )
-    raise ValueError(f"Unsupported MCP transport {kind!r}")
+    # Legacy inference prefers stdio, then HTTP, then SSE.
+    for cls in _PARAMETER_TYPES.values():
+        try:
+            return cls(**payload)
+        except ValidationError:
+            continue
+    raise ValueError("Unable to determine transport for MCP server")
 
 
+validate_server_parameters = parse_server_parameters
 ServerParameters = Annotated[
     StdioServerParameters | SseServerParameters | StreamableHttpParameters,
-    BeforeValidator(validate_server_parameters),
+    BeforeValidator(parse_server_parameters),
 ]
-
-
-def parse_server_parameters(config: Any) -> ServerParameters:
-    return validate_server_parameters(config)
 
 
 def transport(config: ServerParameters) -> str:
     config = parse_server_parameters(config)
-    if isinstance(config, StdioServerParameters):
-        return "stdio"
-    if isinstance(config, StreamableHttpParameters):
-        return "streamable_http"
-    return "sse"
+    return next(
+        kind
+        for kind, cls in _PARAMETER_TYPES.items()
+        if isinstance(config, cls)
+    )
 
 
 def serialize_server_parameters(

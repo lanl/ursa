@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
+from threading import Lock
 from typing import TYPE_CHECKING, Any
 
 from ursa import agents
@@ -51,11 +52,11 @@ def _shares_message_history(agent: Any) -> bool:
     ) is not None and "messages" in getattr(state_type, "__annotations__", {})
 
 
-@dataclass(init=False)
+@dataclass
 class AgentHITL:
     """Wrapper for BaseAgent to delay instantiation and async method calls"""
 
-    _agent_class: Any = field(repr=False)
+    agent_class: Any
     config: dict = field(default_factory=dict)
     state: Any | None = None
     tool_sources: dict[str, str] = field(default_factory=dict, init=False)
@@ -64,27 +65,18 @@ class AgentHITL:
         default=None, init=False, repr=False
     )
 
-    def __init__(
-        self, agent_class: Any, config: dict | None = None, state: Any = None
-    ):
-        self._agent_class = agent_class
-        self.config = {} if config is None else config
-        self.state = state
-        self.tool_sources = {}
-        self._agent = None
-        self._initialization_task = None
-
-    @property
-    def agent_class(self):
+    @cached_property
+    def resolved_class(self):
         """Import an agent implementation only when requested."""
-        if isinstance(self._agent_class, str):
-            self._agent_class = getattr(agents, self._agent_class)
-        return self._agent_class
+        if isinstance(self.agent_class, str):
+            return getattr(agents, self.agent_class)
+        return self.agent_class
 
     async def instantiate(
         self,
         mcp_client: MultiServerMCPClient | None = None,
         finalizer: Callable[[Any], Awaitable[None]] | None = None,
+        dependencies: Callable | None = None,
         **kwargs,
     ):
         """Instantiate once, shared by all concurrent and cancelled waiters."""
@@ -94,7 +86,10 @@ class AgentHITL:
         if task is None:
             task = asyncio.create_task(
                 self._instantiate_once(
-                    mcp_client=mcp_client, finalizer=finalizer, **kwargs
+                    mcp_client=mcp_client,
+                    finalizer=finalizer,
+                    dependencies=dependencies,
+                    **kwargs,
                 )
             )
             self._initialization_task = task
@@ -115,23 +110,30 @@ class AgentHITL:
         self,
         mcp_client: MultiServerMCPClient | None = None,
         finalizer: Callable[[Any], Awaitable[None]] | None = None,
+        dependencies: Callable | None = None,
         **kwargs,
     ) -> None:
-        from ursa.agents.base import AgentWithTools
-
         kwargs |= self.config
 
         def build_agent():
+            nonlocal mcp_client
+            if dependencies is not None:
+                model, embedding, mcp_client = dependencies()
+                kwargs.setdefault("llm", model)
+                if "rag_tools" in kwargs:
+                    kwargs.setdefault("rag_tool_embedding", embedding)
             try:
-                agent = self.agent_class(**kwargs)
+                agent = self.resolved_class(**kwargs)
             except TypeError as exc:
                 raise TypeError(
-                    f"Failed to instantiate {self.agent_class.__name__} with "
+                    f"Failed to instantiate {self.resolved_class.__name__} with "
                     f"config {self.config}. {exc}"
                 ) from exc
             return agent
 
         agent = await asyncio.to_thread(build_agent)
+        from ursa.agents.base import AgentWithTools
+
         try:
             tool_sources: dict[str, str] = {}
             if mcp_client and isinstance(agent, AgentWithTools):
@@ -167,7 +169,7 @@ class AgentHITL:
     @property
     def description(self):
         if self._agent is None:
-            return self.agent_class.__doc__
+            return self.resolved_class.__doc__
         return self._agent.__doc__
 
     async def __call__(
@@ -302,7 +304,7 @@ class HITL:
         self.last_agent_result = None
         self.last_agent = None
         self._runtime_checkpointers: list[AsyncSqliteSaver] = []
-        self._dependencies_task: asyncio.Task | None = None
+        self._dependencies_lock = Lock()
         self._transition_lock = asyncio.Lock()
         self._transition_serial_lock = asyncio.Lock()
         self._loads_allowed = asyncio.Event()
@@ -338,19 +340,17 @@ class HITL:
         return start_mcp_client(self.config.mcp_servers)
 
     def _agent_dependencies(self):
-        needs_embedding = any(
-            agent.config.get("rag_tools") for agent in self.agents.values()
-        )
-        return (
-            self.model,
-            self.embedding if needs_embedding else None,
-            self.mcp_client,
-        )
-
-    def _dependencies_done(self, task: asyncio.Task) -> None:
-        if task.cancelled() or task.exception() is not None:
-            if self._dependencies_task is task:
-                self._dependencies_task = None
+        # AgentHITL owns initialization and cancellation; serialize shared first
+        # use here so concurrent agents reuse the same cached dependencies.
+        with self._dependencies_lock:
+            needs_embedding = any(
+                agent.config.get("rag_tools") for agent in self.agents.values()
+            )
+            return (
+                self.model,
+                self.embedding if needs_embedding else None,
+                self.mcp_client,
+            )
 
     async def _get_checkpointer(
         self, checkpoint_path: Path
@@ -444,24 +444,11 @@ class HITL:
 
     async def _get_agent(self, name: str) -> AgentHITL:
         agent = self.agents[name]
-        # First-use imports and connectivity checks must not block the TUI.
-        # Share the initialized dependencies across concurrent agent requests.
-        task = self._dependencies_task
-        if task is None:
-            task = asyncio.create_task(
-                asyncio.to_thread(self._agent_dependencies)
-            )
-            self._dependencies_task = task
-            task.add_done_callback(self._dependencies_done)
-        model, embedding, mcp_client = await asyncio.shield(task)
-        if "rag_tools" in agent.config:
-            agent.config.setdefault("rag_tool_embedding", embedding)
         await agent.instantiate(
-            llm=model,
+            dependencies=self._agent_dependencies,
             workspace=self.workspace,
             agent_name=self.session_agent_name,
             group=self.group,
-            mcp_client=mcp_client,
             finalizer=self._finalize_named_agent,
             thread_id=f"{self.thread_id}",
         )
@@ -608,15 +595,6 @@ class HITL:
 
     async def _close_instantiated_agents(self) -> None:
         """Close and reset agents so they bind to the configured model."""
-        task = self._dependencies_task
-        if task is not None:
-            try:
-                await asyncio.shield(task)
-            except Exception:
-                logging.exception(
-                    "Dependency initialization failed during cleanup"
-                )
-            self._dependencies_task = None
         for wrapper in self.agents.values():
             try:
                 await wrapper.wait_until_initialized()

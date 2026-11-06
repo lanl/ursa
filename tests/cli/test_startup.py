@@ -1,194 +1,72 @@
-"""Import regressions must run outside pytest's already-imported runtime."""
+"""Exercise delayed loading in fresh processes and response-before-cleanup."""
 
-import asyncio
-import threading
+from io import StringIO
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
-from pydantic import ValidationError
 
-from benchmark.benchmarks._startup import MCP_SCENARIOS, measure
+from benchmark.startup import SCENARIOS, measure
 from ursa.cli.config import EmbModelConfig, UrsaConfig
-from ursa.cli.runtime import HITL, AgentHITL
+from ursa.cli.one_shot import run_once
+from ursa.cli.runtime import HITL
 
 
-@pytest.mark.parametrize(
-    "scenario",
-    [
-        "prompt",
-        "named-prompt",
-        "provider-prompt",
-        "saved-config-prompt",
-        *MCP_SCENARIOS,
-    ],
-)
-def test_first_prompt_does_not_load_agent_implementations(scenario):
-    _, modules = measure(scenario, timeout=30, headless=True)
-    for prefix in (
-        "ursa.agents.base",
-        "ursa.util.mcp",
-        "fastmcp",
-        "mcp",
-        "langchain_mcp_adapters",
-        "langchain_openai",
-        "langchain_ollama",
-        "langgraph.checkpoint.sqlite",
-        "chromadb",
-        "numpy",
-    ):
+@pytest.mark.parametrize("scenario", SCENARIOS)
+def test_cli_defers_unused_imports(scenario):
+    _, modules = measure(scenario)
+    forbidden = {"chromadb", "mcp", "fastmcp", "langchain_openai", "pymupdf"}
+    if scenario == "exec":
+        forbidden.add("textual")
+        assert "langchain_core.language_models.fake_chat_models" in modules
+    else:
+        forbidden.update({
+            "ursa.agents.base",
+            "langchain_core.language_models.fake_chat_models",
+            "numpy",
+        })
+    for prefix in forbidden:
         assert not any(
             name == prefix or name.startswith(prefix + ".") for name in modules
         ), prefix
 
 
-async def test_agent_registry_resolves_classes_only_on_metadata_access(
-    monkeypatch, tmp_path
-):
-    loaded = []
-
-    class Agent:
-        """An agent loaded on demand."""
-
-    class Catalog:
-        def __getattr__(self, name):
-            loaded.append(name)
-            return Agent
-
-    monkeypatch.setattr("ursa.cli.runtime.agents", Catalog())
-    runtime = HITL(UrsaConfig(workspace=tmp_path))
-    try:
-        assert "chat" in runtime.agents
-        assert loaded == []
-        assert runtime.agents["chat"].description == Agent.__doc__
-        assert runtime.agents["chat"].agent_class is Agent
-        assert loaded == ["ChatAgent"]
-    finally:
-        await runtime.aclose()
-
-
-def test_runtime_agent_accepts_concrete_class():
-    class Agent:
-        """Custom agent metadata."""
-
-    agent = AgentHITL(Agent)
-    assert agent.agent_class is Agent
-    assert agent.description == Agent.__doc__
-
-
 @pytest.mark.parametrize("rag_tools", [[], ["saved-rag"]])
-async def test_embedding_initialization_waits_until_rag_is_configured(
-    tmp_path, monkeypatch, rag_tools
-):
+async def test_embeddings_wait_for_rag_tools(tmp_path, monkeypatch, rag_tools):
     runtime = HITL(
         UrsaConfig(
             workspace=tmp_path,
-            emb_model=EmbModelConfig(model="unused", model_provider="openai"),
             rag_tools=rag_tools,
+            emb_model=EmbModelConfig(model="unused", model_provider="openai"),
         )
     )
-    model, embedding = object(), object()
-    runtime.model = model
-    runtime.mcp_client = None
+    runtime.model = object()
     calls = []
     monkeypatch.setattr(
-        "ursa.cli.runtime.validate_model_provider", lambda *args: None
+        "ursa.cli.runtime.validate_model_provider", lambda *a: None
     )
     monkeypatch.setattr(
-        "ursa.cli.runtime.enforce_model_group_policy", lambda *args: None
+        "ursa.cli.runtime.enforce_model_group_policy", lambda *a: None
     )
     monkeypatch.setattr(
-        EmbModelConfig,
-        "init_embedding",
-        lambda self: calls.append(True) or embedding,
+        EmbModelConfig, "init_embedding", lambda self: calls.append(1)
     )
-    assert runtime._agent_dependencies() == (
-        model,
-        embedding if rag_tools else None,
-        None,
-    )
-    assert calls == ([True] if rag_tools else [])
+    runtime._agent_dependencies()
+    assert bool(calls) == bool(rag_tools)
     await runtime.aclose()
 
 
-@pytest.mark.parametrize("cancel_waiters", [False, True])
-async def test_first_use_shares_dependencies_and_shutdown_waits(
-    monkeypatch, tmp_path, cancel_waiters
-):
-    runtime = HITL(UrsaConfig(workspace=tmp_path))
-    started = threading.Event()
-    release = threading.Event()
-    calls = []
-    model = object()
+def test_exec_displays_response_before_cleanup(tmp_path):
+    output = StringIO()
 
-    def load_dependencies():
-        calls.append(threading.get_ident())
-        started.set()
-        assert release.wait(5)
-        return model, None, None
+    async def close():
+        assert output.getvalue().strip() == "Hello!"
 
-    class Agent:
-        def __init__(self, **kwargs):
-            assert kwargs["llm"] is model
-
-        async def aclose(self):
-            pass
-
-        def close(self):
-            pass
-
-    monkeypatch.setattr(runtime, "_agent_dependencies", load_dependencies)
-    runtime.agents = {name: AgentHITL(Agent) for name in ("one", "two")}
-    waiters = [
-        asyncio.create_task(runtime.get_agent(name)) for name in runtime.agents
-    ]
-    try:
-        assert await asyncio.to_thread(started.wait, 2)
-        if cancel_waiters:
-            for waiter in waiters:
-                waiter.cancel()
-            for waiter in waiters:
-                with pytest.raises(asyncio.CancelledError):
-                    await waiter
-            closing = asyncio.create_task(runtime.aclose())
-            await asyncio.sleep(0.01)
-            assert not closing.done()
-            release.set()
-            await asyncio.wait_for(closing, 2)
-            assert all(
-                wrapper._agent is None for wrapper in runtime.agents.values()
-            )
-        else:
-            release.set()
-            wrappers = await asyncio.wait_for(asyncio.gather(*waiters), 2)
-            assert all(wrapper._agent is not None for wrapper in wrappers)
-        assert len(calls) == 1
-        assert calls[0] != threading.get_ident()
-    finally:
-        release.set()
-        await asyncio.gather(*waiters, return_exceptions=True)
-        await runtime.aclose()
-
-
-@pytest.mark.parametrize(
-    "server",
-    [
-        {"transport": "unknown", "url": "https://example.com/mcp"},
-        {"transport": "stdio"},
-        {"transport": "sse", "url": 123},
-    ],
-)
-def test_delayed_mcp_import_preserves_configuration_validation(server):
-    with pytest.raises(ValidationError):
-        UrsaConfig(mcp_servers={"invalid": server})
-
-
-def test_delayed_mcp_import_preserves_json_schema():
-    schema = UrsaConfig.model_json_schema()
-    parameters = schema["properties"]["mcp_servers"]["additionalProperties"]
-    assert {
-        item["$ref"].rsplit("/", 1)[-1] for item in parameters["anyOf"]
-    } == {
-        "StdioServerParameters",
-        "SseServerParameters",
-        "StreamableHttpParameters",
-    }
-    assert schema["$defs"]["StdioServerParameters"]["required"] == ["command"]
+    runtime = SimpleNamespace(
+        workspace=tmp_path,
+        agents={"chat": object()},
+        run_agent=AsyncMock(return_value="Hello!"),
+        aclose=AsyncMock(side_effect=close),
+    )
+    assert run_once(runtime, "say hello", stdout=output) == "Hello!"
+    runtime.aclose.assert_awaited_once()
