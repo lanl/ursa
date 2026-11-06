@@ -1,7 +1,7 @@
 Run a complete 20-player Werewolf game with root as the GM and real subagents
 p01 through p20. Continue until a faction wins. Use hierarchy tools only; do
-not simulate players or write files. Keep /messages interesting: the players
-must talk directly to one another and to groups, not just submit choices to GM.
+not simulate players or write files. Players communicate directly with one
+another and with groups to form alliances and coordinate their decisions.
 
 Privately assign four wolves (p03, p08, p14, p19), seer p06, doctor p11, and
 villagers to everyone else. Give each player a distinct short personality.
@@ -67,8 +67,8 @@ GM workflow:
    Broadcast GAME OVER with result, roles, survivors, and eliminations to all
    twenty. Give the user the final summary.
 
-Parallelism is a requirement of this exercise: throughout play, batch all
-currently independent spawn/send calls in the same model response. When several
+Coordination strategy: batch currently independent spawn/send calls in the
+same model response throughout play. When several
 replies are outstanding, use one wait_for with a target list; it returns when
 any target is ready. Use wait_all=True only if every target must be ready.
 Use one list-target send for an identical announcement, and multiple calls for

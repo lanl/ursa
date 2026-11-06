@@ -34,13 +34,17 @@ async def test_chat_agent_appends_ai_response(chat_model, tmpdir):
     assert result["thread_id"] == agent.thread_id
 
 
-def test_chat_agent_explicitly_enables_openai_parallel_tool_calls(tmp_path):
-    """OpenAI tool bindings explicitly allow batching."""
-    model = ChatOpenAI(model="gpt-5.4", api_key="test-key")
+@pytest.mark.parametrize("parallel", [None, False, True])
+def test_chat_agent_preserves_openai_parallel_tool_setting(tmp_path, parallel):
+    options = {} if parallel is None else {"parallel_tool_calls": parallel}
+    model = ChatOpenAI(
+        model="gpt-5.4", api_key="test-key", model_kwargs=options
+    )
 
     agent = ChatAgent(llm=model, workspace=tmp_path)
 
-    assert agent.llm.kwargs["parallel_tool_calls"] is True
+    assert "parallel_tool_calls" not in agent.llm.kwargs
+    assert agent.llm.bound.model_kwargs == options
 
 
 async def test_chat_agent_runs_independent_tool_calls_concurrently(tmp_path):

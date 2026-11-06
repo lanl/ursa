@@ -119,9 +119,7 @@ class ChatAgent(AgentWithTools, BasicChatAgent):
 
     def _build_graph(self):
         # Bind tools to llm and context summarizer
-        self.llm = self.bind_tools_prefer_parallel(
-            self.llm, list(self.tools.values())
-        )
+        self.llm = self.llm.bind_tools(list(self.tools.values()))
 
         self.add_node(self._response_node, "respond")
         self.add_node(self.tool_node, "tool_node")

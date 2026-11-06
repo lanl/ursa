@@ -580,9 +580,7 @@ This report summarizes the deep-review process for the following question:
         return {"summary_report": final_latex}
 
     def _build_graph(self):
-        self.tool_llm = self.bind_tools_prefer_parallel(
-            self.tool_llm, list(self.tools.values())
-        )
+        self.tool_llm = self.tool_llm.bind_tools(list(self.tools.values()))
 
         self.add_node(self.agent1_generate_solution, "agent1")
         self.add_node(self.agent2_critique, "agent2")

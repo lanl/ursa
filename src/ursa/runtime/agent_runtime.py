@@ -19,13 +19,14 @@ from fastmcp import FastMCP
 from langchain_core.messages import HumanMessage
 
 from ursa import agents
-from ursa.agents.base import (
-    AgentWithTools,
-    BaseAgent,
-    agent_message_wait_result,
-    attach_agent_message_instructions,
+from ursa.agents.base import AgentWithTools, BaseAgent
+from ursa.cli.config import (
+    ChatModelConfig,
+    EmbModelConfig,
+    UrsaConfig,
+    resolve_ursa_config,
 )
-from ursa.agents.coordination import (
+from ursa.messaging.coordination import (
     MessageWait,
     check_capacity,
     resolve_message_routes,
@@ -35,11 +36,9 @@ from ursa.agents.coordination import (
     wait_timeout,
     wake_waiters,
 )
-from ursa.cli.config import (
-    ChatModelConfig,
-    EmbModelConfig,
-    UrsaConfig,
-    resolve_ursa_config,
+from ursa.messaging.messages import (
+    agent_message_wait_result,
+    attach_agent_message_instructions,
 )
 from ursa.security import enforce_model_group_policy
 from ursa.util.has_optional_dep_group import has_optional_dep_group

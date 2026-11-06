@@ -1,0 +1,6 @@
+title: Play Werewolf with a team of agents
+summary: Coordinate twenty players through private messages, group discussion, and parallel tool calls.
+tags:
+  - guided
+  - multi-agent
+  - tui

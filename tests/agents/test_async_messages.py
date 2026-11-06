@@ -4,10 +4,8 @@ from typing import Any
 import pytest
 from langchain.tools import ToolException
 
-from ursa.agents.base import (
-    AgentMessage,
-    BaseAgent,
-)
+from ursa.agents.base import BaseAgent
+from ursa.messaging import AgentMessage
 from ursa.tools.agent_tools import build_agent_tools
 
 
@@ -534,3 +532,56 @@ async def test_request_is_rejected_while_message_loop_is_stopping(mailbox):
     agent.release.set()
     assert await request == {"content": "in progress"}
     await stopping
+
+
+async def test_direct_invocations_serialize_but_allow_owner_reentry(
+    mailbox, monkeypatch
+):
+    agent = mailbox()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = []
+
+    async def invoke(inputs, **_config):
+        content = inputs["messages"][-1].content
+        calls.append(content)
+        assert agent.is_working
+        if content == "outer":
+            assert await agent.ainvoke("inner") == "inner"
+            entered.set()
+            await release.wait()
+        return content
+
+    monkeypatch.setattr(agent, "_ainvoke", invoke)
+    outer = asyncio.create_task(agent.ainvoke("outer"))
+    competing = None
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        competing = asyncio.create_task(agent.ainvoke("competing"))
+        await asyncio.sleep(0)
+        assert calls == ["outer", "inner"]
+        assert not competing.done()
+        release.set()
+        assert await asyncio.wait_for(
+            asyncio.gather(outer, competing), timeout=2
+        ) == ["outer", "competing"]
+        assert calls == ["outer", "inner", "competing"]
+        assert agent._async_invocation_owner is None
+        assert not agent.is_working
+    finally:
+        for task in (outer, competing):
+            if task is not None:
+                task.cancel()
+        await asyncio.gather(
+            *(task for task in (outer, competing) if task is not None),
+            return_exceptions=True,
+        )
+
+
+@pytest.mark.parametrize("limit", ["subagent_max_agents", "subagent_max_depth"])
+@pytest.mark.parametrize("value", [-1, True, 1.5])
+def test_messaging_lifecycle_rejects_invalid_limits(mailbox, limit, value):
+    with pytest.raises(
+        ValueError, match=f"{limit} must be a non-negative integer"
+    ):
+        mailbox(**{limit: value})

@@ -2,7 +2,10 @@
 
 Every `BaseAgent` has an asynchronous inbox and can own a dynamic hierarchy of
 subagents. Inbox processing is serialized per agent, while different agents may
-run concurrently.
+run concurrently. The inbox and hierarchy lifecycle live in
+`ursa.messaging.AsyncMessageMixin`; shared coordination rules live in
+`ursa.messaging.coordination`. `BaseAgent` uses the mixin to validate subagent
+limits and serialize async invocations, including reentrant calls.
 
 ## User messages
 
@@ -119,9 +122,10 @@ one tool-calling round while the sending agent continues its own work. Chat
 agents are instructed to batch independent spawns, different messages, and
 identical group announcements in the same model response. Use one list-target
 `wait_for` call to synchronize several outstanding agents. Dependent actions
-and conflicting writes remain sequential. OpenAI bindings explicitly enable
-`parallel_tool_calls`; the model still chooses which calls to emit, and
-LangGraph executes each batch.
+and conflicting writes remain sequential. Tools use the model's normal
+`bind_tools` method without overriding provider settings. OpenAI allows
+[parallel function calls by default](https://developers.openai.com/api/docs/guides/function-calling#parallel-function-calling);
+the model chooses which calls to emit, and LangGraph executes each batch.
 
 Peers can send directly to siblings or broadcast to explicit target lists;
 communication does not have to pass through the root. Exclude the sender from

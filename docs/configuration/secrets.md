@@ -43,7 +43,7 @@ api_key:
 URSA resolves the reference only when the credential is needed. Resolved
 values remain masked in Pydantic models and configuration output.
 
-## Format a secret with a template
+## Format a secret with `SecretTemplate`
 
 MCP headers often need a scheme or another prefix around the credential. Add a
 `template` containing `%s`, which URSA replaces with the resolved secret:

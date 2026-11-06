@@ -8,7 +8,7 @@ from langchain.tools import ToolException
 
 from tests.agents.test_async_messages import MailboxAgent, hierarchy_tool
 from tests.runtime.fixtures import runtime_request, set_hierarchy
-from ursa.agents.base import AgentMessage
+from ursa.messaging import AgentMessage
 
 
 @pytest.fixture(params=["local", "managed"])

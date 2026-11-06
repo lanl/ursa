@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from langchain.tools import BaseTool, ToolException
 from langchain_core.tools import tool
 
-from ursa.agents.coordination import (
+from ursa.messaging.coordination import (
     SubagentLimitError,
     wait_for_completion,
     wait_targets,

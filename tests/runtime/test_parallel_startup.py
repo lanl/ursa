@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from tests.runtime.fixtures import runtime_request
-from ursa.agents.base import SubagentLimitError
+from ursa.messaging import SubagentLimitError
 
 
 @pytest.fixture
