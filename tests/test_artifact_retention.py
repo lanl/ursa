@@ -196,12 +196,15 @@ def test_corrupt_published_archive_cannot_resume_or_restore(payloads, policy):
         restore_artifacts(payloads / "retention.json", payloads / "restored")
 
 
-def test_links_are_not_followed_and_hardlinks_roundtrip(payloads, policy):
+@pytest.mark.parametrize("target", ["nested/data.bin", "./nested/data.bin"])
+def test_links_are_not_followed_and_hardlinks_roundtrip(
+    payloads, policy, target
+):
     directory = payloads / "trial/artifacts"
     outside = payloads / "outside.txt"
     outside.write_text("outside")
     (directory / "external-link").symlink_to(outside)
-    (directory / "relative-link").symlink_to("nested/data.bin")
+    (directory / "relative-link").symlink_to(target)
     os.link(directory / "nested/data.bin", directory / "hard-link")
     state = apply_retention(plan(payloads, policy))
     assert outside.read_text() == "outside"
