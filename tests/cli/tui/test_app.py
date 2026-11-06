@@ -521,13 +521,42 @@ async def test_controls_during_active_work(app, monkeypatch, key):
         assert app._exit
 
 
-@pytest.mark.parametrize("in_band", [False, True])
-async def test_active_message_promotes_only_on_acceptance(app, in_band):
+@pytest.mark.parametrize(
+    ("in_band", "reply_first", "overlap"),
+    [
+        (False, False, False),
+        (False, True, False),
+        (True, False, False),
+        (True, False, True),
+    ],
+)
+async def test_active_message_promotes_only_on_acceptance(
+    app, monkeypatch, in_band, reply_first, overlap
+):
     runtime = app.runtime
     _activate_hierarchy(runtime, "root")
     started = asyncio.Event()
     release_root = asyncio.Event()
     accept_message = asyncio.Event()
+    if overlap:
+        finishing = asyncio.Event()
+        original_finish = app._finish_agent_run
+        original_remove = QueuedMessage.remove
+
+        async def finish(turn, response, **kwargs):
+            if response == "Original response":
+                finishing.set()
+            await original_finish(turn, response, **kwargs)
+
+        async def remove(queued):
+            # The agent has received the input, but Textual is still moving
+            # its row from the queue into the conversation when the reply arrives.
+            release_root.set()
+            await finishing.wait()
+            await original_remove(queued)
+
+        monkeypatch.setattr(app, "_finish_agent_run", finish)
+        monkeypatch.setattr(QueuedMessage, "remove", remove)
 
     async def run_agent(_name, _prompt, callbacks=None):
         started.set()
@@ -567,12 +596,68 @@ async def test_active_message_promotes_only_on_acceptance(app, in_band):
             assert prompt.text == "unsent draft"
             assert len(app.query(QueuedMessage)) == 1
             assert not release_root.is_set()
+            if reply_first:
+                release_root.set()
+                assert await wait_for(
+                    pilot,
+                    lambda: any(
+                        card.content == "Original response"
+                        for card in app.query(MessageCard)
+                    ),
+                )
+                assert queued.is_mounted
             accept_message.set()
 
         assert await wait_for(pilot, lambda: not app.query(QueuedMessage))
         assert any(card.content == "update" for card in app.query(MessageCard))
         assert all(card.content != "None" for card in app.query(MessageCard))
         await app.workers.wait_for_complete()
+        await pilot.pause()
+        cards = {card.content: card for card in app.query(MessageCard)}
+        assert (
+            cards["update"].region.y < cards["Original response"].region.y
+        ) != reply_first
+        if not in_band:
+            assert cards["update"].region.y < cards["Processed update"].region.y
+
+
+@pytest.mark.parametrize("agent_path", [None, "root", "root/reviewer"])
+async def test_replies_follow_accepted_messages_for_the_same_agent(
+    app, agent_path
+):
+    async with app.run_test():
+        first = Turn("first", app.runtime.workspace, agent_path=agent_path)
+        followup = Turn(
+            "follow-up", app.runtime.workspace, agent_path=agent_path
+        )
+        other = Turn(
+            "another agent", app.runtime.workspace, agent_path="root/other"
+        )
+        for turn in (first, followup, other):
+            await app._mount_existing_turn(turn)
+        await app._finish_agent_run(first, "First reply", succeeded=True)
+        await app._finish_agent_run(followup, "Second reply", succeeded=True)
+
+        messages = list(app.query(MessageCard))
+        expected = (
+            ["first", "First reply", "follow-up", "Second reply"]
+            if agent_path is None
+            else ["first", "follow-up", "First reply", "Second reply"]
+        )
+        assert [card.content for card in messages] == [
+            *expected,
+            "another agent",
+        ]
+        assert [card.content for card in other.query(MessageCard)] == [
+            "another agent"
+        ]
+        assert first.activity_finished and followup.activity_finished
+        # Several replies can follow an accepted input. Every message remains
+        # reachable through the previous/next turn navigation shortcuts.
+        markers = app._turn_markers()
+        assert [
+            marker for marker in markers if isinstance(marker, MessageCard)
+        ] == messages
 
 
 async def test_subagents_command_switches_message_and_progress_target(

@@ -575,14 +575,15 @@ class UrsaTextualApp(App[None]):
     async def _promote_queued_message(
         self, turn: Turn, queued: QueuedMessage
     ) -> None:
-        if self._exit or turn.is_mounted:
-            return
-        container = self.query_one("#queued-messages", VerticalScroll)
-        if queued.is_mounted:
-            await queued.remove()
-        if not list(container.children):
-            container.add_class("hidden")
-        await self._mount_existing_turn(turn)
+        async with self._agent_turn_lock:
+            if self._exit or turn.is_mounted:
+                return
+            container = self.query_one("#queued-messages", VerticalScroll)
+            if queued.is_mounted:
+                await queued.remove()
+            if not list(container.children):
+                container.add_class("hidden")
+            await self._mount_existing_turn(turn)
 
     async def _start_agent_turn(self, prompt: str) -> None:
         turn = await self._mount_turn(prompt)
@@ -684,9 +685,24 @@ class UrsaTextualApp(App[None]):
             self._record_agent_activity(turn.agent_path, "Failed")
         turn.finish_activity(succeeded=succeeded)
         if response is not None:
-            await turn.add_response(response)
-            self.call_after_refresh(self._anchor_conversation_if_overflowing)
-            self._turn_navigation_marker = list(turn.query(MessageCard))[-1]
+            # A wait tool can consume follow-ups during the original run.
+            # Keep its reply after those accepted inputs in the conversation.
+            async with self._agent_turn_lock:
+                response_turn = turn
+                if turn.agent_path is not None:
+                    for candidate in self.query(Turn):
+                        if (
+                            candidate.agent_path == turn.agent_path
+                            and not candidate.progress_only
+                        ):
+                            response_turn = candidate
+                await response_turn.add_response(response)
+                self.call_after_refresh(
+                    self._anchor_conversation_if_overflowing
+                )
+                self._turn_navigation_marker = list(
+                    response_turn.query(MessageCard)
+                )[-1]
         self._settle_prompt_after_run()
 
     def _settle_prompt_after_run(self) -> None:
@@ -1306,8 +1322,7 @@ class UrsaTextualApp(App[None]):
                 continue
             activity = turn.query_one(".events")
             markers.extend((messages[0], activity))
-            if len(messages) > 1:
-                markers.append(messages[-1])
+            markers.extend(messages[1:])
             markers.append(turn.query_one(".turn-end-marker"))
         return markers
 
