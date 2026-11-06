@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -7,8 +8,7 @@ from ursa.cli.agent_management import import_agent
 
 
 def _write_checkpoint_db(path):
-    conn = sqlite3.connect(path)
-    try:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE checkpoints (
@@ -73,20 +73,20 @@ def _write_checkpoint_db(path):
                 b"value",
             ),
         )
-        conn.commit()
-    finally:
-        conn.close()
+
+
+@pytest.fixture
+def group_dir(monkeypatch, tmp_path):
+    root = tmp_path / "ursa"
+    group_root = root / "science"
+    group_root.mkdir(parents=True)
+    monkeypatch.setattr(agent_management, "URSA_CACHE_DIR", root)
+    return group_root / "agents"
 
 
 def test_import_agent_db_creates_agent_checkpoint_and_rewrites_thread_ids(
-    monkeypatch, tmp_path
+    group_dir, tmp_path
 ):
-    root = tmp_path / "ursa"
-    group_root = root / "science"
-    group_dir = group_root / "agents"
-    group_root.mkdir(parents=True)
-    monkeypatch.setattr(agent_management, "URSA_CACHE_DIR", root)
-
     source_db = tmp_path / "execute.db"
     _write_checkpoint_db(source_db)
 
@@ -95,37 +95,25 @@ def test_import_agent_db_creates_agent_checkpoint_and_rewrites_thread_ids(
     imported_db = group_dir / "converted_agent" / "db" / "checkpointer.db"
     assert imported_db.is_file()
 
-    conn = sqlite3.connect(imported_db)
-    try:
+    with closing(sqlite3.connect(imported_db)) as conn:
         checkpoint_threads = conn.execute(
             "SELECT DISTINCT thread_id FROM checkpoints"
         ).fetchall()
         write_threads = conn.execute(
             "SELECT DISTINCT thread_id FROM writes"
         ).fetchall()
-    finally:
-        conn.close()
 
     assert checkpoint_threads == [("ursa",)]
     assert write_threads == [("ursa",)]
 
-    source_conn = sqlite3.connect(source_db)
-    try:
+    with closing(sqlite3.connect(source_db)) as source_conn:
         original_threads = source_conn.execute(
             "SELECT DISTINCT thread_id FROM checkpoints"
         ).fetchall()
-    finally:
-        source_conn.close()
     assert original_threads == [("old-thread",)]
 
 
-def test_import_agent_db_requires_name(monkeypatch, tmp_path):
-    root = tmp_path / "ursa"
-    group_root = root / "science"
-    group_dir = group_root / "agents"
-    group_root.mkdir(parents=True)
-    monkeypatch.setattr(agent_management, "URSA_CACHE_DIR", root)
-
+def test_import_agent_db_requires_name(group_dir, tmp_path):
     source_db = tmp_path / "execute.db"
     _write_checkpoint_db(source_db)
 
@@ -136,14 +124,8 @@ def test_import_agent_db_requires_name(monkeypatch, tmp_path):
 
 
 def test_import_agent_db_cleans_up_destination_on_invalid_database(
-    monkeypatch, tmp_path
+    group_dir, tmp_path
 ):
-    root = tmp_path / "ursa"
-    group_root = root / "science"
-    group_dir = group_root / "agents"
-    group_root.mkdir(parents=True)
-    monkeypatch.setattr(agent_management, "URSA_CACHE_DIR", root)
-
     source_db = tmp_path / "invalid.db"
     source_db.write_text("not sqlite", encoding="utf-8")
 

@@ -39,6 +39,16 @@ def make_runtime(
     )
 
 
+def read_file_content(filename: str, workspace: Path) -> str:
+    """Read through the public tool interface with a real injected runtime."""
+    from ursa.tools.read_file_tool import read_file
+
+    runtime = make_runtime(
+        workspace=workspace, llm=None, tool_call_id="read-file-call"
+    )
+    return read_file.invoke({"filename": filename, "runtime": runtime})
+
+
 class CustomEventRecorder(BaseCallbackHandler):
     """Record custom events emitted from a Runnable parent run."""
 

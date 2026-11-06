@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-import ursa.tools.read_file_tool as rft
+from tests.tools.utils import read_file_content
 
 
 def _bins_available() -> bool:
@@ -36,14 +36,6 @@ def _make_scanned_pdf(path: Path, text: str = "Hello OCR 123") -> None:
     c.save()
 
 
-def _call_tool(filename: str, workspace: Path) -> str:
-    state = {"workspace": str(workspace)}
-    tool_obj = rft.read_file
-    if hasattr(tool_obj, "invoke"):
-        return tool_obj.invoke({"filename": filename, "state": state})
-    return tool_obj.func(filename=filename, state=state)
-
-
 def test_real_ocr_creates_openable_pdf_and_extracts_text(tmp_path):
     if not _bins_available():
         pytest.skip("Requires ocrmypdf+tesseract+qpdf+ghostscript on PATH")
@@ -57,9 +49,7 @@ def test_real_ocr_creates_openable_pdf_and_extracts_text(tmp_path):
     _make_scanned_pdf(pdf, text="Hello OCR 123")
 
     # Act
-    out = _call_tool("scanned.pdf", tmp_path)
-    print("EXTRACTED_LEN:", len(out))
-    print("EXTRACTED_PREVIEW:", out[:300])
+    out = read_file_content("scanned.pdf", tmp_path)
 
     # Assert: text should include our phrase (allow normalization quirks)
     assert "hello" in out.lower()

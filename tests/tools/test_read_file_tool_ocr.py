@@ -1,14 +1,11 @@
 import os
-import shutil
 import time
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
-import ursa.tools.read_file_tool as rft
-
-# import the module (not just the symbol) so monkeypatch works cleanly
-from tests.tools.utils import make_runtime
+from tests.tools.utils import read_file_content
 from ursa.util import parse
 
 
@@ -18,64 +15,37 @@ def _touch(p: Path, content: bytes = b"%PDF-1.4\n%fake\n") -> None:
     os.utime(p, None)
 
 
-# def _call_tool(filename: str, workspace: Path) -> str:
-#     # If @tool produced a Tool object, it should have .invoke
-#     # InjectedState usually flows via state; passing state directly works in practice for unit tests.
-#     return rft.read_file.func(
-#         filename=filename, state={"workspace": str(workspace)}
-#     )
-
-
-def _call_tool(filename: str, workspace: Path) -> str:
-    tool_obj = rft.read_file
-
-    runtime = make_runtime(
-        workspace=workspace,
-        llm=None,
-        tool_call_id="read-file-call",
-    )
-    # Prefer the stable tool interface across langchain_core versions
-    if hasattr(tool_obj, "invoke"):
-        return tool_obj.invoke({"filename": filename, "runtime": runtime})
-
-    # Fallback (older behavior)
-    return tool_obj.func(filename=filename, runtime=runtime)
-
-
-def test_no_ocr_when_text_is_sufficient(tmp_path, monkeypatch):
-    pdf = tmp_path / "doc.pdf"
-    _touch(pdf)
-
+@pytest.fixture(autouse=True)
+def ocr_settings(monkeypatch):
     monkeypatch.setenv("READ_FILE_OCR", "1")
     monkeypatch.setenv("READ_FILE_OCR_MIN_PAGES", "3")
     monkeypatch.setenv("READ_FILE_OCR_MIN_CHARS", "3000")
+
+
+@pytest.fixture
+def ocr(monkeypatch):
+    operation = Mock()
+    monkeypatch.setattr(parse, "_ocr_to_searchable_pdf", operation)
+    return operation
+
+
+def test_no_ocr_when_text_is_sufficient(tmp_path, monkeypatch, ocr):
+    pdf = tmp_path / "doc.pdf"
+    _touch(pdf)
 
     # Pretend this PDF already has plenty of text
     monkeypatch.setattr(parse, "read_text_pdf", lambda path: "X" * 5000)
     monkeypatch.setattr(parse, "_pdf_page_count", lambda path: 10)
 
-    called = {"ocr": 0}
-    monkeypatch.setattr(
-        parse,
-        "_ocr_to_searchable_pdf",
-        lambda src, dst, **kwargs: called.__setitem__("ocr", called["ocr"] + 1),
-    )
-
-    out = _call_tool("doc.pdf", tmp_path)
-    print("EXTRACTED_LEN:", len(out))
-    print("EXTRACTED_PREVIEW:", out[:300])
+    out = read_file_content("doc.pdf", tmp_path)
 
     assert len(out) == 5000
-    assert called["ocr"] == 0
+    ocr.assert_not_called()
 
 
-def test_ocr_runs_and_uses_ocr_pdf(tmp_path, monkeypatch):
+def test_ocr_runs_and_uses_ocr_pdf(tmp_path, monkeypatch, ocr):
     pdf = tmp_path / "scan.pdf"
     _touch(pdf)
-
-    monkeypatch.setenv("READ_FILE_OCR", "1")
-    monkeypatch.setenv("READ_FILE_OCR_MIN_PAGES", "3")
-    monkeypatch.setenv("READ_FILE_OCR_MIN_CHARS", "3000")
 
     monkeypatch.setattr(parse, "_pdf_page_count", lambda path: 22)
 
@@ -90,24 +60,16 @@ def test_ocr_runs_and_uses_ocr_pdf(tmp_path, monkeypatch):
     def fake_ocr(src: str, dst: str, *, mode: str = "skip") -> None:
         Path(dst).write_bytes(b"%PDF-1.4\n%ocr\n")
 
-    monkeypatch.setattr(parse, "_ocr_to_searchable_pdf", fake_ocr)
+    ocr.side_effect = fake_ocr
 
-    out = _call_tool("scan.pdf", tmp_path)
-    print("EXTRACTED_LEN:", len(out))
-    print("EXTRACTED_PREVIEW:", out[:300])
+    out = read_file_content("scan.pdf", tmp_path)
 
     assert out.startswith("OCR_TEXT_")
     assert len(out) > 3000
     assert (tmp_path / "scan.pdf.ocr.skip.pdf").exists()
 
 
-def test_real_ocr_if_available(tmp_path):
-    if not shutil.which("ocrmypdf"):
-        pytest.skip("ocrmypdf not installed")
-    # generate an image-only PDF here, then call the tool and assert output non-trivial
-
-
-def test_ocr_cache_skips_second_run(tmp_path, monkeypatch):
+def test_ocr_cache_skips_second_run(tmp_path, monkeypatch, ocr):
     pdf = tmp_path / "scan.pdf"
     _touch(pdf)
 
@@ -118,10 +80,6 @@ def test_ocr_cache_skips_second_run(tmp_path, monkeypatch):
     time.sleep(0.01)
     os.utime(ocr_pdf, None)
 
-    monkeypatch.setenv("READ_FILE_OCR", "1")
-    monkeypatch.setenv("READ_FILE_OCR_MIN_PAGES", "3")
-    monkeypatch.setenv("READ_FILE_OCR_MIN_CHARS", "3000")
-
     monkeypatch.setattr(parse, "_pdf_page_count", lambda path: 22)
 
     # Original tiny, OCR big
@@ -130,39 +88,21 @@ def test_ocr_cache_skips_second_run(tmp_path, monkeypatch):
 
     monkeypatch.setattr(parse, "read_text_pdf", fake_read_pdf)
 
-    called = {"ocr": 0}
-    monkeypatch.setattr(
-        parse,
-        "_ocr_to_searchable_pdf",
-        lambda src, dst, **kwargs: called.__setitem__("ocr", called["ocr"] + 1),
-    )
-
-    out = _call_tool("scan.pdf", tmp_path)
-    print("EXTRACTED_LEN:", len(out))
-    print("EXTRACTED_PREVIEW:", out[:300])
+    out = read_file_content("scan.pdf", tmp_path)
 
     assert len(out) == 5000
-    assert called["ocr"] == 0
+    ocr.assert_not_called()
 
 
-def test_ocr_failure_returns_original_text(tmp_path, monkeypatch):
+def test_ocr_failure_returns_original_text(tmp_path, monkeypatch, ocr):
     pdf = tmp_path / "scan.pdf"
     _touch(pdf)
-
-    monkeypatch.setenv("READ_FILE_OCR", "1")
-    monkeypatch.setenv("READ_FILE_OCR_MIN_PAGES", "3")
-    monkeypatch.setenv("READ_FILE_OCR_MIN_CHARS", "3000")
 
     monkeypatch.setattr(parse, "_pdf_page_count", lambda path: 22)
     monkeypatch.setattr(parse, "read_pdf", lambda path: "tiny")
 
-    def fail_ocr(src: str, dst: str, *, mode: str = "skip") -> None:
-        raise RuntimeError("ocr failed")
+    ocr.side_effect = RuntimeError("ocr failed")
 
-    monkeypatch.setattr(parse, "_ocr_to_searchable_pdf", fail_ocr)
-
-    out = _call_tool("scan.pdf", tmp_path)
-    print("EXTRACTED_LEN:", len(out))
-    print("EXTRACTED_PREVIEW:", out[:300])
+    out = read_file_content("scan.pdf", tmp_path)
 
     assert out == "tiny"
