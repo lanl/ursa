@@ -2004,8 +2004,8 @@ the complete connection before adapting it to a real service.</p>
 transports and authentication settings. The <a href="../../getting-started/python-scripts/">Python scripts guide</a>
 explains model initialization and direct agent use.</p>
 <h2 id="prepare-the-example">Prepare the example<a class="headerlink" href="#prepare-the-example" title="Permanent link">&para;</a></h2>
-<p>Open a terminal in this folder, install the locked environment, and set your
-OpenAI key.</p>
+<p>Open a terminal in this folder and install the locked environment. With the
+built-in OpenAI defaults, set your OpenAI key as shown below.</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">macOS/Linux</label><label for="__tabbed_1_2">Windows PowerShell</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
@@ -2022,9 +2022,9 @@ OpenAI key.</p>
 </div>
 </div>
 </div>
-<p>The example uses URSA's default OpenAI model. Follow <a href="../../configuration/models/">models and inference
-providers</a> before running it with another
-provider.</p>
+<p>The example loads the model and credentials from your system and user
+configuration Follow <a href="../../configuration/models/">models and inference
+providers</a> to use another provider.</p>
 <h2 id="inspect-the-server-configuration">Inspect the server configuration<a class="headerlink" href="#inspect-the-server-configuration" title="Permanent link">&para;</a></h2>
 <p>The client reads this MCP server definition:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">mcp_servers</span><span class="p">:</span>
@@ -2041,8 +2041,8 @@ your machine for this exercise.</p>
 <p>Leave that process running. It serves the MCP endpoint at
 <code>http://127.0.0.1:8000/mcp</code>.</p>
 <h2 id="attach-and-use-the-tool">Attach and use the tool<a class="headerlink" href="#attach-and-use-the-tool" title="Permanent link">&para;</a></h2>
-<p>Open a second terminal in the same folder, set <code>OPENAI_API_KEY</code> there as shown
-above, and run:</p>
+<p>Open a second terminal in the same folder, set any credential environment
+variables required by your configured model, and run:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uv<span class="w"> </span>run<span class="w"> </span>attach_mcp_tools.py
 </code></pre></div>
 <p>The script prints the tool-to-server mapping returned by <code>add_mcp_tools()</code>, then

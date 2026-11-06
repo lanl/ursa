@@ -2105,7 +2105,7 @@ and <a href="#using-python">below</a>.</p>
 <tr>
 <td><code>llm</code></td>
 <td><code>BaseChatModel</code></td>
-<td><code>init_chat_model("openai:gpt-5.4-mini")</code></td>
+<td>required</td>
 <td>The LLM model to use</td>
 </tr>
 <tr>
@@ -2205,38 +2205,36 @@ and <a href="#using-python">below</a>.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">langchain_openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChatOpenAI</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">DSIAgent</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.util</span><span class="w"> </span><span class="kn">import</span> <span class="n">Checkpointer</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="c1"># Get the data</span>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="n">current_file</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span>
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="n">current_dir</span> <span class="o">=</span> <span class="n">current_file</span><span class="o">.</span><span class="n">parent</span>
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="n">run_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getcwd</span><span class="p">()</span>
-<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>
-<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="n">dataset_path</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">current_dir</span> <span class="o">/</span> <span class="s2">&quot;data/oceans_11/ocean_11_datasets.db&quot;</span><span class="p">)</span>
-<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="nb">print</span><span class="p">(</span><span class="n">dataset_path</span><span class="p">)</span>
-<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>
-<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="n">model</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span>
-<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-5.4&quot;</span><span class="p">,</span> <span class="n">max_completion_tokens</span><span class="o">=</span><span class="mi">10000</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">max_retries</span><span class="o">=</span><span class="mi">2</span>
-<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="p">)</span>
-<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>
-<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="n">workspace</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">&quot;dsi_agent_example&quot;</span><span class="p">)</span>
-<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="n">dsiagent_checkpointer</span> <span class="o">=</span> <span class="n">Checkpointer</span><span class="o">.</span><span class="n">from_workspace</span><span class="p">(</span><span class="n">workspace</span><span class="p">)</span>
-<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>
-<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>
-<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a><span class="n">ai</span> <span class="o">=</span> <span class="n">DSIAgent</span><span class="p">(</span>
-<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>    <span class="n">llm</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
-<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>    <span class="n">database_path</span><span class="o">=</span><span class="n">dataset_path</span><span class="p">,</span>
-<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>    <span class="n">output_mode</span><span class="o">=</span><span class="s2">&quot;console&quot;</span><span class="p">,</span>
-<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a>    <span class="n">checkpointer</span><span class="o">=</span><span class="n">dsiagent_checkpointer</span><span class="p">,</span>
-<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>    <span class="n">run_path</span><span class="o">=</span><span class="n">run_path</span><span class="p">,</span>
-<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a><span class="p">)</span>
-<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a>
-<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Query: Tell me about the datasets you have.&quot;</span><span class="p">)</span>
-<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a><span class="n">response</span> <span class="o">=</span> <span class="n">ai</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">&quot;Tell me about the datasets you have.&quot;</span><span class="p">)</span>
-<a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">DSIAgent</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.cli.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">UrsaConfig</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.util</span><span class="w"> </span><span class="kn">import</span> <span class="n">Checkpointer</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="c1"># Get the data</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="n">current_file</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="n">current_dir</span> <span class="o">=</span> <span class="n">current_file</span><span class="o">.</span><span class="n">parent</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="n">run_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getcwd</span><span class="p">()</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="n">dataset_path</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">current_dir</span> <span class="o">/</span> <span class="s2">&quot;data/oceans_11/ocean_11_datasets.db&quot;</span><span class="p">)</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="nb">print</span><span class="p">(</span><span class="n">dataset_path</span><span class="p">)</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="n">config</span> <span class="o">=</span> <span class="n">UrsaConfig</span><span class="o">.</span><span class="n">user_config</span><span class="p">()</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="n">model</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">llm_model</span><span class="o">.</span><span class="n">init_chat_model</span><span class="p">()</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="n">workspace</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">&quot;dsi_agent_example&quot;</span><span class="p">)</span>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="n">dsiagent_checkpointer</span> <span class="o">=</span> <span class="n">Checkpointer</span><span class="o">.</span><span class="n">from_workspace</span><span class="p">(</span><span class="n">workspace</span><span class="p">)</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="n">ai</span> <span class="o">=</span> <span class="n">DSIAgent</span><span class="p">(</span>
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>    <span class="n">llm</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>    <span class="n">database_path</span><span class="o">=</span><span class="n">dataset_path</span><span class="p">,</span>
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>    <span class="n">output_mode</span><span class="o">=</span><span class="s2">&quot;console&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>    <span class="n">checkpointer</span><span class="o">=</span><span class="n">dsiagent_checkpointer</span><span class="p">,</span>
+<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>    <span class="n">run_path</span><span class="o">=</span><span class="n">run_path</span><span class="p">,</span>
+<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a><span class="p">)</span>
+<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>
+<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Query: Tell me about the datasets you have.&quot;</span><span class="p">)</span>
+<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a><span class="n">response</span> <span class="o">=</span> <span class="n">ai</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">&quot;Tell me about the datasets you have.&quot;</span><span class="p">)</span>
+<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
 </code></pre></div>
 
 

@@ -2012,8 +2012,9 @@ criteria seen by both competitors and the judge.</p>
 <h2 id="1-set-up-the-example">1. Set up the example<a class="headerlink" href="#1-set-up-the-example" title="Permanent link">&para;</a></h2>
 <p>Clone URSA and start from the repository root. You will need
 <a href="https://docs.astral.sh/uv/">uv</a>, Python 3.11 or newer, and credentials for the
-model used in <a href="https://github.com/lanl/ursa/blob/main/examples/environments/agent_elo/run_elo.py">run_elo.py</a>. The supplied runner uses OpenAI's <code>gpt-5</code>
-for both competitors and the judge.</p>
+model in your URSA user configuration. The supplied runner uses that model for
+both competitors and the judge. With the built-in OpenAI defaults, set
+<code>OPENAI_API_KEY</code> as shown below.</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">macOS/Linux</label><label for="__tabbed_1_2">Windows PowerShell</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
@@ -2031,7 +2032,8 @@ for both competitors and the judge.</p>
 </div>
 </div>
 <p>The local <a href="https://github.com/lanl/ursa/blob/main/examples/environments/agent_elo/pyproject.toml">pyproject.toml</a> installs URSA from this checkout in
-editable mode. Model and credential configuration is described in
+editable mode. The runner loads the system and user configuration with
+<code>UrsaConfig.user_config()</code>. Model and credential configuration is described in
 <a href="../../../configuration/models/">Models and inference providers</a>.</p>
 <h2 id="2-inspect-the-population">2. Inspect the population<a class="headerlink" href="#2-inspect-the-population" title="Permanent link">&para;</a></h2>
 <p>Open <a href="https://github.com/lanl/ursa/blob/main/examples/environments/agent_elo/agent_elo.yaml">agent_elo.yaml</a>. It defines two <code>ExecutionAgent</code> members,
@@ -2086,111 +2088,107 @@ the evaluation criteria. Change those criteria when adapting the example to a
 different problem.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">langchain.chat_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">init_chat_model</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.environments</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentEloEnvironment</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">TASK</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="s2">Numerically evaluate</span>
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="s2">    integral_0^1 exp(-x^2) dx</span>
-<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>
-<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="s2">using Python.</span>
-<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>
-<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="s2">This is an execution task: create and run code in your workspace.</span>
-<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>
-<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="s2">Requirements:</span>
-<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>
-<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="s2">- implement a numerical integration method;</span>
-<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="s2">- compare the numerical result with the reference value computed from</span>
-<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="s2">  math.erf;</span>
-<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="s2">- report the absolute error;</span>
-<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="s2">- perform at least one convergence or accuracy check;</span>
-<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a><span class="s2">- save the executable code and useful numerical results in your workspace.</span>
-<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a>
-<a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a><span class="s2">Keep the calculation small and reproducible.</span>
-<a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a>
-<a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a><span class="s2">Evaluation criteria, in priority order:</span>
-<a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a><span class="s2">1. Correctness and numerical accuracy.</span>
-<a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a><span class="s2">2. Evidence from executed validation and convergence checks.</span>
-<a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a><span class="s2">3. Reproducibility of the implementation and results.</span>
-<a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a><span class="s2">4. Meaningful improvement over existing work, when applicable.</span>
-<a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a>
-<a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a><span class="s2">For partial work, assess the available evidence using these same criteria.</span>
-<a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a><span class="s2">Novelty alone is not an improvement.</span>
-<a id="__codelineno-4-35" name="__codelineno-4-35" href="#__codelineno-4-35"></a>
-<a id="__codelineno-4-36" name="__codelineno-4-36" href="#__codelineno-4-36"></a><span class="s2">Your final response should summarize the method, numerical result, error,</span>
-<a id="__codelineno-4-37" name="__codelineno-4-37" href="#__codelineno-4-37"></a><span class="s2">validation performed, files produced, and any remaining weakness.</span>
-<a id="__codelineno-4-38" name="__codelineno-4-38" href="#__codelineno-4-38"></a><span class="s2">&quot;&quot;&quot;</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.cli.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">UrsaConfig</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.environments</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentEloEnvironment</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="n">TASK</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="s2">Numerically evaluate</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="s2">    integral_0^1 exp(-x^2) dx</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="s2">using Python.</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="s2">This is an execution task: create and run code in your workspace.</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="s2">Requirements:</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="s2">- implement a numerical integration method;</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="s2">- compare the numerical result with the reference value computed from</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="s2">  math.erf;</span>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="s2">- report the absolute error;</span>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="s2">- perform at least one convergence or accuracy check;</span>
+<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="s2">- save the executable code and useful numerical results in your workspace.</span>
+<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a>
+<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a><span class="s2">Keep the calculation small and reproducible.</span>
+<a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a>
+<a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a><span class="s2">Evaluation criteria, in priority order:</span>
+<a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a><span class="s2">1. Correctness and numerical accuracy.</span>
+<a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a><span class="s2">2. Evidence from executed validation and convergence checks.</span>
+<a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a><span class="s2">3. Reproducibility of the implementation and results.</span>
+<a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a><span class="s2">4. Meaningful improvement over existing work, when applicable.</span>
+<a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a>
+<a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a><span class="s2">For partial work, assess the available evidence using these same criteria.</span>
+<a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a><span class="s2">Novelty alone is not an improvement.</span>
+<a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a>
+<a id="__codelineno-4-35" name="__codelineno-4-35" href="#__codelineno-4-35"></a><span class="s2">Your final response should summarize the method, numerical result, error,</span>
+<a id="__codelineno-4-36" name="__codelineno-4-36" href="#__codelineno-4-36"></a><span class="s2">validation performed, files produced, and any remaining weakness.</span>
+<a id="__codelineno-4-37" name="__codelineno-4-37" href="#__codelineno-4-37"></a><span class="s2">&quot;&quot;&quot;</span>
+<a id="__codelineno-4-38" name="__codelineno-4-38" href="#__codelineno-4-38"></a>
 <a id="__codelineno-4-39" name="__codelineno-4-39" href="#__codelineno-4-39"></a>
-<a id="__codelineno-4-40" name="__codelineno-4-40" href="#__codelineno-4-40"></a>
-<a id="__codelineno-4-41" name="__codelineno-4-41" href="#__codelineno-4-41"></a><span class="k">def</span><span class="w"> </span><span class="nf">print_generation</span><span class="p">(</span><span class="n">result</span><span class="p">):</span>
-<a id="__codelineno-4-42" name="__codelineno-4-42" href="#__codelineno-4-42"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Generation </span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">&#39;generation&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<a id="__codelineno-4-43" name="__codelineno-4-43" href="#__codelineno-4-43"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;-&quot;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
-<a id="__codelineno-4-44" name="__codelineno-4-44" href="#__codelineno-4-44"></a>
-<a id="__codelineno-4-45" name="__codelineno-4-45" href="#__codelineno-4-45"></a>    <span class="k">for</span> <span class="n">match</span> <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;matches&quot;</span><span class="p">]:</span>
-<a id="__codelineno-4-46" name="__codelineno-4-46" href="#__codelineno-4-46"></a>        <span class="nb">print</span><span class="p">(</span>
-<a id="__codelineno-4-47" name="__codelineno-4-47" href="#__codelineno-4-47"></a>            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">match</span><span class="p">[</span><span class="s1">&#39;player_a&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> vs </span><span class="si">{</span><span class="n">match</span><span class="p">[</span><span class="s1">&#39;player_b&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">: &quot;</span>
-<a id="__codelineno-4-48" name="__codelineno-4-48" href="#__codelineno-4-48"></a>            <span class="sa">f</span><span class="s2">&quot;winner=</span><span class="si">{</span><span class="n">match</span><span class="p">[</span><span class="s1">&#39;winner&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
-<a id="__codelineno-4-49" name="__codelineno-4-49" href="#__codelineno-4-49"></a>        <span class="p">)</span>
-<a id="__codelineno-4-50" name="__codelineno-4-50" href="#__codelineno-4-50"></a>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">match</span><span class="p">[</span><span class="s1">&#39;reasoning&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<a id="__codelineno-4-51" name="__codelineno-4-51" href="#__codelineno-4-51"></a>
-<a id="__codelineno-4-52" name="__codelineno-4-52" href="#__codelineno-4-52"></a>    <span class="k">if</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;eliminated&quot;</span><span class="p">]:</span>
-<a id="__codelineno-4-53" name="__codelineno-4-53" href="#__codelineno-4-53"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Eliminated:&quot;</span><span class="p">,</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;eliminated&quot;</span><span class="p">]))</span>
-<a id="__codelineno-4-54" name="__codelineno-4-54" href="#__codelineno-4-54"></a>
-<a id="__codelineno-4-55" name="__codelineno-4-55" href="#__codelineno-4-55"></a>    <span class="k">if</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;children&quot;</span><span class="p">]:</span>
-<a id="__codelineno-4-56" name="__codelineno-4-56" href="#__codelineno-4-56"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Children:&quot;</span><span class="p">,</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;children&quot;</span><span class="p">]))</span>
-<a id="__codelineno-4-57" name="__codelineno-4-57" href="#__codelineno-4-57"></a>
-<a id="__codelineno-4-58" name="__codelineno-4-58" href="#__codelineno-4-58"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Standings:&quot;</span><span class="p">)</span>
-<a id="__codelineno-4-59" name="__codelineno-4-59" href="#__codelineno-4-59"></a>    <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;standings&quot;</span><span class="p">]:</span>
-<a id="__codelineno-4-60" name="__codelineno-4-60" href="#__codelineno-4-60"></a>        <span class="nb">print</span><span class="p">(</span>
-<a id="__codelineno-4-61" name="__codelineno-4-61" href="#__codelineno-4-61"></a>            <span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;rank&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">. </span><span class="si">{</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> &quot;</span>
-<a id="__codelineno-4-62" name="__codelineno-4-62" href="#__codelineno-4-62"></a>            <span class="sa">f</span><span class="s2">&quot;Elo=</span><span class="si">{</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;rating&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> &quot;</span>
-<a id="__codelineno-4-63" name="__codelineno-4-63" href="#__codelineno-4-63"></a>            <span class="sa">f</span><span class="s2">&quot;generation=</span><span class="si">{</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;generation&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> &quot;</span>
-<a id="__codelineno-4-64" name="__codelineno-4-64" href="#__codelineno-4-64"></a>            <span class="sa">f</span><span class="s2">&quot;parent=</span><span class="si">{</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;parent&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
-<a id="__codelineno-4-65" name="__codelineno-4-65" href="#__codelineno-4-65"></a>        <span class="p">)</span>
+<a id="__codelineno-4-40" name="__codelineno-4-40" href="#__codelineno-4-40"></a><span class="k">def</span><span class="w"> </span><span class="nf">print_generation</span><span class="p">(</span><span class="n">result</span><span class="p">):</span>
+<a id="__codelineno-4-41" name="__codelineno-4-41" href="#__codelineno-4-41"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Generation </span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">&#39;generation&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<a id="__codelineno-4-42" name="__codelineno-4-42" href="#__codelineno-4-42"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;-&quot;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+<a id="__codelineno-4-43" name="__codelineno-4-43" href="#__codelineno-4-43"></a>
+<a id="__codelineno-4-44" name="__codelineno-4-44" href="#__codelineno-4-44"></a>    <span class="k">for</span> <span class="n">match</span> <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;matches&quot;</span><span class="p">]:</span>
+<a id="__codelineno-4-45" name="__codelineno-4-45" href="#__codelineno-4-45"></a>        <span class="nb">print</span><span class="p">(</span>
+<a id="__codelineno-4-46" name="__codelineno-4-46" href="#__codelineno-4-46"></a>            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">match</span><span class="p">[</span><span class="s1">&#39;player_a&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> vs </span><span class="si">{</span><span class="n">match</span><span class="p">[</span><span class="s1">&#39;player_b&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">: &quot;</span>
+<a id="__codelineno-4-47" name="__codelineno-4-47" href="#__codelineno-4-47"></a>            <span class="sa">f</span><span class="s2">&quot;winner=</span><span class="si">{</span><span class="n">match</span><span class="p">[</span><span class="s1">&#39;winner&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+<a id="__codelineno-4-48" name="__codelineno-4-48" href="#__codelineno-4-48"></a>        <span class="p">)</span>
+<a id="__codelineno-4-49" name="__codelineno-4-49" href="#__codelineno-4-49"></a>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">match</span><span class="p">[</span><span class="s1">&#39;reasoning&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<a id="__codelineno-4-50" name="__codelineno-4-50" href="#__codelineno-4-50"></a>
+<a id="__codelineno-4-51" name="__codelineno-4-51" href="#__codelineno-4-51"></a>    <span class="k">if</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;eliminated&quot;</span><span class="p">]:</span>
+<a id="__codelineno-4-52" name="__codelineno-4-52" href="#__codelineno-4-52"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Eliminated:&quot;</span><span class="p">,</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;eliminated&quot;</span><span class="p">]))</span>
+<a id="__codelineno-4-53" name="__codelineno-4-53" href="#__codelineno-4-53"></a>
+<a id="__codelineno-4-54" name="__codelineno-4-54" href="#__codelineno-4-54"></a>    <span class="k">if</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;children&quot;</span><span class="p">]:</span>
+<a id="__codelineno-4-55" name="__codelineno-4-55" href="#__codelineno-4-55"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Children:&quot;</span><span class="p">,</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;children&quot;</span><span class="p">]))</span>
+<a id="__codelineno-4-56" name="__codelineno-4-56" href="#__codelineno-4-56"></a>
+<a id="__codelineno-4-57" name="__codelineno-4-57" href="#__codelineno-4-57"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Standings:&quot;</span><span class="p">)</span>
+<a id="__codelineno-4-58" name="__codelineno-4-58" href="#__codelineno-4-58"></a>    <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;standings&quot;</span><span class="p">]:</span>
+<a id="__codelineno-4-59" name="__codelineno-4-59" href="#__codelineno-4-59"></a>        <span class="nb">print</span><span class="p">(</span>
+<a id="__codelineno-4-60" name="__codelineno-4-60" href="#__codelineno-4-60"></a>            <span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;rank&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">. </span><span class="si">{</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> &quot;</span>
+<a id="__codelineno-4-61" name="__codelineno-4-61" href="#__codelineno-4-61"></a>            <span class="sa">f</span><span class="s2">&quot;Elo=</span><span class="si">{</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;rating&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> &quot;</span>
+<a id="__codelineno-4-62" name="__codelineno-4-62" href="#__codelineno-4-62"></a>            <span class="sa">f</span><span class="s2">&quot;generation=</span><span class="si">{</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;generation&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> &quot;</span>
+<a id="__codelineno-4-63" name="__codelineno-4-63" href="#__codelineno-4-63"></a>            <span class="sa">f</span><span class="s2">&quot;parent=</span><span class="si">{</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;parent&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+<a id="__codelineno-4-64" name="__codelineno-4-64" href="#__codelineno-4-64"></a>        <span class="p">)</span>
+<a id="__codelineno-4-65" name="__codelineno-4-65" href="#__codelineno-4-65"></a>
 <a id="__codelineno-4-66" name="__codelineno-4-66" href="#__codelineno-4-66"></a>
-<a id="__codelineno-4-67" name="__codelineno-4-67" href="#__codelineno-4-67"></a>
-<a id="__codelineno-4-68" name="__codelineno-4-68" href="#__codelineno-4-68"></a><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
-<a id="__codelineno-4-69" name="__codelineno-4-69" href="#__codelineno-4-69"></a>    <span class="n">llm</span> <span class="o">=</span> <span class="n">init_chat_model</span><span class="p">(</span>
-<a id="__codelineno-4-70" name="__codelineno-4-70" href="#__codelineno-4-70"></a>        <span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai:gpt-5&quot;</span><span class="p">,</span>
-<a id="__codelineno-4-71" name="__codelineno-4-71" href="#__codelineno-4-71"></a>        <span class="n">timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-4-72" name="__codelineno-4-72" href="#__codelineno-4-72"></a>        <span class="n">max_retries</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
-<a id="__codelineno-4-73" name="__codelineno-4-73" href="#__codelineno-4-73"></a>    <span class="p">)</span>
-<a id="__codelineno-4-74" name="__codelineno-4-74" href="#__codelineno-4-74"></a>
-<a id="__codelineno-4-75" name="__codelineno-4-75" href="#__codelineno-4-75"></a>    <span class="n">env</span> <span class="o">=</span> <span class="n">AgentEloEnvironment</span><span class="o">.</span><span class="n">from_yaml</span><span class="p">(</span>
-<a id="__codelineno-4-76" name="__codelineno-4-76" href="#__codelineno-4-76"></a>        <span class="s2">&quot;agent_elo.yaml&quot;</span><span class="p">,</span>
-<a id="__codelineno-4-77" name="__codelineno-4-77" href="#__codelineno-4-77"></a>        <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
-<a id="__codelineno-4-78" name="__codelineno-4-78" href="#__codelineno-4-78"></a>        <span class="n">workspace</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="s2">&quot;./workspace_agent_elo&quot;</span><span class="p">),</span>
-<a id="__codelineno-4-79" name="__codelineno-4-79" href="#__codelineno-4-79"></a>        <span class="n">persist_members</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-<a id="__codelineno-4-80" name="__codelineno-4-80" href="#__codelineno-4-80"></a>    <span class="p">)</span>
-<a id="__codelineno-4-81" name="__codelineno-4-81" href="#__codelineno-4-81"></a>
-<a id="__codelineno-4-82" name="__codelineno-4-82" href="#__codelineno-4-82"></a>    <span class="k">try</span><span class="p">:</span>
-<a id="__codelineno-4-83" name="__codelineno-4-83" href="#__codelineno-4-83"></a>        <span class="n">result</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span><span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="n">TASK</span><span class="p">})</span>
-<a id="__codelineno-4-84" name="__codelineno-4-84" href="#__codelineno-4-84"></a>
-<a id="__codelineno-4-85" name="__codelineno-4-85" href="#__codelineno-4-85"></a>        <span class="k">for</span> <span class="n">generation</span> <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;generations&quot;</span><span class="p">]:</span>
-<a id="__codelineno-4-86" name="__codelineno-4-86" href="#__codelineno-4-86"></a>            <span class="n">print_generation</span><span class="p">(</span><span class="n">generation</span><span class="p">)</span>
-<a id="__codelineno-4-87" name="__codelineno-4-87" href="#__codelineno-4-87"></a>
-<a id="__codelineno-4-88" name="__codelineno-4-88" href="#__codelineno-4-88"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Final standings&quot;</span><span class="p">)</span>
-<a id="__codelineno-4-89" name="__codelineno-4-89" href="#__codelineno-4-89"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;-&quot;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
-<a id="__codelineno-4-90" name="__codelineno-4-90" href="#__codelineno-4-90"></a>
-<a id="__codelineno-4-91" name="__codelineno-4-91" href="#__codelineno-4-91"></a>        <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;standings&quot;</span><span class="p">]:</span>
-<a id="__codelineno-4-92" name="__codelineno-4-92" href="#__codelineno-4-92"></a>            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;rank&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">. </span><span class="si">{</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> Elo=</span><span class="si">{</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;rating&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<a id="__codelineno-4-93" name="__codelineno-4-93" href="#__codelineno-4-93"></a>
-<a id="__codelineno-4-94" name="__codelineno-4-94" href="#__codelineno-4-94"></a>        <span class="nb">print</span><span class="p">(</span>
-<a id="__codelineno-4-95" name="__codelineno-4-95" href="#__codelineno-4-95"></a>            <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Restart state:&quot;</span><span class="p">,</span>
-<a id="__codelineno-4-96" name="__codelineno-4-96" href="#__codelineno-4-96"></a>            <span class="n">result</span><span class="p">[</span><span class="s2">&quot;environment_state&quot;</span><span class="p">],</span>
-<a id="__codelineno-4-97" name="__codelineno-4-97" href="#__codelineno-4-97"></a>        <span class="p">)</span>
-<a id="__codelineno-4-98" name="__codelineno-4-98" href="#__codelineno-4-98"></a>
-<a id="__codelineno-4-99" name="__codelineno-4-99" href="#__codelineno-4-99"></a>    <span class="k">finally</span><span class="p">:</span>
-<a id="__codelineno-4-100" name="__codelineno-4-100" href="#__codelineno-4-100"></a>        <span class="k">for</span> <span class="n">member</span> <span class="ow">in</span> <span class="n">env</span><span class="o">.</span><span class="n">members</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
-<a id="__codelineno-4-101" name="__codelineno-4-101" href="#__codelineno-4-101"></a>            <span class="n">close</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">member</span><span class="p">,</span> <span class="s2">&quot;close&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-<a id="__codelineno-4-102" name="__codelineno-4-102" href="#__codelineno-4-102"></a>            <span class="k">if</span> <span class="nb">callable</span><span class="p">(</span><span class="n">close</span><span class="p">):</span>
-<a id="__codelineno-4-103" name="__codelineno-4-103" href="#__codelineno-4-103"></a>                <span class="n">close</span><span class="p">()</span>
-<a id="__codelineno-4-104" name="__codelineno-4-104" href="#__codelineno-4-104"></a>
-<a id="__codelineno-4-105" name="__codelineno-4-105" href="#__codelineno-4-105"></a>
-<a id="__codelineno-4-106" name="__codelineno-4-106" href="#__codelineno-4-106"></a><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
-<a id="__codelineno-4-107" name="__codelineno-4-107" href="#__codelineno-4-107"></a>    <span class="n">main</span><span class="p">()</span>
+<a id="__codelineno-4-67" name="__codelineno-4-67" href="#__codelineno-4-67"></a><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<a id="__codelineno-4-68" name="__codelineno-4-68" href="#__codelineno-4-68"></a>    <span class="n">config</span> <span class="o">=</span> <span class="n">UrsaConfig</span><span class="o">.</span><span class="n">user_config</span><span class="p">()</span>
+<a id="__codelineno-4-69" name="__codelineno-4-69" href="#__codelineno-4-69"></a>    <span class="n">llm</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">llm_model</span><span class="o">.</span><span class="n">init_chat_model</span><span class="p">()</span>
+<a id="__codelineno-4-70" name="__codelineno-4-70" href="#__codelineno-4-70"></a>
+<a id="__codelineno-4-71" name="__codelineno-4-71" href="#__codelineno-4-71"></a>    <span class="n">env</span> <span class="o">=</span> <span class="n">AgentEloEnvironment</span><span class="o">.</span><span class="n">from_yaml</span><span class="p">(</span>
+<a id="__codelineno-4-72" name="__codelineno-4-72" href="#__codelineno-4-72"></a>        <span class="s2">&quot;agent_elo.yaml&quot;</span><span class="p">,</span>
+<a id="__codelineno-4-73" name="__codelineno-4-73" href="#__codelineno-4-73"></a>        <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
+<a id="__codelineno-4-74" name="__codelineno-4-74" href="#__codelineno-4-74"></a>        <span class="n">workspace</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="s2">&quot;./workspace_agent_elo&quot;</span><span class="p">),</span>
+<a id="__codelineno-4-75" name="__codelineno-4-75" href="#__codelineno-4-75"></a>        <span class="n">persist_members</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<a id="__codelineno-4-76" name="__codelineno-4-76" href="#__codelineno-4-76"></a>    <span class="p">)</span>
+<a id="__codelineno-4-77" name="__codelineno-4-77" href="#__codelineno-4-77"></a>
+<a id="__codelineno-4-78" name="__codelineno-4-78" href="#__codelineno-4-78"></a>    <span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-4-79" name="__codelineno-4-79" href="#__codelineno-4-79"></a>        <span class="n">result</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span><span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="n">TASK</span><span class="p">})</span>
+<a id="__codelineno-4-80" name="__codelineno-4-80" href="#__codelineno-4-80"></a>
+<a id="__codelineno-4-81" name="__codelineno-4-81" href="#__codelineno-4-81"></a>        <span class="k">for</span> <span class="n">generation</span> <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;generations&quot;</span><span class="p">]:</span>
+<a id="__codelineno-4-82" name="__codelineno-4-82" href="#__codelineno-4-82"></a>            <span class="n">print_generation</span><span class="p">(</span><span class="n">generation</span><span class="p">)</span>
+<a id="__codelineno-4-83" name="__codelineno-4-83" href="#__codelineno-4-83"></a>
+<a id="__codelineno-4-84" name="__codelineno-4-84" href="#__codelineno-4-84"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Final standings&quot;</span><span class="p">)</span>
+<a id="__codelineno-4-85" name="__codelineno-4-85" href="#__codelineno-4-85"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;-&quot;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+<a id="__codelineno-4-86" name="__codelineno-4-86" href="#__codelineno-4-86"></a>
+<a id="__codelineno-4-87" name="__codelineno-4-87" href="#__codelineno-4-87"></a>        <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;standings&quot;</span><span class="p">]:</span>
+<a id="__codelineno-4-88" name="__codelineno-4-88" href="#__codelineno-4-88"></a>            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;rank&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">. </span><span class="si">{</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> Elo=</span><span class="si">{</span><span class="n">row</span><span class="p">[</span><span class="s1">&#39;rating&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<a id="__codelineno-4-89" name="__codelineno-4-89" href="#__codelineno-4-89"></a>
+<a id="__codelineno-4-90" name="__codelineno-4-90" href="#__codelineno-4-90"></a>        <span class="nb">print</span><span class="p">(</span>
+<a id="__codelineno-4-91" name="__codelineno-4-91" href="#__codelineno-4-91"></a>            <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Restart state:&quot;</span><span class="p">,</span>
+<a id="__codelineno-4-92" name="__codelineno-4-92" href="#__codelineno-4-92"></a>            <span class="n">result</span><span class="p">[</span><span class="s2">&quot;environment_state&quot;</span><span class="p">],</span>
+<a id="__codelineno-4-93" name="__codelineno-4-93" href="#__codelineno-4-93"></a>        <span class="p">)</span>
+<a id="__codelineno-4-94" name="__codelineno-4-94" href="#__codelineno-4-94"></a>
+<a id="__codelineno-4-95" name="__codelineno-4-95" href="#__codelineno-4-95"></a>    <span class="k">finally</span><span class="p">:</span>
+<a id="__codelineno-4-96" name="__codelineno-4-96" href="#__codelineno-4-96"></a>        <span class="k">for</span> <span class="n">member</span> <span class="ow">in</span> <span class="n">env</span><span class="o">.</span><span class="n">members</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+<a id="__codelineno-4-97" name="__codelineno-4-97" href="#__codelineno-4-97"></a>            <span class="n">close</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">member</span><span class="p">,</span> <span class="s2">&quot;close&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+<a id="__codelineno-4-98" name="__codelineno-4-98" href="#__codelineno-4-98"></a>            <span class="k">if</span> <span class="nb">callable</span><span class="p">(</span><span class="n">close</span><span class="p">):</span>
+<a id="__codelineno-4-99" name="__codelineno-4-99" href="#__codelineno-4-99"></a>                <span class="n">close</span><span class="p">()</span>
+<a id="__codelineno-4-100" name="__codelineno-4-100" href="#__codelineno-4-100"></a>
+<a id="__codelineno-4-101" name="__codelineno-4-101" href="#__codelineno-4-101"></a>
+<a id="__codelineno-4-102" name="__codelineno-4-102" href="#__codelineno-4-102"></a><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+<a id="__codelineno-4-103" name="__codelineno-4-103" href="#__codelineno-4-103"></a>    <span class="n">main</span><span class="p">()</span>
 </code></pre></div>
 <p>The runner creates <code>workspace_agent_elo/</code> under this directory. Each competitor
 works in a separate subdirectory. After a decisive first match, the selected
