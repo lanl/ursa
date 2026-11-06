@@ -30,7 +30,13 @@ from textual.widgets import (
 )
 
 import ursa.util.crossplatform as crossplatform
-from tests.cli._app_helpers import make_ollama_runtime, make_runtime, wait_for
+from tests.cli._app_helpers import (
+    make_ollama_runtime,
+    make_runtime,
+    static_text,
+    tool_wrapper,
+    wait_for,
+)
 from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
@@ -474,9 +480,7 @@ async def test_welcome_banner_and_provider_status_are_visible(tmp_path):
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         banner = app.query_one(WelcomeBanner)
-        snapshot = str(
-            banner.query_one("#welcome-config-values", Static).content
-        )
+        snapshot = static_text(banner, "#welcome-config-values")
         workspace = banner.query_one("#welcome-workspace", Static)
         assert str(workspace.content).endswith(tmp_path.name[-12:])
         assert "test-model (hosted-chat - https://llm.test/v1)" in snapshot
@@ -484,10 +488,8 @@ async def test_welcome_banner_and_provider_status_are_visible(tmp_path):
             "embed-model (hosted-embedding - https://embed.test/v1)" in snapshot
         )
         assert "research" in snapshot
-        assert "test-model (hosted-chat)" in str(
-            app.query_one("#status", Static).content
-        )
-        assert "Ctrl+" not in str(app.query_one("#status", Static).content)
+        assert "test-model (hosted-chat)" in static_text(app, "#status")
+        assert "Ctrl+" not in static_text(app, "#status")
 
 
 async def test_named_agent_appears_in_statusline_and_status_command(tmp_path):
@@ -497,7 +499,7 @@ async def test_named_agent_appears_in_statusline_and_status_command(tmp_path):
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)):
-        assert "lab-assistant" in str(app.query_one("#status", Static).content)
+        assert "lab-assistant" in static_text(app, "#status")
         assert "lab-assistant" in app._status_markdown()
 
 
@@ -778,9 +780,9 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         assert "env: OPENAI_API_KEY" in editor.text
         assert "**********" in editor.text
         assert "actual-secret" not in editor.text
-        assert str(
-            app.screen.query_one("#status-config-readonly", Static).content
-        ).startswith("Read only")
+        assert static_text(app.screen, "#status-config-readonly").startswith(
+            "Read only"
+        )
         editor.move_cursor((1, 0))
         editor.move_cursor((2, 0), select=True)
         assert editor.cursor_location[0] == 2
@@ -869,7 +871,7 @@ async def test_model_command_switches_provider_and_model(app, model_dialog):
         await asyncio.sleep(0.8)
         await pilot.press("5", "4")
         fuzzy_options = model_select.query_one(FuzzySelectOverlay)
-        assert str(model_select.query_one("#label", Static).content) == "g54"
+        assert static_text(model_select, "#label") == "g54"
         assert fuzzy_options.border_title is None
         assert fuzzy_options.option_count == 1
         await pilot.press("escape")
@@ -945,7 +947,7 @@ async def test_model_command_switches_provider_and_model(app, model_dialog):
             "Changed the embedding model to private-embedding "
             "(openai - https://api.openai.com/v1)",
         ]
-        welcome = str(app.query_one("#welcome-config-values", Static).content)
+        welcome = static_text(app, "#welcome-config-values")
         assert (
             "LLM        gpt-5.4 (openai - https://api.openai.com/v1)" in welcome
         )
@@ -1177,8 +1179,8 @@ async def test_whitespace_model_yaml_is_rejected_before_apply(
         app.screen.action_apply()
         assert isinstance(app.screen, ModelScreen)
         assert editor.has_class("yaml-invalid")
-        assert f"{kind.title()} model must not be blank" in str(
-            app.screen.query_one(f"#{kind}-yaml-error", Static).content
+        assert f"{kind.title()} model must not be blank" in static_text(
+            app.screen, f"#{kind}-yaml-error"
         )
         if kind == "embedding":
             editor.text = "model: ''\nmodel_provider: openai\n"
@@ -1226,7 +1228,7 @@ async def test_yaml_validation_names_unknown_inference_provider(
         assert isinstance(app.screen, ModelScreen)
         assert editor.has_class("yaml-invalid")
         assert (
-            str(app.screen.query_one("#chat-yaml-error", Static).content)
+            static_text(app.screen, "#chat-yaml-error")
             == "Unknown inference_provider 'missing'"
         )
 
@@ -2153,18 +2155,8 @@ async def test_immediate_switch_preempts_large_tool_render(app, monkeypatch):
     construction_started = asyncio.Event()
     loading_seen_during_construction = False
     construction_count = 0
-    safe = SimpleNamespace(
-        description="safe agent",
-        config={},
-        tool_sources={},
-        _agent=SimpleNamespace(tools={}),
-    )
-    execute = SimpleNamespace(
-        description="execution agent",
-        config={},
-        tool_sources={},
-        _agent=None,
-    )
+    safe = tool_wrapper("safe agent", {})
+    execute = tool_wrapper("execution agent")
     runtime = app.runtime
     runtime.agents = {"safe": safe, "execute": execute}
 
@@ -2259,19 +2251,9 @@ async def test_immediate_switch_preempts_large_tool_render(app, monkeypatch):
 
 async def test_agent_tool_render_failure_is_displayed(app, monkeypatch):
     construction_attempts = 0
-    safe = SimpleNamespace(
-        description="safe agent",
-        config={},
-        tool_sources={},
-        _agent=SimpleNamespace(tools={}),
-    )
+    safe = tool_wrapper("safe agent", {})
     broken_tool = FakeConfiguredTool()
-    broken = SimpleNamespace(
-        description="broken agent",
-        config={},
-        tool_sources={},
-        _agent=SimpleNamespace(tools={broken_tool.name: broken_tool}),
-    )
+    broken = tool_wrapper("broken agent", {broken_tool.name: broken_tool})
     runtime = app.runtime
     runtime.agents = {"safe": safe, "broken": broken}
 
@@ -2336,12 +2318,7 @@ async def test_initialized_tools_render_while_schema_hydration_is_pending(
 
     configured_tool = FakeConfiguredTool()
     configured_tool.args_schema = BlockingSchema
-    wrapper = SimpleNamespace(
-        description="ready agent",
-        config={},
-        tool_sources={},
-        _agent=SimpleNamespace(tools={"read_file": configured_tool}),
-    )
+    wrapper = tool_wrapper("ready agent", {"read_file": configured_tool})
     runtime = app.runtime
     runtime.agents = {"ready": wrapper}
 
@@ -2374,12 +2351,7 @@ async def test_initialized_tools_render_while_schema_hydration_is_pending(
 
 async def test_agents_display_tool_load_failure(app):
     runtime = app.runtime
-    wrapper = SimpleNamespace(
-        description="broken agent",
-        config={},
-        tool_sources={},
-        _agent=None,
-    )
+    wrapper = tool_wrapper("broken agent")
     runtime.agents = {"broken": wrapper}
 
     async def get_agent(name):

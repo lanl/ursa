@@ -1,5 +1,6 @@
 from textual.widgets import Static
 
+from tests.cli._app_helpers import static_text
 from ursa.cli.tui.event_cards import (
     AgentEventCard,
     ArtifactCard,
@@ -30,8 +31,8 @@ async def test_multiple_edit_rows_expand_independently_under_one_heading(
 
         first, second = turn.query(EditCard)
         assert len(turn.query(".edit-group-title")) == 1
-        assert "one.py" in str(first.query_one(".edit-title", Static).content)
-        assert "two.py" in str(second.query_one(".edit-title", Static).content)
+        assert "one.py" in static_text(first, ".edit-title")
+        assert "two.py" in static_text(second, ".edit-title")
         first.scroll_visible(animate=False)
         await pilot.pause()
         assert await pilot.click(first.query_one(".edit-header"))
@@ -75,10 +76,7 @@ async def test_specialized_agent_events_and_artifacts_update_live(event_turn):
 
         artifact = turn.query_one(ArtifactCard)
         for card in turn.query(".event-card"):
-            assert (
-                str(card.query_one(".event-expand-hint", Static).content)
-                == "Click to expand"
-            )
+            assert static_text(card, ".event-expand-hint") == "Click to expand"
         artifact.mark_done()
 
         class Click:
@@ -93,8 +91,7 @@ async def test_specialized_agent_events_and_artifacts_update_live(event_turn):
         assert artifact.done
         assert artifact.expanded
         assert (
-            str(artifact.query_one(".event-expand-hint", Static).content)
-            == "Click to collapse"
+            static_text(artifact, ".event-expand-hint") == "Click to collapse"
         )
 
 

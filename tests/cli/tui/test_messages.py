@@ -2,7 +2,7 @@ import pytest
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Markdown, Static
 
-from tests.cli._app_helpers import wait_for
+from tests.cli._app_helpers import static_text, wait_for
 from ursa.cli.tui.widgets import HierarchyMessageCard, MessagesScreen
 
 
@@ -37,9 +37,7 @@ async def test_message_screen_pages_without_retaining_full_bodies(
         assert all(not card.query_one(Markdown).source for card in cards)
         assert not hasattr(app, "_hierarchy_messages")
         assert app.screen.query_one("#messages-latest", Button).disabled
-        assert str(
-            app.screen.query_one("#messages-footer", Static).content
-        ).startswith("Live ·")
+        assert static_text(app.screen, "#messages-footer").startswith("Live ·")
         assert await wait_for(pilot, lambda: not screen._resuming_live)
         await screen._sync_messages()
         assert screen._live
@@ -70,9 +68,7 @@ async def test_message_screen_pages_without_retaining_full_bodies(
             .first()
             .message.content.startswith("25:")
         )
-        assert "newer available" in str(
-            screen.query_one("#messages-footer", Static).content
-        )
+        assert "newer available" in static_text(screen, "#messages-footer")
         await screen.action_scroll_home()
         assert (
             screen.query(HierarchyMessageCard)
@@ -154,9 +150,7 @@ async def test_message_log_pauses_on_scroll_or_expansion_and_keyboard_toggles(
         paused_at = body.scroll_y
         assert not screen._live
         assert not screen.query_one("#messages-latest", Button).disabled
-        assert str(
-            screen.query_one("#messages-footer", Static).content
-        ).startswith("Paused ·")
+        assert static_text(screen, "#messages-footer").startswith("Paused ·")
         await app.record_hierarchy_message(
             "root/peer", ("root",), "new traffic"
         )
@@ -200,9 +194,7 @@ async def test_message_log_header_and_footer_fit_across_terminal_widths(
             button.region.right <= controls.content_region.right
             for button in buttons
         )
-        assert "Enter expands" in str(
-            screen.query_one("#messages-footer", Static).content
-        )
+        assert "Enter expands" in static_text(screen, "#messages-footer")
 
         await pilot.resize_terminal(40, 20)
         assert await wait_for(
@@ -217,7 +209,7 @@ async def test_message_log_header_and_footer_fit_across_terminal_widths(
             "Newer →",
             "Latest",
         ]
-        assert str(screen.query_one("#messages-footer", Static).content) == (
+        assert static_text(screen, "#messages-footer") == (
             "Live · Enter · End · Esc"
         )
         assert header.region.height == 3
@@ -225,8 +217,7 @@ async def test_message_log_header_and_footer_fit_across_terminal_widths(
         await pilot.resize_terminal(120, 40)
         assert await wait_for(
             pilot,
-            lambda: "Enter expands"
-            in str(screen.query_one("#messages-footer", Static).content),
+            lambda: "Enter expands" in static_text(screen, "#messages-footer"),
         )
         assert [str(button.label) for button in controls.query(Button)] == [
             "← Older",

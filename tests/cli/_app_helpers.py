@@ -1,11 +1,28 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
+from textual.widgets import Static
 
 from ursa.cli.config import UrsaConfig
 from ursa.runtime import AgentRuntime
 from ursa.util.events import DEFAULT_EVENT_NAME
+
+
+def tool_wrapper(description, tools=None):
+    """Describe either an uninitialized agent or one with concrete tools."""
+    return SimpleNamespace(
+        description=description,
+        config={},
+        tool_sources={},
+        _agent=None if tools is None else SimpleNamespace(tools=tools),
+    )
+
+
+def static_text(widget, selector):
+    """Read a Static's literal content for presentation assertions."""
+    return str(widget.query_one(selector, Static).content)
 
 
 def make_runtime(workspace: Path) -> AgentRuntime:

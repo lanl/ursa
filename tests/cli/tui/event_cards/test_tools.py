@@ -5,7 +5,12 @@ from langchain_core.messages import ToolMessage
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
-from tests.cli._app_helpers import emit_tool_start, make_runtime, wait_for
+from tests.cli._app_helpers import (
+    emit_tool_start,
+    make_runtime,
+    static_text,
+    wait_for,
+)
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import (
     AgentToolCard,
@@ -25,15 +30,10 @@ async def test_default_tool_card_switches_from_input_to_output(app, event_turn):
         await pilot.pause()
 
         card = turn.query_one(ToolCallCard)
-        assert (
-            str(card.query_one(".tool-call-title", Static).content)
-            == "🛠️ lookup_widget"
-        )
+        assert static_text(card, ".tool-call-title") == "🛠️ lookup_widget"
         assert card.tool_input == {"query": "bear", "limit": 5}
         assert not card.completed
-        assert "bear" in str(
-            card.query_one(".tool-call-preview", Static).content
-        )
+        assert "bear" in static_text(card, ".tool-call-preview")
         assert card.query_one(".tool-call-state", Static).content in (
             *card.app.query_one(".activity").FRAMES,
         )
@@ -54,9 +54,7 @@ async def test_default_tool_card_switches_from_input_to_output(app, event_turn):
         await wait_for(pilot, lambda: card.completed)
         assert card.completed
         assert card.query_one(".tool-call-state", Static).content == "✓"
-        assert "polar" in str(
-            card.query_one(".tool-call-preview", Static).content
-        )
+        assert "polar" in static_text(card, ".tool-call-preview")
         assert not card.query_one(".tool-output-pane").has_class("hidden")
         output_syntax = card.query_one(".tool-output-json", Static).content
         assert type(output_syntax).__name__ == "Syntax"
@@ -84,15 +82,9 @@ async def test_spawn_agent_card_shows_task_and_queue_acknowledgement(
         assert await wait_for(pilot, lambda: bool(turn.query(AgentToolCard)))
         card = turn.query_one(AgentToolCard)
         assert card.tool == "spawn_agent"
-        assert str(card.query_one(".agent-tool-title", Static).content) == (
-            "✦ Delegating work"
-        )
-        assert "reviewer" in str(
-            card.query_one(".agent-tool-preview", Static).content
-        )
-        assert "deep_review" in str(
-            card.query_one(".agent-tool-preview", Static).content
-        )
+        assert static_text(card, ".agent-tool-title") == ("✦ Delegating work")
+        assert "reviewer" in static_text(card, ".agent-tool-preview")
+        assert "deep_review" in static_text(card, ".agent-tool-preview")
         assert card.query_one(".agent-tool-details").has_class("hidden")
 
         card.set_expanded(True)
@@ -114,9 +106,7 @@ async def test_spawn_agent_card_shows_task_and_queue_acknowledgement(
 
         assert card.completed
         assert card.query_one(".agent-tool-state", Static).content == "✓"
-        assert "started" in str(
-            card.query_one(".agent-tool-preview", Static).content
-        )
+        assert "started" in static_text(card, ".agent-tool-preview")
         assert "Message queued" in str(
             card.query_one(".agent-tool-result", Markdown).source
         )
@@ -150,11 +140,11 @@ async def test_agent_message_and_listing_cards_render_specialized_outcomes(
         cards = list(turn.query(AgentToolCard))
         assert len(cards) == 2
         message, listing = cards
-        assert "Message queued for root/reviewer" in str(
-            message.query_one(".agent-tool-preview", Static).content
+        assert "Message queued for root/reviewer" in static_text(
+            message, ".agent-tool-preview"
         )
-        assert "2 agents in the hierarchy" in str(
-            listing.query_one(".agent-tool-preview", Static).content
+        assert "2 agents in the hierarchy" in static_text(
+            listing, ".agent-tool-preview"
         )
         listing.set_expanded(True)
         assert "root/reviewer" in str(
@@ -186,8 +176,8 @@ async def test_agent_message_card_summarizes_broadcast_results(app, event_turn):
         turn.query_one(CoordinationCard).set_expanded(True)
         assert await wait_for(pilot, lambda: bool(turn.query(AgentToolCard)))
         card = turn.query_one(AgentToolCard)
-        assert "Messages queued for 3 agents" in str(
-            card.query_one(".agent-tool-preview", Static).content
+        assert "Messages queued for 3 agents" in static_text(
+            card, ".agent-tool-preview"
         )
 
 

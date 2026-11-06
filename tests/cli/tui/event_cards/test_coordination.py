@@ -6,7 +6,7 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.geometry import Region
 from textual.widgets import Button, Markdown, Static
 
-from tests.cli._app_helpers import emit_tool_start, wait_for
+from tests.cli._app_helpers import emit_tool_start, static_text, wait_for
 from ursa.cli.tui.event_cards import (
     AgentToolCard,
     CoordinationCard,
@@ -55,9 +55,7 @@ async def test_parallel_coordination_calls_share_one_card_across_entire_turn(
             "message" not in pending for pending in handler.tools.values()
         )
         assert not turn._tool_calls_by_id
-        assert "4 active" in str(
-            group.query_one(".coordination-summary", Static).content
-        )
+        assert "4 active" in static_text(group, ".coordination-summary")
 
         # An unrelated call, an error, and later coordination still use the
         # same card. The old summary grouping grace period doesn't apply.
@@ -74,7 +72,7 @@ async def test_parallel_coordination_calls_share_one_card_across_entire_turn(
         await handler.on_tool_end("queued", run_id="late")
         assert len(turn.query(CoordinationCard)) == 1
         assert len(turn.query(ToolCallCard)) == 1
-        summary = str(group.query_one(".coordination-summary", Static).content)
+        summary = static_text(group, ".coordination-summary")
         assert "5 actions" in summary and "1 action needs attention" in summary
         assert group.has_class("coordination-needs-attention")
         recent = "\n".join(
@@ -147,11 +145,9 @@ async def test_coordination_actions_have_clear_status_and_keyboard_expansion(
         )
         group = turn.query_one(CoordinationCard)
         assert group.can_focus
-        assert "1 active" in str(
-            group.query_one(".coordination-summary", Static).content
-        )
-        assert "Wait for → 2 agents" in str(
-            group.query_one(".coordination-action-preview", Static).content
+        assert "1 active" in static_text(group, ".coordination-summary")
+        assert "Wait for → 2 agents" in static_text(
+            group, ".coordination-action-preview"
         )
         group.focus()
         await pilot.press("enter")
@@ -160,8 +156,8 @@ async def test_coordination_actions_have_clear_status_and_keyboard_expansion(
         )
         card = group.query_one(AgentToolCard)
         assert card.can_focus
-        assert "Click or Enter to collapse" in str(
-            group.query_one(".event-expand-hint", Static).content
+        assert "Click or Enter to collapse" in static_text(
+            group, ".event-expand-hint"
         )
         card.focus()
         await pilot.press("space")
@@ -194,11 +190,9 @@ async def test_coordination_actions_have_clear_status_and_keyboard_expansion(
             "All requested agents completed.", run_id="wait"
         )
         assert await wait_for(pilot, lambda: card.completed)
-        assert "complete" in str(
-            group.query_one(".coordination-summary", Static).content
-        )
-        assert "All requested agents completed." in str(
-            card.query_one(".agent-tool-preview", Static).content
+        assert "complete" in static_text(group, ".coordination-summary")
+        assert "All requested agents completed." in static_text(
+            card, ".agent-tool-preview"
         )
 
 
@@ -263,8 +257,7 @@ async def test_group_target_expressions_are_never_presented_as_agent_counts(
                 "result": "Message queued for root/reviewer.",
             })
         previews = [
-            str(card.query_one(".agent-tool-preview", Static).content)
-            for card in cards.values()
+            static_text(card, ".agent-tool-preview") for card in cards.values()
         ]
         assert all("agents" not in preview for preview in previews)
         assert "@peers + 1 explicit target" in previews[1]
@@ -356,8 +349,8 @@ async def test_coordination_controls_and_recent_actions_fit_narrow_terminals(
             for preview in previews
         )
         assert group.has_class("coordination-needs-attention")
-        assert "1 action needs attention" in str(
-            group.query_one(".coordination-summary", Static).content
+        assert "1 action needs attention" in static_text(
+            group, ".coordination-summary"
         )
 
 
@@ -452,8 +445,8 @@ async def test_coordination_errors_keep_exact_body_and_two_visible_rows(
         card = group.query(AgentToolCard).first()
         assert card.failed and len(card.output) <= 241
         assert card.has_class("agent-tool-failed")
-        assert "Failed: [Unknown target=../foo]" in str(
-            card.query_one(".agent-tool-preview", Static).content
+        assert "Failed: [Unknown target=../foo]" in static_text(
+            card, ".agent-tool-preview"
         )
         card.set_expanded(True)
         assert await wait_for(pilot, lambda: card.output == error)
