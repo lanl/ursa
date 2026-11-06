@@ -87,17 +87,30 @@ def test_round_trip_and_repeat(payloads, policy):
     ]
 
 
-def test_failed_compression_preserves_every_source(
-    payloads, policy, monkeypatch
+@pytest.mark.parametrize(
+    "failure", ["compression", "duplicate", "missing", "unexpected"]
+)
+def test_archive_failure_preserves_every_source(
+    payloads, policy, monkeypatch, failure
 ):
     planned = plan(payloads, policy)
+    original = tarfile.TarFile.add
+
+    def broken_add(archive, path, *, arcname, recursive):
+        if failure == "compression":
+            raise OSError("disk full")
+        if failure == "duplicate":
+            original(archive, path, arcname=arcname, recursive=recursive)
+        if failure != "missing":
+            name = (
+                arcname + ".unexpected" if failure == "unexpected" else arcname
+            )
+            original(archive, path, arcname=name, recursive=recursive)
+
+    error = OSError if failure == "compression" else ValueError
     with monkeypatch.context() as patch:
-        patch.setattr(
-            tarfile.TarFile,
-            "add",
-            lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")),
-        )
-        with pytest.raises(OSError, match="disk full"):
+        patch.setattr(tarfile.TarFile, "add", broken_add)
+        with pytest.raises(error):
             apply_retention(planned)
     assert all((payloads / e.path).exists() for e in planned.entries)
     assert (
@@ -105,20 +118,6 @@ def test_failed_compression_preserves_every_source(
         == "failed"
     )
     assert apply_retention(planned)["status"] == "complete"
-
-
-def test_failed_verification_does_not_even_delete_excluded_files(
-    payloads, policy, monkeypatch
-):
-    planned = plan(payloads, policy)
-    monkeypatch.setattr(
-        retention,
-        "_verify_archive",
-        lambda *a: (_ for _ in ()).throw(ValueError("corrupt")),
-    )
-    with pytest.raises(ValueError, match="corrupt"):
-        apply_retention(planned)
-    assert all((payloads / e.path).exists() for e in planned.entries)
 
 
 def test_resume_interrupted_cleanup(payloads, policy, monkeypatch):
