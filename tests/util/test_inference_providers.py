@@ -18,6 +18,20 @@ def clear_model_provider_caches():
     inference_providers.supported_model_providers.cache_clear()
 
 
+@pytest.fixture
+def provider_lister(monkeypatch):
+    def install(provider, models=()):
+        calls = []
+        monkeypatch.setitem(
+            inference_providers._MODEL_LISTERS,
+            provider,
+            lambda config: calls.append(config) or list(models),
+        )
+        return calls
+
+    return install
+
+
 class FakeOpenAI:
     models = SimpleNamespace()
     kwargs = None
@@ -110,40 +124,26 @@ def test_list_provider_models_rejects_missing_secret(monkeypatch):
         inference_providers.list_provider_models(config)
 
 
-def test_validate_model_provider_accepts_advertised_model(monkeypatch):
+@pytest.mark.parametrize(
+    ("model", "provider", "advertised", "credentials"),
+    [
+        ("gpt-test", "openai", "gpt-test", {"api_key": SecretStr("secret")}),
+        ("gemma4", "ollama", "gemma4:latest", {}),
+        ("gemini-test", "google_genai", "models/gemini-test", {}),
+    ],
+    ids=["advertised-model", "implicit-latest-tag", "google-qualified-name"],
+)
+def test_validate_model_provider_accepts_advertised_model(
+    monkeypatch, model, provider, advertised, credentials
+):
     monkeypatch.setattr(
         inference_providers,
         "list_provider_models",
-        lambda _provider: [ProviderModel("gpt-test", "openai")],
+        lambda _provider: [ProviderModel(advertised, provider)],
     )
+    config = ModelConfig(model=model, model_provider=provider, **credentials)
 
-    assert (
-        inference_providers.validate_model_provider(
-            ModelConfig(
-                model="gpt-test",
-                model_provider="openai",
-                api_key=SecretStr("secret"),
-            ),
-            "chat",
-        )
-        is None
-    )
-
-
-def test_validate_model_provider_accepts_implicit_latest_tag(monkeypatch):
-    monkeypatch.setattr(
-        inference_providers,
-        "list_provider_models",
-        lambda _provider: [ProviderModel("gemma4:latest", "ollama")],
-    )
-
-    assert (
-        inference_providers.validate_model_provider(
-            ModelConfig(model="gemma4", model_provider="ollama"),
-            "chat",
-        )
-        is None
-    )
+    assert inference_providers.validate_model_provider(config, "chat") is None
 
 
 def test_validate_model_provider_rejects_unadvertised_model(monkeypatch):
@@ -179,40 +179,19 @@ def test_validate_model_provider_config_only_checks_connectivity(monkeypatch):
 
 @pytest.mark.parametrize("provider", inference_providers._MODEL_LISTERS)
 def test_list_provider_models_dispatches_by_model_provider(
-    monkeypatch, provider
+    provider_lister, provider
 ):
-    calls = []
-    monkeypatch.setitem(
-        inference_providers._MODEL_LISTERS,
-        provider,
-        lambda config: calls.append(config) or [],
-    )
+    calls = provider_lister(provider)
     config = ModelConfig(model="test", model_provider=provider)
 
     assert inference_providers.list_provider_models(config) == []
     assert calls == [config]
 
 
-def test_list_provider_models_dispatches_litellm(monkeypatch):
-    calls = []
-    monkeypatch.setitem(
-        inference_providers._MODEL_LISTERS,
-        "litellm",
-        lambda config: calls.append(config) or [],
-    )
-    config = ModelConfig(model="test", model_provider="litellm")
-
-    assert inference_providers.list_provider_models(config) == []
-    assert calls == [config]
-
-
-def test_list_provider_models_caches_equivalent_provider_requests(monkeypatch):
-    calls = []
-    monkeypatch.setitem(
-        inference_providers._MODEL_LISTERS,
-        "openai",
-        lambda config: calls.append(config) or [{"id": "gpt-test"}],
-    )
+def test_list_provider_models_caches_equivalent_provider_requests(
+    provider_lister,
+):
+    calls = provider_lister("openai", [{"id": "gpt-test"}])
     chat = ModelConfig(
         model="gpt-test",
         model_provider="openai",
@@ -230,25 +209,19 @@ def test_list_provider_models_caches_equivalent_provider_requests(monkeypatch):
 
 
 def test_list_provider_models_uses_inference_provider_model_provider(
-    monkeypatch,
+    provider_lister,
 ):
-    calls = []
-    monkeypatch.setitem(
-        inference_providers._MODEL_LISTERS,
-        "anthropic",
-        lambda config: calls.append(config) or [],
-    )
+    calls = provider_lister("anthropic")
     config = InferenceProviderConfig(model_provider="anthropic")
 
     assert inference_providers.list_provider_models(config) == []
     assert calls == [config]
 
 
-def test_litellm_models_can_have_different_model_providers(monkeypatch):
-    monkeypatch.setitem(
-        inference_providers._MODEL_LISTERS,
+def test_litellm_models_can_have_different_model_providers(provider_lister):
+    provider_lister(
         "litellm",
-        lambda _config: [
+        [
             {"id": "openai/gpt-test", "litellm_provider": "openai"},
             {
                 "id": "anthropic/claude-test",
@@ -272,12 +245,8 @@ def test_litellm_models_can_have_different_model_providers(monkeypatch):
     ]
 
 
-def test_model_provider_is_inferred_from_model_name(monkeypatch):
-    monkeypatch.setitem(
-        inference_providers._MODEL_LISTERS,
-        "litellm",
-        lambda _config: [{"id": "claude-test", "owned_by": "gateway"}],
-    )
+def test_model_provider_is_inferred_from_model_name(provider_lister):
+    provider_lister("litellm", [{"id": "claude-test", "owned_by": "gateway"}])
     config = ModelConfig(model="test", model_provider="litellm")
 
     assert inference_providers.list_provider_models(config) == [
@@ -315,19 +284,6 @@ def test_ollama_listing_does_not_require_a_key(monkeypatch):
         ProviderModel("llama-test", "ollama")
     ]
     assert captured == {"host": "http://localhost:11434", "verify": False}
-
-
-def test_validate_model_provider_accepts_google_qualified_model_name(
-    monkeypatch,
-):
-    monkeypatch.setattr(
-        inference_providers,
-        "list_provider_models",
-        lambda _provider: [ProviderModel("models/gemini-test", "google_genai")],
-    )
-    config = ModelConfig(model="gemini-test", model_provider="google_genai")
-
-    assert inference_providers.validate_model_provider(config, "chat") is None
 
 
 def test_supported_model_providers_are_installed_langchain_builtins(
