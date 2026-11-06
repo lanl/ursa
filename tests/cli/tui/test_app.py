@@ -93,12 +93,16 @@ async def test_agent_description_failure_is_reported(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("cancel_unlock", [False, True])
-def test_keychain_unlock_precedes_tui_startup(monkeypatch, cancel_unlock):
+@pytest.mark.parametrize("configured", [False, True])
+def test_keychain_unlock_precedes_tui_startup(
+    monkeypatch, cancel_unlock, configured
+):
     calls = []
+    expected_username = "hosted" if configured else "__unlock__"
 
     def read_password(service, username):
         assert service == "ursa"
-        assert username in {"hosted", "tools"}
+        assert username == expected_username
         calls.append(username)
         if cancel_unlock:
             raise KeyringLocked("Unlock cancelled")
@@ -125,14 +129,16 @@ def test_keychain_unlock_precedes_tui_startup(monkeypatch, cancel_unlock):
             }
         },
     ).resolve()
+    if not configured:
+        config = UrsaConfig()
     hitl = SimpleNamespace(config=config, aclose=close)
     if cancel_unlock:
         with pytest.raises(KeyringLocked, match="Unlock cancelled"):
             app_module.run_textual(hitl)
-        assert calls == ["hosted", "close"]
+        assert calls == [expected_username, "close"]
     else:
         app_module.run_textual(hitl)
-        assert calls == ["hosted", "tools", "run", "close"]
+        assert calls == [expected_username, "run", "close"]
 
 
 def test_copy_bindings_are_uniform_and_global():
