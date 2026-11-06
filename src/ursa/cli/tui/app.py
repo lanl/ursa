@@ -46,10 +46,12 @@ from ursa.cli.tui.widgets import (
     ModelScreen,
     ModelSelection,
     PromptArea,
+    TermsScreen,
     ThemeScreen,
     ToolMessage,
     WelcomeBanner,
 )
+from ursa.tools.terminal import term_manager
 from ursa.util import crossplatform
 from ursa.util import mcp as ursa_mcp
 from ursa.util.model_context import (
@@ -147,6 +149,7 @@ class UrsaTextualApp(App[None]):
         self._conversation_anchor_started = False
         self._conversation_anchor_transition = False
         self._conversation_anchor_generation = 0
+        self._agent_running = False
 
     def compose(self) -> ComposeResult:
         yield ConversationScroll(
@@ -274,6 +277,14 @@ class UrsaTextualApp(App[None]):
     @on(PromptArea.Submitted)
     async def submit_prompt(self, event: PromptArea.Submitted) -> None:
         prompt_widget = self.query_one(PromptArea)
+        if self._agent_running:
+            self.notify(
+                "Wait for the active turn to finish before submitting "
+                "another prompt. Slash commands remain available.",
+                title="Turn is still running",
+                severity="warning",
+            )
+            return
         prompt_widget.load_text("")
         turn = Turn(event.text, self.hitl.workspace)
         conversation = self.query_one("#conversation", VerticalScroll)
@@ -284,7 +295,7 @@ class UrsaTextualApp(App[None]):
         self.current_turn = turn
         self._turn_navigation_marker = turn.query_one(".events")
         self._update_status("working")
-        prompt_widget.disabled = True
+        self._agent_running = True
         self.run_worker(
             self._run_agent(turn, event.text), exclusive=True, group="agent"
         )
@@ -313,7 +324,7 @@ class UrsaTextualApp(App[None]):
         self.call_after_refresh(self._anchor_conversation_if_overflowing)
         self._turn_navigation_marker = list(turn.query(MessageCard))[-1]
         prompt_widget = self.query_one(PromptArea)
-        prompt_widget.disabled = False
+        self._agent_running = False
         prompt_widget.focus()
         self._update_status("ready")
         if self._quit_after_turn:
@@ -324,8 +335,7 @@ class UrsaTextualApp(App[None]):
 
     def action_cancel_agent(self) -> None:
         """Explain that an active agent cannot be cancelled safely."""
-        prompt = self.query_one(PromptArea)
-        if prompt.disabled:
+        if self._agent_running:
             self.notify(
                 "Cancelling an active turn is not supported. "
                 "Press Ctrl+D to abruptly quit URSA.",
@@ -339,7 +349,7 @@ class UrsaTextualApp(App[None]):
 
     def action_quit(self) -> None:
         """Quit after the active turn, or immediately when idle."""
-        if self.query_one(PromptArea).disabled:
+        if self._agent_running:
             self._quit_after_turn = True
             self.notify(
                 "URSA will quit when the active turn finishes. "
@@ -482,6 +492,7 @@ class UrsaTextualApp(App[None]):
             return [
                 f"{name} — {description}"
                 for name, description in COMMAND_CHOICES.items()
+                if not (self._agent_running and name == "models")
             ]
         workspace = Path(self.hitl.workspace)
         ignored = {".git", ".venv", "__pycache__", "node_modules"}
@@ -515,6 +526,14 @@ class UrsaTextualApp(App[None]):
             )
             return
         if command == "models":
+            if self._agent_running:
+                self.notify(
+                    "Models cannot be changed while a turn is active.",
+                    title="Turn is still running",
+                    severity="warning",
+                )
+                self.query_one(PromptArea).focus()
+                return
             await self.push_screen(
                 ModelScreen(
                     self.hitl.config.inference_providers,
@@ -536,6 +555,12 @@ class UrsaTextualApp(App[None]):
             await self.push_screen(
                 ThemeScreen(choices, initial_theme=self.theme),
                 callback=self._select_theme,
+            )
+            return
+        if command == "terms":
+            self.push_screen(
+                TermsScreen(term_manager.terminals(), manager=term_manager),
+                callback=lambda _: self.query_one(PromptArea).focus(),
             )
             return
         content = {
@@ -650,6 +675,7 @@ class UrsaTextualApp(App[None]):
             ("Cached tokens", f"{self.cached_tokens:,}"),
             ("Total tokens", f"{self.total_tokens:,}"),
             ("Theme", self.theme),
+            ("Terminal backend", term_manager.backend_status()),
             ("Workspace", str(Path(self.hitl.workspace).resolve())),
             ("Group", str(getattr(self.hitl, "group", None) or "default")),
             ("LLM model", self.hitl.config.llm_model.model),
@@ -825,7 +851,7 @@ class UrsaTextualApp(App[None]):
         self._navigate_turn_markers(1)
 
     async def action_clear_conversation(self) -> None:
-        if self.query_one(PromptArea).disabled:
+        if self._agent_running:
             self.notify(
                 "Clearing the conversation is not allowed while a turn is "
                 "active. Press Ctrl+D to abruptly quit URSA.",

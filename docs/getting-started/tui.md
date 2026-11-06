@@ -64,6 +64,14 @@ the allocated window may only become available after the first response.
 | **Ctrl+Q** or `/exit` | Exit gracefully, waiting for an active turn to finish. |
 | **Ctrl+D** | Exit immediately without cleanup; reserve this for a stuck turn. |
 
+### View managed terminals
+
+Run `/terms` for a live, view-only browser of managed terminal sessions. It
+opens the newest tab first, refreshes while open, and returns to the prompt with
+**Escape** or **Q**. Ghostty tabs preserve their emulated grid and styles;
+ProcessTerm tabs soft-wrap captured output. Agent tools remain responsible for
+terminal input; an empty browser explains when no sessions exist.
+
 ## 3. Chat with the assistant
 
 ```text
@@ -116,6 +124,20 @@ ursa --use-web
 
 Web tools are opt in. Use `--use-web` or `use_web: true` only when you want URSA
 to make network requests through its web-search tools.
+
+Useful commands inside the full-screen interface include:
+
+| Command | Purpose |
+| --- | --- |
+| `/status` | Show runtime, model, endpoint, group, terminal backend, and MCP status. |
+| `/terms` | Browse managed terminal sessions in a live, view-only modal. |
+| `/keymap` | Show the complete keyboard map. |
+| `/models` | Switch chat or embedding providers. |
+| `/theme` | Change the interface theme. |
+| `/exit` | Exit gracefully. |
+
+Terminal activity is grouped by session. Expand its compact latest-line card
+for the live styled view; repeated calls update the same card.
 
 ## Where next?
 

@@ -47,7 +47,9 @@ from ursa.cli.config import (
 from ursa.cli.runtime import HITL
 from ursa.cli.tui.agent_info import AgentDetails, ToolDetails, load_agent_tools
 from ursa.cli.tui.helpers import _fuzzy_score
+from ursa.cli.tui.terminal_view import TerminalView
 from ursa.cli.tui.tips import random_tip
+from ursa.tools.terminal import TermInfo, TermManager, term_manager
 from ursa.util.inference_providers import (
     ModelLister,
     ProviderConfig,
@@ -185,6 +187,9 @@ class PromptArea(TextArea):
         self.insert("\n")
 
     def action_clear_prompt(self) -> None:
+        if getattr(self.app, "_agent_running", False):
+            self.app.action_cancel_agent()
+            return
         self._remember(self.text)
         self._history_index = len(self.prompt_history)
         self.load_text("")
@@ -1247,6 +1252,126 @@ class InformationScreen(ModalScreen[None]):
 
     def action_page_down(self) -> None:
         self._scroll_view().action_page_down()
+
+
+class TermsScreen(ModalScreen[None]):
+    """Tabbed, view-only display of managed terminal sessions."""
+
+    BINDINGS = [Binding("escape,q", "close", "Close", priority=True)]
+
+    def __init__(
+        self,
+        terminals: Sequence[TermInfo],
+        *,
+        manager: TermManager = term_manager,
+        refresh_interval: float = 0.5,
+    ) -> None:
+        super().__init__()
+        self.terminals = self._ordered(terminals)
+        self.manager, self.refresh_interval = manager, refresh_interval
+        self._refresh_timer: Timer | None = None
+        self._tabs: TabbedContent | None = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="terminals"):
+            yield Static("Terminals", id="terminals-title")
+            if not self.terminals:
+                yield Static(
+                    "No managed terminal sessions.",
+                    classes="terminals-empty",
+                )
+                return
+            newest_pane = self._tab_id(self.terminals[-1].term_id)
+            with TabbedContent(initial=newest_pane, id="terminal-tabs") as tabs:
+                self._tabs = tabs
+                for terminal in self.terminals:
+                    yield self._pane(terminal.term_id)
+
+    def on_mount(self) -> None:
+        if getattr(self.manager, "terminals", None) is not None:
+            self._refresh_timer = self.set_interval(
+                self.refresh_interval,
+                self._sync_terminals,
+            )
+
+    def on_unmount(self) -> None:
+        if self._refresh_timer is not None:
+            self._refresh_timer.stop()
+            self._refresh_timer = None
+
+    async def _sync_terminals(self) -> None:
+        manager_terminals = getattr(self.manager, "terminals", None)
+        if manager_terminals is None or not self.is_mounted:
+            return
+        latest = self._ordered(manager_terminals())
+        if latest == self.terminals:
+            return
+        container = self.query_one("#terminals", Vertical)
+        if not latest:
+            if self._tabs is not None:
+                await self._tabs.remove()
+                self._tabs = None
+                await container.mount(
+                    Static(
+                        "No managed terminal sessions.",
+                        classes="terminals-empty",
+                    )
+                )
+            self.terminals = latest
+            return
+        if self._tabs is None:
+            empty = self.query(".terminals-empty")
+            if empty:
+                await empty.remove()
+            tabs = TabbedContent(id="terminal-tabs")
+            await container.mount(tabs)
+            for terminal in latest:
+                await tabs.add_pane(self._pane(terminal.term_id))
+            tabs.active = self._tab_id(latest[-1].term_id)
+            self._tabs, self.terminals = tabs, latest
+            return
+        previous_ids = {terminal.term_id for terminal in self.terminals}
+        previous_last = self.terminals[-1].term_id
+        latest_ids = [terminal.term_id for terminal in latest]
+
+        added = [term for term in latest if term.term_id not in previous_ids]
+        removed = previous_ids - set(latest_ids)
+
+        for term_id in removed:
+            await self._tabs.remove_pane(self._tab_id(term_id))
+
+        previous_active = self._tabs.active
+        for terminal in added:
+            await self._tabs.add_pane(self._pane(terminal.term_id))
+
+        self.terminals = latest
+        latest_tabs = {self._tab_id(term_id) for term_id in latest_ids}
+        if added and previous_active == self._tab_id(previous_last):
+            self._tabs.active = self._tab_id(latest_ids[-1])
+        elif previous_active in latest_tabs:
+            self._tabs.active = previous_active
+        else:
+            self._tabs.active = self._tab_id(latest_ids[-1])
+
+    @staticmethod
+    def _ordered(terminals: Sequence[TermInfo]) -> tuple[TermInfo, ...]:
+        return tuple(sorted(terminals, key=lambda term: term.creation_order))
+
+    @staticmethod
+    def _tab_id(term_id: str) -> str:
+        return f"terminal-tab-{term_id}"
+
+    def _pane(self, term_id: str) -> TabPane:
+        return TabPane(
+            term_id,
+            TerminalView(
+                term_id, manager=self.manager, id=f"terminal-view-{term_id}"
+            ),
+            id=self._tab_id(term_id),
+        )
+
+    def action_close(self) -> None:
+        self.dismiss(None)
 
 
 def _markdown_cell(value: object) -> str:
