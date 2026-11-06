@@ -23,7 +23,7 @@ async def test_message_screen_pages_without_retaining_full_bodies(
 
     monkeypatch.setattr(app.message_store, "message_body", tracked_read)
     async with app.run_test(size=(120, 40)) as pilot:
-        await app._show_command("messages")
+        await app._show_command("coordination")
         screen = app.screen
         assert isinstance(screen, MessagesScreen)
         assert await wait_for(
@@ -99,7 +99,7 @@ async def test_message_screen_pages_without_retaining_full_bodies(
         await pilot.press("escape")
         assert not app.query(HierarchyMessageCard)
         assert all(timer._task is None for timer in timers)
-        await app._show_command("messages")
+        await app._show_command("coordination")
         assert await wait_for(
             pilot, lambda: len(app.screen.query(HierarchyMessageCard)) == 50
         )
@@ -119,7 +119,7 @@ async def test_message_log_pauses_on_scroll_or_expansion_and_keyboard_toggles(
         )
 
     async with app.run_test(size=(80, 14)) as pilot:
-        await app._show_command("messages")
+        await app._show_command("coordination")
         screen = app.screen
         assert isinstance(screen, MessagesScreen)
         assert await wait_for(
@@ -178,7 +178,7 @@ async def test_message_log_header_and_footer_fit_across_terminal_widths(
     await app.record_hierarchy_message("root", ("root/a",), "one message")
 
     async with app.run_test(size=(60, 20)) as pilot:
-        await app._show_command("messages")
+        await app._show_command("coordination")
         screen = app.screen
         assert isinstance(screen, MessagesScreen)
         assert await wait_for(
@@ -233,7 +233,7 @@ async def test_expanding_a_message_cancels_a_deferred_live_resume(app):
         )
 
     async with app.run_test(size=(80, 14)) as pilot:
-        await app._show_command("messages")
+        await app._show_command("coordination")
         screen = app.screen
         assert isinstance(screen, MessagesScreen)
         assert await wait_for(

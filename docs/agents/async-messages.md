@@ -163,12 +163,13 @@ Choose any listed path to make it the target of subsequent messages and show
 that agent's live progress. Switch back to the root path to restore the root
 conversation view.
 
-The **Subagents** tab in `/status` shows the hierarchy as a tree with each
-agent's current Working, Waiting, Stopping, Queued, or Ready state. The status
-summary's total token count includes model calls made by every agent in the
-hierarchy.
+The **Subagents** tab in `/coordination` shows the hierarchy as a tree with
+each agent's current Working, Waiting, Stopping, Queued, or Ready state. The
+status summary's total token count includes model calls made by every agent in
+the hierarchy. Select an agent with **Enter** to switch to it; use **Space** to
+expand or collapse its details.
 
-Use `/messages` for a live, read-only log of messages across the hierarchy.
+Use `/coordination` for a live, read-only log of messages across the hierarchy.
 Each card identifies the sender and recipients, assigns every agent a stable
 color, shows a live relative timestamp, and collapses the message body to one
 line until expanded. The shared footer describes the click and close controls.

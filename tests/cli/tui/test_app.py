@@ -77,7 +77,7 @@ def test_hierarchy_activity_uses_uniform_labels():
     )
 
 
-async def test_messages_command_shows_live_collapsible_colored_log(app):
+async def test_coordination_command_shows_live_collapsible_colored_log(app):
     content = (
         "[OPENING round=1 root/p08] Review the first line.\n\n"
         "Include the complete supporting detail. [red]literal brackets[/red]"
@@ -89,7 +89,7 @@ async def test_messages_command_shows_live_collapsible_colored_log(app):
     )
 
     async with app.run_test(size=(100, 32)) as pilot:
-        await app._show_command("messages")
+        await app._show_command("coordination")
         assert isinstance(app.screen, MessagesScreen)
         await wait_for(
             pilot, lambda: len(app.screen.query(HierarchyMessageCard)) == 1

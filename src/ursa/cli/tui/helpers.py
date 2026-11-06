@@ -41,7 +41,7 @@ AGENT_LABELS = {
 COMMAND_CHOICES = {
     "agents": "Configured agents, descriptions, options, and tools",
     "exit": "Quit URSA gracefully",
-    "messages": "Read-only message log across the agent hierarchy",
+    "coordination": "Live messages and subagent hierarchy",
     "subagents": "Switch to an agent in the active hierarchy",
     "status": "Tokens, models, endpoints, group, and MCP servers",
     "keymap": "Complete keyboard map",

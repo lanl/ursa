@@ -1261,7 +1261,7 @@ class AgentRuntime:
             ]
         # Delivery is now accepted in the host queue. Log the aggregate only
         # after the lock recheck succeeds, so rejected broadcasts never appear
-        # in `/messages` as if they were received.
+        # in `/coordination` as if they were received.
         try:
             await self._notify_callbacks(
                 callbacks,

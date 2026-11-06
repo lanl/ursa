@@ -58,7 +58,7 @@ the allocated window may only become available after the first response.
 |---|---|
 | `/` | Browse application commands. Use `/keymap` for every keyboard shortcut. |
 | `/subagents` | Switch the message target within the active agent hierarchy. |
-| `/messages` | Open the live, read-only message log for the full hierarchy. |
+| `/coordination` | Open live messages and the subagent hierarchy. |
 | `#` | Choose an agent and route the message to it. |
 | `@` | Insert a workspace file or directory into the message. |
 | **Enter** in the editor | Submit the message. During active work, queue it for the selected agent. |
@@ -73,8 +73,9 @@ the conversation only when that agent begins processing them.
 
 Each turn groups agent messaging, spawning, waiting, and stopping into one
 **Coordination** card with a summary and its two latest actions. Expand the
-card to inspect individual calls. `/messages` displays 50 previews at a time;
-use **Older** and **Newer** to browse, then **Latest** to follow live messages.
+card to inspect individual calls. `/coordination` opens on Messages, which
+displays 50 previews at a time; its Subagents tab shows the live hierarchy.
+Use **Older** and **Newer** to browse, then **Latest** to follow live messages.
 Scrolling back or expanding a message pauses live following so incoming traffic
 does not move what you are reading. Press **End** or select **Latest** to resume.
 Use **Tab** and **Shift+Tab** to move between message cards and controls; the

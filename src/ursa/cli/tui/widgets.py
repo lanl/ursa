@@ -1219,10 +1219,15 @@ class LiveHierarchyTree(Tree[HierarchyTreeRow]):
     REFRESH_INTERVAL = 0.5
 
     def __init__(
-        self, snapshot: Callable[[], Sequence[HierarchyTreeRow]]
+        self,
+        snapshot: Callable[[], Sequence[HierarchyTreeRow]],
+        *,
+        id: str = "live-hierarchy-tree",
+        on_select: Callable[[HierarchyTreeRow], None] | None = None,
     ) -> None:
-        super().__init__("Live hierarchy", id="status-subagents-tree")
+        super().__init__("Live hierarchy", id=id)
         self._snapshot = snapshot
+        self._on_select = on_select
         self._signature: tuple[HierarchyTreeRow, ...] | None = None
 
     def on_mount(self) -> None:
@@ -1235,6 +1240,12 @@ class LiveHierarchyTree(Tree[HierarchyTreeRow]):
         if not force and rows == self._signature:
             return
         expanded = self._expanded_paths()
+        cursor = self.cursor_node
+        cursor_path = (
+            cursor.data.path
+            if isinstance(getattr(cursor, "data", None), HierarchyTreeRow)
+            else None
+        )
         previous_paths = {row.path for row in self._signature or ()}
         first_render = self._signature is None
         self._signature = rows
@@ -1263,6 +1274,39 @@ class LiveHierarchyTree(Tree[HierarchyTreeRow]):
             nodes[row.path] = node
             for detail in self._detail_labels(row):
                 node.add_leaf(detail)
+        # ``reset`` retains Textual's numeric cursor line. Rebuild the lines
+        # before restoring a surviving agent; the neutral wrapper is a safe
+        # fallback when an agent disappears.
+        self.get_node_at_line(0)
+        self.move_cursor(nodes.get(cursor_path, self.root), animate=False)
+
+    def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+        """Select agents while leaving detail rows and expansion alone."""
+        if event.control is not self or not isinstance(
+            event.node.data, HierarchyTreeRow
+        ):
+            return
+        event.stop()
+        if self._on_select is not None:
+            self._on_select(event.node.data)
+
+    def action_cursor_up(self) -> None:
+        self._move_agent_cursor(-1)
+
+    def action_cursor_down(self) -> None:
+        self._move_agent_cursor(1)
+
+    def _move_agent_cursor(self, direction: int) -> None:
+        """Keep keyboard navigation on agent rows, not their detail leaves."""
+        start = self.cursor_line
+        if start < 0:
+            start = -1 if direction > 0 else len(self._tree_lines)
+        stop = len(self._tree_lines) if direction > 0 else -1
+        for line in range(start + direction, stop, direction):
+            node = self.get_node_at_line(line)
+            if isinstance(getattr(node, "data", None), HierarchyTreeRow):
+                self.move_cursor(node, animate=False)
+                return
 
     def _expanded_paths(self) -> set[str]:
         expanded: set[str] = set()
@@ -1343,14 +1387,12 @@ class InformationScreen(ModalScreen[None]):
         content: str,
         *,
         config_yaml: str | None = None,
-        subagent_rows: Callable[[], Sequence[HierarchyTreeRow]] | None = None,
         status_content: Callable[[], str] | None = None,
     ) -> None:
         super().__init__()
         self.screen_title = title
         self.content = content
         self.config_yaml = config_yaml
-        self.subagent_rows = subagent_rows
         self.status_content = status_content
         self._status_content_signature = content
 
@@ -1379,13 +1421,6 @@ class InformationScreen(ModalScreen[None]):
                             show_line_numbers=True,
                             id="status-config-yaml",
                         )
-                    if self.subagent_rows is not None:
-                        with TabPane("Subagents", id="status-subagents-tab"):
-                            yield Static(
-                                "Live state, token usage, and latest activity",
-                                id="status-subagents-summary",
-                            )
-                            yield LiveHierarchyTree(self.subagent_rows)
 
     def on_mount(self) -> None:
         if self.status_content is not None:
@@ -1409,9 +1444,6 @@ class InformationScreen(ModalScreen[None]):
         self.dismiss(None)
 
     def _scroll_view(self):
-        tabs = self.query("#status-tabs")
-        if tabs and tabs.first().active == "status-subagents-tab":
-            return self.query_one("#status-subagents-tree", LiveHierarchyTree)
         return self.query_one("#information-body", VerticalScroll)
 
     def action_scroll_up(self) -> None:
@@ -2027,10 +2059,14 @@ class MessagesScreen(ModalScreen[None]):
         self,
         messages: MessageStore,
         color_for: Callable[[str], str],
+        subagent_rows: Callable[[], Sequence[HierarchyTreeRow]] | None = None,
+        on_subagent_selected: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__()
         self._messages = messages
         self._color_for = color_for
+        self._subagent_rows = subagent_rows
+        self._on_subagent_selected = on_subagent_selected
         self._ids: tuple[int, ...] = ()
         self._live = True
         self._resuming_live = False
@@ -2039,26 +2075,73 @@ class MessagesScreen(ModalScreen[None]):
         self._sync_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="messages-dialog"):
-            with Vertical(id="messages-header"):
-                yield Static("Messages", id="messages-title")
-                with Horizontal(id="messages-controls"):
-                    yield Button("← Older", id="messages-older")
-                    yield Button("Newer →", id="messages-newer")
-                    yield Button("Latest", id="messages-latest")
-            yield VerticalScroll(id="messages-body")
-            yield Static(
-                "Loading messages…",
-                id="messages-footer",
-            )
+        with Vertical(id="coordination-dialog"):
+            yield Static("Coordination", id="coordination-title")
+            with TabbedContent(id="coordination-tabs"):
+                with TabPane("Messages", id="coordination-messages-tab"):
+                    with Vertical(id="messages-dialog"):
+                        with Vertical(id="messages-header"):
+                            yield Static("Messages", id="messages-title")
+                            with Horizontal(id="messages-controls"):
+                                yield Button("← Older", id="messages-older")
+                                yield Button("Newer →", id="messages-newer")
+                                yield Button("Latest", id="messages-latest")
+                        yield VerticalScroll(id="messages-body")
+                        yield Static("Loading messages…", id="messages-footer")
+                if self._subagent_rows is not None:
+                    with TabPane("Subagents", id="coordination-subagents-tab"):
+                        yield Static(
+                            id="coordination-subagents-summary",
+                        )
+                        yield LiveHierarchyTree(
+                            self._subagent_rows,
+                            id="coordination-subagents-tree",
+                            on_select=self._select_subagent,
+                        )
 
-    async def on_mount(self) -> None:
+    def on_mount(self) -> None:
+        # Tab panes mount after their parent screen, so wait until the first
+        # message-loop turn before querying the initially active pane.
+        self.call_later(self._start_sync)
+        self.call_after_refresh(self._refresh_subagent_hint)
+
+    async def _start_sync(self) -> None:
+        if not self.is_mounted:
+            return
+        if not self.query("#messages-body"):
+            self.call_later(self._start_sync)
+            return
+        self._refresh_subagent_hint()
         await self._sync_messages()
         self.set_interval(0.5, self._sync_messages)
 
     def on_resize(self) -> None:
-        if self.is_mounted:
+        if self.is_mounted and self.query("#messages-footer"):
             self._refresh_navigation(has_newer=self._has_newer)
+        self.call_after_refresh(self._refresh_subagent_hint)
+
+    @on(TabbedContent.TabActivated, "#coordination-tabs")
+    def _refresh_coordination_hint(
+        self, event: TabbedContent.TabActivated
+    ) -> None:
+        if event.pane.id == "coordination-subagents-tab":
+            self.call_after_refresh(self._refresh_subagent_hint)
+
+    def _refresh_subagent_hint(self) -> None:
+        summary = self.query("#coordination-subagents-summary")
+        if not summary:
+            return
+        widget = summary.first(Static)
+        width = widget.content_region.width or self.app.size.width - 10
+        hint = (
+            "Enter · Space · Esc"
+            if width < 34
+            else "Enter switch · Space expand · Esc"
+            if width < 100
+            else "Live state, token usage, and latest activity · "
+            "Enter switches agent · Space expands · Esc closes"
+        )
+        widget.update(hint)
 
     async def _sync_messages(self) -> None:
         async with self._sync_lock:
@@ -2188,6 +2271,8 @@ class MessagesScreen(ModalScreen[None]):
 
     @on(Button.Pressed, "#messages-older")
     async def action_older(self) -> None:
+        if self._scroll_view() is not self._body():
+            return
         async with self._sync_lock:
             if not self._ids:
                 return
@@ -2202,6 +2287,8 @@ class MessagesScreen(ModalScreen[None]):
 
     @on(Button.Pressed, "#messages-newer")
     async def action_newer(self) -> None:
+        if self._scroll_view() is not self._body():
+            return
         async with self._sync_lock:
             if not self._ids:
                 return
@@ -2238,6 +2325,7 @@ class MessagesScreen(ModalScreen[None]):
             or not self._live
             or not self._resuming_live
             or generation != self._resume_generation
+            or not self.query("#messages-body")
         ):
             return
         self._body().scroll_end(animate=False, immediate=True)
@@ -2246,16 +2334,40 @@ class MessagesScreen(ModalScreen[None]):
     def action_close(self) -> None:
         self.dismiss(None)
 
+    def _select_subagent(self, row: HierarchyTreeRow) -> None:
+        if self._on_subagent_selected is not None:
+            self._on_subagent_selected(row.path)
+        self.dismiss(None)
+
     def _body(self) -> VerticalScroll:
         return self.query_one("#messages-body", VerticalScroll)
 
+    def _scroll_view(self):
+        tabs = self.query("#coordination-tabs")
+        if tabs and tabs.first().active == "coordination-subagents-tab":
+            return self.query_one(
+                "#coordination-subagents-tree", LiveHierarchyTree
+            )
+        return self._body()
+
     def action_scroll_up(self) -> None:
-        self._body().action_scroll_up()
+        view = self._scroll_view()
+        if isinstance(view, LiveHierarchyTree):
+            view.action_cursor_up()
+        else:
+            view.action_scroll_up()
 
     def action_scroll_down(self) -> None:
-        self._body().action_scroll_down()
+        view = self._scroll_view()
+        if isinstance(view, LiveHierarchyTree):
+            view.action_cursor_down()
+        else:
+            view.action_scroll_down()
 
     async def action_scroll_home(self) -> None:
+        if self._scroll_view() is not self._body():
+            self._scroll_view().action_scroll_home()
+            return
         async with self._sync_lock:
             self._live = False
             self._cancel_live_resume()
@@ -2265,13 +2377,16 @@ class MessagesScreen(ModalScreen[None]):
             self.call_after_refresh(self._body().scroll_home, animate=False)
 
     async def action_scroll_end(self) -> None:
+        if self._scroll_view() is not self._body():
+            self._scroll_view().action_scroll_end()
+            return
         await self.action_latest()
 
     def action_page_up(self) -> None:
-        self._body().action_page_up()
+        self._scroll_view().action_page_up()
 
     def action_page_down(self) -> None:
-        self._body().action_page_down()
+        self._scroll_view().action_page_down()
 
 
 class QueuedMessage(Static):

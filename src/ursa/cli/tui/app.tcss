@@ -177,12 +177,28 @@ ModelScreen SelectCurrent {
     color: $accent;
 }
 
-#messages-dialog {
+#coordination-dialog {
     width: 90%;
     height: 85%;
     padding: 1 2;
     border: round $accent;
     background: $surface;
+}
+
+#coordination-title {
+    height: 2;
+    text-style: bold;
+    color: $accent;
+}
+
+#coordination-tabs,
+#coordination-messages-tab,
+#coordination-subagents-tab {
+    height: 1fr;
+}
+
+#messages-dialog {
+    height: 1fr;
 }
 
 #messages-header {
@@ -277,18 +293,19 @@ ModelScreen SelectCurrent {
 
 #status-tabs,
 #status-summary-tab,
-#status-config-tab,
-#status-subagents-tab {
+#status-config-tab {
     height: 1fr;
 }
 
-#status-subagents-summary {
+#coordination-subagents-summary {
     height: 1;
     color: $text-muted;
     text-style: italic;
+    overflow: hidden hidden;
+    text-overflow: ellipsis;
 }
 
-#status-subagents-tree {
+#coordination-subagents-tree {
     height: 1fr;
     margin-top: 1;
     border: round $accent;

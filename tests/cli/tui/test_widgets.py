@@ -51,6 +51,7 @@ from ursa.cli.tui.widgets import (
     HotlistScreen,
     InformationScreen,
     LiveHierarchyTree,
+    MessagesScreen,
     ModelScreen,
     ModelSelection,
     PromptArea,
@@ -645,7 +646,7 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         ] == [
             "agents",
             "exit",
-            "messages",
+            "coordination",
             "subagents",
             "status",
             "keymap",
@@ -675,7 +676,30 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         )
 
         tabs = {str(tab.label): tab for tab in app.screen.query(Tab)}
-        assert "Subagents" in tabs
+        assert set(tabs) == {"Status", "Config"}
+        await pilot.press("escape")
+        await wait_for(
+            pilot, lambda: not isinstance(app.screen, InformationScreen)
+        )
+        await app._show_command("coordination")
+        await wait_for(pilot, lambda: isinstance(app.screen, MessagesScreen))
+        await wait_for(pilot, lambda: len(app.screen.query(Tab)) == 2)
+        summary = app.screen.query_one(
+            "#coordination-subagents-summary", Static
+        )
+        assert "Esc" in str(summary.content)
+        await pilot.resize_terminal(120, 24)
+        assert await wait_for(
+            pilot, lambda: "Esc closes" in str(summary.content)
+        )
+        await pilot.resize_terminal(40, 24)
+        assert await wait_for(
+            pilot,
+            lambda: str(summary.content) == "Enter · Space · Esc",
+        )
+        await pilot.resize_terminal(80, 24)
+        tabs = {str(tab.label): tab for tab in app.screen.query(Tab)}
+        assert list(tabs) == ["Messages", "Subagents"]
         await pilot.click(f"#{tabs['Subagents'].id}")
         await pilot.pause()
         tree = app.screen.query_one(LiveHierarchyTree)
@@ -766,6 +790,16 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
             lambda: "root/researcher" not in tree_rows(),
             timeout=3,
         )
+        coordination_timers = (*app.screen._timers, *tree._timers)
+        await pilot.press("escape")
+        await wait_for(
+            pilot, lambda: not isinstance(app.screen, MessagesScreen), timeout=3
+        )
+        assert all(timer._task is None for timer in coordination_timers)
+        await app._show_command("status")
+        await wait_for(pilot, lambda: isinstance(app.screen, InformationScreen))
+        await wait_for(pilot, lambda: len(app.screen.query(Tab)) == 2)
+        tabs = {str(tab.label): tab for tab in app.screen.query(Tab)}
         await pilot.click(f"#{tabs['Config'].id}")
         await pilot.press("tab")
         await pilot.pause()
@@ -798,8 +832,14 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         await wait_for(pilot, lambda: body.scroll_y > 0)
         assert body.scroll_y > 0
 
-        timers = (*app.screen._timers, *tree._timers)
-        assert app.screen._timers and tree._timers
+        body.scroll_home(animate=False, immediate=True)
+        assert body.scroll_y == 0
+        app.screen.action_scroll_end()
+        assert await wait_for(pilot, lambda: body.scroll_y == body.max_scroll_y)
+        assert body.scroll_y > 0
+
+        timers = tuple(app.screen._timers)
+        assert timers
         await pilot.press("escape")
         await pilot.pause()
         await wait_for(
@@ -807,6 +847,127 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         )
         assert not isinstance(app.screen, InformationScreen)
         assert all(timer._task is None for timer in timers)
+
+
+async def test_coordination_tree_enter_switches_the_active_agent(app):
+    runtime = app.runtime
+    root_id = runtime.agents["chat"].runtime_id
+    runtime._active_root_id = root_id
+    runtime._hierarchies[root_id] = {
+        "root": root_id,
+        "root/reviewer": f"{root_id}:sub:root/reviewer",
+    }
+    app._active_agent_path = "root"
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app._show_command("coordination")
+        await wait_for(pilot, lambda: isinstance(app.screen, MessagesScreen))
+        await wait_for(pilot, lambda: len(app.screen.query(Tab)) == 2)
+        tabs = {str(tab.label): tab for tab in app.screen.query(Tab)}
+        await pilot.click(f"#{tabs['Subagents'].id}")
+        tree = app.screen.query_one(LiveHierarchyTree)
+        await wait_for(
+            pilot,
+            lambda: any(
+                getattr(node.data, "path", None) == "root/reviewer"
+                for node in tree.root.children[0].children
+            ),
+        )
+        reviewer = next(
+            node
+            for node in tree.root.children[0].children
+            if getattr(node.data, "path", None) == "root/reviewer"
+        )
+        root = tree.root.children[0]
+        tree.move_cursor(root, animate=False)
+        tree.focus()
+        await pilot.press("down")
+        assert await wait_for(pilot, lambda: tree.cursor_node is reviewer)
+        await pilot.press("down")
+        assert tree.cursor_node is reviewer
+        await pilot.press("up")
+        assert await wait_for(pilot, lambda: tree.cursor_node is root)
+        await pilot.press("up")
+        assert tree.cursor_node is root
+        await pilot.press("down")
+        assert await wait_for(pilot, lambda: tree.cursor_node is reviewer)
+        runtime._hierarchies[root_id]["root/auditor"] = (
+            f"{root_id}:sub:root/auditor"
+        )
+        app._agent_last_activity["root/reviewer"] = "Reviewing"
+        assert await wait_for(
+            pilot,
+            lambda: any(
+                "Reviewing" in child.label.plain
+                for node in tree.root.children[0].children
+                if getattr(node.data, "path", None) == "root/reviewer"
+                for child in node.children
+                if child.data is None
+            )
+            and any(
+                getattr(node.data, "path", None) == "root/auditor"
+                for node in tree.root.children[0].children
+            )
+            and getattr(getattr(tree.cursor_node, "data", None), "path", None)
+            == "root/reviewer",
+            timeout=3,
+        )
+        del runtime._hierarchies[root_id]["root/reviewer"]
+        tree.refresh_hierarchy(force=True)
+        assert getattr(tree.cursor_node, "data", None) is None
+        await pilot.press("enter")
+        assert app._active_agent_path == "root"
+        assert isinstance(app.screen, MessagesScreen)
+        runtime._hierarchies[root_id]["root/reviewer"] = (
+            f"{root_id}:sub:root/reviewer"
+        )
+        assert await wait_for(
+            pilot,
+            lambda: any(
+                getattr(node.data, "path", None) == "root/reviewer"
+                for node in tree.root.children[0].children
+            ),
+        )
+        reviewer = next(
+            node
+            for node in tree.root.children[0].children
+            if getattr(node.data, "path", None) == "root/reviewer"
+        )
+        tree.move_cursor(reviewer, animate=False)
+        await pilot.press("enter")
+
+        assert await wait_for(
+            pilot, lambda: app._active_agent_path == "root/reviewer"
+        )
+        assert app._view_agent_path == "root/reviewer"
+        assert not isinstance(app.screen, MessagesScreen)
+
+
+async def test_coordination_can_close_before_its_message_pane_mounts(app):
+    async with app.run_test(size=(120, 24)) as pilot:
+        await app._show_command("coordination")
+        assert isinstance(app.screen, MessagesScreen)
+        app.screen.action_close()
+        await pilot.pause()
+        assert not isinstance(app.screen, MessagesScreen)
+
+        await app._show_command("coordination")
+        await wait_for(pilot, lambda: isinstance(app.screen, MessagesScreen))
+        await wait_for(
+            pilot,
+            lambda: bool(app.screen.query("#coordination-subagents-summary")),
+        )
+        summary = app.screen.query_one(
+            "#coordination-subagents-summary", Static
+        )
+        assert await wait_for(
+            pilot, lambda: "Esc closes" in str(summary.content)
+        )
+        await pilot.press("escape")
+        assert await wait_for(
+            pilot, lambda: not isinstance(app.screen, MessagesScreen)
+        )
+        await pilot.pause()
 
 
 async def test_exit_command_quits_the_app(app):

@@ -41,9 +41,10 @@ opens discussion, so no one sends to an agent that has not been created yet.
 
 ## 3. Follow the conversation
 
-Open `/messages` to see traffic across the whole team, including spawn messages.
-Expand a message to read its full content. Use `/subagents` to select a player
-and follow that player's progress, or `/status` to inspect the live agent tree.
+Open `/coordination` to see traffic across the whole team, including spawn
+messages. Expand a message to read its full content. Use `/subagents` to
+select a player and follow that player's progress, or use Coordination's
+Subagents tab to inspect the live agent tree.
 
 The game proceeds through these stages:
 

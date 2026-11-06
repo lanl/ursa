@@ -911,11 +911,13 @@ class UrsaTextualApp(App[None]):
                 callback=lambda _: self.query_one(PromptArea).focus(),
             )
             return
-        if command == "messages":
+        if command == "coordination":
             self.push_screen(
                 MessagesScreen(
                     self.message_store,
                     self._agent_color,
+                    self._subagent_status_rows,
+                    self._select_subagent_path,
                 ),
                 callback=lambda _: self.query_one(PromptArea).focus(),
             )
@@ -983,29 +985,29 @@ class UrsaTextualApp(App[None]):
                     if command == "status"
                     else None
                 ),
-                subagent_rows=(
-                    self._subagent_status_rows if command == "status" else None
-                ),
             ),
             callback=lambda _: self.query_one(PromptArea).focus(),
         )
 
     def _select_subagent(self, choice: str | None) -> None:
         if choice:
-            self._active_agent_path = choice.split(" — ", 1)[0]
-            self._view_agent_path = self._active_agent_path
-            self._apply_agent_turn_visibility()
-            self.run_worker(
-                partial(self._turn_for_agent, self._active_agent_path),
-                exclusive=True,
-                group="agent-view",
-            )
-            self._update_status(
-                "message active agent"
-                if self._message_mode
-                else ("working" if self._active_agent_runs else "ready")
-            )
+            self._select_subagent_path(choice.split(" — ", 1)[0])
         self.query_one(PromptArea).focus()
+
+    def _select_subagent_path(self, path: str) -> None:
+        self._active_agent_path = path
+        self._view_agent_path = path
+        self._apply_agent_turn_visibility()
+        self.run_worker(
+            partial(self._turn_for_agent, path),
+            exclusive=True,
+            group="agent-view",
+        )
+        self._update_status(
+            "message active agent"
+            if self._message_mode
+            else ("working" if self._active_agent_runs else "ready")
+        )
 
     async def record_hierarchy_message(
         self,
