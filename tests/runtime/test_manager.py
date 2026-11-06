@@ -33,7 +33,6 @@ async def manager():
         yield instance
 
 
-@pytest.mark.asyncio
 async def test_agent_process_isolated_config_and_heartbeat(
     manager,
 ) -> None:
@@ -61,7 +60,6 @@ async def test_agent_process_isolated_config_and_heartbeat(
     assert snapshot.heartbeat_age < 1
 
 
-@pytest.mark.asyncio
 async def test_agent_process_routes_all_output_through_logging(
     manager, capfd: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -89,7 +87,6 @@ async def test_agent_process_routes_all_output_through_logging(
     assert "agent log marker" not in terminal
 
 
-@pytest.mark.asyncio
 async def test_restart_keeps_only_committed_invocation_state(
     manager,
     tmp_path: Path,
@@ -115,7 +112,6 @@ async def test_restart_keeps_only_committed_invocation_state(
     assert state_path.is_file()
 
 
-@pytest.mark.asyncio
 async def test_cancelled_waiter_does_not_discard_completed_state(
     manager,
 ) -> None:
@@ -159,7 +155,6 @@ async def test_process_loss_settles_pending_invocations(
     assert (await manager.snapshot("agent")).status is expected
 
 
-@pytest.mark.asyncio
 async def test_shutdown_observes_exception_for_cancelled_invocation(
     manager,
 ) -> None:
@@ -191,7 +186,6 @@ async def test_shutdown_observes_exception_for_cancelled_invocation(
         loop.set_exception_handler(original_handler)
 
 
-@pytest.mark.asyncio
 async def test_host_and_agent_messages_are_routed(
     manager,
 ) -> None:
@@ -216,7 +210,6 @@ async def test_host_and_agent_messages_are_routed(
     )
 
 
-@pytest.mark.asyncio
 async def test_send_message_returns_after_recipient_state_is_committed(
     manager,
 ) -> None:
@@ -233,7 +226,6 @@ async def test_send_message_returns_after_recipient_state_is_committed(
     ]
 
 
-@pytest.mark.asyncio
 async def test_send_message_propagates_recipient_handler_failure(
     manager,
 ) -> None:
@@ -246,7 +238,6 @@ async def test_send_message_propagates_recipient_handler_failure(
         await manager.send_message("agent", "will fail")
 
 
-@pytest.mark.asyncio
 async def test_callbacks_are_dispatched_in_host_process(
     manager,
 ) -> None:
@@ -284,7 +275,6 @@ async def test_callbacks_are_dispatched_in_host_process(
     ]
 
 
-@pytest.mark.asyncio
 async def test_start_waits_for_concurrent_kill_before_new_generation(
     manager,
     monkeypatch: pytest.MonkeyPatch,
@@ -315,7 +305,6 @@ async def test_start_waits_for_concurrent_kill_before_new_generation(
     assert restarted.pid != original.pid
 
 
-@pytest.mark.asyncio
 async def test_cancelled_close_waiter_does_not_cancel_process_cleanup(
     manager,
     monkeypatch: pytest.MonkeyPatch,
@@ -343,7 +332,6 @@ async def test_cancelled_close_waiter_does_not_cancel_process_cleanup(
     assert (await manager.snapshot("agent")).status is AgentStatus.STOPPED
 
 
-@pytest.mark.asyncio
 async def test_kill_waits_for_received_state_commit(
     manager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

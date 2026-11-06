@@ -11,7 +11,6 @@ from tests.runtime.fixtures import runtime_request
 from ursa.runtime.agent_runtime import _BufferedAgentMessage
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("reset_query", [False, True])
 async def test_process_delivers_batch_in_one_turn_with_separate_envelopes(
     reset_query,
@@ -100,7 +99,6 @@ async def queue_peer_messages(runtime, root, callbacks=()):
     return expected
 
 
-@pytest.mark.asyncio
 async def test_busy_recipient_runs_one_batch_with_one_activity(
     runtime, monkeypatch
 ):
@@ -138,7 +136,6 @@ async def test_busy_recipient_runs_one_batch_with_one_activity(
     assert runtime._working_counts == {}
 
 
-@pytest.mark.asyncio
 async def test_wait_consumes_entire_buffer_once_without_replaying_it(runtime):
     runtime, root = runtime
     runtime._mark_working("root", 1)
@@ -153,7 +150,6 @@ async def test_wait_consumes_entire_buffer_once_without_replaying_it(runtime):
     assert "Received" not in again
 
 
-@pytest.mark.asyncio
 async def test_stopping_recipient_does_not_flush_a_new_batch(runtime):
     runtime, root = runtime
     runtime._mark_working("root", 1)
@@ -164,7 +160,6 @@ async def test_stopping_recipient_does_not_flush_a_new_batch(runtime):
     assert runtime._buffered_agent_messages == {}
 
 
-@pytest.mark.asyncio
 async def test_user_and_peer_messages_share_fifo_without_extra_working_count(
     runtime, monkeypatch
 ):
@@ -200,7 +195,6 @@ async def test_user_and_peer_messages_share_fifo_without_extra_working_count(
     )
 
 
-@pytest.mark.asyncio
 async def test_mixed_user_batch_promotes_every_turn_without_delegated_spinner(
     runtime, monkeypatch
 ):
@@ -285,7 +279,6 @@ async def test_lifecycle_change_fails_a_buffered_user_delivery(
         await queued
 
 
-@pytest.mark.asyncio
 async def test_cancelled_before_start_settles_user_delivery_future(runtime):
     runtime, _root = runtime
     response = asyncio.get_running_loop().create_future()

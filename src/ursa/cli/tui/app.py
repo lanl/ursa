@@ -318,18 +318,7 @@ class UrsaTextualApp(App[None]):
                 return fallback
             if existing := self._agent_turns.get(agent_path):
                 return existing
-            turn = Turn(
-                "",
-                self.runtime.workspace,
-                agent_path=agent_path,
-                progress_only=True,
-            )
-            self._agent_turns[agent_path] = turn
-            conversation = self.query_one("#conversation", VerticalScroll)
-            await conversation.mount(turn)
-            turn.set_card_details_expanded(self.card_details_expanded)
-            self._apply_agent_turn_visibility()
-            return turn
+            return await self._mount_agent_activity(agent_path)
 
     async def add_agent_event(
         self,
@@ -395,19 +384,25 @@ class UrsaTextualApp(App[None]):
                 existing.delegated_message_id = message_id
                 existing.update_activity("Working…")
                 return existing
-            turn = Turn(
-                "",
-                self.runtime.workspace,
-                agent_path=agent_path,
-                progress_only=True,
-            )
-            turn.delegated_message_id = message_id
-            self._agent_turns[agent_path] = turn
-            conversation = self.query_one("#conversation", VerticalScroll)
-            await conversation.mount(turn)
-            turn.set_card_details_expanded(self.card_details_expanded)
-            self._apply_agent_turn_visibility()
-            return turn
+            return await self._mount_agent_activity(agent_path, message_id)
+
+    async def _mount_agent_activity(
+        self, agent_path: str, message_id: str | None = None
+    ) -> Turn:
+        """Mount a new progress turn while the caller holds the turn lock."""
+        turn = Turn(
+            "",
+            self.runtime.workspace,
+            agent_path=agent_path,
+            progress_only=True,
+        )
+        turn.delegated_message_id = message_id
+        self._agent_turns[agent_path] = turn
+        conversation = self.query_one("#conversation", VerticalScroll)
+        await conversation.mount(turn)
+        turn.set_card_details_expanded(self.card_details_expanded)
+        self._apply_agent_turn_visibility()
+        return turn
 
     async def finish_agent_activity(
         self,

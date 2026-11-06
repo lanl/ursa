@@ -16,7 +16,6 @@ async def runtime(runtime_factory):
     return runtime
 
 
-@pytest.mark.asyncio
 async def test_starts_overlap_without_blocking_messages_or_exceeding_limits(
     runtime, monkeypatch
 ):
@@ -78,7 +77,6 @@ async def test_starts_overlap_without_blocking_messages_or_exceeding_limits(
         await asyncio.gather(*spawns, return_exceptions=True)
 
 
-@pytest.mark.asyncio
 async def test_failed_start_releases_name_and_capacity(runtime, monkeypatch):
     root = runtime.agents["chat"].runtime_id
     fail = True
@@ -137,7 +135,6 @@ async def test_shutdown_cancels_pending_startup(
         assert not runtime._manager._agents
 
 
-@pytest.mark.asyncio
 async def test_cancel_before_startup_task_runs_releases_reservation(
     runtime, monkeypatch
 ):

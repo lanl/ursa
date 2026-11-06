@@ -33,7 +33,6 @@ async def _wait_for_background_agent_tasks(runtime: AgentRuntime) -> None:
         )
 
 
-@pytest.mark.asyncio
 async def test_process_agent_receives_message_delivery_envelope(process_runner):
     process_agent = process_runner("root/reviewer", result="ok")
     agent = process_agent.agent
@@ -68,7 +67,6 @@ async def test_process_agent_receives_message_delivery_envelope(process_runner):
         assert message.content == content
 
 
-@pytest.mark.asyncio
 async def test_process_runtime_bridge_forwards_list_wait_options() -> None:
     """Child-side wait calls preserve list targets and all-mode for the host."""
     from ursa.runtime.agent_runtime import _ProcessRuntimeBridge
@@ -115,7 +113,6 @@ async def test_kill_interrupts_an_active_runtime_invocation(
         await invocation
 
 
-@pytest.mark.asyncio
 async def test_agent_runtime_runs_cli_agent_outside_host_process(
     runtime_factory,
 ) -> None:
@@ -127,7 +124,6 @@ async def test_agent_runtime_runs_cli_agent_outside_host_process(
     assert runtime.agents["chat"]._agent is None
 
 
-@pytest.mark.asyncio
 async def test_runtime_serializes_filtered_tool_schemas(
     runtime_factory,
 ) -> None:
@@ -145,7 +141,6 @@ async def test_runtime_serializes_filtered_tool_schemas(
     assert set(by_name["run_command"]["schema"]["properties"]) == {"query"}
 
 
-@pytest.mark.asyncio
 async def test_subagents_are_launched_as_managed_processes(
     runtime_factory,
 ) -> None:
@@ -195,7 +190,6 @@ async def test_subagents_are_launched_as_managed_processes(
     ]
 
 
-@pytest.mark.asyncio
 async def test_hierarchy_shares_checkpoint_file_with_distinct_threads(
     runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -251,7 +245,6 @@ async def test_hierarchy_shares_checkpoint_file_with_distinct_threads(
     }
 
 
-@pytest.mark.asyncio
 async def test_subagent_model_usage_callbacks_keep_recipient_metadata(
     runtime_factory,
 ) -> None:
@@ -325,7 +318,6 @@ async def test_subagent_model_usage_callbacks_keep_recipient_metadata(
     assert recipients and set(recipients) == {"root"}
 
 
-@pytest.mark.asyncio
 async def test_host_selects_requested_subagent_type(runtime_factory) -> None:
     runtime, manager = runtime_factory(
         fork=True, agent_config={"plan": {"max_reflection_steps": 7}}
@@ -354,7 +346,6 @@ async def test_host_selects_requested_subagent_type(runtime_factory) -> None:
     assert "root/unknown" not in runtime._hierarchies[root.runtime_id]
 
 
-@pytest.mark.asyncio
 async def test_subagent_limit_is_a_recoverable_runtime_tool_error(
     runtime_factory,
 ) -> None:
@@ -377,7 +368,6 @@ async def test_subagent_limit_is_a_recoverable_runtime_tool_error(
     ]
 
 
-@pytest.mark.asyncio
 async def test_unknown_subagent_path_does_not_fail_managed_agent(
     runtime_factory,
 ) -> None:
@@ -413,7 +403,6 @@ async def test_unknown_subagent_path_does_not_fail_managed_agent(
     )
 
 
-@pytest.mark.asyncio
 async def test_host_spawn_returns_before_initial_task_finishes(
     runtime_factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -456,7 +445,6 @@ async def test_host_spawn_returns_before_initial_task_finishes(
         release.set()
 
 
-@pytest.mark.asyncio
 async def test_host_preflights_batched_agent_messages_before_any_delivery(
     runtime_factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -534,7 +522,6 @@ async def test_host_preflights_batched_agent_messages_before_any_delivery(
         release.set()
 
 
-@pytest.mark.asyncio
 async def test_host_stops_only_a_descendant_subtree(
     runtime_factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -667,7 +654,6 @@ async def test_message_reaches_managed_wait_without_duplicate_invocation(
     assert (await manager.snapshot(root.runtime_id)).status.value == "ready"
 
 
-@pytest.mark.asyncio
 async def test_agent_message_emits_one_activity_lifecycle(
     runtime_factory,
 ) -> None:
@@ -706,7 +692,6 @@ async def test_agent_message_emits_one_activity_lifecycle(
     ]
 
 
-@pytest.mark.asyncio
 async def test_runtimes_share_manager_without_agent_id_or_ownership_collision(
     runtime_factory, tmp_path: Path
 ) -> None:
@@ -723,7 +708,6 @@ async def test_runtimes_share_manager_without_agent_id_or_ownership_collision(
     assert await second.run_agent("chat", "still running") == "ok"
 
 
-@pytest.mark.asyncio
 async def test_runtime_resolves_selected_keyring_in_host_and_skips_unused(
     runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -758,7 +742,6 @@ async def test_runtime_resolves_selected_keyring_in_host_and_skips_unused(
     assert api_key.get_secret_value() == "selected-secret"
 
 
-@pytest.mark.asyncio
 async def test_runner_config_contains_only_host_materialized_secrets(
     runtime_factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:

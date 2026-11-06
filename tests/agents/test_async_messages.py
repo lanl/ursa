@@ -71,7 +71,6 @@ def hierarchy_tool(agent: BaseAgent, name: str):
     return {tool.name: tool for tool in build_agent_tools(agent)}[name]
 
 
-@pytest.mark.asyncio
 async def test_user_can_post_and_request_messages(mailbox):
     agent = mailbox()
 
@@ -92,7 +91,6 @@ async def test_user_can_post_and_request_messages(mailbox):
     }
 
 
-@pytest.mark.asyncio
 async def test_agents_spawn_hierarchies_and_message_siblings(mailbox):
     root = mailbox()
     analyst = root.spawn_subagent(
@@ -120,7 +118,6 @@ async def test_agents_spawn_hierarchies_and_message_siblings(mailbox):
     assert result["recipient"] == reviewer.agent_path
 
 
-@pytest.mark.asyncio
 async def test_wait_for_local_agent_completion_timeout_and_message_wake(
     mailbox,
 ):
@@ -186,7 +183,6 @@ async def test_wait_for_local_agent_completion_timeout_and_message_wake(
     await work
 
 
-@pytest.mark.asyncio
 async def test_wait_for_invalid_local_path_is_recoverable(mailbox):
     root = mailbox()
     child = root.spawn_subagent("child")
@@ -287,7 +283,6 @@ def test_subagents_inherit_configured_models(
     assert grandchild.rag_tool_embedding is embedding_model
 
 
-@pytest.mark.asyncio
 async def test_hierarchy_tool_propagates_callbacks_to_child(mailbox):
     class HierarchyCallback:
         def __init__(self):
@@ -332,7 +327,6 @@ async def test_hierarchy_tool_propagates_callbacks_to_child(mailbox):
     )
 
 
-@pytest.mark.asyncio
 async def test_hierarchy_tool_broadcasts_valid_targets_in_input_order(mailbox):
     root = mailbox()
     analyst = root.spawn_subagent("analyst")
@@ -354,7 +348,6 @@ async def test_hierarchy_tool_broadcasts_valid_targets_in_input_order(mailbox):
     assert analyst.received[0].content == "Compare the proposal."
 
 
-@pytest.mark.asyncio
 async def test_send_message_everyone_errors_when_the_sender_is_alone(mailbox):
     root = mailbox()
 
@@ -365,7 +358,6 @@ async def test_send_message_everyone_errors_when_the_sender_is_alone(mailbox):
         })
 
 
-@pytest.mark.asyncio
 async def test_managed_send_message_group_errors_are_recoverable_and_results_are_concrete(
     mailbox,
 ):
@@ -414,7 +406,6 @@ async def test_managed_send_message_group_errors_are_recoverable_and_results_are
     assert "root/p079" in response
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("target", ["reviewer", "reviewer/critic"])
 async def test_stop_agent_removes_a_descendant_subtree(mailbox, target):
     root = mailbox()
@@ -439,7 +430,6 @@ async def test_stop_agent_removes_a_descendant_subtree(mailbox, target):
     assert analyst.parent_agent is root
 
 
-@pytest.mark.asyncio
 async def test_stop_agent_rejects_non_descendant_paths(mailbox):
     root = mailbox()
     reviewer = root.spawn_subagent("reviewer")
@@ -455,7 +445,6 @@ async def test_stop_agent_rejects_non_descendant_paths(mailbox):
     assert set(root.subagents) == {"reviewer", "analyst"}
 
 
-@pytest.mark.asyncio
 async def test_stopped_local_subtree_rejects_stale_references(mailbox):
     root = mailbox()
     reviewer = root.spawn_subagent("reviewer")
@@ -478,7 +467,6 @@ async def test_stopped_local_subtree_rejects_stale_references(mailbox):
     await asyncio.sleep(0)
 
 
-@pytest.mark.asyncio
 async def test_spawn_agent_returns_while_initial_task_is_still_running(mailbox):
     root = mailbox(BlockingMailboxAgent)
     spawn_agent = hierarchy_tool(root, "spawn_agent")
@@ -504,7 +492,6 @@ async def test_spawn_agent_returns_while_initial_task_is_still_running(mailbox):
     await worker.wait_for_messages()
 
 
-@pytest.mark.asyncio
 async def test_async_factory_can_spawn_subagent(mailbox):
     root = mailbox()
 
@@ -518,7 +505,6 @@ async def test_async_factory_can_spawn_subagent(mailbox):
     assert root.resolve_agent(child.agent_path) is child
 
 
-@pytest.mark.asyncio
 async def test_request_is_rejected_while_message_loop_is_stopping(mailbox):
     agent = mailbox(BlockingMailboxAgent)
     request = asyncio.create_task(agent.request("in progress"))

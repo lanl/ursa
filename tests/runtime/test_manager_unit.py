@@ -86,7 +86,6 @@ def test_agent_spec_accepts_import_factory_reference() -> None:
     assert spec.factory == "package.module:factory"
 
 
-@pytest.mark.asyncio
 async def test_spawn_manager_primes_resource_tracker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -101,7 +100,6 @@ async def test_spawn_manager_primes_resource_tracker(
     ensure_running.assert_called_once_with()
 
 
-@pytest.mark.asyncio
 async def test_process_start_failure_rolls_back_cleanly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -141,7 +139,6 @@ async def test_process_dispatch_returns_exact_result_and_committed_state(kind):
     }
 
 
-@pytest.mark.asyncio
 async def test_agent_process_rejects_private_calls() -> None:
     process = _process()
 
@@ -205,7 +202,6 @@ async def test_stopping_process_closes_only_its_own_generation(new_generation):
         current.close.assert_not_called()
 
 
-@pytest.mark.asyncio
 async def test_manager_response_commits_state_before_resolving() -> None:
     manager = AgentManager()
     entry = _ManagedAgent(AgentSpec("unit", lambda *_args: None), None)

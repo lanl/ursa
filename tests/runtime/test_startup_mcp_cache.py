@@ -66,7 +66,6 @@ def mcp_runtime(runtime_factory):
     return create
 
 
-@pytest.mark.asyncio
 async def test_child_reuses_root_mcp_tool_specs(mcp_runtime):
     runtime, manager = mcp_runtime()
     root = await runtime.get_agent("chat")
@@ -92,7 +91,6 @@ async def test_child_reuses_root_mcp_tool_specs(mcp_runtime):
     assert child_spec.config["mcp_tool_specs"] == runtime._mcp_tool_specs
 
 
-@pytest.mark.asyncio
 async def test_incomplete_mcp_description_does_not_suppress_discovery(
     mcp_runtime,
 ):
@@ -104,7 +102,6 @@ async def test_incomplete_mcp_description_does_not_suppress_discovery(
     assert "mcp_tool_specs" not in manager.specs[child_id].config
 
 
-@pytest.mark.asyncio
 async def test_reconfigure_invalidates_mcp_tool_cache(mcp_runtime):
     runtime, manager = mcp_runtime()
     root = await runtime.get_agent("chat")
@@ -117,7 +114,6 @@ async def test_reconfigure_invalidates_mcp_tool_cache(mcp_runtime):
     assert root.runtime_id not in manager.specs
 
 
-@pytest.mark.asyncio
 async def test_changed_server_with_same_name_bypasses_cached_specs(mcp_runtime):
     runtime, manager = mcp_runtime()
     root = await runtime.get_agent("chat")
@@ -130,7 +126,6 @@ async def test_changed_server_with_same_name_bypasses_cached_specs(mcp_runtime):
     assert "mcp_tool_specs" not in manager.specs[child_id].config
 
 
-@pytest.mark.asyncio
 async def test_root_restart_recaptures_changed_remote_tools(mcp_runtime):
     runtime, manager = mcp_runtime()
     root = await runtime.get_agent("chat")
