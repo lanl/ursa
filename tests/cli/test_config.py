@@ -7,6 +7,21 @@ from pydantic import ValidationError
 import ursa.cli.config as config_mod
 
 
+def _openai_embedding_config(**overrides):
+    return {
+        "model": "text-embedding-3-large",
+        "model_provider": "openai",
+        **overrides,
+    }
+
+
+def _ollama_embedding_config():
+    return {
+        "model": "ollama:nomic-embed-text:latest",
+        "base_url": "http://localhost:11434",
+    }
+
+
 def test_editable_values_preserve_explicit_nulls_and_reject_secrets():
     config = config_mod.UrsaConfig.model_validate({"emb_model": None})
 
@@ -295,10 +310,7 @@ def test_embedding_model_defers_provider_to_inference_provider():
 @pytest.mark.parametrize(
     "higher_priority",
     [
-        {
-            "model": "ollama:nomic-embed-text:latest",
-            "base_url": "http://localhost:11434",
-        },
+        _ollama_embedding_config(),
         config_mod.EmbModelConfig(
             model="ollama:nomic-embed-text:latest",
             base_url="http://localhost:11434",
@@ -447,18 +459,11 @@ def test_model_merge_keeps_provider_defaults_resolvable():
     [
         (
             {
-                "emb_model": {
-                    "model": "text-embedding-3-large",
-                    "model_provider": "openai",
-                    "inference_provider": "openai",
-                }
+                "emb_model": _openai_embedding_config(
+                    inference_provider="openai"
+                )
             },
-            {
-                "emb_model": {
-                    "model": "ollama:nomic-embed-text:latest",
-                    "base_url": "http://localhost:11434",
-                }
-            },
+            {"emb_model": _ollama_embedding_config()},
             "nomic-embed-text:latest",
             "ollama",
             "http://localhost:11434",
@@ -468,18 +473,11 @@ def test_model_merge_keeps_provider_defaults_resolvable():
             False,
         ),
         (
+            {"emb_model": _ollama_embedding_config()},
             {
-                "emb_model": {
-                    "model": "ollama:nomic-embed-text:latest",
-                    "base_url": "http://localhost:11434",
-                }
-            },
-            {
-                "emb_model": {
-                    "model": "text-embedding-3-large",
-                    "model_provider": "openai",
-                    "inference_provider": "openai",
-                }
+                "emb_model": _openai_embedding_config(
+                    inference_provider="openai"
+                )
             },
             "text-embedding-3-large",
             "openai",
@@ -490,18 +488,8 @@ def test_model_merge_keeps_provider_defaults_resolvable():
             False,
         ),
         (
-            {
-                "emb_model": {
-                    "model": "text-embedding-3-large",
-                    "model_provider": "openai",
-                }
-            },
-            {
-                "emb_model": {
-                    "model": "ollama:nomic-embed-text:latest",
-                    "base_url": "http://localhost:11434",
-                }
-            },
+            {"emb_model": _openai_embedding_config()},
+            {"emb_model": _ollama_embedding_config()},
             "nomic-embed-text:latest",
             "ollama",
             "http://localhost:11434",
@@ -513,11 +501,9 @@ def test_model_merge_keeps_provider_defaults_resolvable():
         (
             {},
             {
-                "emb_model": {
-                    "model": "text-embedding-3-large",
-                    "model_provider": "openai",
-                    "inference_provider": "openai",
-                }
+                "emb_model": _openai_embedding_config(
+                    inference_provider="openai"
+                )
             },
             "text-embedding-3-large",
             "openai",
@@ -529,12 +515,7 @@ def test_model_merge_keeps_provider_defaults_resolvable():
         ),
         (
             {},
-            {
-                "emb_model": {
-                    "model": "ollama:nomic-embed-text:latest",
-                    "base_url": "http://localhost:11434",
-                }
-            },
+            {"emb_model": _ollama_embedding_config()},
             "nomic-embed-text:latest",
             "ollama",
             "http://localhost:11434",
@@ -576,19 +557,8 @@ def test_ursa_config_emb_model_layering(
 
 def test_ursa_config_merges_multiple_embedding_model_layers():
     merged = config_mod.UrsaConfig().model_merge(
-        {
-            "emb_model": {
-                "model": "text-embedding-3-large",
-                "model_provider": "openai",
-                "inference_provider": "openai",
-            }
-        },
-        {
-            "emb_model": {
-                "model": "ollama:nomic-embed-text:latest",
-                "base_url": "http://localhost:11434",
-            }
-        },
+        {"emb_model": _openai_embedding_config(inference_provider="openai")},
+        {"emb_model": _ollama_embedding_config()},
     )
 
     assert isinstance(merged.emb_model, config_mod.EmbModelConfig)

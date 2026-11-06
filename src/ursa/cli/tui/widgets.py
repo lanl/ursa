@@ -1223,11 +1223,9 @@ class LiveHierarchyTree(Tree[HierarchyTreeRow]):
         snapshot: Callable[[], Sequence[HierarchyTreeRow]],
         *,
         id: str = "live-hierarchy-tree",
-        on_select: Callable[[HierarchyTreeRow], None] | None = None,
     ) -> None:
         super().__init__("Live hierarchy", id=id)
         self._snapshot = snapshot
-        self._on_select = on_select
         self._signature: tuple[HierarchyTreeRow, ...] | None = None
 
     def on_mount(self) -> None:
@@ -1279,16 +1277,6 @@ class LiveHierarchyTree(Tree[HierarchyTreeRow]):
         # fallback when an agent disappears.
         self.get_node_at_line(0)
         self.move_cursor(nodes.get(cursor_path, self.root), animate=False)
-
-    def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
-        """Select agents while leaving detail rows and expansion alone."""
-        if event.control is not self or not isinstance(
-            event.node.data, HierarchyTreeRow
-        ):
-            return
-        event.stop()
-        if self._on_select is not None:
-            self._on_select(event.node.data)
 
     def action_cursor_up(self) -> None:
         self._move_agent_cursor(-1)
@@ -2096,7 +2084,6 @@ class MessagesScreen(ModalScreen[None]):
                         yield LiveHierarchyTree(
                             self._subagent_rows,
                             id="coordination-subagents-tree",
-                            on_select=self._select_subagent,
                         )
 
     def on_mount(self) -> None:
@@ -2334,7 +2321,12 @@ class MessagesScreen(ModalScreen[None]):
     def action_close(self) -> None:
         self.dismiss(None)
 
-    def _select_subagent(self, row: HierarchyTreeRow) -> None:
+    @on(Tree.NodeSelected, "#coordination-subagents-tree")
+    def _select_subagent(self, event: Tree.NodeSelected) -> None:
+        row = event.node.data
+        if not isinstance(row, HierarchyTreeRow):
+            return
+        event.stop()
         if self._on_subagent_selected is not None:
             self._on_subagent_selected(row.path)
         self.dismiss(None)

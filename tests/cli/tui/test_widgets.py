@@ -85,6 +85,19 @@ async def wait_for_yaml_debounce(pilot) -> None:
     await pilot.pause()
 
 
+def agent_tree_nodes(tree):
+    nodes = {}
+
+    def visit(node):
+        if node.data is not None:
+            nodes[node.data.path] = node
+        for child in node.children:
+            visit(child)
+
+    visit(tree.root)
+    return nodes
+
+
 class FakeToolArgs:
     @classmethod
     def model_json_schema(cls):
@@ -705,16 +718,9 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         tree = app.screen.query_one(LiveHierarchyTree)
 
         def tree_rows():
-            rows = {}
-
-            def visit(node):
-                if node.data is not None:
-                    rows[node.data.path] = node.data
-                for child in node.children:
-                    visit(child)
-
-            visit(tree.root)
-            return rows
+            return {
+                path: node.data for path, node in agent_tree_nodes(tree).items()
+            }
 
         rows = tree_rows()
         assert rows["root"].state == "Working"
@@ -731,11 +737,7 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         assert rows["root/researcher"].cached_tokens == 5
         assert rows["root/researcher"].last_action == "Checking references"
 
-        researcher_node = next(
-            node
-            for node in tree.root.children[0].children
-            if getattr(node.data, "path", None) == "root/researcher"
-        )
+        researcher_node = agent_tree_nodes(tree)["root/researcher"]
         detail_lines = [
             child.label.plain
             for child in researcher_node.children
@@ -866,19 +868,9 @@ async def test_coordination_tree_enter_switches_the_active_agent(app):
         tabs = {str(tab.label): tab for tab in app.screen.query(Tab)}
         await pilot.click(f"#{tabs['Subagents'].id}")
         tree = app.screen.query_one(LiveHierarchyTree)
-        await wait_for(
-            pilot,
-            lambda: any(
-                getattr(node.data, "path", None) == "root/reviewer"
-                for node in tree.root.children[0].children
-            ),
-        )
-        reviewer = next(
-            node
-            for node in tree.root.children[0].children
-            if getattr(node.data, "path", None) == "root/reviewer"
-        )
-        root = tree.root.children[0]
+        await wait_for(pilot, lambda: "root/reviewer" in agent_tree_nodes(tree))
+        reviewer = agent_tree_nodes(tree)["root/reviewer"]
+        root = agent_tree_nodes(tree)["root"]
         tree.move_cursor(root, animate=False)
         tree.focus()
         await pilot.press("down")
@@ -899,15 +891,10 @@ async def test_coordination_tree_enter_switches_the_active_agent(app):
             pilot,
             lambda: any(
                 "Reviewing" in child.label.plain
-                for node in tree.root.children[0].children
-                if getattr(node.data, "path", None) == "root/reviewer"
-                for child in node.children
+                for child in agent_tree_nodes(tree)["root/reviewer"].children
                 if child.data is None
             )
-            and any(
-                getattr(node.data, "path", None) == "root/auditor"
-                for node in tree.root.children[0].children
-            )
+            and "root/auditor" in agent_tree_nodes(tree)
             and getattr(getattr(tree.cursor_node, "data", None), "path", None)
             == "root/reviewer",
             timeout=3,
@@ -922,17 +909,9 @@ async def test_coordination_tree_enter_switches_the_active_agent(app):
             f"{root_id}:sub:root/reviewer"
         )
         assert await wait_for(
-            pilot,
-            lambda: any(
-                getattr(node.data, "path", None) == "root/reviewer"
-                for node in tree.root.children[0].children
-            ),
+            pilot, lambda: "root/reviewer" in agent_tree_nodes(tree)
         )
-        reviewer = next(
-            node
-            for node in tree.root.children[0].children
-            if getattr(node.data, "path", None) == "root/reviewer"
-        )
+        reviewer = agent_tree_nodes(tree)["root/reviewer"]
         tree.move_cursor(reviewer, animate=False)
         await pilot.press("enter")
 
