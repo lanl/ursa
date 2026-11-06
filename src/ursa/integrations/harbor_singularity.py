@@ -1863,6 +1863,18 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         return tuple(binds)
 
     def _prepare_harbor_bind_sources(self) -> None:
+        # Harbor 0.25 mirrors /logs/artifacts below artifacts/logs/artifacts.
+        # TrialPaths.mkdir() creates only the collection root. Unlike Docker,
+        # Singularity requires automatic bind sources to exist at startup.
+        for mount in self._mounts:
+            if mount["target"] == str(EnvironmentPaths.artifacts_dir):
+                source = Path(mount["source"])
+                expected = self.trial_paths.host_artifact_path(
+                    "main", str(EnvironmentPaths.artifacts_dir)
+                )
+                if source == expected:
+                    source.mkdir(parents=True, exist_ok=True)
+                    source.chmod(0o777)
         for source, _target in self._harbor_writable_binds():
             source.mkdir(parents=True, exist_ok=True)
             source.chmod(0o777)

@@ -7,6 +7,7 @@ import threading
 from contextlib import asynccontextmanager, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -535,3 +536,77 @@ async def test_cancelling_exec_reaps_process(environment, tmp_path):
     with pytest.raises(asyncio.CancelledError):
         await command
     await _assert_reaped(environment, path.read_text(), "recovered")
+
+
+def test_retention_plugin_through_harbor_job(tmp_path, ubuntu_sif, monkeypatch):
+    from harbor.cli.main import app
+    from typer.testing import CliRunner
+
+    task = tmp_path / "task"
+    for directory in ("environment", "solution", "tests"):
+        (task / directory).mkdir(parents=True)
+    (task / "instruction.md").write_text("Create the requested artifacts.\n")
+    (task / "task.toml").write_text(
+        '[environment]\nnetwork_mode = "public"\n'
+        "[agent]\ntimeout_sec = 30\n"
+        "[verifier]\ntimeout_sec = 30\n"
+    )
+    (task / "environment/Dockerfile").write_text("FROM ubuntu:24.04\n")
+    (task / "solution/solve.sh").write_text(
+        "#!/bin/bash\nset -e\n"
+        "echo payload > /logs/artifacts/data.txt\n"
+        "echo discard > /logs/artifacts/scratch.discard\n"
+    )
+    (task / "tests/test.sh").write_text(
+        "#!/bin/bash\nset -e\n"
+        "test -f /logs/artifacts/scratch.discard\n"
+        "echo 1 > /logs/verifier/reward.txt\n"
+    )
+    policy = tmp_path / "retention.yaml"
+    policy.write_text(
+        'rules:\n  - match: ["**/*.discard"]\n    action: delete\n'
+        "default_action: archive\narchive: {}\n"
+    )
+    monkeypatch.setattr(
+        DockerfileSingularityEnvironment,
+        "_build_main_sif",
+        AsyncMock(return_value=ubuntu_sif),
+    )
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--path",
+            str(task),
+            "--agent",
+            "oracle",
+            "--env",
+            "ursa.integrations.harbor_singularity:DockerfileSingularityEnvironment",
+            "--environment-kwarg",
+            "singularity_fakeroot=false",
+            "--environment-kwarg",
+            "singularity_overlay=false",
+            "--jobs-dir",
+            str(tmp_path / "jobs"),
+            "--job-name",
+            "retention",
+            "--plugin",
+            "ursa.integrations.harbor_retention:RetentionPlugin",
+            "--plugin-kwarg",
+            f"policy={policy}",
+            "--quiet",
+            "--yes",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "jobs/retention"
+    status = json.loads((root / "retention-status.json").read_text())
+    assert status["status"] == "complete", status
+    trial = next(root.glob("*/result.json"))
+    detail = json.loads(trial.read_text())
+    assert detail["exception_info"] is None, detail
+    assert detail["verifier_result"]["rewards"] == {"reward": 1.0}
+    assert not list(trial.parent.rglob("scratch.discard"))
+    assert not list(trial.parent.rglob("data.txt"))
+    assert (root / "retained-artifacts.tar.xz").is_file()
+    assert (trial.parent / "verifier/reward.txt").read_text() == "1\n"

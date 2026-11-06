@@ -59,6 +59,7 @@ dependencies = [
     "textual[syntax]>=8.2.8,<9.0",
     "keyring>=25.0.0,<26.0.0",
     "filelock>=3.20.3,<4.0",
+    "pathspec>=0.12.1,<2",
 ]
 classifiers = [
     "Operating System :: OS Independent",
@@ -71,6 +72,7 @@ classifiers = [
 [project.scripts]
 ursa = "ursa.cli:main"
 ursa-dashboard = "ursa_dashboard.main:app"
+ursa-artifacts = "ursa.cli.artifacts:app"
 
 [project.urls]
 Homepage = "https://github.com/lanl/ursa"
@@ -116,8 +118,7 @@ metric_plots = [
     "scipy>=1.16.2,<2.0.0",
 ]
 harbor = [
-    "harbor>=0.23.0,<0.24; python_version >= '3.12'",
-    "pathspec>=0.12.1,<2",
+    "harbor>=0.25.0,<0.26; python_version >= '3.12'",
     "singularity-compose>=0.1.19,<0.2",
     "archspec>=0.2.6,<0.3",
 ]

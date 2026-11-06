@@ -15,7 +15,7 @@ from harbor.models.task.verifier_mode import (
     resolve_step_verifier_mode,
     resolve_task_verifier_mode,
 )
-from harbor.models.trial.config import AgentConfig
+from harbor.models.trial.config import AgentConfig, VerifierConfig
 from harbor.models.trial.config import (
     EnvironmentConfig as TrialEnvironmentConfig,
 )
@@ -106,6 +106,7 @@ def _task_environments(
             task.config,
             trial_agent,
             trial_environment,
+            VerifierConfig(),
             step,
             verifier_mode=mode,
             env_config=verifier_environment,

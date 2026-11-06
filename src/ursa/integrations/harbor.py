@@ -32,9 +32,12 @@ import typer
 from pydantic import SecretStr
 
 try:
+    from harbor.agents.agent_auth_resolution import (
+        PROVIDERS,
+        ModelConnectionSpec,
+    )
     from harbor.agents.capabilities import AgentCapabilities
     from harbor.agents.installed.base import BaseInstalledAgent
-    from harbor.agents.model_connection import PROVIDERS, ModelConnectionSpec
     from harbor.environments.base import BaseEnvironment
     from harbor.models.agent.context import AgentContext
     from harbor.models.task.config import NetworkMode
@@ -115,8 +118,12 @@ class UrsaHarborAgent(BaseInstalledAgent):
             string or a sequence of requirement strings.
     """
 
-    MODEL_CONNECTION = ModelConnectionSpec(passthrough=True)
-    capabilities = AgentCapabilities(handoff=True, native_config=True)
+    MODEL_CONNECTION = ModelConnectionSpec(
+        base_url_destination_names={"default": None},
+    )
+    capabilities = AgentCapabilities(
+        handoff=True, native_config=True, base_url=True
+    )
     URSA_PYTHON_VERSION = "3.13"
     URSA_RUNNER = "/installed-agent/bin/ursa-harbor-runner"
     _INSTALL_ROOT = "/installed-agent"
@@ -377,15 +384,15 @@ class UrsaHarborAgent(BaseInstalledAgent):
             env_authenticated = connection.provider in self.ENV_AUTH_PROVIDERS
             if connection.api_key is not None and not env_authenticated:
                 provider_config["api_key"] = SecretStr(connection.api_key)
-            if connection.configured_base_url is not None:
-                provider_config["base_url"] = connection.configured_base_url
+            if connection.user_supplied_base_url is not None:
+                provider_config["base_url"] = connection.user_supplied_base_url
             provider_access = PROVIDERS.get(connection.provider or "")
             projected_names = (
                 set()
                 if env_authenticated or provider_access is None
                 else {
-                    *provider_access.api_key_envs,
-                    *provider_access.base_url_envs,
+                    *provider_access.api_key_candidate_names,
+                    *provider_access.base_url_candidate_names,
                 }
             )
             self._model_env = {

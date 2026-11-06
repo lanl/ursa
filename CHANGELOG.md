@@ -1,5 +1,17 @@
 # Change Log
 
+## Unreleased
+
+- Added reusable Harbor agent/provider configuration and single-run resolution,
+  including native config inputs, deferred credentials, capability validation,
+  and Harbor's common endpoint, API key name, and API format options.
+- Added a post-job retention plugin and `ursa-artifacts plan/apply/restore`.
+  Policies can keep, delete, or archive payloads as tar.xz, with verified
+  publication before deletion and resumable cleanup. The generic library uses
+  the existing pathspec dependency, now available without the Harbor extra.
+- Updated the Harbor extra to 0.25, including authentication, verifier network
+  planning, and Singularity artifact bind-path compatibility.
+
 ## v0.17.3
 
 Changes since `v0.17.2`:

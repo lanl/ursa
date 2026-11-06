@@ -182,7 +182,7 @@ def test_host_ca_certificates_pem(
 @pytest.mark.parametrize(
     ("compose", "overlay", "error"),
     [
-        (False, False, "require a writable overlay"),
+        (False, False, "cannot change network policy after start"),
         (False, True, None),
         (True, True, "sidecar networking"),
     ],
