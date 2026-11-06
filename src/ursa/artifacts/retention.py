@@ -216,7 +216,7 @@ def plan_retention(
         if name in protected_names:
             action = "keep"
         identity = _identity(path)
-        link = str(path.readlink()) if path.is_symlink() else None
+        link = os.readlink(path) if path.is_symlink() else None
         digest = _hash(path) if action == "archive" and link is None else None
         if identity != _identity(path):
             raise ValueError(f"Artifact changed during planning: {name}")
