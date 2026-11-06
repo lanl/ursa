@@ -2049,6 +2049,7 @@
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>ursa<span class="w"> </span>share-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>ursa<span class="w"> </span>import-agent<span class="w"> </span>path/to/agent.tar.gz<span class="w"> </span>--group<span class="w"> </span>default
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>ursa<span class="w"> </span>delete-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>ursa<span class="w"> </span>delete-agent<span class="w"> </span>--name<span class="w"> </span><span class="s1">&#39;tmp_*&#39;</span><span class="w"> </span>--group<span class="w"> </span>default<span class="w">  </span><span class="c1"># wildcard; quote it. Removes temporary agents left by crashed unnamed sessions</span>
 </code></pre></div>
 <h2 id="groups">Groups<a class="headerlink" href="#groups" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ursa<span class="w"> </span>list-groups
