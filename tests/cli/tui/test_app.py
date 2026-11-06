@@ -176,6 +176,7 @@ async def test_command_events_from_a_worker_thread_update_the_ui(tmp_path):
                         "phase": "start",
                         "message": "Running command",
                         "query": "pwd",
+                        "tool_call_id": "pwd-command",
                     },
                 )
             )

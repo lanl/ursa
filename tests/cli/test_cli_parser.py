@@ -526,6 +526,30 @@ def test_config_env_cli_precedence(tmp_path, monkeypatch):
     assert config_cli.emb_model.model_provider == "openai"
 
 
+def test_summarization_fallback_from_file_env_and_cli(tmp_path, monkeypatch):
+    path = tmp_path / "ursa.yaml"
+    path.write_text("tokens_before_summarize: 12000\n")
+    parser = build_parser()
+    assert (
+        _resolve_args(parser, ["--config", str(path)]).tokens_before_summarize
+        == 12000
+    )
+    monkeypatch.setenv("URSA_TOKENS_BEFORE_SUMMARIZE", "16000")
+    assert _resolve_args(parser, []).tokens_before_summarize == 16000
+    assert (
+        _resolve_args(
+            parser, ["--tokens_before_summarize", "24000"]
+        ).tokens_before_summarize
+        == 24000
+    )
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 3.5])
+def test_summarization_fallback_must_be_positive_integer(value):
+    with pytest.raises(ValidationError):
+        UrsaConfig(tokens_before_summarize=value)
+
+
 def test_config_file_env_interpolation(tmp_path, monkeypatch):
     env_workspace = tmp_path / "env-workspace"
     env_workspace.mkdir()

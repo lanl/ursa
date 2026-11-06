@@ -109,6 +109,7 @@ from .credentials import (
     credential_id,
     credential_status,
     credential_target,
+    resolve_api_key,
     session_credential_id,
     store_api_key,
 )
@@ -707,6 +708,57 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     def get_settings() -> SettingsResponse:
         s = _effective_settings()
         return SettingsResponse(settings=s.model_dump(mode="json"))
+
+    @app.get("/settings/summarization", dependencies=[Depends(require_auth)])
+    def get_summarization(session_id: str | None = None) -> dict[str, Any]:
+        from ursa.util.model_context import (
+            model_context_window,
+            summarization_threshold,
+        )
+
+        from .worker_main import _init_llm
+
+        settings = settings_store.load()
+        if session_id is not None:
+            try:
+                session = session_read_session(rm.dashboard_root, session_id)
+            except FileNotFoundError as e:
+                raise HTTPException(
+                    status_code=404, detail="Unknown session_id"
+                ) from e
+            settings = merge_global_settings_patch(
+                settings, {"llm": session.get("llm") or {}}
+            )
+        config = settings.llm.model_dump(mode="json")
+        try:
+            enforce_group_base_url_policy(
+                settings.llm.base_url, dashboard_group
+            )
+            key = resolve_api_key(
+                config,
+                group=dashboard_group,
+                kind="llm",
+                store=credential_store,
+            )
+        except (
+            GroupBaseURLPolicyError,
+            CredentialConfigurationError,
+            CredentialStoreError,
+        ) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        try:
+            model = _init_llm(config, api_key_override=key)
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail="Unable to initialize the saved model; check its settings and credentials.",
+            ) from e
+        return {
+            "context_window": model_context_window(model),
+            "tokens_before_summarize": summarization_threshold(
+                model, settings.llm.tokens_before_summarize
+            ),
+        }
 
     @app.patch(
         "/settings",
@@ -5443,6 +5495,8 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 
     $('#set_base_url').value = llm.base_url || '';
     $('#set_model').value = llm.model || '';
+    $('#set_tokens_before_summarize').value = llm.tokens_before_summarize ?? 50000;
+    $('#set_summarization_status').textContent = 'Check the saved model to see its effective threshold.';
     $('#set_api_key_env').value = llm.api_key_env || '';
     $('#set_llm_credential_source').value = llm.credential_source || (llm.api_key_env ? 'environment' : 'none');
     $('#set_llm_api_key').value = '';
@@ -5577,7 +5631,32 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
   }
 
+  async function checkSummarization() {
+    const button = $('#checkSummarizationBtn');
+    const status = $('#set_summarization_status');
+    const sessionId = state._settingsMode === 'session' ? state._settingsSessionId : null;
+    button.disabled = true;
+    status.textContent = 'Checking saved model…';
+    try {
+      const query = sessionId ? '?session_id=' + encodeURIComponent(sessionId) : '';
+      const result = await api('GET', '/settings/summarization' + query);
+      const threshold = Number(result.tokens_before_summarize).toLocaleString();
+      status.textContent = result.context_window == null
+        ? `Summarize at ${threshold} tokens (fallback; context unknown).`
+        : `Summarize at ${threshold} tokens (70% of ${Number(result.context_window).toLocaleString()}).`;
+    } catch (e) {
+      status.textContent = e.message || String(e);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   async function saveSettings() {
+    const fallback = Number($('#set_tokens_before_summarize').value);
+    if (!Number.isSafeInteger(fallback) || fallback <= 0) {
+      alert('Summarization fallback must be a positive whole number.');
+      return;
+    }
     let modelKwargs;
     let embeddingModelKwargs;
     try {
@@ -5612,6 +5691,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
       inference_provider: ($('#set_llm_inference_provider').value || '').trim() || null,
       base_url: ($('#set_base_url').value || '').trim() || null,
       model: ($('#set_model').value || '').trim() || null,
+      tokens_before_summarize: fallback,
       api_key_env: ($('#set_api_key_env').value || '').trim() || null,
       credential_source: llmKey ? 'none' : llmSource,
       model_kwargs: modelKwargs,
@@ -5706,6 +5786,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     await refreshSessions();
     if (credentialSaveError) return false;
 
+    $('#set_summarization_status').textContent = 'Settings saved. Check the saved model to refresh its effective threshold.';
     const saved = $('#settingsSaved');
     if (saved) {
       saved.textContent = 'Updated.';
@@ -5909,6 +5990,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         }
       }
     };
+    $('#checkSummarizationBtn').onclick = checkSummarization;
 
     document.addEventListener('click', (e) => {
       if (state._openSessionMenu && !(e.target && e.target.closest && e.target.closest('.sessionMenuWrap'))) {
@@ -7160,6 +7242,9 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             <div class="fieldHelp"><div></div><div class="fieldHelpText" id="set_llm_provider_status">Choose a configured provider or continue using a direct endpoint.</div></div>
             <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_base_url" placeholder="Model Provider Default" /></div>
             <div class="fieldRow"><div class="label">Model</div><div class="modelPickerRow"><input class="input" id="set_model" list="set_llm_model_options" placeholder="openai:gpt-5.4-mini" /><datalist id="set_llm_model_options"></datalist><button class="btn modelRefreshBtn" id="refresh_llm_models" type="button" title="Refresh models from this provider">Refresh</button></div></div>
+            <div class="fieldRow"><label class="label" for="set_tokens_before_summarize">Summarization fallback (tokens)</label><input class="input" id="set_tokens_before_summarize" type="number" min="1" step="1" /></div>
+            <div class="fieldHelp"><div></div><div class="fieldHelpText">Summarize at 70% of the model context window. Use this fallback only when the context limit is unknown. Changes apply to new runs; individual agents can override the fallback.</div></div>
+            <div class="fieldRow"><div class="label">Effective threshold</div><div><button class="btn" id="checkSummarizationBtn" type="button">Check saved model</button><div class="muted small" id="set_summarization_status" role="status"></div></div></div>
             <div class="globalCredentialOnly">
               <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_llm_credential_source"><option value="stored">Keyring</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
               <div id="set_llm_stored_fields">

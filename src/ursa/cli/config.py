@@ -40,6 +40,7 @@ from ursa.util.mcp import (
     parse_server_parameters,
     serialize_server_parameters,
 )
+from ursa.util.model_context import DEFAULT_SUMMARIZATION_THRESHOLD
 from ursa.util.secrets import SecretReference
 
 logger = logging.getLogger(__name__)
@@ -461,8 +462,14 @@ class ChatModelConfig(ModelConfig):
         return kwargs
 
     def init_chat_model(self) -> BaseChatModel:
-        llm = init_chat_model(**self.kwargs)
+        from ursa.util.model_metadata import load_model_context
+        from ursa.util.openai_compat import with_responses_fallback
+
+        llm = with_responses_fallback(init_chat_model(**self.kwargs))
         self.check_instantiated_model(llm)
+        load_model_context(
+            llm, explicit_profile="profile" in (self.model_extra or {})
+        )
         return llm
 
     @model_validator(mode="after")
@@ -547,6 +554,11 @@ class UrsaConfig(BaseModel):
     use_web: bool = False
     """Enable web-search tools for ChatAgent and ExecutionAgent."""
 
+    tokens_before_summarize: int = Field(
+        default=DEFAULT_SUMMARIZATION_THRESHOLD, gt=0
+    )
+    """Fallback summarization threshold when the model context is unknown."""
+
     inference_providers: dict[str, InferenceProviderConfig] = Field(
         default_factory=lambda: {
             "openai": InferenceProviderConfig(
@@ -588,6 +600,15 @@ class UrsaConfig(BaseModel):
         )
         return providers
 
+    @field_validator("tokens_before_summarize", mode="before")
+    @classmethod
+    def _validate_summary_threshold(cls, value):
+        if isinstance(value, bool):
+            raise ValueError(
+                "tokens_before_summarize must be a positive integer"
+            )
+        return value
+
     @field_validator("rag_tools", mode="before")
     @classmethod
     def _normalize_rag_tools(cls, value):
@@ -622,6 +643,12 @@ class UrsaConfig(BaseModel):
     @classmethod
     def from_file(cls, path: Path):
         return cls.model_validate(load_config_file(path))
+
+    @classmethod
+    def user_config(cls, resolve: bool = True) -> Self:
+        """Load and merge the default system and user config layers."""
+        config = cls().model_merge(*config_layers(Namespace()))
+        return config.resolve() if resolve else config
 
     def resolve(self) -> Self:
         """Return this config after applying canonical resolution."""
@@ -848,10 +875,8 @@ def config_layers(
 
     if not final:
         return layers
-    if env_overrides is None:
-        raise ValueError("Final config layering requires sparse env overrides")
 
-    layers.append(_ursa_config_values(env_overrides))
+    layers.append(_ursa_config_values(env_overrides or {}))
     if cli_config_path is not None and cli_config_path in paths:
         layers.append(load_config_file(cli_config_path))
     if cli_overrides is not None:

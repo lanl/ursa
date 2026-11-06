@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from time import monotonic
 from typing import TYPE_CHECKING, Any
@@ -17,6 +18,7 @@ from ursa.cli.tui.helpers import (
 )
 from ursa.cli.tui.turn import Turn
 from ursa.util.events import DEFAULT_EVENT_NAME
+from ursa.util.model_metadata import refresh_ollama_context
 
 if TYPE_CHECKING:
     from ursa.cli.tui.app import UrsaTextualApp
@@ -58,11 +60,6 @@ class TextualEventHandler(AsyncCallbackHandler):
     ) -> None:
         if name == DEFAULT_EVENT_NAME and isinstance(data, dict):
             data = dict(data)
-            if data.get("tool") == "run_command" and run_id is not None:
-                # LangChain assigns custom events emitted inside a tool to the
-                # tool run. The query text is not a unique identifier when
-                # identical commands execute concurrently.
-                data["_command_id"] = str(run_id)
             tool = str(data.get("tool") or "")
             # The file tools publish their own structured range events while
             # LangChain also emits tool start/end callbacks. The callback is
@@ -107,6 +104,7 @@ class TextualEventHandler(AsyncCallbackHandler):
         *,
         run_id: Any,
         inputs: dict[str, Any] | None = None,
+        tool_call_id: Any = None,
         **_: Any,
     ) -> None:
         data = dict(inputs or {})
@@ -121,7 +119,9 @@ class TextualEventHandler(AsyncCallbackHandler):
         data["phase"] = "start"
         data["_run_id"] = str(run_id)
         if data["tool"] == "run_command":
-            data["_command_id"] = data["_run_id"]
+            if tool_call_id in (None, ""):
+                raise ValueError("run_command callback missing tool_call_id")
+            data["tool_call_id"] = str(tool_call_id)
         self.tools[run_id] = data
         await self._emit(data)
 
@@ -158,6 +158,8 @@ class TextualEventHandler(AsyncCallbackHandler):
         })
 
     async def on_llm_end(self, response: Any, **_: Any) -> None:
+        # Ollama may only expose its allocated window after the first response.
+        await asyncio.to_thread(refresh_ollama_context, self.app.hitl.model)
         usage = _token_usage_breakdown(response)
         if self.app.is_ui_thread:
             self._record_tokens(usage)

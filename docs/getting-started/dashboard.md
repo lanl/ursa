@@ -124,6 +124,20 @@ reported instead of silently overwritten. Replacing a provider key creates a
 new keyring reference so old sessions and config backups retain access to the
 previous credential; old entries are not automatically deleted.
 
+## Summarization settings
+
+Under **Settings → LLM**, set **Summarization fallback (tokens)** to the threshold
+used when the model's context limit is unknown (default: 50,000). When the limit
+is known, agents summarize at 70% of it. The setting also appears in session
+settings; changes apply to new runs, and explicit agent fallbacks take precedence.
+The dashboard's `--config` option imports `tokens_before_summarize` from CLI
+configuration files when provided.
+
+After saving model settings, use **Check saved model** to display the effective
+threshold. This checks metadata without generating a response. For an unloaded
+Ollama model, the allocated context may be unavailable; configure `num_ctx` or
+check again once the model is running.
+
 ## Configure API credentials
 
 Open **Model and Agent Settings → LLM** and choose an API-key source:

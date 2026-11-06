@@ -28,10 +28,11 @@ Use `run_with_visualization(...)` anywhere you would normally call
 `environment.invoke(...)` synchronously.
 
 ```python
-from langchain.chat_models import init_chat_model
+from ursa.cli.config import UrsaConfig
 from ursa.environments import AgentTeamEnvironment, run_with_visualization
 
-llm = init_chat_model(model="openai:gpt-5.4-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 
 team = AgentTeamEnvironment.from_yaml(
     "examples/environments/agent_team.yaml",
@@ -55,10 +56,11 @@ replayable event stream to disk.
 The same helper works for `AgentSymposiumEnvironment`.
 
 ```python
-from langchain.chat_models import init_chat_model
+from ursa.cli.config import UrsaConfig
 from ursa.environments import AgentSymposiumEnvironment, run_with_visualization
 
-llm = init_chat_model(model="openai:gpt-5.4-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 
 symposium = AgentSymposiumEnvironment.from_yaml(
     "examples/environments/agent_symposium.yaml",
@@ -82,10 +84,11 @@ Use `arun_with_visualization(...)` when running an environment from async code.
 It mirrors `environment.ainvoke(...)`.
 
 ```python
-from langchain.chat_models import init_chat_model
+from ursa.cli.config import UrsaConfig
 from ursa.environments import AgentSymposiumEnvironment, arun_with_visualization
 
-llm = init_chat_model(model="openai:gpt-5.4-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 
 symposium = AgentSymposiumEnvironment.from_yaml(
     "examples/environments/agent_symposium.yaml",

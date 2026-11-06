@@ -45,6 +45,7 @@ from ursa.cli.tui.widgets import (
     FuzzySelectOverlay,
     HotlistScreen,
     InformationScreen,
+    MessageCard,
     ModelScreen,
     ModelSelection,
     PromptArea,
@@ -702,6 +703,7 @@ async def test_slash_picker_status_config_is_read_only_and_selectable(
     tmp_path,
 ):
     app = UrsaTextualApp(status_hitl(tmp_path))
+    app.hitl.model = SimpleNamespace(profile={"max_input_tokens": 128000})
 
     async with app.run_test(size=(80, 24)) as pilot:
         screen = await open_status_from_slash_picker(pilot)
@@ -720,6 +722,8 @@ async def test_slash_picker_status_config_is_read_only_and_selectable(
         assert editor._highlight_query is not None
         assert "llm_model:" in editor.text
         assert "model: test-model" in editor.text
+        assert "tokens_before_summarize: 89600" in editor.text
+        assert app.hitl.config.tokens_before_summarize == 50000
         assert "env: OPENAI_API_KEY" in editor.text
         assert "**********" in editor.text
         assert "actual-secret" not in editor.text
@@ -2674,3 +2678,15 @@ async def test_hotlist_mount_race_with_teardown_does_not_crash(tmp_path):
     async with app.run_test(size=(100, 36)):
         app.push_screen(HotlistScreen("pick", ["one"]))
         app.exit()
+
+
+def test_message_card_does_not_parse_error_text_as_markup():
+    # Regression: an exception message containing "[type=missing, input_value=
+    # {...}, input_type=dict]" was parsed as Textual markup, raising MarkupError
+    # and hiding the real error.
+    text = (
+        "**Agent failed:** `BadRequestError: 1 validation error "
+        "[type=missing, input_value={'type': 'input_image'}, input_type=dict]`"
+    )
+    card = MessageCard("assistant", text)
+    assert card.content == text

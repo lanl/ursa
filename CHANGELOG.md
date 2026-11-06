@@ -1,5 +1,71 @@
 # Change Log
 
+## v0.17.3
+
+Changes since `v0.17.2`:
+
+### Installation, setup, and diagnostics
+
+- Added pipe-friendly `install.sh` and `install.ps1` installers that bootstrap
+  `uv`, install `ursa-ai`, and launch a railroaded `ursa self setup` Textual
+  wizard for validated inference providers, model selection, keyring-backed
+  secrets, and connection-tested optional MCP servers (#379).
+- Added `ursa self doctor`, an extensible health-check command covering
+  configuration, inference providers, LLM and embedding models, secrets, and
+  MCP servers, with install-integrity checks and no concurrent keyring
+  prompts (#378).
+- Added a file-backed keyring fallback so secrets stay available when no OS
+  credential store is present, using locked JSON storage for safe concurrent
+  access (#377).
+
+### Context management and agent reliability
+
+- Context summarization now triggers at 70% of each model's actual context
+  window instead of a fixed token count, resolved from local model metadata
+  without endpoint requests; `tokens_before_summarize` remains as the
+  fallback when the model limit is unknown (#389).
+- Fixed summarization crashing with an `AttributeError` for agents without a
+  `tool_llm` (such as BasicChatAgent and PromptingAgent) once a conversation
+  crossed the summarization threshold; `tool_llm` is still preferred when an
+  agent has one (#295, #376).
+- Fixed history sanitization dropping the leading system prompt from a
+  conversation's first request when no model reply exists yet (#373).
+- Updated execution and planning prompts for current models and capabilities
+  (#390).
+
+### Agents and examples
+
+- Promoted the SimulatorAgent out of the experimental folder into the main
+  agents package (#381).
+- Added an optional SerpBase Google Search engine for the WebSearchAgent via
+  the `SERPBASE_API_KEY` environment variable, with transparent fallback to
+  DuckDuckGo when the key is unset or the API call fails, and restored the
+  required `_id` and `_citation` methods (#323).
+- Fixed the Simulation Agent import used by the JOSS examples (#354, #366).
+- Corrected shear constants and alloy composition in the LAMMPS elastic
+  template example (#367).
+
+### Platform and test reliability
+
+- Fixed URSA crashing when captured stdout or stderr contains non-UTF-8
+  characters (#384).
+- Reworked flaky TUI tests with semantic synchronization and split the
+  slash-picker interaction coverage (#362); added a regression test for the
+  Ollama port issue (#361).
+
+### Documentation, licensing, and community
+
+- Documented file access, command screening, and timeout behavior for
+  sandboxed command execution (#359, #370).
+- Corrected the ExecutionAgent workspace documentation and example (#353,
+  #368).
+- Updated the community guidelines and installation documentation (#358,
+  #369).
+- Added CI checking that documentation links work, and restored the missing
+  `risk_buydown` example data files (#365).
+- Added the copyright notice to the LICENSE (#363, #371).
+- Aligned the pyproject author list with the JOSS paper (#382).
+
 ## v0.17.2
 
 Changes since `v0.17.1`:
@@ -140,10 +206,6 @@ Changes since `v0.16.4`:
 
 ### CLI
 
-- Added pipe-friendly `install.sh` and `install.ps1` installers that bootstrap
-  `uv`, install `ursa-ai`, and launch a railroaded `ursa self setup` Textual
-  wizard for validated inference providers, model selection, keyring-backed
-  secrets, and connection-tested optional MCP servers.
 - Added an `ursa self` command to inspect and manage a `uv tool` installation,
   with `status`, `update` (preserving the install recipe), and `modify`
   (extras, extra packages, exact version, or Git ref) subcommands (#325).

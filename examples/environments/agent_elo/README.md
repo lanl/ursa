@@ -17,8 +17,9 @@ For competition rules, persistence details, and configuration options, see the
 
 Clone URSA and start from the repository root. You will need
 [uv](https://docs.astral.sh/uv/), Python 3.11 or newer, and credentials for the
-model used in [run_elo.py](run_elo.py). The supplied runner uses OpenAI's `gpt-5`
-for both competitors and the judge.
+model in your URSA user configuration. The supplied runner uses that model for
+both competitors and the judge. With the built-in OpenAI defaults, set
+`OPENAI_API_KEY` as shown below.
 
 === "macOS/Linux"
 
@@ -37,7 +38,8 @@ for both competitors and the judge.
     ```
 
 The local [pyproject.toml](pyproject.toml) installs URSA from this checkout in
-editable mode. Model and credential configuration is described in
+editable mode. The runner loads the system and user configuration with
+`UrsaConfig.user_config()`. Model and credential configuration is described in
 [Models and inference providers](../../../docs/configuration/models.md).
 
 ## 2. Inspect the population

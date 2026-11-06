@@ -39,6 +39,7 @@ from typing import (
     TypeVar,
     final,
 )
+from uuid import uuid4
 
 from langchain.chat_models import BaseChatModel
 from langchain.embeddings import Embeddings
@@ -88,6 +89,11 @@ from ursa.util.checkpoint_retention import (
 )
 from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER, AgentEvents
 from ursa.util.mcp import load_mcp_tools_with_sources
+from ursa.util.message_portability import make_portable
+from ursa.util.model_context import (
+    DEFAULT_SUMMARIZATION_THRESHOLD,
+    summarization_threshold,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -168,17 +174,25 @@ _SUMMARIZE_INSTRUCTIONS = (
 
 
 def _message_text(m: BaseMessage) -> str:
-    text = getattr(m, "text", None)
-    if isinstance(text, str) and text:
-        return text
+    """Visible content of ``m`` for plain-text transcripts (summaries).
+
+    Only text is rendered. Non-text blocks (reasoning items carrying base64
+    signatures / ``encrypted_content``, Responses ``function_call`` items that
+    duplicate ``tool_calls``, base64 images) used to be dumped via ``str()``,
+    inflating summarization requests far past the model context window.
+    """
     if isinstance(m.content, str):
         return m.content
     parts = []
     for block in m.content or []:
-        if isinstance(block, dict) and block.get("type") == "text":
-            parts.append(block.get("text", ""))
-        else:
-            parts.append(str(block))
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict):
+            kind = str(block.get("type") or "")
+            if kind in ("text", "output_text"):
+                parts.append(block.get("text") or "")
+            elif "image" in kind:
+                parts.append("[image]")
     return "\n".join(p for p in parts if p)
 
 
@@ -271,7 +285,7 @@ class BaseAgent(Generic[TState], ABC):
         autosave_metrics: bool = True,
         otel_metrics: Optional[bool] = None,
         thread_id: Optional[str] = None,
-        tokens_before_summarize: int = 50000,
+        tokens_before_summarize: int = DEFAULT_SUMMARIZATION_THRESHOLD,
         messages_to_keep: int = 20,
         max_single_tool_message_tokens: int = 100000,
         rag_tools: str | Sequence[str] | None = None,
@@ -283,6 +297,8 @@ class BaseAgent(Generic[TState], ABC):
 
         Args:
             llm: a BaseChatModel instance.
+            tokens_before_summarize: Fallback threshold when the model context
+                window is unknown. Otherwise summarize at 70% of that window.
             checkpointer: Optional checkpoint saver for persisting agent state.
             enable_metrics: Whether to collect performance and usage metrics.
             metrics_dir: Directory path where metrics will be saved.
@@ -357,7 +373,14 @@ class BaseAgent(Generic[TState], ABC):
         else:
             # Keep current behavior if the user is not persisting.
             self.den = self.workspace
-        self.thread_id = thread_id or "ursa"
+        # A generated default, as the docstring above promises. A constant here
+        # means two agents that share a checkpoint store share one thread, so
+        # the second one's model request carries the first one's messages.
+        # langgraph would otherwise refuse to run a checkpointed graph with no
+        # thread selector at all; a constant turns that error into a silent
+        # merge. The CLI and the dashboard pin "ursa" themselves, so only
+        # library callers reach this. See issue #332.
+        self.thread_id = thread_id or uuid4().hex
         self.telemetry = Telemetry(
             enable=enable_metrics,
             output_dir=self.den.joinpath(metrics_dir),
@@ -966,7 +989,8 @@ class BaseAgent(Generic[TState], ABC):
         This preserves the first/system message and the last
         ``self.messages_to_keep`` messages, replacing the middle of the
         transcript with an LLM-generated summary when the approximate token count
-        exceeds ``self.tokens_before_summarize``.
+        reaches 70% of the model context window, or
+        ``self.tokens_before_summarize`` when that window is unknown.
 
         The method also avoids creating dangling tool-call pairs when possible by
         moving tool responses that correspond to summarized-away calls into the
@@ -990,8 +1014,13 @@ class BaseAgent(Generic[TState], ABC):
         else:
             head, body = [], messages
 
-        tokens_before = count_tokens_approximately(body)
-        if tokens_before <= self.tokens_before_summarize:
+        tokens_before = count_tokens_approximately(
+            messages, tools=list(getattr(self, "tools", {}).values())
+        )
+        threshold = summarization_threshold(
+            self.llm, self.tokens_before_summarize
+        )
+        if tokens_before < threshold:
             return new_state, False
 
         events.emit(
@@ -1068,6 +1097,7 @@ class BaseAgent(Generic[TState], ABC):
         patch_dangling: bool = True,
         summarize: bool = True,
         sanitize: bool = True,
+        portable: bool = True,
     ) -> tuple[Mapping[str, Any], bool]:
         """Apply standard message-history maintenance before an LLM call.
 
@@ -1075,6 +1105,13 @@ class BaseAgent(Generic[TState], ABC):
         ``add_messages`` reducer should use :meth:`messages_update` with the
         returned flag to avoid appending duplicate history after summarization or
         dangling-tool patching.
+
+        With ``portable`` (default), AI messages produced by a different model
+        than ``self.llm`` are rebuilt from text + tool calls so a model switch
+        (TUI picker, reloaded agent, multi-model gateway) never replays another
+        model's reasoning items/signatures; see
+        :mod:`ursa.util.message_portability`. Runs before summarization so the
+        token count and summary never see foreign signatures.
         """
         new_state = deepcopy(state)
         full_overwrite = False
@@ -1091,12 +1128,21 @@ class BaseAgent(Generic[TState], ABC):
             ):
                 new_state["messages"] = fixed
                 full_overwrite = True
+        if portable and "messages" in new_state:
+            msgs, changed = make_portable(new_state["messages"], self.llm)
+            if changed:
+                new_state["messages"] = msgs
+                full_overwrite = True
         if summarize:
-            new_state, full_overwrite = self._summarize_context(
+            # OR the flag: earlier steps (sanitize, system prompt, portability)
+            # may already require an overwrite that must not be discarded when
+            # no summarization happens.
+            new_state, summarized = self._summarize_context(
                 new_state,
                 system_prompt=system_prompt,
                 summary_prompt=summary_prompt,
             )
+            full_overwrite = full_overwrite or summarized
         if patch_dangling:
             new_state, full_overwrite = self._patch_dangling(
                 new_state, full_overwrite

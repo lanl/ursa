@@ -42,7 +42,7 @@ dependencies = [
     "langchain>=1.3.2",
     "langchain-chroma>=1.0.0",
     "langchain-community>=0.4.1",
-    "langchain-openai>=1.0.1",
+    "langchain-openai>=1.2.0",
     "langgraph-checkpoint-sqlite>=3.0.3",
     "aiosqlite>=0.20.0,<0.22",
     "langchain-anthropic>=1.4",
@@ -152,6 +152,9 @@ markers = [
     "real_llm: test intentionally initializes a real chat or embedding model and may make network calls",
     "slow: test is comparatively slow and may be omitted from quick local runs",
 ]
+
+[tool.ty.environment]
+python-platform = "all"
 
 [dependency-groups]
 dev = [
