@@ -1,6 +1,7 @@
 import asyncio
 import os
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -138,6 +139,37 @@ def test_compose_image_requires_explicit_workdir(tmp_path: Path) -> None:
         _environment(tmp_path, compose=True, workdir=None)
 
 
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"INHERITED": None, "EMPTY": "", "VALUE": "${INHERITED}", "BOOL": True},
+        ["INHERITED", "EMPTY=", "VALUE=old", "VALUE=${INHERITED}", "BOOL=true"],
+    ],
+)
+def test_compose_environment_and_build_arguments(tmp_path, monkeypatch, values):
+    monkeypatch.setenv("INHERITED", "host=value")
+    env_file = tmp_path / "service.env"
+    env_file.write_text("VALUE=file\nFILE_ONLY=preserved\n")
+    service = {"environment": values, "env_file": [str(env_file)]}
+    expected = {
+        "BOOL": "true",
+        "EMPTY": "",
+        "INHERITED": "host=value",
+        "VALUE": "host=value",
+    }
+    environment = _environment(tmp_path)
+    assert environment._compose_build_inputs({"args": values})[2] == tuple(
+        f"{key}={value}" for key, value in expected.items()
+    )
+    assert harbor_singularity._compose_environment("helper", service, {}) == {
+        "FILE_ONLY": "preserved",
+        **expected,
+    }
+    assert harbor_singularity._compose_environment(
+        "main", service, {"VALUE": "runtime"}
+    ) == {"FILE_ONLY": "preserved", **expected, "VALUE": "runtime"}
+
+
 @pytest.mark.parametrize("hashed_capath", [False, True])
 def test_host_ca_certificates_pem(
     tmp_path: Path, monkeypatch, hashed_capath: bool
@@ -150,6 +182,9 @@ def test_host_ca_certificates_pem(
     loaded: list[bytes] = []
 
     class Context:
+        def load_default_certs(self) -> None:
+            pass
+
         def load_verify_locations(self, *, cafile: str) -> None:
             loaded.append(Path(cafile).read_bytes())
 
@@ -158,7 +193,7 @@ def test_host_ca_certificates_pem(
             return loaded if hashed_capath else [b"first", b"second"]
 
     monkeypatch.setattr(
-        harbor_singularity.ssl, "create_default_context", Context
+        harbor_singularity, "OpenSSLContext", lambda protocol: Context()
     )
     monkeypatch.setattr(
         harbor_singularity.ssl,
@@ -177,6 +212,35 @@ def test_host_ca_certificates_pem(
     assert harbor_singularity._host_ca_certificates_pem() == (
         "PEM:certificate\n" if hashed_capath else "PEM:first\nPEM:second\n"
     )
+
+
+@pytest.mark.parametrize("import_first", [False, True])
+def test_host_ca_export_with_truststore(import_first):
+    # Isolate the process-wide injection and test both Harbor import orders.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            f"""
+import ssl
+import sys
+import truststore
+if {import_first!r}:
+    from ursa.integrations.harbor_singularity import _host_ca_certificates_pem
+from ursa.util.http import inject_truststore_into_ssl
+inject_truststore_into_ssl()
+from ursa.integrations.harbor_singularity import _host_ca_certificates_pem
+actual = _host_ca_certificates_pem()
+assert actual == sys.stdin.read()
+assert ssl.SSLContext is truststore.SSLContext
+""",
+        ],
+        capture_output=True,
+        text=True,
+        input=harbor_singularity._host_ca_certificates_pem(),
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize(
