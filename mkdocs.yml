@@ -108,6 +108,7 @@ nav:
       - Agent Symposia: environments/agent-symposia.md
       - Visualizing Environment Runs: environments/visualization.md
   - Best Practices:
+      - Command sandbox: sandbox.md
       - Sandboxing and information control: best-practices/sandboxing.md
       - Contributing: best-practices/contributing.md
   - Reference:

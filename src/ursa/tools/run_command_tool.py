@@ -1,5 +1,5 @@
 import os
-import subprocess
+import platform
 from pathlib import Path
 
 from langchain.tools import ToolRuntime
@@ -9,6 +9,14 @@ from pydantic import BaseModel, Field
 from ursa.agents.base import AgentContext
 from ursa.prompt_library.safety_prompts import (
     get_safety_prompt,
+)
+from ursa.sandbox import (
+    LinuxBwrapSandbox,
+    MacSandbox,
+    NoSandbox,
+    SandboxError,
+    _disable_sbx_suggestion,
+    parse_extra_writable_paths,
 )
 from ursa.util.events import ToolEvents
 from ursa.util.rendering import event_artifact
@@ -113,15 +121,51 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
             error="Command interrupted",
             query=query,
         ) as span:
-            result = subprocess.run(
-                query,
-                text=True,
-                shell=True,
-                timeout=600000,
-                capture_output=True,
-                cwd=workspace_dir,
-                check=False,
+            access_network = os.getenv("URSA_ACCESS_NETWORK", "1") == "1"
+            enable_sbx = os.getenv("URSA_SBX", "1") == "1"
+            extra_writable_paths = parse_extra_writable_paths(
+                "URSA_EXTRA_WRITABLE_PATHS"
             )
+            match (pf := platform.system()), prompt_level.lower(), enable_sbx:
+                # NOTE:
+                # * No sandbox if URSA_SAFETY_LEVEL=yolo or URSA_SBX=0
+                # * To use sandbox but disable safety checks,
+                #   set URSA_SAFETY_LEVEL=none, URSA_SBX=1 (default)
+                case _, "yolo", _:
+                    sbx = NoSandbox(cwd=workspace_dir)
+                case _, _, 0:
+                    sbx = NoSandbox(cwd=workspace_dir)
+                case "Linux", _, 1:
+                    sbx = LinuxBwrapSandbox(
+                        cwd=workspace_dir,
+                        access_network=access_network,
+                        extra_writable_paths=extra_writable_paths,
+                    )
+                case "Darwin", _, 1:
+                    sbx = MacSandbox(
+                        cwd=workspace_dir,
+                        access_network=access_network,
+                        extra_writable_paths=extra_writable_paths,
+                    )
+                case "Windows", _, 1:
+                    # TODO: Implement WindowsSandbox
+                    raise SandboxError(
+                        f"Unsupported platform {pf} for sandboxing. "
+                        + _disable_sbx_suggestion
+                    )
+                case _, _, _:
+                    raise SandboxError(
+                        f"Unsupported platform {pf} for sandboxing."
+                        + _disable_sbx_suggestion
+                    )
+
+            if not sbx.is_working():
+                raise SandboxError(
+                    f"Could not start sandbox: {sbx.backend}. "
+                    + _disable_sbx_suggestion
+                )
+
+            result = sbx.execute(query)
             stdout, stderr = result.stdout, result.stderr
             stdout = stdout.encode("utf-8", errors="ignore").decode("utf-8")
             stderr = stderr.encode("utf-8", errors="ignore").decode("utf-8")
