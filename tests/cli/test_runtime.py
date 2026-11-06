@@ -19,6 +19,7 @@ from mcp import StdioServerParameters
 from pydantic import ValidationError
 from rich.console import Console as RealConsole
 
+from tests.conftest import extraskip
 from ursa import security
 from ursa.agents.base import AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
@@ -26,7 +27,6 @@ from ursa.cli.config import ChatModelConfig, EmbModelConfig, UrsaConfig
 from ursa.cli.runtime import EPHEMERAL_AGENT_PREFIX, HITL, AgentHITL
 from ursa.cli.tui.agent_info import load_agent_tools
 from ursa.util.events import DEFAULT_EVENT_NAME
-from ursa.util.has_extra import has_extra
 from ursa.util.rendering import event_artifact
 
 LOGGER = logging.getLogger(__name__)
@@ -1153,12 +1153,14 @@ async def test_reconfigure_models_reports_validation_failure_without_change(
         "hypothesize",
         "plan",
         "web",
-    ]
-    + (["dsi"] if has_extra("dsi") else []),
+        "dsi",
+    ],
 )
 async def test_agents_apply_agent_config_overrides(
     agent_name, tmp_path, monkeypatch
 ):
+    if agent_name == "dsi":
+        extraskip("dsi")
     _stub_hitl_dependencies(monkeypatch)
 
     config = UrsaConfig(
