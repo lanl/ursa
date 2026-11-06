@@ -6,6 +6,16 @@ from tests.cli._app_helpers import static_text, wait_for
 from ursa.cli.tui.widgets import HierarchyMessageCard, MessagesScreen
 
 
+async def open_coordination(app, pilot, count):
+    await app._show_command("coordination")
+    screen = app.screen
+    assert isinstance(screen, MessagesScreen)
+    assert await wait_for(
+        pilot, lambda: len(screen.query(HierarchyMessageCard)) == count
+    )
+    return screen
+
+
 async def test_message_screen_pages_without_retaining_full_bodies(
     app, monkeypatch
 ):
@@ -23,12 +33,7 @@ async def test_message_screen_pages_without_retaining_full_bodies(
 
     monkeypatch.setattr(app.message_store, "message_body", tracked_read)
     async with app.run_test(size=(120, 40)) as pilot:
-        await app._show_command("coordination")
-        screen = app.screen
-        assert isinstance(screen, MessagesScreen)
-        assert await wait_for(
-            pilot, lambda: len(screen.query(HierarchyMessageCard)) == 50
-        )
+        screen = await open_coordination(app, pilot, 50)
         cards = list(screen.query(HierarchyMessageCard))
         assert cards[0].message.content.startswith("75:")
         assert cards[-1].message.content.startswith("124:")
@@ -119,12 +124,7 @@ async def test_message_log_pauses_on_scroll_or_expansion_and_keyboard_toggles(
         )
 
     async with app.run_test(size=(80, 14)) as pilot:
-        await app._show_command("coordination")
-        screen = app.screen
-        assert isinstance(screen, MessagesScreen)
-        assert await wait_for(
-            pilot, lambda: len(screen.query(HierarchyMessageCard)) == 16
-        )
+        screen = await open_coordination(app, pilot, 16)
         body = screen.query_one("#messages-body")
         assert await wait_for(pilot, lambda: body.scroll_y == body.max_scroll_y)
 
@@ -178,12 +178,7 @@ async def test_message_log_header_and_footer_fit_across_terminal_widths(
     await app.record_hierarchy_message("root", ("root/a",), "one message")
 
     async with app.run_test(size=(60, 20)) as pilot:
-        await app._show_command("coordination")
-        screen = app.screen
-        assert isinstance(screen, MessagesScreen)
-        assert await wait_for(
-            pilot, lambda: len(screen.query(HierarchyMessageCard)) == 1
-        )
+        screen = await open_coordination(app, pilot, 1)
         header = screen.query_one("#messages-header", Vertical)
         controls = screen.query_one("#messages-controls", Horizontal)
         title = screen.query_one("#messages-title", Static)
@@ -233,12 +228,7 @@ async def test_expanding_a_message_cancels_a_deferred_live_resume(app):
         )
 
     async with app.run_test(size=(80, 14)) as pilot:
-        await app._show_command("coordination")
-        screen = app.screen
-        assert isinstance(screen, MessagesScreen)
-        assert await wait_for(
-            pilot, lambda: len(screen.query(HierarchyMessageCard)) == 12
-        )
+        screen = await open_coordination(app, pilot, 12)
         body = screen.query_one("#messages-body")
         body.scroll_home(animate=False, immediate=True)
         await screen.action_latest()

@@ -330,32 +330,26 @@ async def test_file_hotlist_uses_at_trigger(app, tmp_path):
         assert prompt.text == f"@{Path('docs')}{os.sep} "
 
 
-async def test_shift_enter_adds_a_prompt_newline(app):
+@pytest.mark.parametrize("key", ["shift+enter", "ctrl+j"])
+async def test_newline_shortcuts_add_a_prompt_newline(app, key):
     async with app.run_test() as pilot:
-        await pilot.press("a", "shift+enter", "b")
+        await pilot.press("a", key, "b")
         assert app.query_one(PromptArea).text == "a\nb"
 
 
-async def test_ctrl_j_adds_a_prompt_newline(app):
-    async with app.run_test() as pilot:
-        await pilot.press("a", "ctrl+j", "b")
-        assert app.query_one(PromptArea).text == "a\nb"
-
-
-def test_newline_key_prefers_shift_enter_when_protocol_is_detected(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    ("kitty_keyboard", "expected"),
+    [(True, "shift+enter"), (False, "ctrl+j")],
+)
+def test_newline_key_matches_keyboard_protocol(
+    tmp_path, monkeypatch, kitty_keyboard, expected
 ):
-    monkeypatch.setattr(crossplatform, "expects_kitty_keyboard", lambda: True)
+    monkeypatch.setattr(
+        crossplatform, "expects_kitty_keyboard", lambda: kitty_keyboard
+    )
     app = UrsaTextualApp(make_runtime(tmp_path))
 
-    assert app.preferred_newline_key == "shift+enter"
-
-
-def test_newline_key_falls_back_to_ctrl_j(tmp_path, monkeypatch):
-    monkeypatch.setattr(crossplatform, "expects_kitty_keyboard", lambda: False)
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
-    assert app.preferred_newline_key == "ctrl+j"
+    assert app.preferred_newline_key == expected
 
 
 async def test_prompt_has_markdown_highlighting_paste_undo_and_redo(app):
