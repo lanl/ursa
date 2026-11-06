@@ -95,7 +95,6 @@ def measure_exec(*, profile_imports: bool = False) -> dict:
                             "base_url": f"http://127.0.0.1:{server.server_port}/v1",
                             "api_key": {
                                 "env": "URSA_BENCHMARK_TOKEN",
-                                "template": "%s",
                             },
                         }
                     },

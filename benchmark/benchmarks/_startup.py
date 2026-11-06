@@ -156,15 +156,14 @@ def measure(
         if scenario == "saved-config-prompt":
             config = root / "ursa" / "config.yaml"
             config.parent.mkdir()
-            # Load a saved user config through the ordinary search path, with
-            # the identity template written by older versions. No keyring
-            # lookup or server connection should be necessary to start.
+            # Load a saved user config through the ordinary search path without
+            # looking up secrets or connecting to MCP servers.
             config.write_text(
                 json.dumps({
                     "inference_providers": {
                         "saved-provider": {
                             "base_url": "http://127.0.0.1:9/v1",
-                            "api_key": {"keyring": True, "template": "%s"},
+                            "api_key": {"keyring": True},
                         }
                     },
                     "llm_model": {"inference_provider": "saved-provider"},
