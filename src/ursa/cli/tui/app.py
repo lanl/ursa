@@ -52,6 +52,7 @@ from ursa.util.model_context import (
     model_context_window,
     summarization_threshold,
 )
+from ursa.util.secrets import unlock_keychain
 from ursa.util.tqdm_lock import install_thread_only_tqdm_lock
 
 
@@ -848,6 +849,7 @@ def run_textual(hitl: HITL) -> None:
     # first time a progress bar is built (e.g. RAG document ingestion).
     install_thread_only_tqdm_lock()
     try:
+        unlock_keychain()
         UrsaTextualApp(hitl).run()
     finally:
         asyncio.run(hitl.aclose())

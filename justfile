@@ -9,14 +9,6 @@ help:
 test:
     uv run pytest -s
 
-# Measure CLI startup and exec response latency.
-benchmark *flags:
-    just asv run --environment existing --show-stderr {{ flags }}
-
-# Run an ASV command using the benchmark project's configuration.
-asv *args:
-    uv run --no-sync asv {{ args }}
-
 clean-workspaces:
     rm -rf workspace
     rm -rf workspace_*/

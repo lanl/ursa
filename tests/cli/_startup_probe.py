@@ -1,6 +1,7 @@
-"""Fresh-process CLI probe; the fake model is loaded only on first use."""
+"""Fresh-process probe for CLI import deferral regression tests."""
 
 import json
+import os
 import sys
 from pathlib import Path
 from time import perf_counter
@@ -22,14 +23,18 @@ def fake_model(self):
     )
 
 
-def probe(scenario, result):
+def probe(scenario: str, result: Path) -> None:
+    from ursa.util import crossplatform
+
+    config_path = Path(os.environ["XDG_CONFIG_HOME"]) / "ursa" / "config.yaml"
+    crossplatform.user_config_paths = lambda: [config_path]
     from ursa.cli import main, runtime
     from ursa.cli.config import ChatModelConfig
 
     ChatModelConfig.init_chat_model = fake_model
     runtime.validate_model_provider = lambda *args: None
 
-    def ready():
+    def ready() -> None:
         result.write_text(json.dumps([perf_counter(), sorted(sys.modules)]))
 
     if scenario == "exec":
@@ -52,30 +57,28 @@ def probe(scenario, result):
 
         sys.stdout = Output()
         main(["exec", "say hello"])
-    else:
-        from ursa.cli.tui.app import UrsaTextualApp
-        from ursa.cli.tui.widgets import PromptArea
+        return
 
-        original_mount, original_run = (
-            UrsaTextualApp.on_mount,
-            UrsaTextualApp.run,
-        )
+    from ursa.cli.tui.app import UrsaTextualApp
+    from ursa.cli.tui.widgets import PromptArea
 
-        def focused(app):
-            prompt = app.query_one(PromptArea)
-            assert app.focused is prompt and not prompt.disabled
-            prompt.insert("hello")
-            assert prompt.text == "hello"
-            ready()
-            app.exit()
+    original_mount, original_run = UrsaTextualApp.on_mount, UrsaTextualApp.run
 
-        def mounted(app):
-            original_mount(app)
-            app.call_after_refresh(focused, app)
+    def focused(app):
+        prompt = app.query_one(PromptArea)
+        assert app.focused is prompt and not prompt.disabled
+        prompt.insert("hello")
+        assert prompt.text == "hello"
+        ready()
+        app.exit()
 
-        UrsaTextualApp.on_mount = mounted
-        UrsaTextualApp.run = lambda app: original_run(app, headless=True)
-        main([])
+    def mounted(app):
+        original_mount(app)
+        app.call_after_refresh(focused, app)
+
+    UrsaTextualApp.on_mount = mounted
+    UrsaTextualApp.run = lambda app: original_run(app, headless=True)
+    main([])
 
 
 if __name__ == "__main__":

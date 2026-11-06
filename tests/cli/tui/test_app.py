@@ -3,6 +3,7 @@ import io
 from types import SimpleNamespace
 
 import pytest
+from keyring.errors import KeyringLocked
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
@@ -19,6 +20,38 @@ from ursa.cli.tui.widgets import (
     PromptArea,
     WelcomeBanner,
 )
+
+
+@pytest.mark.parametrize("cancel_unlock", [False, True])
+def test_keychain_unlock_precedes_tui_startup(monkeypatch, cancel_unlock):
+    calls = []
+
+    def read_password(service, username):
+        assert (service, username) == ("ursa", "__unlock__")
+        calls.append("unlock")
+        if cancel_unlock:
+            raise KeyringLocked("Unlock cancelled")
+
+    async def close():
+        calls.append("close")
+
+    monkeypatch.setattr(
+        "ursa.util.secrets.get_keyring",
+        lambda: SimpleNamespace(get_password=read_password),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "UrsaTextualApp",
+        lambda hitl: SimpleNamespace(run=lambda: calls.append("run")),
+    )
+    hitl = SimpleNamespace(aclose=close)
+    if cancel_unlock:
+        with pytest.raises(KeyringLocked, match="Unlock cancelled"):
+            app_module.run_textual(hitl)
+        assert calls == ["unlock", "close"]
+    else:
+        app_module.run_textual(hitl)
+        assert calls == ["unlock", "run", "close"]
 
 
 def test_copy_bindings_are_uniform_and_global():

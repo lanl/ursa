@@ -194,6 +194,11 @@ def get_keyring() -> FallbackKeyring:
     return FallbackKeyring(keyring.get_keyring())
 
 
+def unlock_keychain() -> None:
+    """Trigger any keyring unlock prompt before the TUI owns the terminal."""
+    get_keyring().get_password(KEYRING_SERVICE, "__unlock__")
+
+
 def _non_blank(value: str | None) -> str | None:
     if value is None:
         return None

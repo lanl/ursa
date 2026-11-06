@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from benchmark.startup import SCENARIOS, measure
+from tests.cli._startup import SCENARIOS, measure
 from ursa.cli.config import EmbModelConfig, UrsaConfig
 from ursa.cli.one_shot import run_once
 from ursa.cli.runtime import HITL

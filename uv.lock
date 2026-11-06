@@ -330,45 +330,6 @@ wheels = [
 ]
 
 [[package]]
-name = "asv"
-version = "0.6.6"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "asv-runner" },
-    { name = "build" },
-    { name = "colorama", marker = "sys_platform == 'win32'" },
-    { name = "importlib-metadata" },
-    { name = "json5" },
-    { name = "packaging" },
-    { name = "pympler", marker = "platform_python_implementation != 'PyPy'" },
-    { name = "pyyaml", marker = "platform_python_implementation != 'PyPy'" },
-    { name = "tabulate" },
-    { name = "virtualenv" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a4/0d/17a15f8d941c6846d06708d33ae03c4154844fd7c9610f12be6837241b05/asv-0.6.6.tar.gz", hash = "sha256:82e47105db8f56d9b1e54763dd01a1709d2722ad2f727b21521628c3e110bdc6", size = 403111, upload-time = "2026-06-27T03:12:47.749Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5f/dc/364295d8488b8b325efeb57daf6c121d32749a489cacca7446251525d7e4/asv-0.6.6-cp314-cp314t-macosx_10_15_x86_64.whl", hash = "sha256:7f66ceff065fa02c342a00ccf9832ec34dca3835493173e9cf199851f6686c2b", size = 187438, upload-time = "2026-06-27T03:12:26.272Z" },
-    { url = "https://files.pythonhosted.org/packages/35/65/e8110d7e833a3ff44fbbf00d9267025cf6c31d2d28968897a1dffd149a6c/asv-0.6.6-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:68bdabaf4c4441c460dfe2b9c1722a7f24f0c5cc2f284a751a3fbee75882c87a", size = 187995, upload-time = "2026-06-27T03:12:28.08Z" },
-    { url = "https://files.pythonhosted.org/packages/c9/e8/35a60d4c0dc90b319ed80e61cba49668c1c92a5ab289ca2062b3764ae8e3/asv-0.6.6-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:dfdc4a6295c8539be8c11136d7aaabc6e4293efbc9f635f0263d02205bdd53a2", size = 293614, upload-time = "2026-06-27T03:13:15.432Z" },
-    { url = "https://files.pythonhosted.org/packages/b3/1c/98cc990d856e84cd5f1212e978fcc4d27e48fbc97707a222d295492812d5/asv-0.6.6-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:e2d47388069730ded8c0955fdeb8369d810641faa44c3687864ef8941782f2d1", size = 1315341, upload-time = "2026-06-27T03:13:21.731Z" },
-    { url = "https://files.pythonhosted.org/packages/ec/0c/a6e0e9b9b7c84eab45001a1cd0632634405fe7c8c7332f315b727cc87cf3/asv-0.6.6-cp314-cp314t-win_amd64.whl", hash = "sha256:acfaf32d34301bd1b7386d533f4005b5f94b7cf0c0509042ee942f02ff4de3d5", size = 189115, upload-time = "2026-06-27T03:13:41.891Z" },
-    { url = "https://files.pythonhosted.org/packages/59/fc/83cf0d5ae0052d7ebc8c5e08f6ed2c2bd15c5d895b82652ec09cf21fa317/asv-0.6.6-cp36-abi3-macosx_10_9_x86_64.whl", hash = "sha256:061cd2c370b3427ccf4bdab7c9a6f7ca593b7b74f6f463b825809840b73371a2", size = 186451, upload-time = "2026-06-27T03:12:29.55Z" },
-    { url = "https://files.pythonhosted.org/packages/be/34/3ba6fd0fd33de36238a185f6192711f7c169d164e5ad3895bd0baa9414c1/asv-0.6.6-cp36-abi3-macosx_11_0_arm64.whl", hash = "sha256:a4a70ad4a4cd45c7e6d72f1febc56c0b092ccc21fd06132e9806413a336a97d7", size = 187146, upload-time = "2026-06-27T03:12:31.042Z" },
-    { url = "https://files.pythonhosted.org/packages/70/be/b35663e3ffe0ee23b4d1be754816b1d676d9a65418220d675adb7502db06/asv-0.6.6-cp36-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:0272503beb40b21fbdeb9149b290275791fd824a3a297ffa5fb7029ace989636", size = 280305, upload-time = "2026-06-27T03:13:28.48Z" },
-    { url = "https://files.pythonhosted.org/packages/98/c6/1d96bc66440bfe2156020b9655522dfc3839ff4137d72f09a44a131d0a91/asv-0.6.6-cp36-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:93e6480d87965a60573fe9d48645860f9cd4958a7bfb3b080f43ec08a96e62ee", size = 1303571, upload-time = "2026-06-27T03:13:34.675Z" },
-    { url = "https://files.pythonhosted.org/packages/e0/21/7106ffc89c07faad7b56af3d7166cbc6a25c21845695365be1a06ce44b1e/asv-0.6.6-cp36-abi3-win_amd64.whl", hash = "sha256:a18a2bf9441bfe55f34f0f192db178eee6ead219e11752732f4e9230353fa8d4", size = 188189, upload-time = "2026-06-27T03:13:47.955Z" },
-]
-
-[[package]]
-name = "asv-runner"
-version = "0.3.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a9/b9/e8fdea1b9e6479c7f4dee03e20f0f19c954a7017a1a731200c223ffe7fa6/asv_runner-0.3.2.tar.gz", hash = "sha256:1d8c1d988ddec97cfd640786803d8b4bfea27eb47ce6876b514dfb06dd6fde17", size = 48757, upload-time = "2026-10-16T20:06:18.313Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c7/3e/c0e42f311405c0f361979cf511e38cfa909c917fed781001fbae79f3770f/asv_runner-0.3.2-py3-none-any.whl", hash = "sha256:b4a4360abe63d64cd0ab4a28377b56ff4e2c13b6760bd0c8062feb4a6a5642fb", size = 51972, upload-time = "2026-10-16T20:06:16.961Z" },
-]
-
-[[package]]
 name = "async-lru"
 version = "2.0.5"
 source = { registry = "https://pypi.org/simple" }
@@ -5900,18 +5861,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pympler"
-version = "1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pywin32", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/dd/37/c384631908029676d8e7213dd956bb686af303a80db7afbc9be36bc49495/pympler-1.1.tar.gz", hash = "sha256:1eaa867cb8992c218430f1708fdaccda53df064144d1c5656b1e6f1ee6000424", size = 179954, upload-time = "2024-06-28T19:56:06.563Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/79/4f/a6a2e2b202d7fd97eadfe90979845b8706676b41cbd3b42ba75adf329d1f/Pympler-1.1-py3-none-any.whl", hash = "sha256:5b223d6027d0619584116a0cbc28e8d2e378f7a79c1e5e024f9ff3b673c58506", size = 165766, upload-time = "2024-06-28T19:56:05.087Z" },
-]
-
-[[package]]
 name = "pymupdf"
 version = "1.28.0"
 source = { registry = "https://pypi.org/simple" }
@@ -8136,7 +8085,6 @@ otel = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "asv" },
     { name = "fastmcp" },
     { name = "hypothesis" },
     { name = "notebook" },
@@ -8211,7 +8159,6 @@ provides-extras = ["dashboard", "fm", "lammps", "office-readers", "opt", "otel",
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "asv", specifier = ">=0.6.6,<0.7" },
     { name = "fastmcp", specifier = ">=2.13.3" },
     { name = "hypothesis", specifier = ">=6.130" },
     { name = "notebook", specifier = ">=7.3.3" },
