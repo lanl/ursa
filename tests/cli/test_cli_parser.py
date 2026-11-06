@@ -1310,11 +1310,6 @@ def test_print_config_includes_defaults_and_nulls(
         "example": {
             "transport": "stdio",
             "command": "example-server",
-            "args": [],
-            "env": None,
-            "cwd": None,
-            "encoding": "utf-8",
-            "encoding_error_handler": "strict",
         }
     }
 

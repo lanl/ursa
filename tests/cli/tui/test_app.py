@@ -715,6 +715,10 @@ def test_one_shot_routes_hash_agent_and_writes_response(tmp_path):
             self.calls.append((name, prompt))
             return "One-shot result"
 
+        async def aclose(self):
+            assert "One-shot result" in output.getvalue()
+            await super().aclose()
+
     hitl = OneShotHITL(tmp_path)
     output = io.StringIO()
 

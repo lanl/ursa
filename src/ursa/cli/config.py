@@ -33,11 +33,6 @@ from ursa.util.http import (
     build_httpx_client,
     httpx_verify_value,
 )
-from ursa.util.mcp_config import (
-    ServerParameters,
-    parse_server_parameters,
-    serialize_server_parameters,
-)
 from ursa.util.model_context import DEFAULT_SUMMARIZATION_THRESHOLD
 from ursa.util.secrets import SecretReference
 
@@ -598,7 +593,11 @@ class UrsaConfig(BaseModel):
     agent_config: dict[str, dict[str, Any]] = Field(default_factory=dict)
     """ Configuration options for URSA Agents """
 
-    mcp_servers: dict[str, ServerParameters] = Field(default_factory=dict)
+    # File settings are validated by the MCP SDK when first used. Python
+    # callers can also supply SDK parameter objects directly.
+    mcp_servers: dict[str, dict[str, Any] | BaseModel] = Field(
+        default_factory=dict
+    )
     """MCP Servers to connect to Ursa."""
 
     @field_validator("inference_providers", mode="before")
@@ -690,7 +689,10 @@ class UrsaConfig(BaseModel):
             fields_set.update(updates)
             for key, value in updates.items():
                 field_info = type(self).model_fields.get(key)
-                value = _merge_config_values(merged.get(key), value)
+                if key == "mcp_servers" and isinstance(value, dict):
+                    value = merged[key] | value
+                else:
+                    value = _merge_config_values(merged.get(key), value)
                 if field_info is not None:
                     try:
                         value = TypeAdapter(
@@ -714,32 +716,20 @@ class UrsaConfig(BaseModel):
         return workspace.as_posix()
 
     @field_serializer("mcp_servers")
-    def serialize_mcp_servers(
-        self, mcp_servers: dict[str, ServerParameters], info
-    ):
-        include_defaults = bool(
-            info.context and info.context.get("include_defaults")
-        )
+    def serialize_mcp_servers(self, mcp_servers, _info):
         return {
-            server: serialize_server_parameters(
-                config,
-                exclude_defaults=False,
-                exclude_none=False,
-                exclude_unset=not include_defaults,
-            )
+            server: mcp_server_values(config)
             for server, config in mcp_servers.items()
         }
 
 
-def interpolate_mcp_server(config: ServerParameters) -> ServerParameters:
-    """Apply config-file environment interpolation to a typed MCP server."""
-    values = serialize_server_parameters(
-        config,
-        exclude_defaults=False,
-        exclude_none=False,
-        exclude_unset=False,
-    )
-    return parse_server_parameters(deep_interp_env(values))
+def mcp_server_values(config: dict[str, Any] | BaseModel) -> dict[str, Any]:
+    """Return file settings, preserving effective defaults of SDK objects."""
+    if isinstance(config, BaseModel):
+        from ursa.util.mcp import serialize_server_parameters
+
+        return serialize_server_parameters(config, exclude_none=False)
+    return config
 
 
 def load_config_file(path: Path, *, interpolate: bool = True) -> dict[str, Any]:

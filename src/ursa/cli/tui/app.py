@@ -23,7 +23,7 @@ from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Static, TextArea
 
-from ursa.cli.config import config_file_value
+from ursa.cli.config import config_file_value, mcp_server_values
 from ursa.cli.one_shot import run_once as run_textual_once  # noqa: F401
 from ursa.cli.runtime import HITL
 from ursa.cli.tui.agent_info import load_agent_details
@@ -47,7 +47,6 @@ from ursa.cli.tui.widgets import (
     WelcomeBanner,
 )
 from ursa.util import crossplatform
-from ursa.util import mcp_config as ursa_mcp
 from ursa.util.model_context import (
     model_context_window,
     summarization_threshold,
@@ -714,15 +713,12 @@ class UrsaTextualApp(App[None]):
             return model_table + "\n\n## MCP servers\n\nNone configured."
         server_rows = []
         for name, server in servers.items():
-            server = ursa_mcp.parse_server_parameters(server)
-            location = (
-                server.command
-                if isinstance(server, ursa_mcp.StdioServerParameters)
-                else server.url
+            server = mcp_server_values(server)
+            kind = server.get("transport") or (
+                "stdio" if "command" in server else "streamable_http"
             )
-            server_rows.append(
-                f"| `{name}` | {ursa_mcp.transport(server)} | `{location}` |"
-            )
+            location = server.get("command" if kind == "stdio" else "url", "")
+            server_rows.append(f"| `{name}` | {kind} | `{location}` |")
         return (
             model_table
             + "\n\n## MCP servers\n\n"

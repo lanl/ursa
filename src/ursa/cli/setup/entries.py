@@ -31,7 +31,7 @@ from textual.widgets import (
     TextArea,
 )
 
-from ursa.cli.config import InferenceProviderConfig, interpolate_mcp_server
+from ursa.cli.config import InferenceProviderConfig, deep_interp_env
 from ursa.cli.setup.config import (
     SetupError,
     reject_literal_secrets,
@@ -40,12 +40,12 @@ from ursa.cli.setup.config import (
 )
 from ursa.cli.tui.widgets import AdvancedYamlEditor, FuzzySelect, HelpLabel
 from ursa.util import get_keyring
-from ursa.util.mcp_config import (
+from ursa.util.mcp import (
     ServerParameters,
     parse_server_parameters,
     transport,
 )
-from ursa.util.mcp_config import (
+from ursa.util.mcp import (
     serialize_server_parameters as dump_mcp,
 )
 from ursa.util.secrets import KEYRING_SERVICE, SecretReference, SecretTemplate
@@ -308,7 +308,7 @@ class EntryDraftEditor(Vertical):
         kind: str,
         draft_id: str,
         original_name: str | None,
-        config: InferenceProviderConfig | ServerParameters | None,
+        config: InferenceProviderConfig | ServerParameters | dict | None,
         known_keys: list[str],
     ) -> None:
         super().__init__(id=f"{draft_id}-editor", classes="entry-draft-editor")
@@ -325,7 +325,7 @@ class EntryDraftEditor(Vertical):
             self._values = config.model_dump(mode="json", exclude_none=True)
             self._values.pop("ssl_verify", None)
         elif config is not None:
-            server = cast(ServerParameters, config)
+            server = self._initial = parse_server_parameters(config)
             self._values = dump_mcp(server, exclude_defaults=False)
             self.header, reference = _auth(server)
             if reference is not None:
@@ -605,7 +605,7 @@ class EntryDraftEditor(Vertical):
             return EntryCandidate(
                 self.kind, *identity, stored, runtime, credential
             )
-        runtime = interpolate_mcp_server(stored)
+        runtime = parse_server_parameters(deep_interp_env(dump_mcp(stored)))
         headers = dict(getattr(runtime, "headers", None) or {})
         if credential.pending:
             headers[self.header] = self.template % credential.pending

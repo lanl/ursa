@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,12 +12,73 @@ from mcp.client.session_group import (
     SseServerParameters,
     StreamableHttpParameters,
 )
+from pydantic import Field
 
-from ursa.cli.config import UrsaConfig
+from ursa.cli.config import UrsaConfig, config_file_value
 from ursa.util import mcp as mcp_mod
 from ursa.util.secrets import SecretTemplate
 
 DUMMY_SERVER = Path(__file__).parents[1] / "tools" / "dummy_mcp_server.py"
+
+
+class DefaultStdioParameters(StdioServerParameters):
+    command: str = "tool"
+    args: list[str] = Field(default_factory=lambda: ["--test"])
+
+
+class DefaultSseParameters(SseServerParameters):
+    url: str = "http://localhost/sse"
+    timeout: float = 60
+
+
+class DefaultHttpParameters(StreamableHttpParameters):
+    url: str = "http://localhost/mcp"
+    timeout: timedelta = timedelta(seconds=60)
+    terminate_on_close: bool = False
+
+
+@pytest.mark.parametrize(
+    "cls", [DefaultStdioParameters, DefaultSseParameters, DefaultHttpParameters]
+)
+def test_sdk_defaults_survive_config_round_trip(cls, monkeypatch):
+    original = cls()
+    config = UrsaConfig(mcp_servers={"tools": original})
+    assert config.mcp_servers["tools"] is original
+    assert mcp_mod.parse_server_parameters(original) is original
+    assert original.model_fields_set == set()
+
+    saved = config_file_value(config)["mcp_servers"]["tools"]
+    restored = mcp_mod.parse_server_parameters(saved)
+    assert restored.model_dump() == original.model_dump()
+    monkeypatch.setattr(
+        mcp_mod, "UrsaMCPClient", lambda connections: connections
+    )
+    assert mcp_mod.start_mcp_client({"tools": saved}) == (
+        mcp_mod.start_mcp_client(config.mcp_servers)
+    )
+
+
+@pytest.mark.parametrize(
+    "server",
+    [
+        {"transport": "unknown", "url": "http://localhost/mcp"},
+        {"transport": "stdio"},
+        {"transport": "stdio", "command": "tool", "args": "bad"},
+        {"transport": "sse", "url": 123},
+        {
+            "transport": "streamable-http",
+            "url": "http://localhost/mcp",
+            "timeout": "bad",
+        },
+    ],
+)
+def test_invalid_parameters_fail_before_connecting(server, monkeypatch):
+    def unexpected_client(connections):
+        pytest.fail("Invalid parameters reached the MCP client")
+
+    monkeypatch.setattr(mcp_mod, "UrsaMCPClient", unexpected_client)
+    with pytest.raises(ValueError):
+        mcp_mod.start_mcp_client({"invalid": server})
 
 
 @pytest.mark.parametrize(
