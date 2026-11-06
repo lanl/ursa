@@ -93,7 +93,6 @@ class AsyncMessageMixin:
         self._message_event_loop: asyncio.AbstractEventLoop | None = None
         self._message_loop_stopping = False
         self._current_agent_message: AgentMessage | None = None
-        self._active_message_task: asyncio.Task[Any] | None = None
         # Tools such as ``wait_for`` can await another member's work without
         # blocking this actor's inbox.  A newly accepted message wakes those
         # tools so the model can handle the message promptly.
@@ -130,27 +129,25 @@ class AsyncMessageMixin:
         """Return this agent's slash-delimited path from the root."""
         if runtime_path := getattr(self, "_runtime_agent_path", None):
             return str(runtime_path)
-        names: list[str] = []
+        names = [agent.hierarchy_name for agent in self._ancestors()]
+        return "/".join(reversed(names))
+
+    def _ancestors(self) -> Iterator[BaseAgent]:
+        """Walk from this agent to its root, rejecting hierarchy cycles."""
         current: BaseAgent | None = self  # type: ignore[assignment]
         seen: set[int] = set()
         while current is not None:
             if id(current) in seen:
                 raise RuntimeError("Cycle detected in agent hierarchy")
             seen.add(id(current))
-            names.append(current.hierarchy_name)
+            yield current
             current = current.parent_agent
-        return "/".join(reversed(names))
 
     @property
     def root_agent(self) -> BaseAgent:
-        current: BaseAgent = self  # type: ignore[assignment]
-        seen: set[int] = set()
-        while current.parent_agent is not None:
-            if id(current) in seen:
-                raise RuntimeError("Cycle detected in agent hierarchy")
-            seen.add(id(current))
-            current = current.parent_agent
-        return current
+        return next(
+            agent for agent in self._ancestors() if agent.parent_agent is None
+        )
 
     async def post_message(
         self,
@@ -439,7 +436,6 @@ class AsyncMessageMixin:
                 handler = asyncio.create_task(
                     self.ahandle_message(item.message)
                 )
-                self._active_message_task = handler
                 succeeded = False
                 try:
                     result = await handler
@@ -473,11 +469,9 @@ class AsyncMessageMixin:
                                 self.agent_path,
                                 item.message.message_id,
                             )
-                    self._active_message_task = None
                     self._current_agent_message = None
                     inbox.task_done()
         finally:
-            self._active_message_task = None
             self._current_agent_message = None
 
     def _cancel_queued_responses(self) -> None:
@@ -541,19 +535,16 @@ class AsyncMessageMixin:
 
     def _get_async_invocation_lock(self) -> asyncio.Lock:
         loop = asyncio.get_running_loop()
-        if self._async_invocation_loop is not loop:
-            if (
-                self._async_invocation_lock
-                and self._async_invocation_lock.locked()
-            ):
+        lock = self._async_invocation_lock
+        if lock is None or self._async_invocation_loop is not loop:
+            if lock is not None and lock.locked():
                 raise RuntimeError(
                     "Agent is already running in another event loop"
                 )
-            self._async_invocation_lock = asyncio.Lock()
+            lock = asyncio.Lock()
+            self._async_invocation_lock = lock
             self._async_invocation_loop = loop
-        elif self._async_invocation_lock is None:
-            self._async_invocation_lock = asyncio.Lock()
-        return self._async_invocation_lock
+        return lock
 
     @asynccontextmanager
     async def _async_invocation(self):
@@ -577,7 +568,7 @@ class AsyncMessageMixin:
     @property
     def is_working(self) -> bool:
         """Whether this agent is currently handling an invocation."""
-        task = self._async_invocation_owner or self._active_message_task
+        task = self._async_invocation_owner
         return (
             self._current_agent_message is not None
             or self.pending_messages > 0
@@ -630,13 +621,8 @@ class AsyncMessageMixin:
                 raise ValueError(
                     f"Agent {agent.agent_path!r} already has a parent"
                 )
-            ancestor: BaseAgent | None = self  # type: ignore[assignment]
-            while ancestor is not None:
-                if ancestor is agent:
-                    raise ValueError(
-                        "Attaching this agent would create a cycle"
-                    )
-                ancestor = ancestor.parent_agent
+            if any(ancestor is agent for ancestor in self._ancestors()):
+                raise ValueError("Attaching this agent would create a cycle")
             self._validate_subagent_capacity(agent)
             agent._parent_agent = self  # type: ignore[assignment]
             agent._hierarchy_name = name
