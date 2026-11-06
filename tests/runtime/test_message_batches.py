@@ -2,108 +2,68 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import cast
+from unittest.mock import AsyncMock
 
 import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from tests.runtime.fixtures import runtime_request
 from ursa.cli.config import UrsaConfig
-from ursa.runtime import AgentContext, AgentManager, AgentRuntime
-from ursa.runtime.agent_runtime import _BufferedAgentMessage, _UrsaProcessAgent
+from ursa.runtime import AgentManager, AgentRuntime
+from ursa.runtime.agent_runtime import _BufferedAgentMessage
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reset_query", [False, True])
 async def test_process_delivers_batch_in_one_turn_with_separate_envelopes(
     reset_query,
+    process_runner,
 ):
-    class Context:
-        active_request_id = "batch"
-
-        def _enter_request(self, request_id):
-            return request_id
-
-        def _leave_request(self, token):
-            pass
-
-    class CaptureAgent:
-        calls = []
-        formatted = []
-
-        @staticmethod
-        def format_query(prompt, state=None):
-            CaptureAgent.formatted.append(prompt)
-            if reset_query:
-                state = {
-                    "messages": [SystemMessage(content="Instructions")],
-                    "task": prompt,
-                }
-            state = state or {
-                "messages": [SystemMessage(content="Instructions")]
-            }
-            state["messages"].append(HumanMessage(content=prompt))
-            return state
-
-        async def ainvoke(self, query, config=None):
-            assert "ursa_additional_messages" not in config
-            assert "ursa_additional_messages" not in config["metadata"]
-            self.calls.append(query)
-            return query
-
-        @staticmethod
-        def format_result(state):
-            return "processed"
-
-    agent = CaptureAgent()
-    runner = _UrsaProcessAgent(
-        agent, cast(AgentContext, Context()), "root/worker"
+    runner = process_runner(
+        "root/worker", result="processed", reset_query=reset_query
     )
+    agent = runner.agent
     bodies = [
         "First question\n[brackets]",
         'Second question: "quoted"',
         "New phase",
     ]
     senders = ["root/first", "root/second", "root"]
-    try:
-        result = await runner.ainvoke(
-            bodies[0],
-            config={
-                "metadata": {
-                    "ursa_message_sender": senders[0],
-                    "ursa_message_recipient": "root/worker",
-                },
-                "ursa_additional_messages": [
-                    {
-                        "sender": sender,
-                        "recipient": "root/worker",
-                        "content": body,
-                    }
-                    for sender, body in zip(
-                        senders[1:], bodies[1:], strict=True
-                    )
-                ],
+    result = await runner.ainvoke(
+        bodies[0],
+        config={
+            "metadata": {
+                "ursa_message_sender": senders[0],
+                "ursa_message_recipient": "root/worker",
             },
-        )
-        assert result == "processed"
-        assert len(agent.calls) == 1
-        assert len(agent.formatted) == 1
-        if reset_query:
-            entries = json.loads(agent.calls[0]["task"].split("\n", 1)[1])
-            assert [entry["content"] for entry in entries] == bodies
-            assert [entry["sender"] for entry in entries] == senders
-        messages = agent.calls[0]["messages"]
-        assert len(messages) == 7
-        for index, (sender, body) in enumerate(
-            zip(senders, bodies, strict=True)
-        ):
-            envelope, message = messages[1 + index * 2 : 3 + index * 2]
-            assert isinstance(envelope, SystemMessage)
-            assert f"Sender: {sender}" in envelope.content
-            assert "Recipient: root/worker" in envelope.content
-            assert isinstance(message, HumanMessage)
-            assert message.content == body
-    finally:
-        await runner.aclose()
+            "ursa_additional_messages": [
+                {
+                    "sender": sender,
+                    "recipient": "root/worker",
+                    "content": body,
+                }
+                for sender, body in zip(senders[1:], bodies[1:], strict=True)
+            ],
+        },
+    )
+    assert result == "processed"
+    assert "ursa_additional_messages" not in agent.configs[0]
+    assert "ursa_additional_messages" not in agent.configs[0]["metadata"]
+    assert len(agent.seen) == 1
+    assert len(agent.formatted) == 1
+    if reset_query:
+        entries = json.loads(agent.seen[0]["task"].split("\n", 1)[1])
+        assert [entry["content"] for entry in entries] == bodies
+        assert [entry["sender"] for entry in entries] == senders
+    messages = agent.seen[0]["messages"]
+    assert len(messages) == 7
+    for index, (sender, body) in enumerate(zip(senders, bodies, strict=True)):
+        envelope, message = messages[1 + index * 2 : 3 + index * 2]
+        assert isinstance(envelope, SystemMessage)
+        assert f"Sender: {sender}" in envelope.content
+        assert "Recipient: root/worker" in envelope.content
+        assert isinstance(message, HumanMessage)
+        assert message.content == body
 
 
 @pytest.fixture
@@ -137,11 +97,13 @@ async def queue_peer_messages(runtime, root, callbacks=()):
         ("first", "newer instruction"),
     ):
         sender_id = runtime._hierarchies[root][f"root/{sender}"]
-        result = await runtime._handle_runtime_request(
+        result = await runtime_request(
+            runtime,
             sender_id,
             "invoke",
-            {"target": "root", "message": content},
-            callbacks,
+            callbacks=callbacks,
+            target="root",
+            message=content,
         )
         assert result == "Message queued for root."
         expected.append({
@@ -175,7 +137,7 @@ async def test_busy_recipient_runs_one_batch_with_one_activity(
     monkeypatch.setattr(runtime._manager, "invoke", invoke)
     runtime._mark_working("root", 1)
     expected = await queue_peer_messages(runtime, root, (Callback(),))
-    assert runtime._pending_counts == {"root": 3}
+    assert len(runtime._buffered_agent_messages["root"]) == 3
     assert not invocations
     runtime._mark_working("root", -1)
     await asyncio.gather(*runtime._background_agent_tasks)
@@ -186,7 +148,7 @@ async def test_busy_recipient_runs_one_batch_with_one_activity(
     assert config["metadata"]["ursa_message_sender"] == expected[0]["sender"]
     assert config["ursa_additional_messages"] == expected[1:]
     assert lifecycle == [("start", "root"), ("end", "root", True)]
-    assert runtime._pending_counts == {}
+    assert runtime._buffered_agent_messages == {}
     assert runtime._working_counts == {}
     assert runtime._buffered_agent_messages == {}
 
@@ -199,7 +161,6 @@ async def test_wait_consumes_entire_buffer_once_without_replaying_it(runtime):
     result = await runtime._wait_for_runtime_agent(root, ["first", "second"], 0)
     assert result.startswith("Received 3 messages while waiting.")
     assert json.loads(result.split("\n", 1)[1]) == expected
-    assert runtime._pending_counts == {}
     assert runtime._buffered_agent_messages == {}
     runtime._mark_working("root", -1)
     assert not runtime._background_agent_tasks
@@ -215,7 +176,6 @@ async def test_stopping_recipient_does_not_flush_a_new_batch(runtime):
     runtime._stopping_subtrees.add((root, "root"))
     runtime._mark_working("root", -1)
     assert not runtime._background_agent_tasks
-    assert runtime._pending_counts == {}
     assert runtime._buffered_agent_messages == {}
 
 
@@ -236,10 +196,10 @@ async def test_user_and_peer_messages_share_fifo_without_extra_working_count(
     user = asyncio.create_task(runtime.run_active_agent("root", "user first"))
     await asyncio.sleep(0)
     assert runtime._working_counts == {"root": 1}
-    assert runtime._pending_counts == {"root": 1}
+    assert len(runtime._buffered_agent_messages["root"]) == 1
 
     await queue_peer_messages(runtime, root)
-    assert runtime._pending_counts == {"root": 4}
+    assert len(runtime._buffered_agent_messages["root"]) == 4
     runtime._mark_working("root", -1)
 
     assert await user == "reply: user first"
@@ -376,114 +336,58 @@ async def test_cancelled_before_start_settles_user_delivery_future(runtime):
     assert runtime._background_agent_tasks == set()
 
 
-@pytest.mark.asyncio
-async def test_bad_message_format_does_not_kill_the_root_inbox_worker():
-    class Context:
-        active_request_id = "message"
+@pytest.mark.parametrize(
+    ("stage", "error_type", "message"),
+    [
+        ("format_query", ValueError, "cannot format this message"),
+        ("snapshot", TypeError, "cannot snapshot root state"),
+        ("ainvoke", ValueError, "model failed"),
+        ("format_result", ValueError, "cannot format result"),
+    ],
+)
+async def test_bad_message_does_not_kill_the_root_inbox_worker(
+    process_runner, monkeypatch, stage, error_type, message
+):
+    runner = process_runner()
 
-        def _enter_request(self, request_id):
-            return request_id
+    def fail(*args, **kwargs):
+        raise error_type(message)
 
-        def _leave_request(self, token):
-            pass
+    with monkeypatch.context() as patch:
+        if stage == "snapshot":
 
-    class Agent:
-        def format_query(self, prompt, state=None):
-            if prompt == "bad message":
-                raise ValueError("cannot format this message")
-            return {"messages": [HumanMessage(content=prompt)]}
+            class UncopyableState:
+                __deepcopy__ = fail
 
-        async def ainvoke(self, query, config=None):
-            return query
-
-        @staticmethod
-        def format_result(result):
-            return result["messages"][-1].content
-
-    runner = _UrsaProcessAgent(Agent(), cast(AgentContext, Context()), "root")
-    try:
-        with pytest.raises(ValueError, match="cannot format"):
+            runner.state = UncopyableState()
+        else:
+            patch.setattr(
+                runner.agent,
+                stage,
+                AsyncMock(side_effect=fail) if stage == "ainvoke" else fail,
+            )
+        with pytest.raises(error_type, match=message):
             await runner.ainvoke("bad message")
-        assert await runner.ainvoke("root survives") == "root survives"
-        assert runner._worker is not None and not runner._worker.done()
-    finally:
-        await runner.aclose()
+    runner.state = None
+    assert await runner.ainvoke("root survives") == "root survives"
+    assert runner._worker is not None and not runner._worker.done()
 
 
-@pytest.mark.asyncio
-async def test_bad_root_state_snapshot_does_not_kill_the_inbox_worker():
-    class Context:
-        active_request_id = "message"
-
-        def _enter_request(self, request_id):
-            return request_id
-
-        def _leave_request(self, token):
-            pass
-
-    class UncopyableState:
-        def __deepcopy__(self, memo):
-            raise TypeError("cannot snapshot root state")
-
-    class Agent:
-        @staticmethod
-        def format_query(prompt, state=None):
-            return {"messages": [HumanMessage(content=prompt)]}
-
-        async def ainvoke(self, query, config=None):
-            return query
-
-        @staticmethod
-        def format_result(result):
-            return result["messages"][-1].content
-
-    runner = _UrsaProcessAgent(Agent(), cast(AgentContext, Context()), "root")
-    try:
-        runner.state = UncopyableState()
-        with pytest.raises(TypeError, match="cannot snapshot"):
-            await runner.ainvoke("bad state")
-        runner.state = None
-        assert await runner.ainvoke("root survives") == "root survives"
-        assert runner._worker is not None and not runner._worker.done()
-    finally:
-        await runner.aclose()
-
-
-@pytest.mark.asyncio
-async def test_shutdown_cancels_the_active_root_message_response():
-    class Context:
-        active_request_id = "message"
-
-        def _enter_request(self, request_id):
-            return request_id
-
-        def _leave_request(self, token):
-            pass
-
+async def test_shutdown_cancels_the_active_root_message_response(
+    process_runner, monkeypatch
+):
+    runner = process_runner()
     started = asyncio.Event()
 
-    class Agent:
-        @staticmethod
-        def format_query(prompt, state=None):
-            return {"messages": [HumanMessage(content=prompt)]}
+    async def invoke(query, config=None):
+        started.set()
+        await asyncio.Event().wait()
 
-        async def ainvoke(self, query, config=None):
-            started.set()
-            await asyncio.Event().wait()
-            return query
-
-        @staticmethod
-        def format_result(result):
-            return result["messages"][-1].content
-
-    runner = _UrsaProcessAgent(Agent(), cast(AgentContext, Context()), "root")
-    try:
-        active = asyncio.create_task(runner.ainvoke("working"))
-        await asyncio.wait_for(started.wait(), 1)
-        assert runner._worker is not None
-        runner._worker.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await active
-        assert runner._worker.done()
-    finally:
-        await runner.aclose()
+    monkeypatch.setattr(runner.agent, "ainvoke", invoke)
+    active = asyncio.create_task(runner.ainvoke("working"))
+    await asyncio.wait_for(started.wait(), 1)
+    assert runner._worker is not None
+    runner._worker.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await active
+    assert runner._worker.done()

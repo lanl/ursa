@@ -12,6 +12,7 @@ import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import SecretStr
 
+from tests.runtime.fixtures import runtime_request, set_hierarchy
 from ursa.cli.config import UrsaConfig
 from ursa.runtime import (
     AgentContext,
@@ -35,68 +36,27 @@ async def _wait_for_background_agent_tasks(runtime: AgentRuntime) -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_agent_receives_message_delivery_envelope() -> None:
-    from ursa.runtime.agent_runtime import _UrsaProcessAgent
-
-    class Context:
-        active_request_id = "request-id"
-
-        @staticmethod
-        def _enter_request(_request_id: str) -> object:
-            return object()
-
-        @staticmethod
-        def _leave_request(_token: object) -> None:
-            return None
-
-    class CaptureAgent:
-        seen = []
-
-        @staticmethod
-        def format_query(prompt: str, state=None):
-            if state is None:
-                state = {
-                    "messages": [SystemMessage(content="Agent instructions")]
-                }
-            state["messages"].append(HumanMessage(content=prompt))
-            return state
-
-        async def ainvoke(self, inputs, config=None):
-            del config
-            self.seen.append(inputs)
-            return inputs
-
-        @staticmethod
-        def format_result(_result) -> str:
-            return "ok"
-
-    agent = CaptureAgent()
-    process_agent = _UrsaProcessAgent(
-        agent,
-        cast(AgentContext, Context()),
-        "root/reviewer",
+async def test_process_agent_receives_message_delivery_envelope(process_runner):
+    process_agent = process_runner("root/reviewer", result="ok")
+    agent = process_agent.agent
+    result = await process_agent.ainvoke(
+        "Tell one short joke.",
+        config={
+            "metadata": {
+                "ursa_message_sender": "root",
+                "ursa_message_recipient": "root/reviewer",
+            }
+        },
     )
-    try:
-        result = await process_agent.ainvoke(
-            "Tell one short joke.",
-            config={
-                "metadata": {
-                    "ursa_message_sender": "root",
-                    "ursa_message_recipient": "root/reviewer",
-                }
-            },
-        )
-        second_result = await process_agent.ainvoke(
-            "Use a penguin this time.",
-            config={
-                "metadata": {
-                    "ursa_message_sender": "root/editor",
-                    "ursa_message_recipient": "root/reviewer",
-                }
-            },
-        )
-    finally:
-        await process_agent.aclose()
+    second_result = await process_agent.ainvoke(
+        "Use a penguin this time.",
+        config={
+            "metadata": {
+                "ursa_message_sender": "root/editor",
+                "ursa_message_recipient": "root/reviewer",
+            }
+        },
+    )
 
     assert result == "ok"
     assert second_result == "ok"
@@ -195,32 +155,14 @@ async def test_kill_interrupts_an_active_runtime_invocation(
 )
 @pytest.mark.asyncio
 async def test_agent_runtime_runs_cli_agent_outside_host_process(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        "ursa.runtime.agent_runtime.validate_model_provider",
-        lambda *_args: None,
-    )
-    manager = AgentManager(
-        start_method="fork",
-        heartbeat_interval=0.05,
-        heartbeat_timeout=1,
-    )
-    runtime = AgentRuntime(
-        UrsaConfig(
-            workspace=tmp_path,
-            llm_model={"model": "fake:chat"},
-        ),
-        manager=manager,
-    )
-    try:
-        assert await runtime.run_agent("chat", "hello") == "ok"
-        snapshot = await manager.snapshot(runtime.agents["chat"].runtime_id)
-        assert snapshot.pid is not None
-        assert snapshot.pid != os.getpid()
-        assert runtime.agents["chat"]._agent is None
-    finally:
-        await runtime.aclose()
+    runtime, manager = runtime_factory(fork=True)
+    assert await runtime.run_agent("chat", "hello") == "ok"
+    snapshot = await manager.snapshot(runtime.agents["chat"].runtime_id)
+    assert snapshot.pid is not None
+    assert snapshot.pid != os.getpid()
+    assert runtime.agents["chat"]._agent is None
 
 
 @pytest.mark.skipif(
@@ -256,86 +198,69 @@ async def test_runtime_serializes_filtered_tool_schemas() -> None:
 )
 @pytest.mark.asyncio
 async def test_subagents_are_launched_as_managed_processes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        "ursa.runtime.agent_runtime.validate_model_provider",
-        lambda *_args: None,
+    runtime, manager = runtime_factory(
+        fork=True,
+        emb_model={"model": "openai:root-embeddings"},
+        subagents={
+            "max_agents": None,
+            "max_depth": None,
+            "llm_model": {"model": "fake:subagent"},
+            "embedding_model": {"model": "openai:subagent-embeddings"},
+        },
     )
-    manager = AgentManager(
-        start_method="fork",
-        heartbeat_interval=0.05,
-        heartbeat_timeout=1,
+    root = await runtime.get_agent("chat")
+    assert await manager.call(
+        root.runtime_id,
+        "spawn_subagent",
+        "reviewer",
+        "review this",
+    ) == (
+        "root/reviewer",
+        "Message queued for root/reviewer.",
     )
-    runtime = AgentRuntime(
-        UrsaConfig(
-            workspace=tmp_path,
-            llm_model={"model": "fake:chat"},
-            emb_model={"model": "openai:root-embeddings"},
-            subagents={
-                "max_agents": None,
-                "max_depth": None,
-                "llm_model": {"model": "fake:subagent"},
-                "embedding_model": {"model": "openai:subagent-embeddings"},
-            },
-        ),
-        manager=manager,
+    reviewer_id = runtime._hierarchies[root.runtime_id]["root/reviewer"]
+    reviewer_config = manager._entry(reviewer_id).spec.config["ursa_config"]
+    assert reviewer_config.llm_model.model == "fake:subagent"
+    assert reviewer_config.emb_model.model == "subagent-embeddings"
+    assert await manager.call(
+        reviewer_id,
+        "spawn_subagent",
+        "critic",
+        "critique this",
+    ) == (
+        "root/reviewer/critic",
+        "Message queued for root/reviewer/critic.",
     )
-    try:
-        root = await runtime.get_agent("chat")
-        assert await manager.call(
-            root.runtime_id,
-            "spawn_subagent",
-            "reviewer",
-            "review this",
-        ) == (
-            "root/reviewer",
-            "Message queued for root/reviewer.",
-        )
-        reviewer_id = runtime._hierarchies[root.runtime_id]["root/reviewer"]
-        reviewer_config = manager._entry(reviewer_id).spec.config["ursa_config"]
-        assert reviewer_config.llm_model.model == "fake:subagent"
-        assert reviewer_config.emb_model.model == "subagent-embeddings"
-        assert await manager.call(
-            reviewer_id,
-            "spawn_subagent",
-            "critic",
-            "critique this",
-        ) == (
-            "root/reviewer/critic",
-            "Message queued for root/reviewer/critic.",
-        )
 
-        snapshots = [
-            await manager.snapshot(runtime_id)
-            for runtime_id in runtime._hierarchies[root.runtime_id].values()
-        ]
-        pids = {snapshot.pid for snapshot in snapshots}
-        assert None not in pids
-        assert len(pids) == 3
-        assert os.getpid() not in pids
-        assert (
-            await manager.call(
-                root.runtime_id,
-                "send_subagent_message",
-                "root/reviewer",
-                "review this",
-            )
-            == "Message queued for root/reviewer."
-        )
-        runtime._active_root_id = root.runtime_id
-        assert (
-            await runtime.run_active_agent("root/reviewer", "user follow-up")
-            == "ok"
-        )
-        assert await manager.call(root.runtime_id, "list_subagents") == [
-            "root",
+    snapshots = [
+        await manager.snapshot(runtime_id)
+        for runtime_id in runtime._hierarchies[root.runtime_id].values()
+    ]
+    pids = {snapshot.pid for snapshot in snapshots}
+    assert None not in pids
+    assert len(pids) == 3
+    assert os.getpid() not in pids
+    assert (
+        await manager.call(
+            root.runtime_id,
+            "send_subagent_message",
             "root/reviewer",
-            "root/reviewer/critic",
-        ]
-    finally:
-        await runtime.aclose()
-        await manager.aclose()
+            "review this",
+        )
+        == "Message queued for root/reviewer."
+    )
+    runtime._active_root_id = root.runtime_id
+    assert (
+        await runtime.run_active_agent("root/reviewer", "user follow-up")
+        == "ok"
+    )
+    assert await manager.call(root.runtime_id, "list_subagents") == [
+        "root",
+        "root/reviewer",
+        "root/reviewer/critic",
+    ]
 
 
 @pytest.mark.skipif(
@@ -344,13 +269,9 @@ async def test_subagents_are_launched_as_managed_processes(
 )
 @pytest.mark.asyncio
 async def test_hierarchy_shares_checkpoint_file_with_distinct_threads(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Durable hierarchy members share one SQLite store, never one thread."""
-    monkeypatch.setattr(
-        "ursa.runtime.agent_runtime.validate_model_provider",
-        lambda *_args: None,
-    )
     group_root = tmp_path / "checkpoint-group"
     group_root.mkdir()
     monkeypatch.setattr(
@@ -360,66 +281,49 @@ async def test_hierarchy_shares_checkpoint_file_with_distinct_threads(
         "ursa.agents.base.group_agents_dir",
         lambda _group: group_root / "agents",
     )
-    manager = AgentManager(
-        start_method="fork",
-        heartbeat_interval=0.05,
-        heartbeat_timeout=1,
-    )
     agent_name = "durable-hierarchy"
     root_thread = "hierarchy-session"
-    runtime = AgentRuntime(
-        UrsaConfig(
-            workspace=tmp_path,
-            agent_name=agent_name,
-            thread_id=root_thread,
-            llm_model={"model": "fake:chat"},
-        ),
-        manager=manager,
+    runtime, manager = runtime_factory(
+        fork=True, agent_name=agent_name, thread_id=root_thread
     )
     checkpoint_path = (
         group_root / "agents" / agent_name / "db" / "checkpointer.db"
     )
-    try:
-        assert await runtime.run_agent("chat", "Root work") == "ok"
-        root = await runtime.get_agent("chat")
-        assert await manager.call(
-            root.runtime_id,
-            "spawn_subagent",
-            "reviewer",
-            "Review this.",
-        ) == (
-            "root/reviewer",
-            "Message queued for root/reviewer.",
-        )
-        reviewer_id = runtime._hierarchies[root.runtime_id]["root/reviewer"]
-        assert await manager.call(
-            reviewer_id,
-            "spawn_subagent",
-            "critic",
-            "Critique this.",
-        ) == (
-            "root/reviewer/critic",
-            "Message queued for root/reviewer/critic.",
-        )
-        critic_id = runtime._hierarchies[root.runtime_id][
-            "root/reviewer/critic"
-        ]
+    assert await runtime.run_agent("chat", "Root work") == "ok"
+    root = await runtime.get_agent("chat")
+    assert await manager.call(
+        root.runtime_id,
+        "spawn_subagent",
+        "reviewer",
+        "Review this.",
+    ) == (
+        "root/reviewer",
+        "Message queued for root/reviewer.",
+    )
+    reviewer_id = runtime._hierarchies[root.runtime_id]["root/reviewer"]
+    assert await manager.call(
+        reviewer_id,
+        "spawn_subagent",
+        "critic",
+        "Critique this.",
+    ) == (
+        "root/reviewer/critic",
+        "Message queued for root/reviewer/critic.",
+    )
+    critic_id = runtime._hierarchies[root.runtime_id]["root/reviewer/critic"]
 
-        configs = [
-            manager._entry(runtime_id).spec.config["ursa_config"]
-            for runtime_id in (root.runtime_id, reviewer_id, critic_id)
-        ]
-        assert [config.agent_name for config in configs] == [agent_name] * 3
-        assert [config.thread_id for config in configs] == [
-            root_thread,
-            f"{root_thread}:root/reviewer",
-            f"{root_thread}:root/reviewer/critic",
-        ]
-        await _wait_for_background_agent_tasks(runtime)
-        assert checkpoint_path.is_file()
-    finally:
-        await runtime.aclose()
-        await manager.aclose()
+    configs = [
+        manager._entry(runtime_id).spec.config["ursa_config"]
+        for runtime_id in (root.runtime_id, reviewer_id, critic_id)
+    ]
+    assert [config.agent_name for config in configs] == [agent_name] * 3
+    assert [config.thread_id for config in configs] == [
+        root_thread,
+        f"{root_thread}:root/reviewer",
+        f"{root_thread}:root/reviewer/critic",
+    ]
+    await _wait_for_background_agent_tasks(runtime)
+    assert checkpoint_path.is_file()
 
     with sqlite3.connect(checkpoint_path) as connection:
         threads = {
@@ -441,13 +345,9 @@ async def test_hierarchy_shares_checkpoint_file_with_distinct_threads(
 )
 @pytest.mark.asyncio
 async def test_subagent_model_usage_callbacks_keep_recipient_metadata(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Token callbacks from a child remain attributable to that child."""
-    monkeypatch.setattr(
-        "ursa.runtime.agent_runtime.validate_model_provider",
-        lambda *_args: None,
-    )
     recipients: list[str | None] = []
     messages: list[tuple[str, tuple[str, ...], str]] = []
 
@@ -462,53 +362,43 @@ async def test_subagent_model_usage_callbacks_keep_recipient_metadata(
         async def on_hierarchy_message(self, sender, targets, message) -> None:
             messages.append((sender, tuple(targets), message))
 
-    manager = AgentManager(
-        start_method="fork",
-        heartbeat_interval=0.05,
-        heartbeat_timeout=1,
+    runtime, manager = runtime_factory(fork=True)
+    root = await runtime.get_agent("chat")
+    result = await runtime_request(
+        runtime,
+        root.runtime_id,
+        "spawn",
+        callbacks=(Callback(),),
+        name="reviewer",
+        message="Review this.",
     )
-    runtime = AgentRuntime(
-        UrsaConfig(workspace=tmp_path, llm_model={"model": "fake:chat"}),
-        manager=manager,
+
+    assert result["path"] == "root/reviewer"
+    assert result["response"] == "Message queued for root/reviewer."
+    await _wait_for_background_agent_tasks(runtime)
+    assert recipients
+    assert set(recipients) == {"root/reviewer"}
+    assert messages == [
+        ("root", ("root/reviewer",), "Review this."),
+    ]
+
+    recipients.clear()
+    messages.clear()
+    runtime._active_root_id = root.runtime_id
+    assert (
+        await runtime.run_active_agent(
+            "root/reviewer",
+            "Follow up.",
+            callbacks=(Callback(),),
+        )
+        == "ok"
     )
-    try:
-        root = await runtime.get_agent("chat")
-        result = await runtime._handle_runtime_request(
-            root.runtime_id,
-            "spawn",
-            {"name": "reviewer", "message": "Review this."},
-            (Callback(),),
-        )
-
-        assert result["path"] == "root/reviewer"
-        assert result["response"] == "Message queued for root/reviewer."
-        await _wait_for_background_agent_tasks(runtime)
-        assert recipients
-        assert set(recipients) == {"root/reviewer"}
-        assert messages == [
-            ("root", ("root/reviewer",), "Review this."),
-        ]
-
-        recipients.clear()
-        messages.clear()
-        runtime._active_root_id = root.runtime_id
-        assert (
-            await runtime.run_active_agent(
-                "root/reviewer",
-                "Follow up.",
-                callbacks=(Callback(),),
-            )
-            == "ok"
-        )
-        assert recipients
-        assert set(recipients) == {"root/reviewer"}
-        assert messages == [
-            ("user", ("root/reviewer",), "Follow up."),
-            ("root/reviewer", ("user",), "ok"),
-        ]
-    finally:
-        await runtime.aclose()
-        await manager.aclose()
+    assert recipients
+    assert set(recipients) == {"root/reviewer"}
+    assert messages == [
+        ("user", ("root/reviewer",), "Follow up."),
+        ("root/reviewer", ("user",), "ok"),
+    ]
 
 
 @pytest.mark.skipif(
@@ -517,59 +407,41 @@ async def test_subagent_model_usage_callbacks_keep_recipient_metadata(
 )
 @pytest.mark.asyncio
 async def test_host_selects_requested_subagent_type(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        "ursa.runtime.agent_runtime.validate_model_provider",
-        lambda *_args: None,
+    runtime, manager = runtime_factory(
+        fork=True, agent_config={"plan": {"max_reflection_steps": 7}}
     )
-    manager = AgentManager(
-        start_method="fork",
-        heartbeat_interval=0.05,
-        heartbeat_timeout=1,
+    root = await runtime.get_agent("chat")
+    child_path, response = await manager.call(
+        root.runtime_id,
+        "spawn_subagent",
+        "planner",
+        "Create a plan.",
+        "plan",
     )
-    runtime = AgentRuntime(
-        UrsaConfig(
-            workspace=tmp_path,
-            llm_model={"model": "fake:chat"},
-            agent_config={"plan": {"max_reflection_steps": 7}},
-        ),
-        manager=manager,
-    )
-    try:
-        root = await runtime.get_agent("chat")
-        child_path, response = await manager.call(
+    assert child_path == "root/planner"
+    assert response
+
+    child_id = runtime._hierarchies[root.runtime_id]["root/planner"]
+    child_spec = manager._entry(child_id).spec.config
+    assert child_spec["agent_name"] == "plan"
+    assert runtime._runtime_agent_names[child_id] == "plan"
+    assert child_spec["ursa_config"].agent_config == {
+        "plan": {"max_reflection_steps": 7}
+    }
+
+    with pytest.raises(
+        AgentInvocationError, match="Unknown subagent agent_type 'missing'"
+    ):
+        await manager.call(
             root.runtime_id,
             "spawn_subagent",
-            "planner",
-            "Create a plan.",
-            "plan",
+            "unknown",
+            "This must not start.",
+            "missing",
         )
-        assert child_path == "root/planner"
-        assert response
-
-        child_id = runtime._hierarchies[root.runtime_id]["root/planner"]
-        child_spec = manager._entry(child_id).spec.config
-        assert child_spec["agent_name"] == "plan"
-        assert runtime._runtime_agent_names[child_id] == "plan"
-        assert child_spec["ursa_config"].agent_config == {
-            "plan": {"max_reflection_steps": 7}
-        }
-
-        with pytest.raises(
-            AgentInvocationError, match="Unknown subagent agent_type 'missing'"
-        ):
-            await manager.call(
-                root.runtime_id,
-                "spawn_subagent",
-                "unknown",
-                "This must not start.",
-                "missing",
-            )
-        assert "root/unknown" not in runtime._hierarchies[root.runtime_id]
-    finally:
-        await runtime.aclose()
-        await manager.aclose()
+    assert "root/unknown" not in runtime._hierarchies[root.runtime_id]
 
 
 @pytest.mark.skipif(
@@ -578,47 +450,25 @@ async def test_host_selects_requested_subagent_type(
 )
 @pytest.mark.asyncio
 async def test_subagent_limit_is_a_recoverable_runtime_tool_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        "ursa.runtime.agent_runtime.validate_model_provider",
-        lambda *_args: None,
-    )
-    manager = AgentManager(
-        start_method="fork",
-        heartbeat_interval=0.05,
-        heartbeat_timeout=1,
-    )
-    runtime = AgentRuntime(
-        UrsaConfig(
-            workspace=tmp_path,
-            llm_model={"model": "fake:chat"},
-            subagents={"max_agents": 1},
-        ),
-        manager=manager,
-    )
-    try:
-        root = await runtime.get_agent("chat")
+    runtime, manager = runtime_factory(fork=True, subagents={"max_agents": 1})
+    root = await runtime.get_agent("chat")
+    await manager.call(root.runtime_id, "spawn_subagent", "first", "first task")
+    with pytest.raises(AgentInvocationError, match="max_agents=1"):
         await manager.call(
-            root.runtime_id, "spawn_subagent", "first", "first task"
+            root.runtime_id,
+            "spawn_subagent",
+            "overflow",
+            "overflow task",
         )
-        with pytest.raises(AgentInvocationError, match="max_agents=1"):
-            await manager.call(
-                root.runtime_id,
-                "spawn_subagent",
-                "overflow",
-                "overflow task",
-            )
 
-        snapshot = await manager.snapshot(root.runtime_id)
-        assert snapshot.status.value == "ready"
-        assert await manager.call(root.runtime_id, "list_subagents") == [
-            "root",
-            "root/first",
-        ]
-    finally:
-        await runtime.aclose()
-        await manager.aclose()
+    snapshot = await manager.snapshot(root.runtime_id)
+    assert snapshot.status.value == "ready"
+    assert await manager.call(root.runtime_id, "list_subagents") == [
+        "root",
+        "root/first",
+    ]
 
 
 @pytest.mark.skipif(
@@ -627,71 +477,51 @@ async def test_subagent_limit_is_a_recoverable_runtime_tool_error(
 )
 @pytest.mark.asyncio
 async def test_unknown_subagent_path_does_not_fail_managed_agent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        "ursa.runtime.agent_runtime.validate_model_provider",
-        lambda *_args: None,
+    runtime, manager = runtime_factory(fork=True)
+    root = await runtime.get_agent("chat")
+    await manager.call(
+        root.runtime_id,
+        "spawn_subagent",
+        "reviewer",
+        "Review this.",
     )
-    manager = AgentManager(
-        start_method="fork",
-        heartbeat_interval=0.05,
-        heartbeat_timeout=1,
-    )
-    runtime = AgentRuntime(
-        UrsaConfig(workspace=tmp_path, llm_model={"model": "fake:chat"}),
-        manager=manager,
-    )
-    try:
-        root = await runtime.get_agent("chat")
+    reviewer_id = runtime._hierarchies[root.runtime_id]["root/reviewer"]
+
+    with pytest.raises(AgentInvocationError, match="Unknown agent path"):
+        await manager.call(
+            reviewer_id,
+            "send_subagent_message",
+            "../foo",
+            "Please review this.",
+        )
+
+    with pytest.raises(AgentInvocationError, match="Unknown agent path"):
+        await manager.call(
+            reviewer_id,
+            "wait_for_subagent",
+            "../foo",
+            0,
+        )
+
+    assert (await manager.snapshot(reviewer_id)).status.value == "ready"
+    assert (
         await manager.call(
             root.runtime_id,
-            "spawn_subagent",
-            "reviewer",
-            "Review this.",
+            "send_subagent_message",
+            "root/reviewer",
+            "Still available?",
         )
-        reviewer_id = runtime._hierarchies[root.runtime_id]["root/reviewer"]
-
-        with pytest.raises(AgentInvocationError, match="Unknown agent path"):
-            await manager.call(
-                reviewer_id,
-                "send_subagent_message",
-                "../foo",
-                "Please review this.",
-            )
-
-        with pytest.raises(AgentInvocationError, match="Unknown agent path"):
-            await manager.call(
-                reviewer_id,
-                "wait_for_subagent",
-                "../foo",
-                0,
-            )
-
-        assert (await manager.snapshot(reviewer_id)).status.value == "ready"
-        assert (
-            await manager.call(
-                root.runtime_id,
-                "send_subagent_message",
-                "root/reviewer",
-                "Still available?",
-            )
-            == "Message queued for root/reviewer."
-        )
-    finally:
-        await runtime.aclose()
-        await manager.aclose()
+        == "Message queued for root/reviewer."
+    )
 
 
 @pytest.mark.asyncio
 async def test_host_spawn_returns_before_initial_task_finishes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    manager = AgentManager()
-    runtime = AgentRuntime(
-        UrsaConfig(workspace=tmp_path, llm_model={"model": "fake:chat"}),
-        manager=manager,
-    )
+    runtime, manager = runtime_factory()
     root_id, worker_id = "root-id", "worker-id"
     runtime._runtime_roots[root_id] = root_id
     runtime._runtime_paths[root_id] = "root"
@@ -715,11 +545,8 @@ async def test_host_spawn_returns_before_initial_task_finishes(
     monkeypatch.setattr(runtime, "_spawn_runtime_subagent", spawn)
     monkeypatch.setattr(manager, "invoke", invoke)
     try:
-        result = await runtime._handle_runtime_request(
-            root_id,
-            "spawn",
-            {"name": "worker", "message": "Do blocked work."},
-            (),
+        result = await runtime_request(
+            runtime, root_id, "spawn", name="worker", message="Do blocked work."
         )
         await asyncio.wait_for(started.wait(), timeout=1)
 
@@ -735,35 +562,22 @@ async def test_host_spawn_returns_before_initial_task_finishes(
         assert runtime._working_counts == {}
     finally:
         release.set()
-        await runtime.aclose()
-        await manager.aclose()
 
 
 @pytest.mark.asyncio
 async def test_host_preflights_batched_agent_messages_before_any_delivery(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    manager = AgentManager()
-    runtime = AgentRuntime(
-        UrsaConfig(workspace=tmp_path, llm_model={"model": "fake:chat"}),
-        manager=manager,
-    )
+    runtime, manager = runtime_factory()
     root_id, analyst_id, reviewer_id = "root-id", "analyst-id", "reviewer-id"
-    runtime._runtime_roots.update({
-        root_id: root_id,
-        analyst_id: root_id,
-        reviewer_id: root_id,
-    })
-    runtime._runtime_paths.update({
-        root_id: "root",
-        analyst_id: "root/analyst",
-        reviewer_id: "root/reviewer",
-    })
-    runtime._hierarchies[root_id] = {
-        "root": root_id,
-        "root/analyst": analyst_id,
-        "root/reviewer": reviewer_id,
-    }
+    set_hierarchy(
+        runtime,
+        {
+            root_id: "root",
+            analyst_id: "root/analyst",
+            reviewer_id: "root/reviewer",
+        },
+    )
     runtime._active_root_id = root_id
     calls: list[str] = []
     messages: list[tuple[str, tuple[str, ...], str]] = []
@@ -786,30 +600,24 @@ async def test_host_preflights_batched_agent_messages_before_any_delivery(
     callbacks = (Callback(),)
     try:
         with pytest.raises(KeyError, match="Unknown agent path"):
-            await runtime._handle_runtime_request(
+            await runtime_request(
+                runtime,
                 root_id,
                 "invoke_many",
-                {
-                    "targets": [
-                        "root/analyst",
-                        "root/missing",
-                        "root/reviewer",
-                    ],
-                    "message": "Compare the proposal.",
-                },
-                callbacks,
+                callbacks=callbacks,
+                targets=["root/analyst", "root/missing", "root/reviewer"],
+                message="Compare the proposal.",
             )
         assert calls == []
         assert messages == []
 
-        results = await runtime._handle_runtime_request(
+        results = await runtime_request(
+            runtime,
             root_id,
             "invoke_many",
-            {
-                "targets": ["root/reviewer", "root/analyst"],
-                "message": "Compare the proposal.",
-            },
-            callbacks,
+            callbacks=callbacks,
+            targets=["root/reviewer", "root/analyst"],
+            message="Compare the proposal.",
         )
         assert results == [
             {"result": "Message queued for root/reviewer."},
@@ -832,42 +640,27 @@ async def test_host_preflights_batched_agent_messages_before_any_delivery(
         assert runtime._working_counts == {}
     finally:
         release.set()
-        await runtime.aclose()
-        await manager.aclose()
 
 
 @pytest.mark.asyncio
 async def test_host_expands_message_target_groups_atomically(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Selectors expand only for sends, retain order, and never self-send."""
-    manager = AgentManager()
-    runtime = AgentRuntime(
-        UrsaConfig(workspace=tmp_path, llm_model={"model": "fake:chat"}),
-        manager=manager,
-    )
+    runtime, manager = runtime_factory()
     root_id = "root-id"
     analyst_id = "analyst-id"
     reviewer_id = "reviewer-id"
     specialist_id = "specialist-id"
-    runtime._runtime_roots.update({
-        root_id: root_id,
-        analyst_id: root_id,
-        reviewer_id: root_id,
-        specialist_id: root_id,
-    })
-    runtime._runtime_paths.update({
-        root_id: "root",
-        analyst_id: "root/analyst",
-        reviewer_id: "root/reviewer",
-        specialist_id: "root/analyst/specialist",
-    })
-    runtime._hierarchies[root_id] = {
-        "root": root_id,
-        "root/analyst": analyst_id,
-        "root/reviewer": reviewer_id,
-        "root/analyst/specialist": specialist_id,
-    }
+    set_hierarchy(
+        runtime,
+        {
+            root_id: "root",
+            analyst_id: "root/analyst",
+            reviewer_id: "root/reviewer",
+            specialist_id: "root/analyst/specialist",
+        },
+    )
     calls: list[str] = []
     messages: list[tuple[str, tuple[str, ...], str]] = []
 
@@ -882,129 +675,112 @@ async def test_host_expands_message_target_groups_atomically(
             messages.append((sender, tuple(targets), message))
 
     callbacks = (Callback(),)
-    try:
-        assert runtime._expand_message_target(analyst_id, "@everyone") == [
-            "root",
-            "root/reviewer",
-            "root/analyst/specialist",
-        ]
-        for selector in ("@parent", "@siblings", "@children"):
-            with pytest.raises(
-                ValueError, match="Unknown message target group"
-            ):
-                await runtime._handle_runtime_request(
-                    analyst_id,
-                    "invoke_many",
-                    {
-                        "targets": ["root/reviewer", selector],
-                        "message": "Do not partially deliver.",
-                    },
-                    callbacks,
-                )
-        assert calls == []
-        assert messages == []
-        results = await runtime._handle_runtime_request(
-            analyst_id,
-            "invoke_many",
-            {
-                "targets": [
-                    "@peers",
-                    "root/reviewer",
-                    "@reports",
-                    "@supervisor",
-                    "root/analyst",
-                ],
-                "message": "Compare findings.",
-            },
-            callbacks,
-        )
-        assert results == [
-            {"result": "Message queued for root/reviewer."},
-            {"result": "Message queued for root/analyst/specialist."},
-            {"result": "Message queued for root."},
-        ]
-        assert messages == [
-            (
-                "root/analyst",
-                ("root/reviewer", "root/analyst/specialist", "root"),
-                "Compare findings.",
-            )
-        ]
-        await _wait_for_background_agent_tasks(runtime)
-        assert calls == [reviewer_id, specialist_id, root_id]
-
-        # Any concrete recipient that is stopping rejects the entire selector
-        # expansion before a callback or a new delivery can occur.
-        runtime._stopping_subtrees.add((root_id, "root/reviewer"))
-        with pytest.raises(ValueError, match="is stopping"):
-            await runtime._handle_runtime_request(
+    assert runtime._expand_message_target(analyst_id, "@everyone") == [
+        "root",
+        "root/reviewer",
+        "root/analyst/specialist",
+    ]
+    for selector in ("@parent", "@siblings", "@children"):
+        with pytest.raises(ValueError, match="Unknown message target group"):
+            await runtime_request(
+                runtime,
                 analyst_id,
-                "invoke",
-                {"target": "@everyone", "message": "Status update."},
-                callbacks,
+                "invoke_many",
+                callbacks=callbacks,
+                targets=["root/reviewer", selector],
+                message="Do not partially deliver.",
             )
-        assert messages == [
-            (
-                "root/analyst",
-                ("root/reviewer", "root/analyst/specialist", "root"),
-                "Compare findings.",
-            )
-        ]
-        assert calls == [reviewer_id, specialist_id, root_id]
+    assert calls == []
+    assert messages == []
+    results = await runtime_request(
+        runtime,
+        analyst_id,
+        "invoke_many",
+        callbacks=callbacks,
+        targets=[
+            "@peers",
+            "root/reviewer",
+            "@reports",
+            "@supervisor",
+            "root/analyst",
+        ],
+        message="Compare findings.",
+    )
+    assert results == [
+        {"result": "Message queued for root/reviewer."},
+        {"result": "Message queued for root/analyst/specialist."},
+        {"result": "Message queued for root."},
+    ]
+    assert messages == [
+        (
+            "root/analyst",
+            ("root/reviewer", "root/analyst/specialist", "root"),
+            "Compare findings.",
+        )
+    ]
+    await _wait_for_background_agent_tasks(runtime)
+    assert calls == [reviewer_id, specialist_id, root_id]
 
-        for selector in ("@supervisor", "@peers", "@reports", "@unknown"):
-            with pytest.raises(ValueError):
-                await runtime._handle_runtime_request(
-                    root_id,
-                    "invoke",
-                    {"target": selector, "message": "No recipients."},
-                    callbacks,
-                )
-        assert len(messages) == 1
-    finally:
-        await runtime.aclose()
-        await manager.aclose()
+    # Any concrete recipient that is stopping rejects the entire selector
+    # expansion before a callback or a new delivery can occur.
+    runtime._stopping_subtrees.add((root_id, "root/reviewer"))
+    with pytest.raises(ValueError, match="is stopping"):
+        await runtime_request(
+            runtime,
+            analyst_id,
+            "invoke",
+            callbacks=callbacks,
+            target="@everyone",
+            message="Status update.",
+        )
+    assert messages == [
+        (
+            "root/analyst",
+            ("root/reviewer", "root/analyst/specialist", "root"),
+            "Compare findings.",
+        )
+    ]
+    assert calls == [reviewer_id, specialist_id, root_id]
+
+    for selector in ("@supervisor", "@peers", "@reports", "@unknown"):
+        with pytest.raises(ValueError):
+            await runtime_request(
+                runtime,
+                root_id,
+                "invoke",
+                callbacks=callbacks,
+                target=selector,
+                message="No recipients.",
+            )
+    assert len(messages) == 1
 
 
 @pytest.mark.asyncio
 async def test_host_stops_only_a_descendant_subtree(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    manager = AgentManager()
-    runtime = AgentRuntime(
-        UrsaConfig(workspace=tmp_path, llm_model={"model": "fake:chat"}),
-        manager=manager,
-    )
+    runtime, manager = runtime_factory()
     root_id, reviewer_id, critic_id, analyst_id = (
         "root-id",
         "reviewer-id",
         "critic-id",
         "analyst-id",
     )
-    runtime._runtime_roots.update({
-        root_id: root_id,
-        reviewer_id: root_id,
-        critic_id: root_id,
-        analyst_id: root_id,
-    })
-    runtime._runtime_paths.update({
-        root_id: "root",
-        reviewer_id: "root/reviewer",
-        critic_id: "root/reviewer/critic",
-        analyst_id: "root/analyst",
-    })
+    set_hierarchy(
+        runtime,
+        {
+            root_id: "root",
+            reviewer_id: "root/reviewer",
+            critic_id: "root/reviewer/critic",
+            analyst_id: "root/analyst",
+        },
+    )
     runtime._runtime_agent_names.update({
         root_id: "chat",
         reviewer_id: "chat",
         critic_id: "chat",
         analyst_id: "chat",
     })
-    runtime._hierarchies[root_id] = {
-        "root": root_id,
-        "root/reviewer": reviewer_id,
-        "root/reviewer/critic": critic_id,
-        "root/analyst": analyst_id,
-    }
     runtime._active_root_id = root_id
     runtime._dynamic_runtime_ids.update({reviewer_id, critic_id, analyst_id})
     removed: list[tuple[str, dict[str, object]]] = []
@@ -1021,13 +797,11 @@ async def test_host_stops_only_a_descendant_subtree(
         with pytest.raises(
             ValueError, match="only stop one of its descendants"
         ):
-            await runtime._handle_runtime_request(
-                reviewer_id, "stop", {"target": "root/analyst"}, ()
+            await runtime_request(
+                runtime, reviewer_id, "stop", target="root/analyst"
             )
         assert (
-            await runtime._handle_runtime_request(
-                root_id, "stop", {"target": "reviewer"}, ()
-            )
+            await runtime_request(runtime, root_id, "stop", target="reviewer")
             == "Stopped agent root/reviewer and its subagents."
         )
         await asyncio.wait_for(teardown_started.wait(), timeout=1)
@@ -1037,18 +811,20 @@ async def test_host_stops_only_a_descendant_subtree(
         assert runtime._is_stopping_path(root_id, "root/reviewer")
         assert runtime._is_stopping_path(root_id, "root/reviewer/critic")
         with pytest.raises(ValueError, match="is stopping"):
-            await runtime._handle_runtime_request(
+            await runtime_request(
+                runtime,
                 root_id,
                 "invoke",
-                {"target": "root/reviewer/critic", "message": "No more work."},
-                (),
+                target="root/reviewer/critic",
+                message="No more work.",
             )
         with pytest.raises(ValueError, match="is stopping"):
-            await runtime._handle_runtime_request(
+            await runtime_request(
+                runtime,
                 reviewer_id,
                 "spawn",
-                {"name": "late-child", "message": "Do not start."},
-                (),
+                name="late-child",
+                message="Do not start.",
             )
         assert not any(runtime_id == analyst_id for runtime_id, _ in removed)
         allow_teardown.set()
@@ -1064,321 +840,6 @@ async def test_host_stops_only_a_descendant_subtree(
         assert all(kwargs == {"force": True} for _runtime_id, kwargs in removed)
     finally:
         allow_teardown.set()
-        await runtime.aclose()
-        await manager.aclose()
-
-
-@pytest.mark.asyncio
-async def test_host_wait_for_reports_completion_timeout_wake_and_bad_path(
-    tmp_path: Path,
-) -> None:
-    """Host-owned waits never need a sleeping process or a 120-second test."""
-    manager = AgentManager()
-    runtime = AgentRuntime(
-        UrsaConfig(workspace=tmp_path, llm_model={"model": "fake:chat"}),
-        manager=manager,
-    )
-    root_id, waiter_id, worker_id, second_id = (
-        "root-id",
-        "waiter-id",
-        "worker-id",
-        "second-id",
-    )
-    runtime._active_root_id = root_id
-    runtime._runtime_roots.update({
-        root_id: root_id,
-        waiter_id: root_id,
-        worker_id: root_id,
-        second_id: root_id,
-    })
-    runtime._runtime_paths.update({
-        root_id: "root",
-        waiter_id: "root/waiter",
-        worker_id: "root/worker",
-        second_id: "root/second",
-    })
-    runtime._hierarchies[root_id] = {
-        "root": root_id,
-        "root/waiter": waiter_id,
-        "root/worker": worker_id,
-        "root/second": second_id,
-    }
-
-    async def wait_until_waiting() -> None:
-        for _ in range(100):
-            if runtime._waiting_counts.get("root"):
-                return
-            await asyncio.sleep(0)
-        pytest.fail("wait_for never entered the waiting state")
-
-    try:
-        runtime._mark_working("root/worker", 1)
-        completed = asyncio.create_task(
-            runtime._handle_runtime_request(
-                root_id,
-                "wait_for",
-                {"target": "worker", "timeout_seconds": 1},
-                (),
-            )
-        )
-        await wait_until_waiting()
-        assert runtime.hierarchy_status()[0].state == "Waiting"
-        runtime._mark_working("root/worker", -1)
-        assert await completed == "Agent root/worker finished its work."
-
-        runtime._mark_working("root/worker", 1)
-        runtime._mark_working("root/second", 1)
-        any_wait = asyncio.create_task(
-            runtime._handle_runtime_request(
-                root_id,
-                "wait_for",
-                {"target": ["worker", "second"], "timeout_seconds": 1},
-                (),
-            )
-        )
-        await wait_until_waiting()
-        runtime._mark_working("root/second", -1)
-        assert await any_wait == "Agent root/second finished its work."
-
-        all_wait = asyncio.create_task(
-            runtime._handle_runtime_request(
-                root_id,
-                "wait_for",
-                {
-                    "target": ["worker", "second"],
-                    "timeout_seconds": 1,
-                    "wait_all": True,
-                },
-                (),
-            )
-        )
-        await wait_until_waiting()
-        assert not all_wait.done()
-        runtime._mark_working("root/worker", -1)
-        assert await all_wait == (
-            "All agents finished their work: root/worker, root/second."
-        )
-
-        runtime._mark_working("root/worker", 1)
-        assert (
-            await runtime._handle_runtime_request(
-                root_id,
-                "wait_for",
-                {
-                    "target": ["worker", "second"],
-                    "timeout_seconds": 0,
-                    "wait_all": True,
-                },
-                (),
-            )
-            == "Not all agents finished within 0 seconds: root/worker, root/second."
-        )
-        runtime._mark_working("root/worker", -1)
-
-        runtime._mark_working("root/worker", 1)
-        assert (
-            await runtime._handle_runtime_request(
-                root_id,
-                "wait_for",
-                {"target": "worker", "timeout_seconds": 0},
-                (),
-            )
-            == "Agent root/worker did not finish within 0 seconds."
-        )
-
-        awakened = asyncio.create_task(
-            runtime._handle_runtime_request(
-                root_id,
-                "wait_for",
-                {"target": "worker", "timeout_seconds": 1},
-                (),
-            )
-        )
-        await wait_until_waiting()
-        await runtime._handle_runtime_request(root_id, "wake_waiters", {}, ())
-        assert (
-            await awakened == "Stopped waiting because a new message arrived."
-        )
-
-        async def invoke(*_args, **_kwargs) -> str:
-            return "delivered"
-
-        manager.invoke = invoke  # type: ignore[method-assign]
-        routed_wait = asyncio.create_task(
-            runtime._handle_runtime_request(
-                waiter_id,
-                "wait_for",
-                {"target": "root/worker", "timeout_seconds": 1},
-                (),
-            )
-        )
-        for _ in range(100):
-            if runtime._waiting_counts.get("root/waiter"):
-                break
-            await asyncio.sleep(0)
-        assert runtime._waiting_counts.get("root/waiter")
-        assert (
-            await runtime._handle_runtime_request(
-                root_id,
-                "invoke",
-                {"target": "root/waiter", "message": "new request"},
-                (),
-            )
-            == "Message queued for root/waiter."
-        )
-        assert (
-            await routed_wait == "Received a message while waiting.\n"
-            "Sender: root\n"
-            "Recipient: root/waiter\n"
-            "Exact message content:\n"
-            "new request"
-        )
-        assert not runtime._background_agent_tasks
-        await _wait_for_background_agent_tasks(runtime)
-
-        runtime._mark_working("root", 1)
-        assert (
-            await runtime._handle_runtime_request(
-                worker_id,
-                "invoke",
-                {"target": "root", "message": "reply before wait"},
-                (),
-            )
-            == "Message queued for root."
-        )
-        assert runtime._pending_counts == {"root": 1}
-        assert not runtime._background_agent_tasks
-        assert (
-            await runtime._handle_runtime_request(
-                root_id,
-                "wait_for",
-                {"target": "worker", "timeout_seconds": 1},
-                (),
-            )
-            == "Received a message while waiting.\n"
-            "Sender: root/worker\n"
-            "Recipient: root\n"
-            "Exact message content:\n"
-            "reply before wait"
-        )
-        assert runtime._pending_counts == {}
-        assert runtime._buffered_agent_messages == {}
-        assert not runtime._background_agent_tasks
-        runtime._mark_working("root", -1)
-
-        runtime._mark_working("root", 1)
-        assert (
-            await runtime._handle_runtime_request(
-                worker_id,
-                "invoke",
-                {"target": "root", "message": "handle after current turn"},
-                (),
-            )
-            == "Message queued for root."
-        )
-        assert not runtime._background_agent_tasks
-        runtime._mark_working("root", -1)
-        assert runtime._background_agent_tasks
-        await _wait_for_background_agent_tasks(runtime)
-        assert runtime._working_counts == {"root/worker": 1}
-        assert runtime._pending_counts == {}
-
-        with pytest.raises(KeyError, match="Unknown agent path"):
-            await runtime._handle_runtime_request(
-                root_id,
-                "wait_for",
-                {"target": ["worker", "../missing"], "timeout_seconds": 0},
-                (),
-            )
-        assert runtime._waiting_counts == {}
-
-        # A host-owned root wait makes root ready to its active child. The
-        # child's reverse wait therefore finishes immediately instead of
-        # forming a reciprocal wait cycle.
-        runtime._mark_working("root", 1)
-        reciprocal_root_wait = asyncio.create_task(
-            runtime._handle_runtime_request(
-                root_id,
-                "wait_for",
-                {"target": "worker", "timeout_seconds": 1},
-                (),
-            )
-        )
-        await wait_until_waiting()
-        unrelated_wait = asyncio.create_task(
-            runtime._handle_runtime_request(
-                waiter_id,
-                "wait_for",
-                {"target": "root", "timeout_seconds": 1},
-                (),
-            )
-        )
-        await asyncio.sleep(0)
-        assert not unrelated_wait.done()
-        assert await runtime._handle_runtime_request(
-            worker_id,
-            "wait_for",
-            {"target": "root", "timeout_seconds": 1},
-            (),
-        ) == (
-            "Agent root is ready for this wait because it is waiting on "
-            "you directly."
-        )
-        runtime._mark_working("root/worker", -1)
-        assert (
-            await reciprocal_root_wait == "Agent root/worker finished its work."
-        )
-        runtime._mark_working("root", -1)
-        assert await unrelated_wait == "Agent root finished its work."
-
-        runtime._mark_working("root", 1)
-        runtime._mark_working("root/worker", 1)
-        runtime._mark_working("root/second", 1)
-        indirect_root_wait = asyncio.create_task(
-            runtime._handle_runtime_request(
-                root_id,
-                "wait_for",
-                {"target": "worker", "timeout_seconds": 1},
-                (),
-            )
-        )
-        await wait_until_waiting()
-        indirect_worker_wait = asyncio.create_task(
-            runtime._handle_runtime_request(
-                worker_id,
-                "wait_for",
-                {"target": "root/second", "timeout_seconds": 1},
-                (),
-            )
-        )
-        for _ in range(100):
-            if runtime._waiting_counts.get("root/worker"):
-                break
-            await asyncio.sleep(0)
-        assert runtime._waiting_counts.get("root/worker")
-        assert await runtime._handle_runtime_request(
-            second_id,
-            "wait_for",
-            {"target": "root", "timeout_seconds": 1},
-            (),
-        ) == (
-            "Agent root is ready for this wait because it is waiting on you "
-            "indirectly."
-        )
-        indirect_root_wait.cancel()
-        indirect_worker_wait.cancel()
-        await asyncio.gather(
-            indirect_root_wait, indirect_worker_wait, return_exceptions=True
-        )
-        assert runtime._waiting_counts == {}
-        assert runtime._wait_dependencies == {}
-        runtime._mark_working("root", -1)
-        runtime._mark_working("root/worker", -1)
-        runtime._mark_working("root/second", -1)
-        assert runtime.hierarchy_status()[0].state == "Ready"
-    finally:
-        await runtime.aclose()
-        await manager.aclose()
 
 
 @pytest.mark.skipif(
@@ -1387,60 +848,44 @@ async def test_host_wait_for_reports_completion_timeout_wake_and_bad_path(
 )
 @pytest.mark.asyncio
 async def test_run_active_agent_message_wakes_a_managed_wait(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A user message reaches a waiting process without stalling routing."""
-    monkeypatch.setattr(
-        "ursa.runtime.agent_runtime.validate_model_provider",
-        lambda *_args: None,
+    runtime, manager = runtime_factory(fork=True)
+    root = await runtime.get_agent("chat")
+    child_path, _ = await manager.call(
+        root.runtime_id,
+        "spawn_subagent",
+        "worker",
+        "long task",
     )
-    manager = AgentManager(
-        start_method="fork",
-        heartbeat_interval=0.05,
-        heartbeat_timeout=1,
-    )
-    runtime = AgentRuntime(
-        UrsaConfig(workspace=tmp_path, llm_model={"model": "fake:chat"}),
-        manager=manager,
-    )
-    try:
-        root = await runtime.get_agent("chat")
-        child_path, _ = await manager.call(
+    runtime._active_root_id = root.runtime_id
+    runtime._mark_working(child_path, 1)
+    wait = asyncio.create_task(
+        manager.call(
             root.runtime_id,
-            "spawn_subagent",
-            "worker",
-            "long task",
+            "wait_for_subagent",
+            child_path,
+            1,
         )
-        runtime._active_root_id = root.runtime_id
-        runtime._mark_working(child_path, 1)
-        wait = asyncio.create_task(
-            manager.call(
-                root.runtime_id,
-                "wait_for_subagent",
-                child_path,
-                1,
-            )
-        )
-        for _ in range(100):
-            if runtime._waiting_counts.get("root"):
-                break
-            await asyncio.sleep(0.01)
-        assert runtime._waiting_counts.get("root")
+    )
+    for _ in range(100):
+        if runtime._wait_dependencies.get("root"):
+            break
+        await asyncio.sleep(0.01)
+    assert runtime._wait_dependencies.get("root")
 
-        # User messages take the same in-band path as peer messages. The
-        # waiting invocation receives the exact delivery, so no second model
-        # turn or duplicate response is created.
-        assert await runtime.run_active_agent("root", "wake now") is None
-        assert await wait == (
-            "Received a message while waiting.\n"
-            "Sender: user\nRecipient: root\n"
-            "Exact message content:\nwake now"
-        )
-        runtime._mark_working(child_path, -1)
-        assert (await manager.snapshot(root.runtime_id)).status.value == "ready"
-    finally:
-        await runtime.aclose()
-        await manager.aclose()
+    # User messages take the same in-band path as peer messages. The
+    # waiting invocation receives the exact delivery, so no second model
+    # turn or duplicate response is created.
+    assert await runtime.run_active_agent("root", "wake now") is None
+    assert await wait == (
+        "Received a message while waiting.\n"
+        "Sender: user\nRecipient: root\n"
+        "Exact message content:\nwake now"
+    )
+    runtime._mark_working(child_path, -1)
+    assert (await manager.snapshot(root.runtime_id)).status.value == "ready"
 
 
 @pytest.mark.skipif(
@@ -1449,69 +894,49 @@ async def test_run_active_agent_message_wakes_a_managed_wait(
 )
 @pytest.mark.asyncio
 async def test_agent_message_is_returned_to_managed_wait(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A model receives a reply that reaches the host just before its wait."""
-    monkeypatch.setattr(
-        "ursa.runtime.agent_runtime.validate_model_provider",
-        lambda *_args: None,
+    runtime, manager = runtime_factory(fork=True)
+    root = await runtime.get_agent("chat")
+    child_path, _ = await manager.call(
+        root.runtime_id,
+        "spawn_subagent",
+        "worker",
+        "long task",
     )
-    manager = AgentManager(
-        start_method="fork",
-        heartbeat_interval=0.05,
-        heartbeat_timeout=1,
+    child_id = runtime._hierarchies[root.runtime_id][child_path]
+    await _wait_for_background_agent_tasks(runtime)
+    runtime._active_root_id = root.runtime_id
+    runtime._mark_working(child_path, 1)
+    runtime._mark_working("root", 1)
+    assert (
+        await runtime_request(
+            runtime, child_id, "invoke", target="root", message="VOTE: player4"
+        )
+        == "Message queued for root."
     )
-    runtime = AgentRuntime(
-        UrsaConfig(workspace=tmp_path, llm_model={"model": "fake:chat"}),
-        manager=manager,
-    )
-    try:
-        root = await runtime.get_agent("chat")
-        child_path, _ = await manager.call(
+    assert len(runtime._buffered_agent_messages["root"]) == 1
+    assert not runtime._background_agent_tasks
+    wait = asyncio.create_task(
+        manager.call(
             root.runtime_id,
-            "spawn_subagent",
-            "worker",
-            "long task",
+            "wait_for_subagent",
+            child_path,
+            1,
         )
-        child_id = runtime._hierarchies[root.runtime_id][child_path]
-        await _wait_for_background_agent_tasks(runtime)
-        runtime._active_root_id = root.runtime_id
-        runtime._mark_working(child_path, 1)
-        runtime._mark_working("root", 1)
-        assert (
-            await runtime._handle_runtime_request(
-                child_id,
-                "invoke",
-                {"target": "root", "message": "VOTE: player4"},
-                (),
-            )
-            == "Message queued for root."
-        )
-        assert runtime._pending_counts == {"root": 1}
-        assert not runtime._background_agent_tasks
-        wait = asyncio.create_task(
-            manager.call(
-                root.runtime_id,
-                "wait_for_subagent",
-                child_path,
-                1,
-            )
-        )
-        assert (
-            await wait == "Received a message while waiting.\n"
-            "Sender: root/worker\n"
-            "Recipient: root\n"
-            "Exact message content:\n"
-            "VOTE: player4"
-        )
-        assert runtime._pending_counts == {}
-        assert runtime._buffered_agent_messages == {}
-        assert not runtime._background_agent_tasks
-        runtime._mark_working("root", -1)
-        runtime._mark_working(child_path, -1)
-    finally:
-        await runtime.aclose()
-        await manager.aclose()
+    )
+    assert (
+        await wait == "Received a message while waiting.\n"
+        "Sender: root/worker\n"
+        "Recipient: root\n"
+        "Exact message content:\n"
+        "VOTE: player4"
+    )
+    assert runtime._buffered_agent_messages == {}
+    assert not runtime._background_agent_tasks
+    runtime._mark_working("root", -1)
+    runtime._mark_working(child_path, -1)
 
 
 @pytest.mark.skipif(
@@ -1520,22 +945,10 @@ async def test_agent_message_is_returned_to_managed_wait(
 )
 @pytest.mark.asyncio
 async def test_agent_message_emits_one_activity_lifecycle(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """One routed message produces exactly one progress lifecycle."""
-    monkeypatch.setattr(
-        "ursa.runtime.agent_runtime.validate_model_provider",
-        lambda *_args: None,
-    )
-    manager = AgentManager(
-        start_method="fork",
-        heartbeat_interval=0.05,
-        heartbeat_timeout=1,
-    )
-    runtime = AgentRuntime(
-        UrsaConfig(workspace=tmp_path, llm_model={"model": "fake:chat"}),
-        manager=manager,
-    )
+    runtime, manager = runtime_factory(fork=True)
     lifecycle: list[tuple[str, str, bool | None]] = []
 
     class Callback:
@@ -1547,32 +960,30 @@ async def test_agent_message_emits_one_activity_lifecycle(
         ) -> None:
             lifecycle.append(("end", path, succeeded))
 
-    try:
-        root = await runtime.get_agent("chat")
-        child_path, _ = await manager.call(
+    root = await runtime.get_agent("chat")
+    child_path, _ = await manager.call(
+        root.runtime_id,
+        "spawn_subagent",
+        "worker",
+        "initial task",
+    )
+    await _wait_for_background_agent_tasks(runtime)
+    assert (
+        await runtime_request(
+            runtime,
             root.runtime_id,
-            "spawn_subagent",
-            "worker",
-            "initial task",
+            "invoke",
+            callbacks=(Callback(),),
+            target=child_path,
+            message="follow-up",
         )
-        await _wait_for_background_agent_tasks(runtime)
-        assert (
-            await runtime._handle_runtime_request(
-                root.runtime_id,
-                "invoke",
-                {"target": child_path, "message": "follow-up"},
-                (Callback(),),
-            )
-            == f"Message queued for {child_path}."
-        )
-        await _wait_for_background_agent_tasks(runtime)
-        assert lifecycle == [
-            ("start", child_path, None),
-            ("end", child_path, True),
-        ]
-    finally:
-        await runtime.aclose()
-        await manager.aclose()
+        == f"Message queued for {child_path}."
+    )
+    await _wait_for_background_agent_tasks(runtime)
+    assert lifecycle == [
+        ("start", child_path, None),
+        ("end", child_path, True),
+    ]
 
 
 @pytest.mark.skipif(
@@ -1628,12 +1039,8 @@ async def test_runtimes_share_manager_without_agent_id_or_ownership_collision(
 )
 @pytest.mark.asyncio
 async def test_runtime_resolves_selected_keyring_in_host_and_skips_unused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        "ursa.runtime.agent_runtime.validate_model_provider",
-        lambda *_args: None,
-    )
     resolution_pid = tmp_path / "secret-resolution.pid"
 
     def get_password(service: str, username: str) -> str:
@@ -1645,89 +1052,65 @@ async def test_runtime_resolves_selected_keyring_in_host_and_skips_unused(
         "ursa.util.secrets.get_keyring",
         lambda: SimpleNamespace(get_password=get_password),
     )
-    manager = AgentManager(
-        start_method="fork",
-        heartbeat_interval=0.05,
-        heartbeat_timeout=1,
+    runtime, manager = runtime_factory(
+        fork=True,
+        inference_providers={
+            "unused": {
+                "model_provider": "openai",
+                "api_key": {"keyring": "aiportal"},
+            }
+        },
+        llm_model={
+            "model": "fake:chat",
+            "api_key": {"keyring": "selected-account"},
+        },
     )
-    runtime = AgentRuntime(
-        UrsaConfig(
-            workspace=tmp_path,
-            inference_providers={
-                "unused": {
-                    "model_provider": "openai",
-                    "api_key": {"keyring": "aiportal"},
-                }
-            },
-            llm_model={
-                "model": "fake:chat",
-                "api_key": {"keyring": "selected-account"},
-            },
-        ),
-        manager=manager,
-    )
-    try:
-        assert await runtime.run_agent("chat", "hello") == "ok"
-        assert int(resolution_pid.read_text()) == os.getpid()
-        api_key = runtime.config.llm_model.api_key
-        assert isinstance(api_key, SecretStr)
-        assert api_key.get_secret_value() == "selected-secret"
-    finally:
-        await runtime.aclose()
-        await manager.aclose()
+    assert await runtime.run_agent("chat", "hello") == "ok"
+    assert int(resolution_pid.read_text()) == os.getpid()
+    api_key = runtime.config.llm_model.api_key
+    assert isinstance(api_key, SecretStr)
+    assert api_key.get_secret_value() == "selected-secret"
 
 
 @pytest.mark.asyncio
 async def test_runner_config_contains_only_host_materialized_secrets(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("MODEL_TOKEN", "model-secret")
     monkeypatch.setenv("MCP_TOKEN", "mcp-secret")
-    manager = AgentManager()
-    runtime = AgentRuntime(
-        UrsaConfig(
-            workspace=tmp_path,
-            llm_model={
-                "model": "fake:chat",
-                "api_key": {"env": "MODEL_TOKEN"},
-            },
-            subagents={
-                "llm_model": {
-                    "model": "fake:child",
-                    "api_key": {"env": "UNUSED_CHILD_TOKEN"},
-                }
-            },
-            mcp_servers={
-                "tools": {
-                    "transport": "streamable-http",
-                    "url": "https://example.test/mcp",
-                    "headers": {
-                        "Authorization": {
-                            "env": "MCP_TOKEN",
-                            "template": "Bearer %s",
-                        }
-                    },
-                }
-            },
-        ),
-        manager=manager,
+    runtime, manager = runtime_factory(
+        llm_model={"model": "fake:chat", "api_key": {"env": "MODEL_TOKEN"}},
+        subagents={
+            "llm_model": {
+                "model": "fake:child",
+                "api_key": {"env": "UNUSED_CHILD_TOKEN"},
+            }
+        },
+        mcp_servers={
+            "tools": {
+                "transport": "streamable-http",
+                "url": "https://example.test/mcp",
+                "headers": {
+                    "Authorization": {
+                        "env": "MCP_TOKEN",
+                        "template": "Bearer %s",
+                    }
+                },
+            }
+        },
     )
-    try:
-        assert runtime.config.llm_model.api_key == SecretStr("model-secret")
-        assert runtime.config.mcp_servers["tools"].headers == {
-            "Authorization": "Bearer mcp-secret"
-        }
+    assert runtime.config.llm_model.api_key == SecretStr("model-secret")
+    assert runtime.config.mcp_servers["tools"].headers == {
+        "Authorization": "Bearer mcp-secret"
+    }
 
-        await runtime._ensure_registered("chat")
-        runtime_id = runtime.agents["chat"].runtime_id
-        runner_config = manager._entry(runtime_id).spec.config["ursa_config"]
+    await runtime._ensure_registered("chat")
+    runtime_id = runtime.agents["chat"].runtime_id
+    runner_config = manager._entry(runtime_id).spec.config["ursa_config"]
 
-        assert runner_config.inference_providers == {}
-        assert runner_config.subagents.llm_model is None
-        assert runner_config.llm_model.api_key == SecretStr("model-secret")
-        assert runner_config.mcp_servers["tools"].headers == {
-            "Authorization": "Bearer mcp-secret"
-        }
-    finally:
-        await runtime.aclose()
-        await manager.aclose()
+    assert runner_config.inference_providers == {}
+    assert runner_config.subagents.llm_model is None
+    assert runner_config.llm_model.api_key == SecretStr("model-secret")
+    assert runner_config.mcp_servers["tools"].headers == {
+        "Authorization": "Bearer mcp-secret"
+    }

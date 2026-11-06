@@ -192,6 +192,10 @@ async def test_coordination_actions_have_clear_status_and_keyboard_expansion(
         assert "Click or Enter to collapse" in str(hint.content)
         group.set_expanded(False)
         assert "Click or Enter to expand" in str(hint.content)
+        conversation = app.query_one("#conversation", VerticalScroll)
+        scroll_y = conversation.scroll_y
+        group._reveal_expanded_card()
+        assert conversation.scroll_y == scroll_y
         group.set_expanded(True)
         assert "Click or Enter to collapse" in str(hint.content)
 

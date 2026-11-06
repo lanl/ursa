@@ -11,7 +11,12 @@ from typing import TYPE_CHECKING, Any
 from langchain.tools import BaseTool, ToolException
 from langchain_core.tools import tool
 
-from ursa.agents.base import SubagentLimitError, agent_message_wait_result
+from ursa.agents.coordination import (
+    SubagentLimitError,
+    wait_for_completion,
+    wait_targets,
+    wait_timeout,
+)
 
 if TYPE_CHECKING:
     from ursa.agents.base import BaseAgent
@@ -172,41 +177,6 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
             raise ToolException(str(exc)) from exc
         return f"Spawned agent {path}\n\n{_stringify_result(result)}"
 
-    async def send_one_message(target: str, message: str) -> str:
-        """Queue one message and return its delivery acknowledgement."""
-        runtime = getattr(agent, "_process_runtime", None)
-        if runtime is not None:
-            try:
-                return _stringify_result(
-                    await runtime.send_message(target, message)
-                )
-            except RuntimeError as exc:
-                if tool_error := _routing_tool_error(exc):
-                    raise tool_error from exc
-                raise
-
-        recipient = resolve_local_recipient(target)
-        return await post_local_agent(recipient, message)
-
-    async def post_local_messages(
-        targets: str | list[str], message: str
-    ) -> tuple[list[str], list[Any]]:
-        """Preflight all local paths and selector expansions before delivery."""
-        recipients = agent.resolve_message_targets(targets)
-        for recipient in recipients:
-            recipient._ensure_hierarchy_accepting_messages()
-        return (
-            [recipient.agent_path for recipient in recipients],
-            list(
-                await asyncio.gather(
-                    *(
-                        post_local_agent(recipient, message)
-                        for recipient in recipients
-                    )
-                )
-            ),
-        )
-
     @tool
     async def send_message(target: str | list[str], message: str) -> str:
         """Queue a one-way message to one agent or a list of agents.
@@ -241,7 +211,9 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
         if runtime is not None:
             try:
                 if isinstance(target, str):
-                    return await send_one_message(target, message)
+                    return _stringify_result(
+                        await runtime.send_message(target, message)
+                    )
                 results = await runtime.send_messages(target, message)
             except RuntimeError as exc:
                 if tool_error := _routing_tool_error(exc):
@@ -260,30 +232,25 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
                     result = result.get("result")
                 acknowledgements.append(_stringify_result(result))
             return "\n\n".join(acknowledgements)
-        else:
-            # Complete preflight before calling any inbox. This is deliberately
-            # separate from post_local_agent so an invalid sibling cannot
-            # race with an otherwise valid recipient.
-            try:
-                routes, results = await post_local_messages(target, message)
-            except (KeyError, TypeError, RuntimeError) as exc:
-                raise ToolException(str(exc)) from exc
-            if isinstance(target, str) and len(results) == 1:
-                return str(results[0])
-        formatted = []
-        for item, result in zip(routes, results, strict=True):
-            if isinstance(result, Mapping):
-                if "error" in result:
-                    formatted.append(f"{item}: Error: {result['error']}")
-                    continue
-                result = result.get("result")
-            if isinstance(result, Exception):
-                formatted.append(
-                    f"{item}: Error: {type(result).__name__}: {result}"
+        # Validate the complete broadcast before scheduling any local delivery.
+        try:
+            recipients = agent.resolve_message_targets(target)
+            for recipient in recipients:
+                recipient._ensure_hierarchy_accepting_messages()
+            results = await asyncio.gather(
+                *(
+                    post_local_agent(recipient, message)
+                    for recipient in recipients
                 )
-            else:
-                formatted.append(f"{item}: {result}")
-        return "\n\n".join(formatted)
+            )
+        except (KeyError, TypeError, RuntimeError) as exc:
+            raise ToolException(str(exc)) from exc
+        if isinstance(target, str) and len(results) == 1:
+            return results[0]
+        return "\n\n".join(
+            f"{recipient.agent_path}: {result}"
+            for recipient, result in zip(recipients, results, strict=True)
+        )
 
     @tool
     async def wait_for(
@@ -309,11 +276,10 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
         once, each with its own sender, recipient, and exact content.
         """
         try:
-            timeout = float(timeout_seconds)
-        except (TypeError, ValueError) as exc:
-            raise ToolException("timeout_seconds must be a number") from exc
-        if not 0 <= timeout <= 120:
-            raise ToolException("timeout_seconds must be between 0 and 120")
+            timeout = wait_timeout(timeout_seconds)
+            targets = wait_targets(target)
+        except ValueError as exc:
+            raise ToolException(str(exc)) from exc
 
         runtime = getattr(agent, "_process_runtime", None)
         if runtime is not None:
@@ -328,19 +294,6 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
                     raise tool_error from exc
                 raise
 
-        if isinstance(target, str):
-            targets = [target]
-        elif (
-            isinstance(target, list)
-            and target
-            and all(isinstance(item, str) and item.strip() for item in target)
-        ):
-            targets = list(target)
-        else:
-            raise ToolException(
-                "target must be a non-empty agent path or list of paths"
-            )
-
         # Resolve every entry before registering the wait. That keeps a batch
         # invalid if any route is invalid, without partially changing state.
         recipients = [resolve_local_recipient(item) for item in targets]
@@ -349,39 +302,14 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
         target_paths = [recipient.agent_path for recipient in recipients]
 
         waiter = agent._begin_message_wait(recipients)
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout
         try:
-            completed = _completed_local_wait_targets(recipients, agent)
-            if _wait_satisfied(completed, len(recipients), wait_all):
-                return _format_local_wait_result(
-                    completed, target_paths, wait_all, already_finished=True
-                )
-            while True:
-                if waiter.event.is_set():
-                    if waiter.message is not None:
-                        return agent_message_wait_result(
-                            waiter.message.sender,
-                            waiter.message.recipient,
-                            str(waiter.message.content),
-                        )
-                    return "Stopped waiting because a new message arrived."
-                completed = _completed_local_wait_targets(recipients, agent)
-                if _wait_satisfied(completed, len(recipients), wait_all):
-                    return _format_local_wait_result(
-                        completed, target_paths, wait_all
-                    )
-                remaining = deadline - loop.time()
-                if remaining <= 0:
-                    return _local_wait_timeout_result(
-                        target_paths, timeout, wait_all
-                    )
-                try:
-                    await asyncio.wait_for(
-                        waiter.event.wait(), timeout=min(remaining, 0.1)
-                    )
-                except TimeoutError:
-                    pass
+            return await wait_for_completion(
+                waiter,
+                target_paths,
+                lambda: _completed_local_wait_targets(recipients, agent),
+                timeout,
+                wait_all,
+            )
         finally:
             agent._end_message_wait(waiter)
 
@@ -443,72 +371,12 @@ def _stringify_result(result: Any) -> str:
 
 def _completed_local_wait_targets(
     recipients: Sequence[BaseAgent], waiting_agent: BaseAgent
-) -> list[tuple[BaseAgent, str | None]]:
+) -> list[tuple[str, str | None]]:
     """Return idle targets or ones that would close a wait dependency cycle."""
     completed = []
     for recipient in recipients:
         if not recipient.is_working:
-            completed.append((recipient, None))
+            completed.append((recipient.agent_path, None))
         elif relation := recipient._wait_dependency_relation(waiting_agent):
-            completed.append((recipient, relation))
+            completed.append((recipient.agent_path, relation))
     return completed
-
-
-def _wait_satisfied(
-    completed: Sequence[tuple[BaseAgent, str | None]],
-    target_count: int,
-    wait_all: bool,
-) -> bool:
-    return len(completed) == target_count if wait_all else bool(completed)
-
-
-def _format_local_wait_result(
-    completed: Sequence[tuple[BaseAgent, str | None]],
-    targets: Sequence[str],
-    wait_all: bool,
-    *,
-    already_finished: bool = False,
-) -> str:
-    """Describe list wait completion while preserving single-target wording."""
-    recipient, relation = completed[0]
-    if relation is not None:
-        cycle_result = (
-            f"Agent {recipient.agent_path} is ready for this wait because it "
-            f"is waiting on you {relation}."
-        )
-    else:
-        cycle_result = None
-    if len(targets) == 1:
-        if cycle_result is not None:
-            return cycle_result
-        verb = "has already finished" if already_finished else "finished"
-        return f"Agent {recipient.agent_path} {verb} its work."
-    if wait_all:
-        if any(item_relation is not None for _, item_relation in completed):
-            details = ", ".join(
-                f"{item.agent_path} ({'finished' if item_relation is None else f'waiting on you {item_relation}'})"
-                for item, item_relation in completed
-            )
-            return f"All agents are ready for this wait: {details}."
-        verb = "have already finished" if already_finished else "finished"
-        paths = [item.agent_path for item, _relation in completed]
-        return f"All agents {verb} their work: {', '.join(paths)}."
-    if cycle_result is not None:
-        return cycle_result
-    verb = "has already finished" if already_finished else "finished"
-    return f"Agent {recipient.agent_path} {verb} its work."
-
-
-def _local_wait_timeout_result(
-    targets: Sequence[str], timeout: float, wait_all: bool
-) -> str:
-    if len(targets) == 1:
-        return f"Agent {targets[0]} did not finish within {timeout:g} seconds."
-    if wait_all:
-        return (
-            f"Not all agents finished within {timeout:g} seconds: "
-            f"{', '.join(targets)}."
-        )
-    return (
-        f"No agents finished within {timeout:g} seconds: {', '.join(targets)}."
-    )

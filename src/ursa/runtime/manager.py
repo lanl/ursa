@@ -208,7 +208,7 @@ class AgentStatus(StrEnum):
     FAILED = "failed"
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True)
 class AgentSpec:
     """Everything needed to construct one independently configured agent.
 
@@ -219,38 +219,19 @@ class AgentSpec:
 
     agent_id: str
     factory: AgentFactory | str
-    config: Mapping[str, Any]
+    config: Mapping[str, Any] = field(default_factory=dict)
     initial_state: Any = None
     state_path: Path | None = None
     restart_on_failure: bool = False
     environment: Mapping[str, str] | None = None
     working_directory: Path | None = None
 
-    def __init__(
-        self,
-        agent_id: str,
-        factory: AgentFactory | str,
-        config: Mapping[str, Any] | None = None,
-        initial_state: Any = None,
-        state_path: Path | None = None,
-        restart_on_failure: bool = False,
-        environment: Mapping[str, str] | None = None,
-        working_directory: Path | None = None,
-    ) -> None:
-        _validate_agent_id(agent_id)
-        _validate_factory_reference(factory)
-        object.__setattr__(self, "agent_id", agent_id)
-        object.__setattr__(self, "factory", factory)
-        object.__setattr__(self, "config", dict(config or {}))
-        object.__setattr__(self, "initial_state", initial_state)
-        object.__setattr__(self, "state_path", state_path)
-        object.__setattr__(self, "restart_on_failure", restart_on_failure)
-        object.__setattr__(
-            self,
-            "environment",
-            dict(environment) if environment is not None else None,
-        )
-        object.__setattr__(self, "working_directory", working_directory)
+    def __post_init__(self) -> None:
+        _validate_agent_id(self.agent_id)
+        _validate_factory_reference(self.factory)
+        object.__setattr__(self, "config", dict(self.config or {}))
+        if self.environment is not None:
+            object.__setattr__(self, "environment", dict(self.environment))
 
 
 @dataclass(frozen=True, slots=True)

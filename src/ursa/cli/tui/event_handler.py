@@ -34,6 +34,12 @@ class TextualEventHandler(AsyncCallbackHandler):
         self.tools: dict[Any, dict[str, Any]] = {}
         self.delegated_turns: dict[str, Turn] = {}
 
+    async def _on_ui(self, method, *args, **kwargs):
+        """Dispatch every callback through the same Textual thread boundary."""
+        if self.app.is_ui_thread:
+            return await method(*args, **kwargs)
+        return self.app.call_from_thread(method, *args, **kwargs)
+
     @staticmethod
     def _agent_path(metadata: Any) -> str | None:
         if not isinstance(metadata, Mapping):
@@ -52,15 +58,7 @@ class TextualEventHandler(AsyncCallbackHandler):
         agent_path = data.get("_agent_path") or self._agent_path(metadata)
         if agent_path:
             data["_agent_path"] = agent_path
-        if self.app.is_ui_thread:
-            await self.app.add_agent_event(self.turn, agent_path, data)
-        else:
-            self.app.call_from_thread(
-                self.app.add_agent_event,
-                self.turn,
-                agent_path,
-                data,
-            )
+        await self._on_ui(self.app.add_agent_event, self.turn, agent_path, data)
 
     async def _update_activity(
         self,
@@ -69,15 +67,9 @@ class TextualEventHandler(AsyncCallbackHandler):
         metadata: Any = None,
     ) -> None:
         agent_path = self._agent_path(metadata)
-        if self.app.is_ui_thread:
-            await self.app.update_agent_activity(self.turn, agent_path, message)
-        else:
-            self.app.call_from_thread(
-                self.app.update_agent_activity,
-                self.turn,
-                agent_path,
-                message,
-            )
+        await self._on_ui(
+            self.app.update_agent_activity, self.turn, agent_path, message
+        )
 
     async def on_custom_event(
         self,
@@ -234,19 +226,12 @@ class TextualEventHandler(AsyncCallbackHandler):
         if model is not None:
             await asyncio.to_thread(refresh_ollama_context, model)
         usage = _token_usage_breakdown(response)
-        if self.app.is_ui_thread:
-            await self.app.add_agent_tokens(
-                self.turn,
-                self._agent_path(metadata),
-                usage,
-            )
-        else:
-            self.app.call_from_thread(
-                self.app.add_agent_tokens,
-                self.turn,
-                self._agent_path(metadata),
-                usage,
-            )
+        await self._on_ui(
+            self.app.add_agent_tokens,
+            self.turn,
+            self._agent_path(metadata),
+            usage,
+        )
 
     async def on_agent_message_start(
         self,
@@ -255,17 +240,9 @@ class TextualEventHandler(AsyncCallbackHandler):
         message_id: str | None = None,
     ) -> None:
         """Start the progress view for a delegated hierarchy message."""
-        if self.app.is_ui_thread:
-            turn = await self.app.start_agent_activity(
-                agent_path,
-                message_id=message_id,
-            )
-        else:
-            turn = self.app.call_from_thread(
-                self.app.start_agent_activity,
-                agent_path,
-                message_id=message_id,
-            )
+        turn = await self._on_ui(
+            self.app.start_agent_activity, agent_path, message_id=message_id
+        )
         if message_id is not None:
             self.delegated_turns[message_id] = turn
 
@@ -282,21 +259,13 @@ class TextualEventHandler(AsyncCallbackHandler):
             if message_id is not None
             else None
         )
-        if self.app.is_ui_thread:
-            await self.app.finish_agent_activity(
-                self.turn,
-                agent_path,
-                succeeded=succeeded,
-                turn=turn,
-            )
-        else:
-            self.app.call_from_thread(
-                self.app.finish_agent_activity,
-                self.turn,
-                agent_path,
-                succeeded=succeeded,
-                turn=turn,
-            )
+        await self._on_ui(
+            self.app.finish_agent_activity,
+            self.turn,
+            agent_path,
+            succeeded=succeeded,
+            turn=turn,
+        )
 
     async def on_hierarchy_message(
         self,
@@ -305,12 +274,6 @@ class TextualEventHandler(AsyncCallbackHandler):
         message: str,
     ) -> None:
         """Retain one user/agent message in the session-wide log."""
-        if self.app.is_ui_thread:
-            await self.app.record_hierarchy_message(sender, recipients, message)
-        else:
-            self.app.call_from_thread(
-                self.app.record_hierarchy_message,
-                sender,
-                recipients,
-                message,
-            )
+        await self._on_ui(
+            self.app.record_hierarchy_message, sender, recipients, message
+        )

@@ -53,15 +53,18 @@ class EventCard(Static):
     def _update_expand_hint(self) -> None:
         if not self.is_mounted:
             return
-        hints = list(self.query(".event-expand-hint"))
-        if hints:
-            hints[0].update(
-                "Click to collapse" if self.expanded else "Click to expand"
-            )
+        trigger = "Click or Enter" if self.can_focus else "Click"
+        action = "collapse" if self.expanded else "expand"
+        for child in self.children:
+            if child.has_class("event-expand-hint"):
+                child.update(f"{trigger} to {action}")
+
+    def action_toggle(self) -> None:
+        self.set_expanded(not self.expanded)
 
     def on_click(self, event: events.Click) -> None:
         event.stop()
-        self.set_expanded(not self.expanded)
+        self.action_toggle()
 
     def refresh_content(self) -> None:
         if not self.is_mounted:

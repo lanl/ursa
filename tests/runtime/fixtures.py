@@ -85,3 +85,20 @@ def tool_describing_factory(config: dict[str, Any], context: AgentContext):
         context,
         "root",
     )
+
+
+async def runtime_request(runtime, sender, action, *, callbacks=(), **payload):
+    """Exercise the host's request boundary without repeating its wire format."""
+    return await runtime._handle_runtime_request(
+        sender, action, payload, callbacks
+    )
+
+
+def set_hierarchy(runtime, paths):
+    """Install a hierarchy for host-only tests without launching processes."""
+    root = next(identity for identity, path in paths.items() if path == "root")
+    runtime._runtime_paths.update(paths)
+    runtime._runtime_roots.update(dict.fromkeys(paths, root))
+    runtime._hierarchies[root] = {
+        path: identity for identity, path in paths.items()
+    }

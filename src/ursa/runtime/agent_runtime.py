@@ -12,7 +12,6 @@ from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
-from time import monotonic
 from typing import Any
 from uuid import uuid4
 
@@ -23,9 +22,18 @@ from ursa import agents
 from ursa.agents.base import (
     AgentWithTools,
     BaseAgent,
-    SubagentLimitError,
     agent_message_wait_result,
     attach_agent_message_instructions,
+)
+from ursa.agents.coordination import (
+    MessageWait,
+    check_capacity,
+    message_group,
+    wait_dependency,
+    wait_for_completion,
+    wait_targets,
+    wait_timeout,
+    wake_waiters,
 )
 from ursa.cli.config import (
     ChatModelConfig,
@@ -118,15 +126,6 @@ class _RuntimePrompt:
     message_recipient: str | None = None
     additional_messages: tuple[tuple[str, str, str], ...] = ()
     on_start: Any = None
-
-
-@dataclass(eq=False, slots=True)
-class _RuntimeWait:
-    """One host-owned wait that may directly receive a routed message."""
-
-    event: asyncio.Event = field(default_factory=asyncio.Event)
-    delivery: str | None = None
-    targets: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -821,13 +820,10 @@ class AgentRuntime:
         self._runtime_agent_names: dict[str, str] = {}
         self._hierarchies: dict[str, dict[str, str]] = {}
         self._working_counts: dict[str, int] = {}
-        self._pending_counts: dict[str, int] = {}
-        self._waiting_counts: dict[str, int] = {}
         self._background_agent_tasks: set[asyncio.Task[Any]] = set()
         self._background_teardown_tasks: set[asyncio.Task[None]] = set()
         self._stopping_subtrees: set[tuple[str, str]] = set()
-        self._wait_wake_events: dict[str, set[_RuntimeWait]] = {}
-        self._wait_dependencies: dict[str, set[_RuntimeWait]] = {}
+        self._wait_dependencies: dict[str, set[MessageWait[str]]] = {}
         self._buffered_agent_messages: dict[
             str, deque[_BufferedAgentMessage]
         ] = {}
@@ -1042,12 +1038,12 @@ class AgentRuntime:
             return []
         statuses = []
         for path, runtime_id in self._hierarchies.get(root_id, {}).items():
-            pending = self._pending_counts.get(path, 0)
+            pending = len(self._buffered_agent_messages.get(path, ()))
             if self._is_stopping_path(root_id, path):
                 state = "Stopping"
             elif runtime_id in self._subagent_start_tasks:
                 state = "Starting"
-            elif self._waiting_counts.get(path, 0):
+            elif self._wait_dependencies.get(path):
                 state = "Waiting"
             elif self._working_counts.get(path, 0):
                 state = "Working"
@@ -1186,8 +1182,6 @@ class AgentRuntime:
             return
         items = tuple(buffered)
         primary, additional = items[0], items[1:]
-        for item in items:
-            self._decrement_pending(item.target_path)
         root_id = self._runtime_roots.get(primary.target_id)
         if (
             self._closed
@@ -1209,7 +1203,6 @@ class AgentRuntime:
         if not buffered:
             return ()
         for item in buffered:
-            self._decrement_pending(item.target_path)
             self._complete_in_band_delivery(item)
         return tuple(buffered)
 
@@ -1232,20 +1225,6 @@ class AgentRuntime:
         for buffered in self._buffered_agent_messages.values():
             self._fail_buffered_messages(tuple(buffered), error)
         self._buffered_agent_messages.clear()
-
-    def _decrement_pending(self, path: str) -> None:
-        count = max(0, self._pending_counts.get(path, 0) - 1)
-        if count:
-            self._pending_counts[path] = count
-        else:
-            self._pending_counts.pop(path, None)
-
-    def _mark_waiting(self, path: str, delta: int) -> None:
-        count = max(0, self._waiting_counts.get(path, 0) + delta)
-        if count:
-            self._waiting_counts[path] = count
-        else:
-            self._waiting_counts.pop(path, None)
 
     async def _handle_runtime_request(
         self,
@@ -1341,10 +1320,6 @@ class AgentRuntime:
         sender_path = self._runtime_paths[sender_runtime_id]
         for target in targets:
             paths = self._expand_message_target(sender_runtime_id, target)
-            if not paths:
-                raise ValueError(
-                    f"Message target group {target!r} has no recipients"
-                )
             for path in paths:
                 target_id, target_path = self._validate_message_target(
                     sender_runtime_id, path
@@ -1359,44 +1334,14 @@ class AgentRuntime:
     def _expand_message_target(
         self, sender_runtime_id: str, target: str
     ) -> list[str]:
-        """Expand a one-way message selector inside the caller's hierarchy."""
         target = target.strip()
         if not target.startswith("@"):
             return [target]
-        selectors = {
-            "@everyone": "everyone",
-            "@supervisor": "supervisor",
-            "@peers": "peers",
-            "@reports": "reports",
-        }
-        relation = selectors.get(target.casefold())
-        if relation is None:
-            raise ValueError(f"Unknown message target group {target!r}")
-        sender_path = self._runtime_paths[sender_runtime_id]
-        hierarchy = self._hierarchies[self._runtime_roots[sender_runtime_id]]
-        if relation == "everyone":
-            return [path for path in hierarchy if path != sender_path]
-        if relation == "supervisor":
-            return [sender_path.rsplit("/", 1)[0]] if "/" in sender_path else []
-        if relation == "reports":
-            depth = sender_path.count("/") + 1
-            prefix = f"{sender_path}/"
-            return [
-                path
-                for path in hierarchy
-                if path.startswith(prefix) and path.count("/") == depth
-            ]
-        if "/" not in sender_path:
-            return []
-        supervisor = sender_path.rsplit("/", 1)[0]
-        depth = sender_path.count("/")
-        return [
-            path
-            for path in hierarchy
-            if path != sender_path
-            and path.rsplit("/", 1)[0] == supervisor
-            and path.count("/") == depth
-        ]
+        return message_group(
+            self._runtime_paths[sender_runtime_id],
+            target,
+            self._hierarchies[self._runtime_roots[sender_runtime_id]],
+        )
 
     async def _queue_message_targets(
         self,
@@ -1527,8 +1472,6 @@ class AgentRuntime:
                     self._runtime_roots.pop(runtime_id, None)
                     self._runtime_agent_names.pop(runtime_id, None)
                     self._working_counts.pop(path, None)
-                    self._pending_counts.pop(path, None)
-                    self._waiting_counts.pop(path, None)
                     buffered = self._buffered_agent_messages.pop(path, ())
                     self._fail_buffered_messages(
                         tuple(buffered),
@@ -1566,7 +1509,7 @@ class AgentRuntime:
         wait_all: bool = False,
     ) -> str:
         """Wait interruptibly for any or all hierarchy members to become idle."""
-        targets = self._normalize_wait_targets(target)
+        targets = wait_targets(target)
         resolved = [
             self._resolve_path(sender_runtime_id, item) for item in targets
         ]
@@ -1574,12 +1517,7 @@ class AgentRuntime:
         if any(target_id == sender_runtime_id for target_id, _path in resolved):
             raise ValueError("An agent cannot wait for itself")
         sender_path = self._runtime_paths[sender_runtime_id]
-        try:
-            timeout = float(timeout_value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("timeout_seconds must be a number") from exc
-        if not 0 <= timeout <= 120:
-            raise ValueError("timeout_seconds must be between 0 and 120")
+        timeout = wait_timeout(timeout_value)
         if buffered := self._take_buffered_agent_messages(sender_path):
             if len(buffered) == 1:
                 item = buffered[0]
@@ -1602,64 +1540,22 @@ class AgentRuntime:
                 )
             )
 
-        waiter = _RuntimeWait(targets=tuple(target_paths))
-        self._wait_wake_events.setdefault(sender_runtime_id, set()).add(waiter)
+        waiter = MessageWait[str](targets=tuple(target_paths))
         self._wait_dependencies.setdefault(sender_path, set()).add(waiter)
-        self._mark_waiting(sender_path, 1)
-        deadline = monotonic() + timeout
         try:
-            completed = self._completed_wait_targets(resolved, sender_path)
-            if self._wait_satisfied(completed, len(resolved), wait_all):
-                return self._wait_result(
-                    completed, target_paths, wait_all, already_finished=True
-                )
-            while True:
-                if waiter.event.is_set():
-                    return waiter.delivery or (
-                        "Stopped waiting because a new message arrived."
-                    )
-                completed = self._completed_wait_targets(resolved, sender_path)
-                if self._wait_satisfied(completed, len(resolved), wait_all):
-                    return self._wait_result(completed, target_paths, wait_all)
-                remaining = deadline - monotonic()
-                if remaining <= 0:
-                    return self._wait_timeout_result(
-                        target_paths, timeout, wait_all
-                    )
-                try:
-                    await asyncio.wait_for(
-                        waiter.event.wait(), timeout=min(remaining, 0.1)
-                    )
-                except TimeoutError:
-                    pass
+            return await wait_for_completion(
+                waiter,
+                target_paths,
+                lambda: self._completed_wait_targets(resolved, sender_path),
+                timeout,
+                wait_all,
+            )
         finally:
-            events = self._wait_wake_events.get(sender_runtime_id)
-            if events is not None:
-                events.discard(waiter)
-                if not events:
-                    self._wait_wake_events.pop(sender_runtime_id, None)
             dependencies = self._wait_dependencies.get(sender_path)
             if dependencies is not None:
                 dependencies.discard(waiter)
                 if not dependencies:
                     self._wait_dependencies.pop(sender_path, None)
-            self._mark_waiting(sender_path, -1)
-
-    @staticmethod
-    def _normalize_wait_targets(target: Any) -> list[str]:
-        """Validate one or more targets before the wait observes any state."""
-        if isinstance(target, str):
-            if target.strip():
-                return [target]
-        elif (
-            isinstance(target, list)
-            and target
-            and all(isinstance(item, str) and item.strip() for item in target)
-        ):
-            return list(target)
-        raise ValueError(
-            "target must be a non-empty agent path or list of paths"
-        )
 
     def _completed_wait_targets(
         self, resolved: list[tuple[str, str]], waiting_path: str
@@ -1677,120 +1573,28 @@ class AgentRuntime:
                 completed.append((path, relation))
         return completed
 
-    def _runtime_wait_depends_on(
-        self, path: str, target_path: str, visited: set[str] | None = None
-    ) -> bool:
-        """Whether a live host wait edge path reaches ``target_path``."""
-        if path == target_path:
-            return True
-        visited = set() if visited is None else visited
-        if path in visited:
-            return False
-        visited.add(path)
-        return any(
-            self._runtime_wait_depends_on(target, target_path, visited)
-            for waiter in self._wait_dependencies.get(path, ())
-            for target in waiter.targets
-        )
-
     def _runtime_wait_dependency_relation(
-        self, path: str, target_path: str, visited: set[str] | None = None
+        self, path: str, target_path: str
     ) -> str | None:
-        """Return whether a live wait path reaches the target directly or not."""
-        visited = set() if visited is None else visited
-        if path in visited:
-            return None
-        visited.add(path)
-        for waiter in self._wait_dependencies.get(path, ()):
-            for target in waiter.targets:
-                if target == target_path:
-                    return "directly"
-                if self._runtime_wait_depends_on(
-                    target, target_path, set(visited)
-                ):
-                    return "indirectly"
-        return None
-
-    @staticmethod
-    def _wait_satisfied(
-        completed: list[tuple[str, str | None]],
-        target_count: int,
-        wait_all: bool,
-    ) -> bool:
-        return len(completed) == target_count if wait_all else bool(completed)
-
-    @staticmethod
-    def _wait_result(
-        completed: list[tuple[str, str | None]],
-        targets: list[str],
-        wait_all: bool,
-        *,
-        already_finished: bool = False,
-    ) -> str:
-        path, relation = completed[0]
-        if relation is not None:
-            cycle_result = (
-                f"Agent {path} is ready for this wait because it is waiting "
-                f"on you {relation}."
-            )
-        else:
-            cycle_result = None
-        if len(targets) == 1:
-            if cycle_result is not None:
-                return cycle_result
-            verb = "has already finished" if already_finished else "finished"
-            return f"Agent {path} {verb} its work."
-        if wait_all:
-            if any(item_relation is not None for _, item_relation in completed):
-                details = ", ".join(
-                    f"{item_path} ({'finished' if item_relation is None else f'waiting on you {item_relation}'})"
-                    for item_path, item_relation in completed
-                )
-                return f"All agents are ready for this wait: {details}."
-            verb = "have already finished" if already_finished else "finished"
-            return (
-                f"All agents {verb} their work: "
-                f"{', '.join(item_path for item_path, _relation in completed)}."
-            )
-        if cycle_result is not None:
-            return cycle_result
-        verb = "has already finished" if already_finished else "finished"
-        return f"Agent {path} {verb} its work."
-
-    @staticmethod
-    def _wait_timeout_result(
-        targets: list[str], timeout: float, wait_all: bool
-    ) -> str:
-        if len(targets) == 1:
-            return (
-                f"Agent {targets[0]} did not finish within {timeout:g} seconds."
-            )
-        if wait_all:
-            return (
-                f"Not all agents finished within {timeout:g} seconds: "
-                f"{', '.join(targets)}."
-            )
-        return (
-            f"No agents finished within {timeout:g} seconds: "
-            f"{', '.join(targets)}."
+        return wait_dependency(
+            path,
+            target_path,
+            lambda agent: (
+                target
+                for waiter in self._wait_dependencies.get(agent, ())
+                for target in waiter.targets
+            ),
         )
 
     def _wake_runtime_waiters(
-        self,
-        sender_runtime_id: str,
-        *,
-        delivery: str | None = None,
+        self, sender_runtime_id: str, *, delivery: str | None = None
     ) -> bool:
-        """Wake waits, optionally delivering one routed message in-band."""
-        waiters = tuple(self._wait_wake_events.get(sender_runtime_id, ()))
-        available = [waiter for waiter in waiters if not waiter.event.is_set()]
-        if not available:
-            return False
-        if delivery is not None:
-            available[0].delivery = delivery
-        for waiter in available:
-            waiter.event.set()
-        return delivery is not None
+        return wake_waiters(
+            self._wait_dependencies.get(
+                self._runtime_paths.get(sender_runtime_id), ()
+            ),
+            delivery,
+        )
 
     async def _queue_message_target(
         self,
@@ -1865,9 +1669,6 @@ class AgentRuntime:
             self._buffered_agent_messages.setdefault(
                 target_path, deque()
             ).append(item)
-            self._pending_counts[target_path] = (
-                self._pending_counts.get(target_path, 0) + 1
-            )
             return f"Message queued for {target_path}."
         self._schedule_message_target(item)
         return f"Message queued for {target_path}."
@@ -2047,26 +1848,12 @@ class AgentRuntime:
             if child_path in hierarchy:
                 raise ValueError(f"Subagent name already exists: {name!r}")
 
-            max_agents = self.config.subagents.max_agents
-            max_depth = self.config.subagents.max_depth
-            if max_agents == 0:
-                raise SubagentLimitError(
-                    "Subagents are disabled by subagents.max_agents=0"
-                )
-            if max_depth == 0:
-                raise SubagentLimitError(
-                    "Subagents are disabled by subagents.max_depth=0"
-                )
-            if max_agents is not None and len(hierarchy) - 1 >= max_agents:
-                raise SubagentLimitError(
-                    f"Subagent limit reached: subagents.max_agents={max_agents}"
-                )
-            depth = child_path.count("/")
-            if max_depth is not None and depth > max_depth:
-                raise SubagentLimitError(
-                    "Subagent depth limit reached: "
-                    f"subagents.max_depth={max_depth}"
-                )
+            check_capacity(
+                len(hierarchy),
+                child_path.count("/"),
+                self.config.subagents.max_agents,
+                self.config.subagents.max_depth,
+            )
 
             parent_agent_name = self._runtime_agent_names[parent_runtime_id]
             agent_name = self._resolve_subagent_type(
@@ -2324,13 +2111,11 @@ class AgentRuntime:
             self._runtime_agent_names.clear()
             self._hierarchies.clear()
             self._working_counts.clear()
-            self._pending_counts.clear()
             self._fail_all_buffered_messages(
                 RuntimeError("Agent runtime was reconfigured")
             )
             self._wake_all_waiters()
             self._wait_dependencies.clear()
-            self._waiting_counts.clear()
             self._stopping_subtrees.clear()
             self._active_root_id = None
             self._active_agent_ready.clear()
@@ -2375,10 +2160,10 @@ class AgentRuntime:
 
     def _wake_all_waiters(self) -> None:
         """Release host waits before hierarchy ownership is discarded."""
-        for events in self._wait_wake_events.values():
+        for events in self._wait_dependencies.values():
             for waiter in tuple(events):
                 waiter.event.set()
-        self._wait_wake_events.clear()
+        self._wait_dependencies.clear()
 
     async def close(self) -> None:
         await self.aclose()

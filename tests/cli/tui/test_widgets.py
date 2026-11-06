@@ -2594,6 +2594,8 @@ async def test_immediate_switch_preempts_large_tool_render(
         assert len(app.screen.query("#agent-tools-1 .agent-tool")) == 100
         assert not app.screen.query("#agent-tools-1 .agent-tool Markdown")
         assert not app.screen.query("#agent-tools-1 .agent-tools-loading")
+        # A queued timer tick after the loader disappears is harmless.
+        app.screen._advance_tool_loading(1)
 
 
 async def test_agent_tool_render_failure_is_displayed(tmp_path, monkeypatch):

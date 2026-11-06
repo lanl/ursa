@@ -67,9 +67,7 @@ class AgentToolCard(EventCard):
             name = str(self.tool_input.get("name") or "new subagent")
             agent_type = str(self.tool_input.get("agent_type") or "").strip()
             return f"{name} ({agent_type})" if agent_type else name
-        if self.tool == "send_message":
-            return self._target_description()
-        if self.tool == "wait_for":
+        if self.tool in {"send_message", "wait_for"}:
             return self._target_description()
         if self.tool == "stop_agent":
             return str(self.tool_input.get("target") or "another agent")
@@ -112,7 +110,7 @@ class AgentToolCard(EventCard):
     @property
     def request(self) -> str:
         """Describe the actual tool request, including non-message actions."""
-        targets = self._request_targets()
+        targets = self.targets
         if self.tool == "spawn_agent":
             name = str(self.tool_input.get("name") or "new subagent")
             agent_type = str(self.tool_input.get("agent_type") or "").strip()
@@ -141,13 +139,6 @@ class AgentToolCard(EventCard):
         if self.tool == "stop_agent":
             return f"**Stopping:** `{targets[0]}` and its descendants"
         return "_No request details available._"
-
-    def _request_targets(self) -> list[str]:
-        value = self.tool_input.get("target")
-        if isinstance(value, list):
-            targets = [str(item).strip() for item in value if str(item).strip()]
-            return targets or ["other agents"]
-        return [str(value or "another agent")]
 
     @staticmethod
     def _target_list(targets: list[str]) -> str:
@@ -281,23 +272,6 @@ class AgentToolCard(EventCard):
         self._update_expand_hint()
         if self._details_loader and expanded and self.is_mounted:
             self._request_details()
-
-    def action_toggle(self) -> None:
-        """Expand or collapse the action from the keyboard."""
-        self.set_expanded(not self.expanded)
-
-    def _update_expand_hint(self) -> None:
-        if not self.is_mounted:
-            return
-        next(
-            child
-            for child in self.children
-            if child.has_class("event-expand-hint")
-        ).update(
-            "Click or Enter to collapse"
-            if self.expanded
-            else "Click or Enter to expand"
-        )
 
     def _request_details(self) -> None:
         self._details_error = None

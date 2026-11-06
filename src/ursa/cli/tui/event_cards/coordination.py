@@ -159,23 +159,6 @@ class CoordinationCard(EventCard):
         if self.expanded:
             await self._refresh_details()
 
-    def action_toggle(self) -> None:
-        """Expand or collapse when keyboard focus is on the group."""
-        self.set_expanded(not self.expanded)
-
-    def _update_expand_hint(self) -> None:
-        if not self.is_mounted:
-            return
-        next(
-            child
-            for child in self.children
-            if child.has_class("event-expand-hint")
-        ).update(
-            "Click or Enter to collapse"
-            if self.expanded
-            else "Click or Enter to expand"
-        )
-
     def set_expanded(self, expanded: bool) -> None:
         self._reveal_after_expand = (
             expanded and not self.expanded and self.is_mounted

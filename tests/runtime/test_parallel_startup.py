@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from tests.runtime.fixtures import runtime_request
 from ursa.agents.base import SubagentLimitError
 from ursa.cli.config import UrsaConfig
 from ursa.runtime import AgentManager, AgentRuntime
@@ -54,9 +55,7 @@ async def test_starts_overlap_without_blocking_messages_or_exceeding_limits(
     monkeypatch.setattr(runtime._manager, "invoke", invoke)
     spawns = [
         asyncio.create_task(
-            runtime._handle_runtime_request(
-                root, "spawn", {"name": name, "message": name}, ()
-            )
+            runtime_request(runtime, root, "spawn", name=name, message=name)
         )
         for name in release
     ]

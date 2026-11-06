@@ -76,6 +76,16 @@ from langgraph.store.sqlite import SqliteStore
 from langgraph.store.sqlite.aio import AsyncSqliteStore
 from langgraph.types import Overwrite
 
+from ursa.agents.coordination import (
+    MessageWait,
+    check_capacity,
+    message_group,
+    wait_dependency,
+    wake_waiters,
+)
+from ursa.agents.coordination import (
+    SubagentLimitError as SubagentLimitError,
+)
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
 )
@@ -237,15 +247,6 @@ class _QueuedAgentMessage:
     on_end: Callable[[AgentMessage, bool], Awaitable[None] | None] | None = None
 
 
-@dataclass(eq=False, slots=True)
-class _AgentMessageWait:
-    """One local wait that may directly receive a one-way message."""
-
-    event: asyncio.Event = field(default_factory=asyncio.Event)
-    message: AgentMessage | None = None
-    targets: tuple[BaseAgent, ...] = ()
-
-
 _STOP_MESSAGE_LOOP = object()
 
 
@@ -303,10 +304,6 @@ def attach_agent_message_instructions(
     return normalized
 
 
-class SubagentLimitError(RuntimeError):
-    """A hierarchy policy rejected creation of another subagent."""
-
-
 class AsyncMessageMixin:
     """Actor-style async messaging and dynamic agent hierarchy support.
 
@@ -336,7 +333,7 @@ class AsyncMessageMixin:
         # Tools such as ``wait_for`` can await another member's work without
         # blocking this actor's inbox.  A newly accepted message wakes those
         # tools so the model can handle the message promptly.
-        self._message_waiters: set[_AgentMessageWait] = set()
+        self._message_waiters: set[MessageWait[BaseAgent]] = set()
         self._async_invocation_lock: asyncio.Lock | None = None
         self._async_invocation_loop: asyncio.AbstractEventLoop | None = None
         self._async_invocation_owner: asyncio.Task[Any] | None = None
@@ -646,66 +643,38 @@ class AsyncMessageMixin:
 
     def _begin_message_wait(
         self, targets: Sequence[BaseAgent] = ()
-    ) -> _AgentMessageWait:
+    ) -> MessageWait[BaseAgent]:
         """Register an interruptible wait for this agent's next message."""
-        waiter = _AgentMessageWait(targets=tuple(targets))
+        waiter = MessageWait[BaseAgent](targets=tuple(targets))
         self._message_waiters.add(waiter)
         return waiter
 
-    def _end_message_wait(self, waiter: _AgentMessageWait) -> None:
+    def _end_message_wait(self, waiter: MessageWait[BaseAgent]) -> None:
         """Remove a wait previously created by :meth:`_begin_message_wait`."""
         self._message_waiters.discard(waiter)
 
     def _wake_message_waiters(
         self, message: AgentMessage | None = None
     ) -> bool:
-        """Wake local waits, optionally delivering one message in-band."""
-        available = [
-            waiter
-            for waiter in tuple(self._message_waiters)
-            if not waiter.event.is_set()
-        ]
-        if not available:
-            return False
-        if message is not None:
-            available[0].message = message
-        for waiter in available:
-            waiter.event.set()
-        return message is not None
-
-    def _wait_depends_on(
-        self, target: BaseAgent, visited: set[int] | None = None
-    ) -> bool:
-        """Whether an active wait dependency path from ``self`` reaches target."""
-        if self is target:
-            return True
-        visited = set() if visited is None else visited
-        identity = id(self)
-        if identity in visited:
-            return False
-        visited.add(identity)
-        return any(
-            dependency._wait_depends_on(target, visited)
-            for waiter in self._message_waiters
-            for dependency in waiter.targets
+        delivery = (
+            agent_message_wait_result(
+                message.sender, message.recipient, str(message.content)
+            )
+            if message is not None
+            else None
         )
+        return wake_waiters(self._message_waiters, delivery)
 
-    def _wait_dependency_relation(
-        self, target: BaseAgent, visited: set[int] | None = None
-    ) -> str | None:
-        """Return whether an active path to ``target`` is direct or indirect."""
-        visited = set() if visited is None else visited
-        identity = id(self)
-        if identity in visited:
-            return None
-        visited.add(identity)
-        for waiter in self._message_waiters:
-            for dependency in waiter.targets:
-                if dependency is target:
-                    return "directly"
-                if dependency._wait_depends_on(target, set(visited)):
-                    return "indirectly"
-        return None
+    def _wait_dependency_relation(self, target: BaseAgent) -> str | None:
+        return wait_dependency(
+            self,
+            target,
+            lambda agent: (
+                dependency
+                for waiter in agent._message_waiters
+                for dependency in waiter.targets
+            ),
+        )
 
     async def _run_message_loop(self) -> None:
         inbox = self._message_inbox
@@ -810,46 +779,21 @@ class AsyncMessageMixin:
     def _validate_subagent_capacity(
         self, agent: BaseAgent | None = None
     ) -> None:
-        """Reject a prospective child that exceeds the root policy."""
         root = self.root_agent
-        max_agents = root._subagent_max_agents
-        max_depth = root._subagent_max_depth
-        if max_agents == 0:
-            raise SubagentLimitError(
-                "Subagents are disabled by subagents.max_agents=0"
-            )
-        if max_depth == 0:
-            raise SubagentLimitError(
-                "Subagents are disabled by subagents.max_depth=0"
-            )
-
-        existing = sum(1 for _ in root.walk_agents()) - 1
-        addition = 1 if agent is None else sum(1 for _ in agent.walk_agents())
-        if max_agents is not None and existing + addition > max_agents:
-            raise SubagentLimitError(
-                f"Subagent limit reached: subagents.max_agents={max_agents}"
-            )
-
-        parent_depth = 0
-        current = self.parent_agent
-        while current is not None:
-            parent_depth += 1
-            current = current.parent_agent
-
-        subtree_depth = 0
-        if agent is not None:
-            stack = [(agent, 0)]
-            while stack:
-                member, depth = stack.pop()
-                subtree_depth = max(subtree_depth, depth)
-                stack.extend(
-                    (child, depth + 1) for child in member.subagents.values()
-                )
-        requested_depth = parent_depth + 1 + subtree_depth
-        if max_depth is not None and requested_depth > max_depth:
-            raise SubagentLimitError(
-                f"Subagent depth limit reached: subagents.max_depth={max_depth}"
-            )
+        additions = list(agent.walk_agents()) if agent is not None else []
+        subtree_depth = max(
+            (
+                member.agent_path.count("/") - agent.agent_path.count("/")
+                for member in additions
+            ),
+            default=0,
+        )
+        check_capacity(
+            sum(1 for _ in root.walk_agents()) - 1 + max(1, len(additions)),
+            self.agent_path.count("/") + 1 + subtree_depth,
+            root._subagent_max_agents,
+            root._subagent_max_depth,
+        )
 
     @classmethod
     def _validate_subagent_name(cls, name: str) -> None:
@@ -1129,15 +1073,9 @@ class AsyncMessageMixin:
                 "target must be a non-empty agent path or list of paths"
             )
 
-        selectors = {
-            "@everyone": lambda: list(self.root_agent.walk_agents()),
-            "@supervisor": lambda: [self.parent_agent],
-            "@peers": lambda: (
-                list(self.parent_agent.subagents.values())
-                if self.parent_agent is not None
-                else []
-            ),
-            "@reports": lambda: list(self.subagents.values()),
+        hierarchy = {
+            member.agent_path: member
+            for member in self.root_agent.walk_agents()
         }
         recipients: list[BaseAgent] = []
         seen: set[str] = set()
@@ -1145,22 +1083,15 @@ class AsyncMessageMixin:
         for route in routes:
             name = route.strip()
             if name.startswith("@"):
-                selector = name.casefold()
                 try:
-                    candidates = selectors[selector]()
-                except KeyError:
-                    raise KeyError(
-                        f"Unknown message target group {name!r}"
-                    ) from None
-                expanded = [
-                    candidate
-                    for candidate in candidates
-                    if candidate is not None and candidate is not self
-                ]
-                if not expanded:
-                    raise KeyError(
-                        f"Message target group {selector!r} has no recipients"
-                    )
+                    expanded = [
+                        hierarchy[path]
+                        for path in message_group(
+                            self.agent_path, name, hierarchy
+                        )
+                    ]
+                except ValueError as exc:
+                    raise KeyError(str(exc)) from exc
             else:
                 expanded = [self.resolve_agent(name)]
             for recipient in expanded:
