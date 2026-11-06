@@ -331,7 +331,8 @@ def _publish_archive(root: Path, plan: RetentionPlan, state: dict) -> None:
                     archive.add(path, arcname=entry.path, recursive=False)
             _verify_archive(temporary, entries)
             _check_inputs(plan, cleanup=False)
-            with temporary.open("rb") as stream:
+            # Windows requires a writable descriptor for fsync.
+            with temporary.open("r+b") as stream:
                 os.fsync(stream.fileno())
             # A hard link publishes atomically without overwriting another file.
             os.link(temporary, target)
