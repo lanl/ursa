@@ -12,10 +12,11 @@ URSA environments compose persistent agents and other environments behind a sing
 Load a team from YAML with:
 
 ```python
-from langchain.chat_models import init_chat_model
+from ursa.cli.config import UrsaConfig
 from ursa.environments import AgentTeamEnvironment
 
-llm = init_chat_model(model="openai:gpt-4o-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 team = AgentTeamEnvironment.from_yaml("examples/environments/agent_team.yaml", llm=llm)
 result = team.invoke("Analyze this problem...")
 ```
@@ -23,10 +24,11 @@ result = team.invoke("Analyze this problem...")
 Load a symposium from YAML with:
 
 ```python
-from langchain.chat_models import init_chat_model
+from ursa.cli.config import UrsaConfig
 from ursa.environments import AgentSymposiumEnvironment
 
-llm = init_chat_model(model="openai:gpt-4o-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 symposium = AgentSymposiumEnvironment.from_yaml(
     "examples/environments/agent_symposium.yaml", llm=llm
 )

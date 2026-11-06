@@ -93,10 +93,11 @@ The repository also includes an example at
 ## Run a team from Python
 
 ```python
-from langchain.chat_models import init_chat_model
+from ursa.cli.config import UrsaConfig
 from ursa.environments import AgentTeamEnvironment
 
-llm = init_chat_model(model="openai:gpt-4o-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 
 team = AgentTeamEnvironment.from_yaml(
     "examples/environments/agent_team.yaml",
@@ -120,10 +121,11 @@ YAML is usually the clearest way to describe a team, but you can also construct 
 team directly:
 
 ```python
-from langchain.chat_models import init_chat_model
+from ursa.cli.config import UrsaConfig
 from ursa.environments import AgentTeamEnvironment
 
-llm = init_chat_model(model="openai:gpt-4o-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 
 team = AgentTeamEnvironment(
     llm=llm,

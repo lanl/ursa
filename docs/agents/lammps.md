@@ -40,9 +40,10 @@ for other extras.
 
 ```python
 from ursa.agents import LammpsAgent
-from langchain_openai import ChatOpenAI
+from ursa.cli.config import UrsaConfig
 
-agent = LammpsAgent(llm = ChatOpenAI(model='gpt-5'))
+config = UrsaConfig.user_config()
+agent = LammpsAgent(llm=config.llm_model.init_chat_model())
 
 result = agent.invoke({
     "simulation_task": "Carry out a LAMMPS simulation of Cu to determine its equation of state.",
