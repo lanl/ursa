@@ -80,20 +80,13 @@ Operations use differentiated, operation-specific timeouts (not a unified timeou
 If other operations timeout, try running them in smaller chunks or profiling the specific operation.
 
 ### Path Safety
-`write_code`, `write_code_with_repo`, and `edit_code` validate file paths to prevent:
-- **Path traversal attacks** (e.g., `../../../etc/passwd` attempts are rejected)
-- **Writes outside the workspace** (all files must be within the workspace directory)
-- **Writes outside the repository** (`write_code_with_repo`, or `edit_code` when `repo_path` is used)
 
-Path validation is enabled by default. For trusted sandbox/container usage, you can opt in to unsafe writes by setting:
+`write_code`, `write_code_with_repo`, and `edit_code` reject paths outside the
+workspace; repository-aware writes also enforce the specified repository boundary.
+Set `URSA_ALLOW_UNSAFE_WRITES=1` only when you intend to bypass these checks.
 
-```bash
-export URSA_ALLOW_UNSAFE_WRITES=1
-```
-
-When enabled, workspace and repository boundary checks are bypassed for `write_code`, `write_code_with_repo`, and `edit_code`.
-
-Example: Specifying a repo boundary ensures all file modifications stay within that repository.
+These file-tool checks are separate from the
+[command sandbox](../sandbox-quickstart.md).
 
 ### Golangci-lint Integration
 

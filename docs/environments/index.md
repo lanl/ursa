@@ -166,11 +166,9 @@ environment with its configured workspace behavior.
 
 ## Safety reminder
 
-Environments can contain agents that use web access, write files, or run commands.
-Treat the whole environment as powerful as its most capable member. Use dedicated
-workspaces, review generated code and commands, and apply the same sandboxing
-practices you would use for an
-[`ExecutionAgent`][ursa.agents.execution_agent.ExecutionAgent].
+Use dedicated workspaces and review generated code and commands. Members sharing
+a workspace can modify each other's files. See the
+[Command sandbox quickstart](../sandbox-quickstart.md) for execution controls.
 
 Next, read about [Agent Teams][agent-teams] or
 [Agent Symposia][agent-symposia].

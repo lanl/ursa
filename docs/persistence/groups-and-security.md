@@ -62,7 +62,9 @@ an error, not a way to disable the policy. Removing the default group's
 `group.yaml` restores its unrestricted behavior; non-default groups still
 require this file and a non-empty allowlist.
 
-This policy checks model endpoints; it is not a general network or tool sandbox.
+Group allowlists restrict model endpoints, not shell commands or other tool
+traffic. See the [Command sandbox quickstart](../sandbox-quickstart.md) for
+command execution controls.
 
 ## How this relates to model configuration
 
