@@ -10,7 +10,7 @@ import asyncio
 import json
 import sqlite3
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
@@ -29,6 +29,21 @@ COORDINATION_TOOLS = frozenset({
 def preview_text(content: str, limit: int = 240) -> str:
     text = " ".join(content[: limit * 4].split())
     return text[:limit] + ("…" if len(content) > limit else "")
+
+
+def target_summary(targets: Sequence[str]) -> tuple[str, int]:
+    """Describe target expressions; a selector's concrete count is unknown (0)."""
+    selectors = [target for target in targets if target.startswith("@")]
+    if not selectors:
+        return ", ".join(targets), max(1, len(targets))
+    description = ", ".join(selectors)
+    explicit_count = len(targets) - len(selectors)
+    if explicit_count:
+        description += (
+            f" + {explicit_count} explicit target"
+            f"{'s' if explicit_count != 1 else ''}"
+        )
+    return description, 0
 
 
 @dataclass(frozen=True)
@@ -200,23 +215,7 @@ class MessageStore:
             for item in targets
             if item is not None and str(item).strip()
         ]
-        selectors = [name for name in target_names if name.startswith("@")]
-        explicit_targets = [
-            name for name in target_names if not name.startswith("@")
-        ]
-        # A selector can expand to any current hierarchy member. Keep the raw
-        # expression visible and encode its unknown concrete count as zero;
-        # callers must never infer recipients from a tool result string.
-        target_count = 0 if selectors else max(1, len(explicit_targets))
-        if selectors:
-            target = ", ".join(selectors)
-            if explicit_targets:
-                target += (
-                    f" + {len(explicit_targets)} explicit target"
-                    f"{'s' if len(explicit_targets) != 1 else ''}"
-                )
-        else:
-            target = ", ".join(explicit_targets)
+        target, target_count = target_summary(target_names)
         if tool == "spawn_agent" and tool_input.get("agent_type"):
             target = f"{target} ({tool_input['agent_type']})"
 

@@ -335,13 +335,13 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
         except (KeyError, TypeError) as exc:
             raise ToolException(str(exc)) from exc
         caller_path = agent.agent_path
-        if not recipient.agent_path.startswith(f"{caller_path}/"):
+        parent = recipient.parent_agent
+        if parent is None or not recipient.agent_path.startswith(
+            f"{caller_path}/"
+        ):
             raise ToolException("An agent can only stop one of its descendants")
-        child_name = recipient.agent_path[len(caller_path) + 1 :].split("/", 1)[
-            0
-        ]
         stopped_path = recipient.agent_path
-        agent.stop_subagent(child_name)
+        parent.stop_subagent(recipient.hierarchy_name)
         return f"Stopped agent {stopped_path} and its subagents."
 
     @tool

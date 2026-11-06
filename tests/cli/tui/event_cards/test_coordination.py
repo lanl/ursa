@@ -6,8 +6,7 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.geometry import Region
 from textual.widgets import Button, Markdown, Static
 
-from tests.cli._app_helpers import make_runtime, wait_for
-from ursa.cli.tui.app import UrsaTextualApp
+from tests.cli._app_helpers import wait_for
 from ursa.cli.tui.event_cards import (
     AgentToolCard,
     CoordinationCard,
@@ -20,8 +19,8 @@ from ursa.cli.tui.widgets import PromptArea
 
 async def test_parallel_coordination_calls_share_one_card_across_entire_turn(
     tmp_path,
+    app,
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
     body_reads = []
     action_body = app.message_store.action_body
 
@@ -138,9 +137,8 @@ async def test_parallel_coordination_calls_share_one_card_across_entire_turn(
 
 
 async def test_coordination_actions_have_clear_status_and_keyboard_expansion(
-    tmp_path,
+    app,
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
     async with app.run_test(size=(100, 36)) as pilot:
         turn = await app._mount_turn("coordinate")
         handler = TextualEventHandler(app, turn)
@@ -211,8 +209,7 @@ async def test_coordination_actions_have_clear_status_and_keyboard_expansion(
         )
 
 
-async def test_compact_recipient_count_survives_long_target_preview(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
+async def test_compact_recipient_count_survives_long_target_preview(app):
     targets = [
         f"root/reviewer-with-a-long-name-{index:03}" for index in range(80)
     ]
@@ -231,9 +228,8 @@ async def test_compact_recipient_count_survives_long_target_preview(tmp_path):
 
 
 async def test_group_target_expressions_are_never_presented_as_agent_counts(
-    tmp_path,
+    app,
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
     long_paths = [f"root/reviewer-{index:03}" for index in range(80)]
     async with app.run_test(size=(100, 30)) as pilot:
         turn = await app._mount_turn("broadcast")
@@ -283,9 +279,8 @@ async def test_group_target_expressions_are_never_presented_as_agent_counts(
 
 @pytest.mark.parametrize("size", [(40, 20), (60, 20), (80, 24), (120, 40)])
 async def test_coordination_controls_and_recent_actions_fit_narrow_terminals(
-    tmp_path, size
+    app, size
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
     async with app.run_test(size=size) as pilot:
         turn = await app._mount_turn("coordinate")
         await turn.event({
@@ -373,8 +368,7 @@ async def test_coordination_controls_and_recent_actions_fit_narrow_terminals(
         )
 
 
-async def test_expanded_coordination_pages_bound_widget_count(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
+async def test_expanded_coordination_pages_bound_widget_count(app):
     async with app.run_test(size=(110, 40)) as pilot:
         turn = await app._mount_turn("many calls")
         for index in range(25):
@@ -435,9 +429,8 @@ async def test_expanded_coordination_pages_bound_widget_count(tmp_path):
 
 
 async def test_coordination_errors_keep_exact_body_and_two_visible_rows(
-    tmp_path,
+    app,
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
     async with app.run_test(size=(85, 30)) as pilot:
         turn = await app._mount_turn("coordinate")
         handler = TextualEventHandler(app, turn)

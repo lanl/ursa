@@ -79,7 +79,7 @@ from langgraph.types import Overwrite
 from ursa.agents.coordination import (
     MessageWait,
     check_capacity,
-    message_group,
+    resolve_message_routes,
     wait_dependency,
     wake_waiters,
 )
@@ -1073,35 +1073,25 @@ class AsyncMessageMixin:
                 "target must be a non-empty agent path or list of paths"
             )
 
-        hierarchy = {
-            member.agent_path: member
-            for member in self.root_agent.walk_agents()
-        }
-        recipients: list[BaseAgent] = []
-        seen: set[str] = set()
-        expands_groups = any(route.strip().startswith("@") for route in routes)
-        for route in routes:
-            name = route.strip()
-            if name.startswith("@"):
-                try:
-                    expanded = [
-                        hierarchy[path]
-                        for path in message_group(
-                            self.agent_path, name, hierarchy
-                        )
-                    ]
-                except ValueError as exc:
-                    raise KeyError(str(exc)) from exc
-            else:
-                expanded = [self.resolve_agent(name)]
-            for recipient in expanded:
-                if expands_groups and recipient is self:
-                    continue
-                path = recipient.agent_path
-                if path not in seen:
-                    seen.add(path)
-                    recipients.append(recipient)
-        return recipients
+        def resolve(path: str) -> tuple[BaseAgent, str]:
+            recipient = self.resolve_agent(path)
+            return recipient, recipient.agent_path
+
+        try:
+            return [
+                recipient
+                for recipient, _path in resolve_message_routes(
+                    self.agent_path,
+                    routes,
+                    [
+                        member.agent_path
+                        for member in self.root_agent.walk_agents()
+                    ],
+                    resolve,
+                )
+            ]
+        except ValueError as exc:
+            raise KeyError(str(exc)) from exc
 
 
 class UnregisteredAgentStateWarning(UserWarning):

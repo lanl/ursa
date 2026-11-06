@@ -20,6 +20,7 @@ from textual.widgets import Button, Static
 
 from ursa.cli.tui.event_cards.base import EventCard
 from ursa.cli.tui.event_cards.hierarchy import AgentToolCard
+from ursa.cli.tui.event_cards.tools import tool_event_input
 from ursa.cli.tui.message_store import MessageStore
 
 
@@ -93,26 +94,11 @@ class CoordinationCard(EventCard):
         if output is None:
             output = payload.get("tool_message", payload.get("result"))
         failed = failed or getattr(output, "status", None) == "error"
-        ignored = {
-            "tool",
-            "phase",
-            "result",
-            "error",
-            "status",
-            "tool_message",
-            "_run_id",
-            "_received_at",
-            "_agent_path",
-        }
         await self.store.record_action(
             self.turn_id,
             str(payload.get("_run_id") or uuid4().hex),
             str(payload["tool"]),
-            {
-                key: value
-                for key, value in payload.items()
-                if key not in ignored
-            },
+            tool_event_input(payload),
             output=AgentToolCard._text_content(output),
             completed=completed,
             failed=failed,

@@ -18,6 +18,25 @@ from textual.widgets import Markdown, Static
 from ursa.cli.tui.event_cards.base import EventCard
 from ursa.cli.tui.widgets import ActivityIndicator
 
+_EVENT_FIELDS = frozenset({
+    "tool",
+    "phase",
+    "result",
+    "error",
+    "status",
+    "tool_message",
+    "_run_id",
+    "_received_at",
+    "_agent_path",
+})
+
+
+def tool_event_input(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract tool arguments from the event envelope used by every card."""
+    return {
+        key: value for key, value in payload.items() if key not in _EVENT_FIELDS
+    }
+
 
 def _json(value: Any, *, compact: bool) -> str:
     return json.dumps(

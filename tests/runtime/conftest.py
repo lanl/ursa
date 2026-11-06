@@ -1,5 +1,6 @@
 """Reusable host setup with teardown even when a test assertion fails."""
 
+import multiprocessing
 from types import SimpleNamespace
 
 import pytest
@@ -67,6 +68,8 @@ async def runtime_factory(tmp_path, monkeypatch):
     def create(*, manager=None, fork=False, **config):
         options = {}
         if fork:
+            if "fork" not in multiprocessing.get_all_start_methods():
+                pytest.skip("test fixtures are inherited through fork")
             monkeypatch.setattr(
                 "ursa.runtime.agent_runtime.validate_model_provider",
                 lambda *_: None,

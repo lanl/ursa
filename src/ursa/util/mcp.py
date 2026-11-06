@@ -258,26 +258,6 @@ def _resolve_header(value, server_name: str):
     return value
 
 
-def _serialize_server_config(
-    config: ServerParameters,
-    *,
-    exclude_defaults: bool = True,
-    exclude_none: bool = True,
-):
-    """Internal: serialize MCP ServerParameters in a yaml/json compatible way"""
-    config = {
-        "transport": transport(config),
-        **config.model_dump(
-            exclude_defaults=exclude_defaults,
-            exclude_none=exclude_none,
-        ),
-    }
-    for k, v in config.items():
-        if isinstance(v, timedelta):
-            config[k] = v.total_seconds()
-    return config
-
-
 def serialize_server_parameters(
     config: ServerParameters,
     *,
@@ -285,13 +265,22 @@ def serialize_server_parameters(
     exclude_none: bool = True,
     exclude_unset: bool = False,
 ):
-    """Serialize typed MCP parameters for configuration files."""
-    values = _serialize_server_config(
-        config,
-        exclude_defaults=exclude_defaults,
-        exclude_none=exclude_none,
-    )
+    """Serialize MCP parameters for configuration files and process transport."""
+    values = {
+        "transport": transport(config),
+        **config.model_dump(
+            exclude_defaults=exclude_defaults,
+            exclude_none=exclude_none,
+        ),
+    }
     if exclude_unset:
         allowed = set(config.model_fields_set) | {"transport"}
         values = {key: value for key, value in values.items() if key in allowed}
+    for key, value in values.items():
+        if isinstance(value, timedelta):
+            values[key] = value.total_seconds()
     return values
+
+
+# Keep the private spelling for callers predating the public config helper.
+_serialize_server_config = serialize_server_parameters

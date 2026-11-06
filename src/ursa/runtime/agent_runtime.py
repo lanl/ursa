@@ -28,7 +28,7 @@ from ursa.agents.base import (
 from ursa.agents.coordination import (
     MessageWait,
     check_capacity,
-    message_group,
+    resolve_message_routes,
     wait_dependency,
     wait_for_completion,
     wait_targets,
@@ -1216,14 +1216,10 @@ class AgentRuntime:
             child_id, child_path = self._resolve_path(
                 sender_runtime_id, child_path
             )
-            acknowledgement = await self._queue_message_target(
-                sender_runtime_id,
-                child_id,
-                child_path,
-                message,
-                callbacks,
+            acknowledgements = await self._queue_message_targets(
+                sender_runtime_id, [(child_id, child_path)], message, callbacks
             )
-            return {"path": child_path, "response": acknowledgement}
+            return {"path": child_path, "response": acknowledgements[0]}
         if action == "list":
             root_id = self._runtime_roots[sender_runtime_id]
             return list(self._hierarchies[root_id])
@@ -1284,35 +1280,11 @@ class AgentRuntime:
         deliberately not part of ``_resolve_path``: wait, stop, and spawn keep
         their exact path-only grammar.
         """
-        seen: set[str] = set()
-        resolved = []
-        expands_groups = any(
-            target.strip().startswith("@") for target in targets
-        )
-        sender_path = self._runtime_paths[sender_runtime_id]
-        for target in targets:
-            paths = self._expand_message_target(sender_runtime_id, target)
-            for path in paths:
-                target_id, target_path = self._validate_message_target(
-                    sender_runtime_id, path
-                )
-                if expands_groups and target_path == sender_path:
-                    continue
-                if target_path not in seen:
-                    seen.add(target_path)
-                    resolved.append((target_id, target_path))
-        return resolved
-
-    def _expand_message_target(
-        self, sender_runtime_id: str, target: str
-    ) -> list[str]:
-        target = target.strip()
-        if not target.startswith("@"):
-            return [target]
-        return message_group(
+        return resolve_message_routes(
             self._runtime_paths[sender_runtime_id],
-            target,
+            targets,
             self._hierarchies[self._runtime_roots[sender_runtime_id]],
+            lambda path: self._validate_message_target(sender_runtime_id, path),
         )
 
     async def _queue_message_targets(
@@ -1568,43 +1540,6 @@ class AgentRuntime:
             delivery,
         )
 
-    async def _queue_message_target(
-        self,
-        sender_runtime_id: str,
-        target_id: str,
-        target_path: str,
-        message: str,
-        callbacks: Sequence[Any],
-        *,
-        log_request: bool = True,
-    ) -> str:
-        """Record and queue a validated one-way message."""
-        sender_path = self._runtime_paths[sender_runtime_id]
-        if log_request:
-            await self._notify_callbacks(
-                callbacks,
-                "on_hierarchy_message",
-                sender_path,
-                (target_path,),
-                message,
-            )
-        async with self._hierarchy_lock:
-            root_id = self._runtime_roots[sender_runtime_id]
-            if self._hierarchies[root_id].get(target_path) != target_id:
-                raise KeyError(
-                    f"Unknown agent path {target_path!r} from {sender_path!r}"
-                )
-            if self._is_stopping_path(root_id, target_path):
-                raise ValueError(f"Agent {target_path!r} is stopping")
-            acknowledgement = self._accept_message_target(
-                sender_path,
-                target_id,
-                target_path,
-                message,
-                callbacks,
-            )
-        return acknowledgement
-
     def _accept_message_target(
         self,
         sender_path: str,
@@ -1654,6 +1589,28 @@ class AgentRuntime:
         """Start one turn for already-validated messages to the same agent."""
         self._mark_working(item.target_path, 1)
         items = (item, *additional)
+        task_state = {"started": False}
+        task = asyncio.create_task(
+            self._invoke_message_target(items, task_state),
+            name=f"ursa-message-{item.target_path}",
+        )
+        self._background_agent_tasks.add(task)
+        task.add_done_callback(
+            lambda done: self._agent_task_done(
+                done,
+                items=items,
+                task_state=task_state,
+            )
+        )
+
+    async def _invoke_message_target(
+        self,
+        items: tuple[_BufferedAgentMessage, ...],
+        task_state: dict[str, bool],
+    ) -> None:
+        """Run one FIFO batch and give its reply to the newest user message."""
+        task_state["started"] = True
+        item, *additional = items
         response_item = next(
             (candidate for candidate in reversed(items) if candidate.response),
             None,
@@ -1661,52 +1618,12 @@ class AgentRuntime:
         deliveries = tuple(
             candidate for candidate in items if candidate.response is not None
         )
-        execution_callbacks = (
+        callbacks = (
             response_item.callbacks
             if response_item is not None
             else item.callbacks
         )
-        task_state = {"started": False}
-        task = asyncio.create_task(
-            self._invoke_message_target(
-                item.sender_path,
-                item.target_id,
-                item.target_path,
-                item.message,
-                execution_callbacks,
-                response=(response_item.response if response_item else None),
-                deliveries=deliveries,
-                additional=additional,
-                task_state=task_state,
-            ),
-            name=f"ursa-message-{item.target_path}",
-        )
-        self._background_agent_tasks.add(task)
-        task.add_done_callback(
-            lambda done: self._agent_task_done(
-                done,
-                target_path=item.target_path,
-                deliveries=deliveries,
-                task_state=task_state,
-            )
-        )
-
-    async def _invoke_message_target(
-        self,
-        sender_path: str,
-        target_id: str,
-        target_path: str,
-        message: str,
-        callbacks: Sequence[Any],
-        *,
-        response: asyncio.Future[str | None] | None = None,
-        deliveries: Sequence[_BufferedAgentMessage] = (),
-        additional: Sequence[_BufferedAgentMessage] = (),
-        task_state: dict[str, bool] | None = None,
-    ) -> None:
-        """Run a queued message in the background and report its lifecycle."""
-        if task_state is not None:
-            task_state["started"] = True
+        response = response_item.response if response_item else None
         succeeded = False
         try:
             if deliveries:
@@ -1716,15 +1633,15 @@ class AgentRuntime:
                         self._complete_in_band_delivery(delivery)
             else:
                 await self._notify_callbacks(
-                    callbacks, "on_agent_message_start", target_path
+                    callbacks, "on_agent_message_start", item.target_path
                 )
             result = await self._manager.invoke(
-                target_id,
-                message,
+                item.target_id,
+                item.message,
                 config={
                     "metadata": {
-                        "ursa_message_recipient": target_path,
-                        "ursa_message_sender": sender_path,
+                        "ursa_message_recipient": item.target_path,
+                        "ursa_message_sender": item.sender_path,
                     },
                     "ursa_additional_messages": [
                         {
@@ -1742,16 +1659,14 @@ class AgentRuntime:
             succeeded = True
         except BaseException as exc:
             self._fail_buffered_messages(deliveries, exc)
-            if response is not None and not response.done():
-                response.set_exception(exc)
             raise
         finally:
-            self._mark_working(target_path, -1)
+            self._mark_working(item.target_path, -1)
             if not deliveries:
                 await self._notify_callbacks(
                     callbacks,
                     "on_agent_message_end",
-                    target_path,
+                    item.target_path,
                     succeeded=succeeded,
                 )
 
@@ -1769,15 +1684,15 @@ class AgentRuntime:
         self,
         task: asyncio.Task[Any],
         *,
-        target_path: str,
-        deliveries: Sequence[_BufferedAgentMessage],
+        items: tuple[_BufferedAgentMessage, ...],
         task_state: Mapping[str, bool],
     ) -> None:
         """Retrieve background failures so they only reach structured logs."""
         self._background_agent_tasks.discard(task)
-        if not task_state.get("started"):
+        if not task_state["started"]:
+            target_path = items[0].target_path
             self._fail_buffered_messages(
-                deliveries,
+                items,
                 RuntimeError(
                     f"Message delivery to {target_path!r} was cancelled before start"
                 ),

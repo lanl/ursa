@@ -13,9 +13,7 @@ from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.turn import Turn
 
 
-async def test_default_tool_card_switches_from_input_to_output(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_default_tool_card_switches_from_input_to_output(tmp_path, app):
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("call it", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
@@ -67,9 +65,7 @@ async def test_default_tool_card_switches_from_input_to_output(tmp_path):
         assert '"grizzly"' in output_syntax.code
 
 
-async def test_default_tool_card_shows_failure_output(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_default_tool_card_shows_failure_output(tmp_path, app):
     async with app.run_test(size=(100, 24)) as pilot:
         turn = Turn("call it", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
@@ -86,9 +82,9 @@ async def test_default_tool_card_shows_failure_output(tmp_path):
         assert card.query_one(".tool-call-state", Static).content == "✗"
 
 
-async def test_spawn_agent_card_shows_task_and_queue_acknowledgement(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_spawn_agent_card_shows_task_and_queue_acknowledgement(
+    tmp_path, app
+):
     async with app.run_test(size=(100, 30)) as pilot:
         turn = Turn("delegate it", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
@@ -151,9 +147,8 @@ async def test_spawn_agent_card_shows_task_and_queue_acknowledgement(tmp_path):
 
 async def test_agent_message_and_listing_cards_render_specialized_outcomes(
     tmp_path,
+    app,
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
     async with app.run_test(size=(100, 30)) as pilot:
         turn = Turn("coordinate it", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
@@ -193,9 +188,7 @@ async def test_agent_message_and_listing_cards_render_specialized_outcomes(
         )
 
 
-async def test_agent_message_card_summarizes_broadcast_results(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_agent_message_card_summarizes_broadcast_results(tmp_path, app):
     async with app.run_test(size=(100, 30)) as pilot:
         turn = Turn("coordinate everyone", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
@@ -263,9 +256,7 @@ async def test_wait_card_renders_batched_agent_messages_as_plain_text(tmp_path):
         assert '"sender": "root/p08"' in str(preview.content)
 
 
-async def test_agent_tool_card_survives_unavailable_lazy_details(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_agent_tool_card_survives_unavailable_lazy_details(tmp_path, app):
     async def unavailable():
         raise LookupError("action was pruned")
 
@@ -292,8 +283,9 @@ async def test_agent_tool_card_survives_unavailable_lazy_details(tmp_path):
         )
 
 
-async def test_tool_call_preview_renders_code_brackets_as_plain_text(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
+async def test_tool_call_preview_renders_code_brackets_as_plain_text(
+    tmp_path, app
+):
     output = "[patch={'old_code': 'ax.set_xticklabels([labels])'}]"
 
     async with app.run_test(size=(100, 24)) as pilot:
@@ -311,9 +303,7 @@ async def test_tool_call_preview_renders_code_brackets_as_plain_text(tmp_path):
         assert card.output == output
 
 
-async def test_tool_message_prefers_structured_content_as_json(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_tool_message_prefers_structured_content_as_json(tmp_path, app):
     async with app.run_test(size=(100, 24)) as pilot:
         turn = Turn("call it", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
@@ -341,9 +331,7 @@ async def test_tool_message_prefers_structured_content_as_json(tmp_path):
         assert card.query_one(".tool-output-markdown").has_class("hidden")
 
 
-async def test_text_only_tool_message_renders_as_markdown(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_text_only_tool_message_renders_as_markdown(tmp_path, app):
     async with app.run_test(size=(100, 24)) as pilot:
         turn = Turn("call it", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)

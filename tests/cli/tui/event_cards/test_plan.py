@@ -22,9 +22,7 @@ def plan_steps(count=7):
     ]
 
 
-async def test_plan_card_renders_drafting_and_collapsed_steps(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_plan_card_renders_drafting_and_collapsed_steps(tmp_path, app):
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("make a plan", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
@@ -76,9 +74,7 @@ async def test_plan_card_renders_drafting_and_collapsed_steps(tmp_path):
         assert "lazy river" in wide_first_step
 
 
-async def test_plan_card_tracks_revisions_approval_and_expansion(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_plan_card_tracks_revisions_approval_and_expansion(tmp_path, app):
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("make a plan", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
@@ -198,9 +194,7 @@ async def test_agent_completion_stops_pending_plan_review_spinner(tmp_path):
         assert plan._frame == frame
 
 
-async def test_failed_agent_stops_drafting_plan_spinner(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_failed_agent_stops_drafting_plan_spinner(tmp_path, app):
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("make a plan", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)

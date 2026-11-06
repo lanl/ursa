@@ -26,9 +26,8 @@ def test_long_command_preview_keeps_top_and_bottom_eight_lines():
 
 async def test_overlapping_commands_stay_compact_and_complete_independently(
     tmp_path,
+    app,
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("run both", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
@@ -68,9 +67,9 @@ async def test_overlapping_commands_stay_compact_and_complete_independently(
         )
 
 
-async def test_identical_concurrent_commands_are_correlated_by_run_id(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_identical_concurrent_commands_are_correlated_by_run_id(
+    tmp_path, app
+):
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("run both", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
@@ -107,9 +106,9 @@ async def test_identical_concurrent_commands_are_correlated_by_run_id(tmp_path):
         )
 
 
-async def test_command_completion_finishes_pending_safety_indicator(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_command_completion_finishes_pending_safety_indicator(
+    tmp_path, app
+):
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("run it", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
@@ -134,9 +133,8 @@ async def test_command_completion_finishes_pending_safety_indicator(tmp_path):
 
 async def test_solitary_command_after_overlap_returns_to_detailed_layout(
     tmp_path,
+    app,
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("run commands", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)

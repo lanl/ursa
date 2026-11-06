@@ -15,6 +15,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Markdown, Static
 
 from ursa.cli.tui.event_cards.tools import ToolEventCard
+from ursa.cli.tui.message_store import target_summary
 from ursa.cli.tui.widgets import ActivityIndicator
 
 LOGGER = logging.getLogger(__name__)
@@ -86,22 +87,8 @@ class AgentToolCard(ToolEventCard):
 
     def _target_description(self) -> str:
         """Describe selectors as expressions, never guessed agent counts."""
-        targets = self.targets
-        selectors = [target for target in targets if target.startswith("@")]
-        explicit_targets = [
-            target for target in targets if not target.startswith("@")
-        ]
-        if selectors:
-            description = ", ".join(selectors)
-            if explicit_targets:
-                description += (
-                    f" + {len(explicit_targets)} explicit target"
-                    f"{'s' if len(explicit_targets) != 1 else ''}"
-                )
-            return description
-        if len(targets) == 1:
-            return targets[0]
-        return f"{len(targets)} agents"
+        description, count = target_summary(self.targets)
+        return f"{count} agents" if count > 1 else description
 
     @property
     def request(self) -> str:

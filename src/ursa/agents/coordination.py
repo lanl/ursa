@@ -58,6 +58,29 @@ def message_group(
     return recipients
 
 
+def resolve_message_routes(
+    sender: str,
+    targets: Sequence[str],
+    hierarchy: Collection[str],
+    resolve: Callable[[str], tuple[T, str]],
+) -> list[tuple[T, str]]:
+    """Expand and validate every route, preserving its first input position."""
+    resolved: dict[str, tuple[T, str]] = {}
+    expands_groups = any(target.strip().startswith("@") for target in targets)
+    for target in targets:
+        target = target.strip()
+        paths = (
+            message_group(sender, target, hierarchy)
+            if target.startswith("@")
+            else [target]
+        )
+        for path in paths:
+            recipient, path = resolve(path)
+            if not (expands_groups and path == sender):
+                resolved.setdefault(path, (recipient, path))
+    return list(resolved.values())
+
+
 @dataclass(eq=False)
 class MessageWait(Generic[T]):
     targets: tuple[T, ...] = ()

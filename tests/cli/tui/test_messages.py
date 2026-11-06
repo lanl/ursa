@@ -2,15 +2,13 @@ import pytest
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Markdown, Static
 
-from tests.cli._app_helpers import make_runtime, wait_for
-from ursa.cli.tui.app import UrsaTextualApp
+from tests.cli._app_helpers import wait_for
 from ursa.cli.tui.widgets import HierarchyMessageCard, MessagesScreen
 
 
 async def test_message_screen_pages_without_retaining_full_bodies(
-    tmp_path, monkeypatch
+    app, monkeypatch
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
     body = "[message key=value] 🐺\n" + "Detailed content.\n" * 5000
     for index in range(125):
         await app.record_hierarchy_message(
@@ -110,9 +108,8 @@ async def test_message_screen_pages_without_retaining_full_bodies(
 
 
 async def test_message_log_pauses_on_scroll_or_expansion_and_keyboard_toggles(
-    tmp_path,
+    app,
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
     for index in range(16):
         await app.record_hierarchy_message(
             "root", ("root/peer",), f"message {index}\nfull detail"
@@ -175,9 +172,8 @@ async def test_message_log_pauses_on_scroll_or_expansion_and_keyboard_toggles(
 
 
 async def test_message_log_header_and_footer_fit_across_terminal_widths(
-    tmp_path,
+    app,
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
     await app.record_hierarchy_message("root", ("root/a",), "one message")
 
     async with app.run_test(size=(60, 20)) as pilot:
@@ -232,8 +228,7 @@ async def test_message_log_header_and_footer_fit_across_terminal_widths(
         ]
 
 
-async def test_expanding_a_message_cancels_a_deferred_live_resume(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
+async def test_expanding_a_message_cancels_a_deferred_live_resume(app):
     for index in range(12):
         await app.record_hierarchy_message(
             "root", ("root/a",), f"message {index}\nfull detail"

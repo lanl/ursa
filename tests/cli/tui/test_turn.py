@@ -16,9 +16,7 @@ from ursa.cli.tui.widgets import ActivityIndicator, MessageCard
 from ursa.util.events import DEFAULT_EVENT_NAME
 
 
-async def test_turn_spacing_is_one_row_with_or_without_events(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_turn_spacing_is_one_row_with_or_without_events(tmp_path, app):
     async with app.run_test(size=(100, 40)) as pilot:
         conversation = app.query_one("#conversation", VerticalScroll)
 
@@ -458,9 +456,9 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
         assert groups[1].done
 
 
-async def test_stale_summary_timer_cannot_finalize_replacement_card(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_stale_summary_timer_cannot_finalize_replacement_card(
+    tmp_path, app
+):
     async with app.run_test(size=(100, 36)):
         turn = Turn("read", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
@@ -554,9 +552,7 @@ async def test_parallel_read_callbacks_render_as_one_group(tmp_path):
         ]
 
 
-async def test_file_failure_is_retained_on_its_activity_card(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_file_failure_is_retained_on_its_activity_card(tmp_path, app):
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("read it", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
@@ -582,9 +578,9 @@ async def test_file_failure_is_retained_on_its_activity_card(tmp_path):
         )
 
 
-async def test_unchanged_file_result_is_retained_on_activity_card(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_unchanged_file_result_is_retained_on_activity_card(
+    tmp_path, app
+):
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("edit it", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
@@ -609,9 +605,9 @@ async def test_unchanged_file_result_is_retained_on_activity_card(tmp_path):
 
 
 @pytest.mark.parametrize("outcome", ["failed", "unchanged"])
-async def test_rich_edit_outcome_updates_existing_diff_row(tmp_path, outcome):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_rich_edit_outcome_updates_existing_diff_row(
+    tmp_path, app, outcome
+):
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("edit it", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)

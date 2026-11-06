@@ -204,14 +204,6 @@ class TextualEventHandler(AsyncCallbackHandler):
         data = self.tools.pop(run_id, {"tool": "tool"})
         if agent_path := self._agent_path(metadata):
             data.setdefault("_agent_path", agent_path)
-        if data.get("tool") in FILE_TOOLS:
-            await self._emit({
-                **data,
-                "phase": "error",
-                "error": str(error),
-                "result": str(error),
-            })
-            return
         await self._emit({
             **data,
             "phase": "error",

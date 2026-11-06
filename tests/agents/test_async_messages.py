@@ -417,20 +417,27 @@ async def test_managed_send_message_group_errors_are_recoverable_and_results_are
 
 
 @pytest.mark.asyncio
-async def test_stop_agent_removes_a_descendant_subtree(mailbox):
+@pytest.mark.parametrize("target", ["reviewer", "reviewer/critic"])
+async def test_stop_agent_removes_a_descendant_subtree(mailbox, target):
     root = mailbox()
     reviewer = root.spawn_subagent("reviewer")
     critic = reviewer.spawn_subagent("critic")
     analyst = root.spawn_subagent("analyst")
 
     result = await hierarchy_tool(root, "stop_agent").ainvoke({
-        "target": "reviewer",
+        "target": target,
     })
 
-    assert result == "Stopped agent root/reviewer and its subagents."
-    assert list(root.subagents) == ["analyst"]
-    assert reviewer.parent_agent is None
-    assert critic.parent_agent is reviewer
+    assert result == f"Stopped agent root/{target} and its subagents."
+    if target == "reviewer":
+        assert list(root.subagents) == ["analyst"]
+        assert reviewer.parent_agent is None
+        assert critic.parent_agent is reviewer
+    else:
+        assert list(root.subagents) == ["reviewer", "analyst"]
+        assert reviewer.parent_agent is root
+        assert not reviewer.subagents
+        assert critic.parent_agent is None
     assert analyst.parent_agent is root
 
 

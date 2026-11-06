@@ -77,8 +77,7 @@ def test_hierarchy_activity_uses_uniform_labels():
     )
 
 
-async def test_messages_command_shows_live_collapsible_colored_log(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
+async def test_messages_command_shows_live_collapsible_colored_log(app):
     content = (
         "[OPENING round=1 root/p08] Review the first line.\n\n"
         "Include the complete supporting detail. [red]literal brackets[/red]"
@@ -164,9 +163,7 @@ def test_tui_logging_never_writes_through_terminal_handler(capsys):
     assert "tui logging marker" not in captured.out + captured.err
 
 
-async def test_welcome_banner_starts_at_top_of_conversation(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_welcome_banner_starts_at_top_of_conversation(tmp_path, app):
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.pause()
         conversation = app.query_one("#conversation", VerticalScroll)
@@ -832,9 +829,9 @@ async def test_turn_navigation_changes_real_scroll_position(tmp_path):
         assert conversation.scroll_y < bottom
 
 
-async def test_new_cards_follow_bottom_without_moving_scrolled_view(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_new_cards_follow_bottom_without_moving_scrolled_view(
+    tmp_path, app
+):
     async with app.run_test(size=(80, 20)) as pilot:
         conversation = app.query_one("#conversation", VerticalScroll)
         turn = Turn("test", tmp_path)
@@ -878,9 +875,7 @@ async def test_new_cards_follow_bottom_without_moving_scrolled_view(tmp_path):
         assert conversation.scroll_y == pytest.approx(scrolled_position)
 
 
-async def test_user_scroll_cancels_initial_anchor_transition(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_user_scroll_cancels_initial_anchor_transition(tmp_path, app):
     async with app.run_test(size=(80, 20)) as pilot:
         conversation = app.query_one("#conversation", VerticalScroll)
         turn = Turn("test", tmp_path)
@@ -939,17 +934,14 @@ async def test_user_scroll_cancels_initial_anchor_transition(tmp_path):
     ],
 )
 def test_hash_agent_routing_accepts_whitespace_and_multiline_prompts(
-    tmp_path, prompt, expected
+    app, prompt, expected
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
     assert app._route_prompt(prompt) == expected
 
 
 def test_copy_to_clipboard_prefers_platform_tool_when_available(
-    tmp_path, monkeypatch
+    app, monkeypatch
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
     fallback = []
     monkeypatch.setattr(crossplatform, "copy_to_clipboard", lambda text: True)
     monkeypatch.setattr(
@@ -965,9 +957,8 @@ def test_copy_to_clipboard_prefers_platform_tool_when_available(
 
 
 def test_copy_to_clipboard_uses_osc52_when_platform_copy_unavailable(
-    tmp_path, monkeypatch
+    app, monkeypatch
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
     fallback = []
     monkeypatch.setattr(crossplatform, "copy_to_clipboard", lambda text: False)
     monkeypatch.setattr(
@@ -1003,13 +994,13 @@ def test_one_shot_routes_hash_agent_and_writes_response(tmp_path):
     assert "One-shot result" in output.getvalue()
 
 
-async def test_user_scroll_during_anchor_start_gap_is_not_overridden(tmp_path):
+async def test_user_scroll_during_anchor_start_gap_is_not_overridden(
+    tmp_path, app
+):
     # The anchor transition must start its animation synchronously with
     # its flag; a user scroll in the gap before a deferred start could
     # not stop an animation that had not begun, and the late start then
     # drove the viewport away from the user's position.
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
     async with app.run_test(size=(80, 20)) as pilot:
         conversation = app.query_one("#conversation", VerticalScroll)
         turn = Turn("test", tmp_path)
@@ -1033,13 +1024,11 @@ async def test_user_scroll_during_anchor_start_gap_is_not_overridden(tmp_path):
             assert conversation.scroll_y == 0
 
 
-async def test_update_status_survives_absent_status_widget(tmp_path):
+async def test_update_status_survives_absent_status_widget(app):
     # The agent worker's tail calls _update_status; when teardown has
     # already pruned the status widget, the bare query crashed the
     # worker and surfaced as WorkerFailed at run_test exit, after every
     # test assertion had passed (the recurring Windows CI signature).
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
     async with app.run_test(size=(100, 36)) as pilot:
         await app.query_one("#status").remove()
         await pilot.pause()

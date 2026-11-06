@@ -88,7 +88,12 @@ async def routing(request, runtime_factory, chat_model, tmp_path, monkeypatch):
 
     def expand(sender, target):
         if managed:
-            return runtime._expand_message_target(identities[sender], target)
+            return [
+                path
+                for _identity, path in runtime._resolve_message_targets(
+                    identities[sender], [target]
+                )
+            ]
         return [
             agent.agent_path
             for agent in members[sender].resolve_message_targets(target)

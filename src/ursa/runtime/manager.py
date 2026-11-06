@@ -652,36 +652,35 @@ class AgentProcess:
         try:
             kind = message.get("type")
             if kind == "invoke":
-                result, has_state, state = await self._invoke(
+                result = await self._invoke(
                     request_id,
                     message.get("inputs"),
                     message.get("config"),
                     bool(message.get("callbacks")),
                 )
-                response = {
-                    "type": "response",
-                    "request_id": request_id,
-                    "ok": True,
-                    "result": result,
-                    "has_state": has_state,
-                    "state": state,
-                }
-                # Fail this invocation explicitly instead of silently killing
-                # the pipe writer when a custom result/state cannot cross a
-                # multiprocessing connection.
-                await self.outgoing.put(_freeze_message(response))
             elif kind == "call":
                 result = await self._call(
                     str(message.get("method") or ""),
                     tuple(message.get("args") or ()),
                     dict(message.get("kwargs") or {}),
                 )
-                await self._respond(request_id, result, snapshot=True)
             elif kind == "message_handler":
                 result = await self._handle_message(message["message"])
-                await self._respond(request_id, result, snapshot=True)
             else:
                 raise ValueError(f"Unknown process command {kind!r}")
+            has_state, state = await self._snapshot_state()
+            # Freeze at the operation boundary: serialization failures belong
+            # to this request, not the shared pipe writer or a later operation.
+            await self.outgoing.put(
+                _freeze_message({
+                    "type": "response",
+                    "request_id": request_id,
+                    "ok": True,
+                    "result": result,
+                    "has_state": has_state,
+                    "state": state,
+                })
+            )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
@@ -696,29 +695,13 @@ class AgentProcess:
         finally:
             self.context._leave_request(request_token)
 
-    async def _respond(
-        self, request_id: str, result: Any, *, snapshot: bool = False
-    ) -> None:
-        has_state, state = (
-            await self._snapshot_state() if snapshot else (False, None)
-        )
-        response = {
-            "type": "response",
-            "request_id": request_id,
-            "ok": True,
-            "result": result,
-            "has_state": has_state,
-            "state": state,
-        }
-        await self.outgoing.put(_freeze_message(response))
-
     async def _invoke(
         self,
         request_id: str,
         inputs: Any,
         config: Mapping[str, Any] | None,
         callbacks: bool,
-    ) -> tuple[Any, bool, Any]:
+    ) -> Any:
         invoke = getattr(self.agent, "ainvoke", None)
         if not callable(invoke):
             raise TypeError(
@@ -736,9 +719,7 @@ class AgentProcess:
                 )
             )
             invoke_config["callbacks"] = configured
-        result = await invoke(inputs, config=invoke_config or None)
-        has_state, state = await self._snapshot_state()
-        return result, has_state, state
+        return await invoke(inputs, config=invoke_config or None)
 
     async def _snapshot_state(self) -> tuple[bool, Any]:
         for method_name in ("snapshot_state", "export_state"):
@@ -754,11 +735,9 @@ class AgentProcess:
     ) -> Any:
         if not method_name or method_name.startswith("_"):
             raise ValueError("only public agent methods may be called")
-        method = getattr(self.agent, method_name)
-        if inspect.iscoroutinefunction(method):
-            return await method(*args, **kwargs)
-        value = await asyncio.to_thread(method, *args, **kwargs)
-        return await _maybe_await(value)
+        return await _call_without_blocking(
+            getattr(self.agent, method_name), *args, **kwargs
+        )
 
     def _routed_message(self, message: Mapping[str, Any]) -> AgentMessage:
         return AgentMessage(
@@ -1318,36 +1297,23 @@ class AgentManager:
             if entry.ready is not None and not entry.ready.done():
                 entry.ready.set_exception(error)
             return
-        if kind == "response":
-            task = asyncio.create_task(self._handle_response(entry, message))
-            self._track_task(entry, task)
-            entry.response_tasks.add(task)
-            task.add_done_callback(entry.response_tasks.discard)
-            return
-        if kind == "state_update":
-            task = asyncio.create_task(
-                self._commit_state(entry, message.get("state"))
+        if kind in {"response", "state_update"}:
+            operation = (
+                self._handle_response(entry, message)
+                if kind == "response"
+                else self._commit_state(entry, message.get("state"))
             )
+            task = asyncio.create_task(operation)
             self._track_task(entry, task)
             entry.response_tasks.add(task)
             task.add_done_callback(entry.response_tasks.discard)
-            return
-        if kind == "callback":
+        elif kind == "callback":
             self._queue_callback(entry, message)
-            return
-        if kind == "route_message":
+        elif kind in {"route_message", "runtime_request"}:
             self._track_task(
                 entry,
                 asyncio.create_task(
-                    self._route_message(entry, connection, message)
-                ),
-            )
-            return
-        if kind == "runtime_request":
-            self._track_task(
-                entry,
-                asyncio.create_task(
-                    self._route_runtime_request(entry, connection, message)
+                    self._route_context_request(entry, connection, message)
                 ),
             )
 
@@ -1438,76 +1404,48 @@ class AgentManager:
         entry.background_tasks.add(task)
         task.add_done_callback(entry.background_tasks.discard)
 
-    async def _route_message(
+    async def _route_context_request(
         self,
         entry: _ManagedAgent,
         connection: Any,
         message: Mapping[str, Any],
     ) -> None:
-        request_id = str(message.get("request_id") or "")
-        recipient = str(message.get("recipient") or "")
+        """Route child services through one recoverable response boundary."""
+        response = {
+            "type": "context_response",
+            "request_id": str(message.get("request_id") or ""),
+        }
         try:
-            if recipient == "host":
-                await self._host_messages.put(
-                    AgentMessage(
-                        sender=entry.spec.agent_id,
-                        recipient="host",
-                        payload=message.get("payload"),
-                    )
+            if message["type"] == "runtime_request":
+                handler = self._runtime_request_handlers[entry.spec.agent_id]
+                source_request_id = str(message.get("source_request_id") or "")
+                pending = entry.pending.get(source_request_id)
+                result = await handler(
+                    entry.spec.agent_id,
+                    str(message.get("action") or ""),
+                    dict(message.get("payload") or {}),
+                    pending.callbacks if pending is not None else (),
                 )
             else:
-                await self.send_message(
-                    recipient,
-                    message.get("payload"),
-                    sender=entry.spec.agent_id,
-                )
-            response = {
-                "type": "context_response",
-                "request_id": request_id,
-                "ok": True,
-                "result": None,
-            }
+                recipient = str(message.get("recipient") or "")
+                if recipient == "host":
+                    await self._host_messages.put(
+                        AgentMessage(
+                            sender=entry.spec.agent_id,
+                            recipient="host",
+                            payload=message.get("payload"),
+                        )
+                    )
+                else:
+                    await self.send_message(
+                        recipient,
+                        message.get("payload"),
+                        sender=entry.spec.agent_id,
+                    )
+                result = None
+            response.update(ok=True, result=result)
         except Exception as exc:
-            response = {
-                "type": "context_response",
-                "request_id": request_id,
-                "ok": False,
-                "error": str(exc),
-            }
-        await self._send(entry, response, connection=connection)
-
-    async def _route_runtime_request(
-        self,
-        entry: _ManagedAgent,
-        connection: Any,
-        message: Mapping[str, Any],
-    ) -> None:
-        """Delegate a child lifecycle request to its owning host runtime."""
-        request_id = str(message.get("request_id") or "")
-        try:
-            handler = self._runtime_request_handlers[entry.spec.agent_id]
-            source_request_id = str(message.get("source_request_id") or "")
-            pending = entry.pending.get(source_request_id)
-            callbacks = pending.callbacks if pending is not None else ()
-            result = await handler(
-                entry.spec.agent_id,
-                str(message.get("action") or ""),
-                dict(message.get("payload") or {}),
-                callbacks,
-            )
-            response = {
-                "type": "context_response",
-                "request_id": request_id,
-                "ok": True,
-                "result": result,
-            }
-        except Exception as exc:
-            response = {
-                "type": "context_response",
-                "request_id": request_id,
-                "ok": False,
-                "error": str(exc),
-            }
+            response.update(ok=False, error=str(exc))
         await self._send(entry, response, connection=connection)
 
     async def _process_exited(

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import multiprocessing
 import os
 import sqlite3
 from pathlib import Path
@@ -149,10 +148,6 @@ async def test_kill_interrupts_an_active_runtime_invocation(
         await invocation
 
 
-@pytest.mark.skipif(
-    "fork" not in multiprocessing.get_all_start_methods(),
-    reason="test fixtures are inherited through fork",
-)
 @pytest.mark.asyncio
 async def test_agent_runtime_runs_cli_agent_outside_host_process(
     runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -165,37 +160,24 @@ async def test_agent_runtime_runs_cli_agent_outside_host_process(
     assert runtime.agents["chat"]._agent is None
 
 
-@pytest.mark.skipif(
-    "fork" not in multiprocessing.get_all_start_methods(),
-    reason="test fixtures are inherited through fork",
-)
 @pytest.mark.asyncio
-async def test_runtime_serializes_filtered_tool_schemas() -> None:
-    manager = AgentManager(
-        start_method="fork",
-        heartbeat_interval=0.05,
-        heartbeat_timeout=1,
-    )
-    try:
-        await manager.register(
-            AgentSpec(
-                agent_id="tool-browser",
-                factory="tests.runtime.fixtures:tool_describing_factory",
-            )
+async def test_runtime_serializes_filtered_tool_schemas(
+    runtime_factory,
+) -> None:
+    _, manager = runtime_factory(fork=True)
+    await manager.register(
+        AgentSpec(
+            agent_id="tool-browser",
+            factory="tests.runtime.fixtures:tool_describing_factory",
         )
-        tools = await manager.call("tool-browser", "describe_tools")
-        by_name = {tool["name"]: tool for tool in tools}
+    )
+    tools = await manager.call("tool-browser", "describe_tools")
+    by_name = {tool["name"]: tool for tool in tools}
 
-        assert "run_command" in by_name
-        assert set(by_name["run_command"]["schema"]["properties"]) == {"query"}
-    finally:
-        await manager.aclose()
+    assert "run_command" in by_name
+    assert set(by_name["run_command"]["schema"]["properties"]) == {"query"}
 
 
-@pytest.mark.skipif(
-    "fork" not in multiprocessing.get_all_start_methods(),
-    reason="test fixtures are inherited through fork",
-)
 @pytest.mark.asyncio
 async def test_subagents_are_launched_as_managed_processes(
     runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -263,10 +245,6 @@ async def test_subagents_are_launched_as_managed_processes(
     ]
 
 
-@pytest.mark.skipif(
-    "fork" not in multiprocessing.get_all_start_methods(),
-    reason="test fixtures are inherited through fork",
-)
 @pytest.mark.asyncio
 async def test_hierarchy_shares_checkpoint_file_with_distinct_threads(
     runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -339,10 +317,6 @@ async def test_hierarchy_shares_checkpoint_file_with_distinct_threads(
     }
 
 
-@pytest.mark.skipif(
-    "fork" not in multiprocessing.get_all_start_methods(),
-    reason="test fixtures are inherited through fork",
-)
 @pytest.mark.asyncio
 async def test_subagent_model_usage_callbacks_keep_recipient_metadata(
     runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -401,10 +375,6 @@ async def test_subagent_model_usage_callbacks_keep_recipient_metadata(
     ]
 
 
-@pytest.mark.skipif(
-    "fork" not in multiprocessing.get_all_start_methods(),
-    reason="test fixtures are inherited through fork",
-)
 @pytest.mark.asyncio
 async def test_host_selects_requested_subagent_type(
     runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -444,10 +414,6 @@ async def test_host_selects_requested_subagent_type(
     assert "root/unknown" not in runtime._hierarchies[root.runtime_id]
 
 
-@pytest.mark.skipif(
-    "fork" not in multiprocessing.get_all_start_methods(),
-    reason="test fixtures are inherited through fork",
-)
 @pytest.mark.asyncio
 async def test_subagent_limit_is_a_recoverable_runtime_tool_error(
     runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -471,10 +437,6 @@ async def test_subagent_limit_is_a_recoverable_runtime_tool_error(
     ]
 
 
-@pytest.mark.skipif(
-    "fork" not in multiprocessing.get_all_start_methods(),
-    reason="test fixtures are inherited through fork",
-)
 @pytest.mark.asyncio
 async def test_unknown_subagent_path_does_not_fail_managed_agent(
     runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -729,10 +691,6 @@ async def test_host_stops_only_a_descendant_subtree(
         allow_teardown.set()
 
 
-@pytest.mark.skipif(
-    "fork" not in multiprocessing.get_all_start_methods(),
-    reason="test fixtures are inherited through fork",
-)
 @pytest.mark.asyncio
 async def test_run_active_agent_message_wakes_a_managed_wait(
     runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -775,10 +733,6 @@ async def test_run_active_agent_message_wakes_a_managed_wait(
     assert (await manager.snapshot(root.runtime_id)).status.value == "ready"
 
 
-@pytest.mark.skipif(
-    "fork" not in multiprocessing.get_all_start_methods(),
-    reason="test fixtures are inherited through fork",
-)
 @pytest.mark.asyncio
 async def test_agent_message_is_returned_to_managed_wait(
     runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -826,10 +780,6 @@ async def test_agent_message_is_returned_to_managed_wait(
     runtime._mark_working(child_path, -1)
 
 
-@pytest.mark.skipif(
-    "fork" not in multiprocessing.get_all_start_methods(),
-    reason="test fixtures are inherited through fork",
-)
 @pytest.mark.asyncio
 async def test_agent_message_emits_one_activity_lifecycle(
     runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -873,57 +823,23 @@ async def test_agent_message_emits_one_activity_lifecycle(
     ]
 
 
-@pytest.mark.skipif(
-    "fork" not in multiprocessing.get_all_start_methods(),
-    reason="test fixtures are inherited through fork",
-)
 @pytest.mark.asyncio
 async def test_runtimes_share_manager_without_agent_id_or_ownership_collision(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(
-        "ursa.runtime.agent_runtime.validate_model_provider",
-        lambda *_args: None,
+    first, manager = runtime_factory(fork=True, workspace=tmp_path / "first")
+    second, _ = runtime_factory(
+        fork=True, manager=manager, workspace=tmp_path / "second"
     )
-    manager = AgentManager(
-        start_method="fork",
-        heartbeat_interval=0.05,
-        heartbeat_timeout=1,
-    )
-    first = AgentRuntime(
-        UrsaConfig(
-            workspace=tmp_path / "first",
-            llm_model={"model": "fake:chat"},
-        ),
-        manager=manager,
-    )
-    second = AgentRuntime(
-        UrsaConfig(
-            workspace=tmp_path / "second",
-            llm_model={"model": "fake:chat"},
-        ),
-        manager=manager,
-    )
-    try:
-        assert (
-            first.agents["chat"].runtime_id != second.agents["chat"].runtime_id
-        )
-        assert await first.run_agent("chat", "first") == "ok"
-        assert await second.run_agent("chat", "second") == "ok"
+    assert first.agents["chat"].runtime_id != second.agents["chat"].runtime_id
+    assert await first.run_agent("chat", "first") == "ok"
+    assert await second.run_agent("chat", "second") == "ok"
 
-        await first.aclose()
+    await first.aclose()
 
-        assert await second.run_agent("chat", "still running") == "ok"
-    finally:
-        await first.aclose()
-        await second.aclose()
-        await manager.aclose()
+    assert await second.run_agent("chat", "still running") == "ok"
 
 
-@pytest.mark.skipif(
-    "fork" not in multiprocessing.get_all_start_methods(),
-    reason="test fixtures are inherited through fork",
-)
 @pytest.mark.asyncio
 async def test_runtime_resolves_selected_keyring_in_host_and_skips_unused(
     runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

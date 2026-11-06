@@ -54,6 +54,13 @@ from ursa.cli.tui.widgets import (
 from ursa.util.inference_providers import ProviderModel
 
 
+async def open_model_screen(app, pilot):
+    await app._show_command("models")
+    await pilot.pause()
+    await app.workers.wait_for_complete()
+    assert isinstance(app.screen, ModelScreen)
+
+
 async def wait_for_yaml_debounce(pilot) -> None:
     """Let the YAML validation timer fire, then flush resulting messages."""
     await asyncio.sleep(ModelScreen.YAML_VALIDATION_DELAY + 0.1)
@@ -128,10 +135,8 @@ async def test_agent_hotlist_routes_selected_agent(tmp_path):
 
 
 async def test_agent_selection_moves_to_front_replaces_and_preserves_cursor(
-    tmp_path,
+    app,
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
     async with app.run_test(size=(100, 36)) as pilot:
         prompt = app.query_one(PromptArea)
         prompt.load_text("Review docs carefully")
@@ -154,9 +159,7 @@ async def test_agent_selection_moves_to_front_replaces_and_preserves_cursor(
         assert prompt.cursor_location == (0, 12)
 
 
-async def test_macro_selectors_close_with_escape(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_macro_selectors_close_with_escape(app):
     async with app.run_test(size=(100, 36)) as pilot:
         prompt = app.query_one(PromptArea)
         prompt.load_text("Review docs carefully")
@@ -197,10 +200,8 @@ async def test_macro_selectors_close_with_escape(tmp_path):
 
 
 async def test_escaping_command_picker_preserves_multiline_draft_and_undo(
-    tmp_path,
+    app,
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
     async with app.run_test(size=(100, 36)) as pilot:
         prompt = app.query_one(PromptArea)
         prompt.load_text("alpha\nbeta")
@@ -224,9 +225,7 @@ async def test_escaping_command_picker_preserves_multiline_draft_and_undo(
         assert not isinstance(app.screen, HotlistScreen)
 
 
-async def test_macro_choice_is_undoable_without_reopening_picker(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_macro_choice_is_undoable_without_reopening_picker(app):
     async with app.run_test(size=(100, 36)) as pilot:
         prompt = app.query_one(PromptArea)
         prompt.load_text("Review docs")
@@ -251,10 +250,8 @@ async def test_macro_choice_is_undoable_without_reopening_picker(tmp_path):
 
 
 async def test_programmatic_and_pasted_macro_characters_do_not_open_picker(
-    tmp_path,
+    app,
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
     async with app.run_test(size=(100, 36)) as pilot:
         prompt = app.query_one(PromptArea)
         prompt.load_text("#plan programmatic")
@@ -308,17 +305,13 @@ async def test_file_hotlist_uses_at_trigger(tmp_path):
         assert prompt.text == f"@{Path('docs')}{os.sep} "
 
 
-async def test_shift_enter_adds_a_prompt_newline(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_shift_enter_adds_a_prompt_newline(app):
     async with app.run_test() as pilot:
         await pilot.press("a", "shift+enter", "b")
         assert app.query_one(PromptArea).text == "a\nb"
 
 
-async def test_ctrl_j_adds_a_prompt_newline(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_ctrl_j_adds_a_prompt_newline(app):
     async with app.run_test() as pilot:
         await pilot.press("a", "ctrl+j", "b")
         assert app.query_one(PromptArea).text == "a\nb"
@@ -340,9 +333,7 @@ def test_newline_key_falls_back_to_ctrl_j(tmp_path, monkeypatch):
     assert app.preferred_newline_key == "ctrl+j"
 
 
-async def test_prompt_has_markdown_highlighting_paste_undo_and_redo(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_prompt_has_markdown_highlighting_paste_undo_and_redo(app):
     async with app.run_test() as pilot:
         prompt = app.query_one(PromptArea)
         assert prompt.language == "markdown"
@@ -358,10 +349,7 @@ async def test_prompt_has_markdown_highlighting_paste_undo_and_redo(tmp_path):
         assert prompt.text == "# heading\nbody"
 
 
-async def test_prompt_copy_shortcut_preserves_selected_text(
-    tmp_path, monkeypatch
-):
-    app = UrsaTextualApp(make_runtime(tmp_path))
+async def test_prompt_copy_shortcut_preserves_selected_text(app, monkeypatch):
     copied = []
     monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
 
@@ -377,9 +365,8 @@ async def test_prompt_copy_shortcut_preserves_selected_text(
 
 
 async def test_prompt_copy_shortcut_delegates_to_screen_selection(
-    tmp_path, monkeypatch
+    app, monkeypatch
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
     delegated = []
 
     async with app.run_test() as pilot:
@@ -392,9 +379,7 @@ async def test_prompt_copy_shortcut_delegates_to_screen_selection(
         assert delegated == [True]
 
 
-async def test_prompt_supports_option_arrow_word_navigation(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_prompt_supports_option_arrow_word_navigation(app):
     async with app.run_test() as pilot:
         prompt = app.query_one(PromptArea)
         prompt.load_text("alpha beta")
@@ -430,9 +415,7 @@ async def test_ctrl_c_clears_prompt_and_adds_it_to_history(tmp_path):
         assert prompt.text == "draft"
 
 
-async def test_prompt_caps_at_thirty_percent_of_terminal_height(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_prompt_caps_at_thirty_percent_of_terminal_height(app):
     async with app.run_test(size=(100, 36)) as pilot:
         prompt = app.query_one(PromptArea)
         assert prompt.region.height == 3  # One content row plus the border.
@@ -452,9 +435,7 @@ async def test_prompt_caps_at_thirty_percent_of_terminal_height(tmp_path):
         assert prompt.region.height == 8  # ceil(20 * 0.3) plus the border.
 
 
-async def test_prompt_grows_for_soft_wrapped_lines(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_prompt_grows_for_soft_wrapped_lines(app):
     async with app.run_test(size=(40, 24)) as pilot:
         prompt = app.query_one(PromptArea)
         prompt.load_text("word " * 40)
@@ -516,9 +497,7 @@ async def test_named_agent_appears_in_statusline_and_status_command(tmp_path):
         assert "lab-assistant" in app._status_markdown()
 
 
-async def test_welcome_tips_vary_and_keymaps_resolve(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_welcome_tips_vary_and_keymaps_resolve(app):
     async with app.run_test(size=(80, 24)):
         owners = (type(app), PromptArea, HotlistScreen)
         keymap = runtime_keymap(app, owners)
@@ -526,9 +505,7 @@ async def test_welcome_tips_vary_and_keymaps_resolve(tmp_path):
         assert len({random_tip(app, owners) for _ in range(100)}) > 1
 
 
-async def test_welcome_tip_border_uses_visible_theme_border(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_welcome_tip_border_uses_visible_theme_border(app):
     async with app.run_test(size=(80, 24)) as pilot:
         tip = app.query_one("#welcome-tip", Static)
         for theme_name in ("ursa-dark", "ursa-light"):
@@ -544,9 +521,9 @@ async def test_welcome_tip_border_uses_visible_theme_border(tmp_path):
             assert border_color != app.screen.styles.background
 
 
-async def test_welcome_version_and_workspace_align_at_narrow_width(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_welcome_version_and_workspace_align_at_narrow_width(
+    tmp_path, app
+):
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         logo = app.query_one("#welcome-logo")
@@ -590,9 +567,7 @@ async def test_workspace_uses_one_borderless_row_when_it_fits(tmp_path):
         assert str(workspace.content) == str(Path("/tmp/ursa").resolve())
 
 
-async def test_picker_header_shares_the_top_row_with_exit_hint(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_picker_header_shares_the_top_row_with_exit_hint(app):
     async with app.run_test(size=(80, 24)) as pilot:
         app.push_screen(HotlistScreen("Workspace paths", ["src/"]))
         await pilot.pause()
@@ -825,9 +800,7 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         assert not isinstance(app.screen, InformationScreen)
 
 
-async def test_exit_command_quits_the_app(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_exit_command_quits_the_app(app):
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.press("/", "e", "x", "i", "t", "enter")
         await pilot.pause()
@@ -859,10 +832,7 @@ async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         assert (
             app.screen.query_one("#chat-inference-provider", Select).value
             == "openai"
@@ -998,9 +968,8 @@ async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
 
 
 async def test_invalid_model_selection_notifies_without_closing_modal(
-    tmp_path, monkeypatch
+    app, monkeypatch
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
     notifications = []
     monkeypatch.setattr(
         app,
@@ -1050,10 +1019,7 @@ async def test_model_yaml_round_trips_extras_and_updates_controls(
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         assert type(editor.document).__name__ == "SyntaxAwareDocument"
         assert editor._highlight_query is not None
@@ -1105,10 +1071,7 @@ async def test_valid_yaml_is_committed_only_when_apply_is_pressed(
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = """\
 model: applied-model
@@ -1144,10 +1107,7 @@ async def test_yaml_validation_keeps_unavailable_model_as_not_found(
     app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = """\
 model: unavailable-model
@@ -1179,10 +1139,7 @@ async def test_yaml_keeps_unavailable_model_provider_visible(
     app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = """\
 model: custom-model
@@ -1243,10 +1200,7 @@ async def test_whitespace_chat_model_yaml_is_rejected_before_apply(
     app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = "model: '   '\nmodel_provider: openai\n"
 
@@ -1269,10 +1223,7 @@ async def test_whitespace_embedding_model_yaml_is_rejected_before_apply(
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         editor = app.screen.query_one("#embedding-config-yaml", TextArea)
         editor.text = "model: '   '\nmodel_provider: openai\n"
 
@@ -1302,10 +1253,7 @@ async def test_structured_chat_none_updates_yaml_and_blocks_apply(
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         app.screen.query_one(
             "#chat-model-name", Select
         ).value = ModelScreen.NONE_VALUE
@@ -1332,10 +1280,7 @@ async def test_structured_embedding_none_removes_configured_embedding(
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         app.screen.query_one(
             "#embedding-model-name", Select
         ).value = ModelScreen.NONE_VALUE
@@ -1362,10 +1307,7 @@ async def test_yaml_validation_names_unknown_inference_provider(
     app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = "model: test-model\ninference_provider: missing\n"
 
@@ -1388,10 +1330,7 @@ async def test_model_option_refresh_preserves_sync_guard_and_empty_choice(
     app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
 
         app.screen._syncing_controls = True
         app.screen._set_model_options("embedding", {}, "")
@@ -1416,10 +1355,7 @@ async def test_programmatic_control_sync_suppresses_queued_events(
     app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         discoveries.clear()
         updated = app.screen.drafts["chat"].model_copy(
             update={"model": "programmatic-model"}
@@ -1454,10 +1390,7 @@ async def test_masked_yaml_api_key_preserves_secret_value(
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         assert "actual-secret" not in editor.text
         assert "api_key: '**********'" in editor.text
@@ -1487,10 +1420,7 @@ async def test_direct_provider_selection_refreshes_model_catalog(
     app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
 
         app.screen.query_one(
             "#chat-inference-provider", Select
@@ -1530,10 +1460,7 @@ async def test_yaml_provider_change_refreshes_model_catalog(
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = """\
 model: test-model
@@ -1573,10 +1500,7 @@ async def test_provider_discovery_failure_clears_previous_catalog(
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         assert "old-only" in app.screen.model_catalogs["chat"]
 
         app.screen.query_one(
@@ -1600,10 +1524,7 @@ async def test_expanded_advanced_modal_is_scrollable_on_short_terminal(
     app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 20)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         app.screen.query_one("#chat-advanced", Collapsible).collapsed = False
         await pilot.pause()
 
@@ -1650,10 +1571,7 @@ async def test_advanced_yaml_seeded_fuzz_never_mutates_running_config(
     random.Random(20260826).shuffle(cases)
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         advanced = app.screen.query_one("#chat-advanced", Collapsible)
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         assert advanced.collapsed
@@ -1712,10 +1630,7 @@ async def test_cancel_discards_yaml_with_pending_validation(
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         app.screen.query_one(
             "#chat-config-yaml", TextArea
         ).text = "model: changed-before-cancel\n"
@@ -1742,10 +1657,7 @@ async def test_yaml_debounce_restarts_from_latest_edit(tmp_path, monkeypatch):
     app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = "model: first-edit\n"
         await pilot.pause()
@@ -1777,10 +1689,7 @@ async def test_invalid_yaml_blocks_model_accept(tmp_path, monkeypatch):
     )
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = "model: [not valid"
 
@@ -1801,10 +1710,7 @@ async def test_yaml_validation_error_with_rich_markup_is_plain_text(
     app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = """\
 model: gpt-5.4
@@ -1841,10 +1747,7 @@ async def test_yaml_validation_lists_all_errors_in_bounded_scroll_area(
     app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         app.screen.query_one("#chat-advanced", Collapsible).collapsed = False
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = """\
@@ -1913,10 +1816,7 @@ async def test_model_modal_preserves_direct_embedding_endpoint(
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         assert (
             app.screen.query_one("#embedding-inference-provider", Select).value
             == ModelScreen.NONE_VALUE
@@ -1958,10 +1858,7 @@ async def test_switching_direct_endpoint_to_named_provider_stays_in_sync(
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
 
         provider = app.screen.query_one("#chat-inference-provider", Select)
         provider.value = "openai"
@@ -2002,10 +1899,7 @@ async def test_named_provider_control_removes_direct_url_in_one_sync(
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         provider = app.screen.query_one("#chat-inference-provider", Select)
         initial_yaml = yaml.safe_load(
             app.screen.query_one("#chat-config-yaml", TextArea).text
@@ -2042,10 +1936,7 @@ async def test_immediate_apply_clears_direct_url_for_named_provider(
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         app.screen.query_one(
             "#chat-inference-provider", Select
         ).value = "openai"
@@ -2095,10 +1986,7 @@ async def test_model_modal_preserves_only_explicit_overrides_when_switching_prov
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         app.screen.query_one("#chat-inference-provider", Select).value = "other"
 
         chat = app.screen._settings("chat", app.screen.chat)
@@ -2126,10 +2014,7 @@ async def test_model_modal_uses_default_provider_for_new_embedding(
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
         assert any(
             config.model_provider == "openai"
             and config.api_key
@@ -2249,10 +2134,7 @@ async def test_model_modal_seeded_provider_fuzz_preserves_invariants(
     rng = random.Random(20260826)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        await open_model_screen(app, pilot)
 
         for iteration in range(30):
             provider_select = app.screen.query_one(
@@ -2322,10 +2204,8 @@ def test_model_modal_new_embedding_inherits_direct_chat_settings(tmp_path):
 
 
 async def test_command_picker_prioritizes_command_name_over_description(
-    tmp_path,
+    app,
 ):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.press("/", "k", "e")
         await pilot.pause()
@@ -2337,9 +2217,7 @@ async def test_command_picker_prioritizes_command_name_over_description(
         assert app.screen.query_one("#hotlist-options").highlighted == 0
 
 
-async def test_theme_command_selects_theme_and_escape_preserves_it(tmp_path):
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+async def test_theme_command_selects_theme_and_escape_preserves_it(app):
     async with app.run_test(size=(80, 24)) as pilot:
         status = app.query_one("#status", Static)
         dark_background = status.styles.background
@@ -2879,13 +2757,11 @@ def test_hotlist_mount_survives_absent_children():
     screen.on_mount()
 
 
-async def test_hotlist_mount_race_with_teardown_does_not_crash(tmp_path):
+async def test_hotlist_mount_race_with_teardown_does_not_crash(app):
     # Real-machinery pin for the mount race: exiting right after the push
     # makes mount_all skip composing children while Mount still
     # dispatches, and the unguarded on_mount crashed the app (NoMatches
     # raised at run_test exit).
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
     async with app.run_test(size=(100, 36)):
         app.push_screen(HotlistScreen("pick", ["one"]))
         app.exit()

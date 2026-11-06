@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import multiprocessing
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -175,6 +175,33 @@ async def test_agent_process_rejects_private_calls() -> None:
     assert response["message"] == "only public agent methods may be called"
 
 
+@pytest.mark.parametrize("kind", ["invoke", "call", "message_handler"])
+async def test_unserializable_result_fails_only_its_request(kind, monkeypatch):
+    process = _process()
+    method = "on_message" if kind == "message_handler" else "ainvoke"
+    monkeypatch.setattr(
+        process.agent, method, AsyncMock(side_effect=[lambda: None, "ok"])
+    )
+    request = {
+        "type": kind,
+        "method": method,
+        "inputs": "hello",
+        "args": ["hello"],
+        "message": AgentMessage("host", "unit", "hello"),
+    }
+    await process._dispatch(request | {"request_id": "bad"})
+    failed = await process.outgoing.get()
+    assert not failed["ok"] and failed["request_id"] == "bad"
+    assert "pickle" in failed["message"]
+    assert process.context.active_request_id is None
+
+    await process._dispatch(request | {"request_id": "next"})
+    succeeded = await process.outgoing.get()
+    assert succeeded["ok"] and succeeded["request_id"] == "next"
+    assert succeeded["result"] == "ok"
+    assert succeeded["state"] == {"calls": 0}
+
+
 @pytest.mark.asyncio
 async def test_agent_process_delivers_exact_message_before_snapshot() -> None:
     process = _process()
@@ -197,58 +224,25 @@ async def test_agent_process_delivers_exact_message_before_snapshot() -> None:
     }
 
 
-@pytest.mark.asyncio
-async def test_stopping_process_releases_its_process_handle() -> None:
-    class Process:
-        def __init__(self) -> None:
-            self.closed = False
-
-        def close(self) -> None:
-            self.closed = True
-
+@pytest.mark.parametrize("new_generation", [False, True])
+async def test_stopping_process_closes_only_its_own_generation(new_generation):
     manager = AgentManager()
     entry = _ManagedAgent(AgentSpec("unit", lambda *_args: None), None)
-    process = Process()
-    entry.process = cast(multiprocessing.Process, process)
-    entry.generation = 1
+    stopped = Mock(spec=["close"])
+    current = Mock(spec=["close"]) if new_generation else stopped
+    entry.process = current
+    entry.generation = 2 if new_generation else 1
 
-    await manager._finish_stopped(
-        entry, 1, _Connection(), cast(multiprocessing.Process, process)
-    )
+    await manager._finish_stopped(entry, 1, _Connection(), stopped)
 
-    assert process.closed
-    assert entry.process is None
-
-
-@pytest.mark.asyncio
-async def test_stopping_old_process_preserves_newer_generation() -> None:
-    class Process:
-        def __init__(self) -> None:
-            self.closed = False
-
-        def close(self) -> None:
-            self.closed = True
-
-    manager = AgentManager()
-    entry = _ManagedAgent(AgentSpec("unit", lambda *_args: None), None)
-    stopped = Process()
-    newer = Process()
-    entry.process = cast(multiprocessing.Process, newer)
-    entry.generation = 2
-
-    await manager._finish_stopped(
-        entry, 1, _Connection(), cast(multiprocessing.Process, stopped)
-    )
-
-    assert stopped.closed
-    assert not newer.closed
-    assert entry.process is newer
+    stopped.close.assert_called_once_with()
+    assert entry.process is (current if new_generation else None)
+    if new_generation:
+        current.close.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_manager_response_commits_state_before_resolving() -> None:
-    from ursa.runtime import AgentManager
-
     manager = AgentManager()
     entry = _ManagedAgent(AgentSpec("unit", lambda *_args: None), None)
     future = asyncio.get_running_loop().create_future()

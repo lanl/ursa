@@ -26,6 +26,7 @@ from ursa.cli.tui.event_cards import (
     SearchEventCard,
     ToolCallCard,
 )
+from ursa.cli.tui.event_cards.tools import tool_event_input
 from ursa.cli.tui.helpers import (
     AGENT_LABELS,
     FILE_TOOLS,
@@ -272,9 +273,7 @@ class Turn(Static):
             )
             await self._replace_or_mount(key, card)
         self._mark_summary(summary_kind, card)
-        if isinstance(card, AgentEventCard):
-            card.update_event(payload)
-        elif isinstance(card, SearchEventCard):
+        if isinstance(card, (AgentEventCard, SearchEventCard)):
             card.update_event(payload)
         else:
             detail = payload.get("error") or payload.get("preview")
@@ -321,34 +320,12 @@ class Turn(Static):
         card = self._tool_calls_by_id.get(run_id) if run_id else None
         phase = str(payload.get("phase") or "")
         if card is None:
-            ignored = {
-                "tool",
-                "phase",
-                "result",
-                "error",
-                "status",
-                "tool_message",
-                "_run_id",
-                "_received_at",
-                "_agent_path",
-            }
-            tool_input = {
-                key: value
-                for key, value in payload.items()
-                if key not in ignored
-            }
+            tool_input = tool_event_input(payload)
             key = self._next_summary_key("tool")
             tool = str(payload.get("tool"))
             card = (
                 AgentToolCard(key, tool, tool_input)
-                if tool
-                in {
-                    "spawn_agent",
-                    "send_message",
-                    "wait_for",
-                    "stop_agent",
-                    "list_agents",
-                }
+                if tool == "list_agents"
                 else ToolCallCard(key, tool, tool_input)
             )
             await self._replace_or_mount(key, card)

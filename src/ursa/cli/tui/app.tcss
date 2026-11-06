@@ -45,16 +45,8 @@ ThemeScreen {
     min-height: 3;
 }
 
-InformationScreen {
-    align: center middle;
-    background: $background 50%;
-}
-
-MessagesScreen {
-    align: center middle;
-    background: $background 50%;
-}
-
+InformationScreen,
+MessagesScreen,
 ModelScreen {
     align: center middle;
     background: $background 50%;
@@ -251,7 +243,9 @@ ModelScreen SelectCurrent {
     height: 1;
 }
 
-.hierarchy-message-route {
+.hierarchy-message-route,
+.tool-call-preview,
+.agent-tool-preview {
     width: 1fr;
     height: 1;
     overflow: hidden hidden;
@@ -581,21 +575,16 @@ AgentToolCard > .event-expand-hint {
     text-style: bold;
 }
 
-.tool-call-summary {
+.tool-call-summary,
+.agent-tool-summary {
     height: 1;
     padding: 0 1;
 }
 
-.tool-call-state {
+.tool-call-state,
+.agent-tool-state {
     width: 4;
     color: $primary;
-}
-
-.tool-call-preview {
-    width: 1fr;
-    height: 1;
-    overflow: hidden hidden;
-    text-overflow: ellipsis;
 }
 
 .agent-tool-title {
@@ -664,23 +653,6 @@ AgentToolCard > .event-expand-hint {
     text-overflow: ellipsis;
     content-align: center middle;
     color: $text-muted;
-}
-
-.agent-tool-summary {
-    height: 1;
-    padding: 0 1;
-}
-
-.agent-tool-state {
-    width: 4;
-    color: $primary;
-}
-
-.agent-tool-preview {
-    width: 1fr;
-    height: 1;
-    overflow: hidden hidden;
-    text-overflow: ellipsis;
 }
 
 .agent-tool-details {
