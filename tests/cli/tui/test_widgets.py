@@ -36,12 +36,14 @@ from ursa.cli.config import (
     InferenceProviderConfig,
 )
 from ursa.cli.tui.app import UrsaTextualApp
+from ursa.cli.tui.helpers import TokenUsage
 from ursa.cli.tui.tips import TIPS, random_tip, runtime_keymap
 from ursa.cli.tui.widgets import (
     AgentsScreen,
     FuzzySelectOverlay,
     HotlistScreen,
     InformationScreen,
+    LiveHierarchyTree,
     ModelScreen,
     ModelSelection,
     PromptArea,
@@ -627,8 +629,23 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
     }
     runtime._working_counts["root"] = 1
     app = UrsaTextualApp(runtime)
+    app._active_agent_path = "root"
     app._agent_turns["root"] = SimpleNamespace(token_usage=17)
     app._agent_turns["root/researcher"] = SimpleNamespace(token_usage=29)
+    app._agent_token_usage["root"] = TokenUsage(
+        input_tokens=11,
+        output_tokens=6,
+        cached_tokens=4,
+        total_tokens=17,
+    )
+    app._agent_token_usage["root/researcher"] = TokenUsage(
+        input_tokens=21,
+        output_tokens=8,
+        cached_tokens=5,
+        total_tokens=29,
+    )
+    app._agent_last_activity["root"] = "Reading the request"
+    app._agent_last_activity["root/researcher"] = "Checking references"
 
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.press("/")
@@ -647,6 +664,7 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         ] == [
             "agents",
             "exit",
+            "messages",
             "subagents",
             "status",
             "keymap",
@@ -664,13 +682,108 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         assert "ursa-mcp" in app.screen.content
         assert "https://example.test/mcp" in app.screen.content
 
+        # The status overview itself remains current while its modal is open.
+        summary = app.screen.query_one(
+            "#information-body", VerticalScroll
+        ).query_one(Markdown)
+        app.total_tokens = 123
+        await wait_for(
+            pilot,
+            lambda: "123" in str(summary.source),
+            timeout=3,
+        )
+
         tabs = {str(tab.label): tab for tab in app.screen.query(Tab)}
         assert "Subagents" in tabs
         await pilot.click(f"#{tabs['Subagents'].id}")
         await pilot.pause()
-        assert "`root` — **Working** · 17 tokens" in app.screen.subagents
-        assert (
-            "`root/researcher` — **Ready** · 29 tokens" in app.screen.subagents
+        tree = app.screen.query_one(LiveHierarchyTree)
+
+        def tree_rows():
+            rows = {}
+
+            def visit(node):
+                if node.data is not None:
+                    rows[node.data.path] = node.data
+                for child in node.children:
+                    visit(child)
+
+            visit(tree.root)
+            return rows
+
+        rows = tree_rows()
+        assert rows["root"].state == "Working"
+        assert rows["root"].tokens == 17
+        assert rows["root"].input_tokens == 7
+        assert rows["root"].output_tokens == 6
+        assert rows["root"].cached_tokens == 4
+        assert rows["root"].last_action == "Reading the request"
+        assert rows["root"].active
+        assert rows["root/researcher"].state == "Ready"
+        assert rows["root/researcher"].tokens == 29
+        assert rows["root/researcher"].input_tokens == 16
+        assert rows["root/researcher"].output_tokens == 8
+        assert rows["root/researcher"].cached_tokens == 5
+        assert rows["root/researcher"].last_action == "Checking references"
+
+        researcher_node = next(
+            node
+            for node in tree.root.children[0].children
+            if getattr(node.data, "path", None) == "root/researcher"
+        )
+        detail_lines = [
+            child.label.plain
+            for child in researcher_node.children
+            if child.data is None
+        ]
+        assert detail_lines == [
+            "Tokens: 29 total · 16 input · 8 output · 5 cached",
+            "Last activity: Checking references",
+        ]
+
+        runtime._working_counts.pop("root", None)
+        runtime._working_counts["root/researcher"] = 1
+        # A later run replaces the visible Turn, but the tree keeps the
+        # agent's cumulative usage rather than reverting to this run alone.
+        app._agent_turns["root/researcher"] = SimpleNamespace(token_usage=8)
+        app._agent_token_usage["root/researcher"] = TokenUsage(
+            input_tokens=27,
+            output_tokens=10,
+            cached_tokens=7,
+            total_tokens=37,
+        )
+        app._agent_last_activity["root/researcher"] = "Comparing sources"
+        app._active_agent_path = "root/researcher"
+        await wait_for(
+            pilot,
+            lambda: (
+                (updated := tree_rows()).get("root/researcher") is not None
+                and updated["root/researcher"].state == "Working"
+                and updated["root/researcher"].tokens == 37
+                and updated["root/researcher"].last_action
+                == "Comparing sources"
+                and updated["root/researcher"].active
+            ),
+            timeout=3,
+        )
+
+        # The screen-level navigation bindings target the Tree while this tab
+        # is active, so a deep hierarchy remains keyboard-scrollable.
+        runtime._hierarchies[root_id].update({
+            f"root/worker-{index}": f"{root_id}:sub:root/worker-{index}"
+            for index in range(24)
+        })
+        await wait_for(pilot, lambda: len(tree_rows()) >= 26, timeout=3)
+        await pilot.press("end")
+        await pilot.pause()
+        await wait_for(pilot, lambda: tree.scroll_y > 0, timeout=3)
+        assert tree.scroll_y > 0
+
+        runtime._hierarchies[root_id].pop("root/researcher")
+        await wait_for(
+            pilot,
+            lambda: "root/researcher" not in tree_rows(),
+            timeout=3,
         )
         await pilot.click(f"#{tabs['Config'].id}")
         await pilot.press("tab")
@@ -2713,7 +2826,7 @@ def test_command_details_and_keymap_come_from_live_bindings(
     keymap = app._keymap_markdown()
 
     assert "1,234" in status
-    assert "1,000" in status
+    assert "544" in status
     assert "234" in status
     assert "456" in status
     assert "test-model" in status
@@ -2726,6 +2839,7 @@ def test_command_details_and_keymap_come_from_live_bindings(
         "## Application",
         "## Prompt editor",
         "## Picker",
+        "## Message log",
         "## Information screen",
         "Submit prompt",
         "Choose workspace path",

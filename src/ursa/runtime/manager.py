@@ -14,6 +14,7 @@ import logging
 import multiprocessing
 import os
 import pickle
+import sys
 import tempfile
 import threading
 import traceback
@@ -29,6 +30,147 @@ from uuid import uuid4
 from langchain_core.callbacks import AsyncCallbackHandler
 
 LOGGER = logging.getLogger(__name__)
+
+
+class _ProcessLogHandler(logging.Handler):
+    """Forward child-process log records through the runtime control queue."""
+
+    def __init__(
+        self,
+        outgoing: asyncio.Queue[dict[str, Any]],
+        loop: asyncio.AbstractEventLoop,
+        agent_id: str,
+    ) -> None:
+        super().__init__()
+        self.outgoing = outgoing
+        self.loop = loop
+        self.agent_id = agent_id
+        self.loop_thread = threading.get_ident()
+        self.setFormatter(logging.Formatter("%(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = {
+                "type": "log",
+                "agent_id": self.agent_id,
+                "logger": record.name,
+                "level": record.levelno,
+                "message": self.format(record),
+            }
+            if threading.get_ident() == self.loop_thread:
+                self.outgoing.put_nowait(message)
+            else:
+                self.loop.call_soon_threadsafe(
+                    self.outgoing.put_nowait, message
+                )
+        except Exception:
+            # Logging must never take down an agent process, and calling
+            # Handler.handleError() could recurse through redirected stderr.
+            pass
+
+
+class _LoggingStream:
+    """Line-buffered text stream which emits writes through logging."""
+
+    encoding = "utf-8"
+    errors = "replace"
+
+    def __init__(self, logger: logging.Logger, level: int) -> None:
+        self.logger = logger
+        self.level = level
+        self._buffer = ""
+        self._lock = threading.Lock()
+
+    def write(self, value: str) -> int:
+        if not value:
+            return 0
+        lines: list[str]
+        with self._lock:
+            self._buffer += str(value).replace("\r", "\n")
+            lines = self._buffer.split("\n")
+            self._buffer = lines.pop()
+        for line in lines:
+            self._emit(line)
+        return len(value)
+
+    def flush(self) -> None:
+        with self._lock:
+            value, self._buffer = self._buffer, ""
+        self._emit(value)
+
+    def _emit(self, value: str) -> None:
+        value = value.strip()
+        if value:
+            self.logger.log(self.level, value)
+
+    def isatty(self) -> bool:
+        return False
+
+    def writable(self) -> bool:
+        return True
+
+    def fileno(self) -> int:
+        raise OSError("agent process output is routed through logging")
+
+
+class _ProcessOutputForwarder:
+    """Route every child log and terminal write to the host logger."""
+
+    def __init__(
+        self,
+        outgoing: asyncio.Queue[dict[str, Any]],
+        agent_id: str,
+    ) -> None:
+        self.outgoing = outgoing
+        self.agent_id = agent_id
+        self.root = logging.getLogger()
+        self.handler = _ProcessLogHandler(
+            outgoing, asyncio.get_running_loop(), agent_id
+        )
+        self.stdout = _LoggingStream(
+            logging.getLogger("ursa.runtime.agent.stdout"), logging.INFO
+        )
+        self.stderr = _LoggingStream(
+            logging.getLogger("ursa.runtime.agent.stderr"), logging.WARNING
+        )
+        self._old_stdout: Any = None
+        self._old_stderr: Any = None
+        self._old_root_handlers: list[logging.Handler] = []
+        self._old_root_level = logging.NOTSET
+        self._logger_states: list[
+            tuple[logging.Logger, list[logging.Handler], bool]
+        ] = []
+
+    def install(self) -> None:
+        self._old_stdout, self._old_stderr = sys.stdout, sys.stderr
+        self._old_root_handlers = list(self.root.handlers)
+        self._old_root_level = self.root.level
+        self.root.handlers = [self.handler]
+        self.root.setLevel(logging.NOTSET)
+        for value in logging.root.manager.loggerDict.values():
+            if not isinstance(value, logging.Logger):
+                continue
+            self._logger_states.append((
+                value,
+                list(value.handlers),
+                value.propagate,
+            ))
+            value.handlers.clear()
+            value.propagate = True
+        sys.stdout, sys.stderr = self.stdout, self.stderr
+
+    def flush(self) -> None:
+        self.stdout.flush()
+        self.stderr.flush()
+
+    def restore(self) -> None:
+        self.flush()
+        sys.stdout, sys.stderr = self._old_stdout, self._old_stderr
+        self.root.handlers = self._old_root_handlers
+        self.root.setLevel(self._old_root_level)
+        for logger, handlers, propagate in self._logger_states:
+            logger.handlers = handlers
+            logger.propagate = propagate
 
 
 class AsyncAgent(Protocol):
@@ -271,12 +413,14 @@ class AgentContext:
         """Return the host operation currently executing in this process."""
         return self._active_request_id.get()
 
-    def callback_handler(self) -> AsyncCallbackHandler:
+    def callback_handler(
+        self, metadata: Mapping[str, Any] | None = None
+    ) -> AsyncCallbackHandler:
         """Build a callback forwarder for the active host operation."""
         request_id = self.active_request_id
         if request_id is None:
             raise RuntimeError("No active host operation")
-        return _RemoteCallbackHandler(self, request_id)
+        return _RemoteCallbackHandler(self, request_id, metadata)
 
     async def emit_callback(
         self, method: str, *args: Any, **kwargs: Any
@@ -335,11 +479,26 @@ class AgentContext:
 class _RemoteCallbackHandler(AsyncCallbackHandler):
     """Forward the callback families used by the CLI over the control pipe."""
 
-    def __init__(self, context: AgentContext, request_id: str) -> None:
+    def __init__(
+        self,
+        context: AgentContext,
+        request_id: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
         self._context = context
         self._request_id = request_id
+        self._metadata = dict(metadata or {})
 
     async def _send(self, method: str, *args: Any, **kwargs: Any) -> None:
+        # LangChain doesn't consistently include invocation metadata on end
+        # callbacks. Token usage arrives on ``on_llm_end``, so retain the
+        # process invocation metadata and merge it into every callback.
+        callback_metadata = kwargs.get("metadata")
+        metadata = dict(self._metadata)
+        if isinstance(callback_metadata, Mapping):
+            metadata.update(callback_metadata)
+        if metadata:
+            kwargs["metadata"] = metadata
         await self._context.emit_event(self._request_id, method, args, kwargs)
 
     async def on_custom_event(self, *args: Any, **kwargs: Any) -> None:
@@ -394,11 +553,18 @@ class AgentProcess:
         self._stopping = asyncio.Event()
 
     async def run(self) -> None:
+        output = _ProcessOutputForwarder(self.outgoing, self.spec.agent_id)
+        output.install()
         writer = asyncio.create_task(self._writer())
         heartbeat = asyncio.create_task(self._heartbeat())
         reader = asyncio.create_task(self._reader())
         worker = asyncio.create_task(self._command_worker())
         try:
+            if self.spec.environment is not None:
+                os.environ.clear()
+                os.environ.update(self.spec.environment)
+            if self.spec.working_directory is not None:
+                os.chdir(self.spec.working_directory)
             await self._construct_agent()
             await self.outgoing.put({"type": "ready", "pid": os.getpid()})
             done, _pending = await asyncio.wait(
@@ -428,6 +594,7 @@ class AgentProcess:
             await self._close_agent()
             heartbeat.cancel()
             await asyncio.gather(heartbeat, return_exceptions=True)
+            output.flush()
             if not writer.done():
                 await self.outgoing.put({"type": "stopped"})
                 await self.outgoing.join()
@@ -435,6 +602,7 @@ class AgentProcess:
             await asyncio.gather(writer, return_exceptions=True)
             reader.cancel()
             await asyncio.gather(reader, return_exceptions=True)
+            output.restore()
 
     async def _construct_agent(self) -> None:
         factory = _load_factory(self.spec.factory)
@@ -474,7 +642,7 @@ class AgentProcess:
                 routed = self._routed_message(message)
                 await self.context._deliver(routed)
                 # Inbox delivery must remain available while a normal invoke
-                # is running so user messages can queue or interrupt it.
+                # is running so messages can be accepted concurrently.
                 task = asyncio.create_task(
                     self._dispatch({
                         "type": "message_handler",
@@ -580,7 +748,14 @@ class AgentProcess:
         invoke_config = dict(config or {})
         if callbacks:
             configured: list[Any] = list(invoke_config.get("callbacks") or ())
-            configured.append(_RemoteCallbackHandler(self.context, request_id))
+            metadata = invoke_config.get("metadata")
+            configured.append(
+                _RemoteCallbackHandler(
+                    self.context,
+                    request_id,
+                    metadata if isinstance(metadata, Mapping) else None,
+                )
+            )
             invoke_config["callbacks"] = configured
         result = await invoke(inputs, config=invoke_config or None)
         has_state, state = await self._snapshot_state()
@@ -656,11 +831,6 @@ def _agent_process_main(
     heartbeat_interval: float,
 ) -> None:
     try:
-        if spec.environment is not None:
-            os.environ.clear()
-            os.environ.update(spec.environment)
-        if spec.working_directory is not None:
-            os.chdir(spec.working_directory)
         asyncio.run(
             AgentProcess(
                 spec, state, connection, heartbeat, heartbeat_interval
@@ -706,7 +876,7 @@ class AgentManager:
         start_method: str = "spawn",
         heartbeat_interval: float = 1.0,
         heartbeat_timeout: float = 10.0,
-        startup_timeout: float = 30.0,
+        startup_timeout: float = 120.0,
     ) -> None:
         if heartbeat_interval <= 0:
             raise ValueError("heartbeat_interval must be positive")
@@ -901,6 +1071,13 @@ class AgentManager:
             raise AgentProcessExitedError(f"Agent {agent_id!r} is not ready")
         request_id = uuid4().hex
         future = asyncio.get_running_loop().create_future()
+        # ``invoke`` and ``call`` shield requests so cancelling a TUI worker
+        # does not discard state that may still be committed by the process.
+        # If shutdown then fails that now-detached request, explicitly observe
+        # its exception so asyncio does not print "Future exception was never
+        # retrieved" after the terminal UI has been restored. Awaiters still
+        # receive the same exception normally.
+        future.add_done_callback(self._observe_request_exception)
         entry.pending[request_id] = _PendingRequest(future, host_callbacks)
         connection = entry.connection
         task = asyncio.create_task(
@@ -915,6 +1092,12 @@ class AgentManager:
             lambda task: self._send_done(entry, request_id, task)
         )
         return future
+
+    @staticmethod
+    def _observe_request_exception(future: asyncio.Future[Any]) -> None:
+        """Mark a completed request exception as retrieved."""
+        if not future.cancelled():
+            future.exception()
 
     @staticmethod
     def _send_done(
@@ -971,17 +1154,21 @@ class AgentManager:
         agent_id: str,
         *,
         graceful_timeout: float = 2.0,
+        force: bool = False,
     ) -> None:
         """Stop a process while retaining its last committed state."""
         entry = self._entry(agent_id)
         async with entry.lifecycle_lock:
-            await self._kill_locked(entry, graceful_timeout=graceful_timeout)
+            await self._kill_locked(
+                entry, graceful_timeout=graceful_timeout, force=force
+            )
 
     async def _kill_locked(
         self,
         entry: _ManagedAgent,
         *,
         graceful_timeout: float = 2.0,
+        force: bool = False,
     ) -> None:
         process = entry.process
         if process is None:
@@ -995,11 +1182,20 @@ class AgentManager:
             await asyncio.to_thread(process.join)
             await self._finish_stopped(entry, generation, connection, process)
             return
-        try:
-            await self._send(entry, {"type": "shutdown"}, connection=connection)
-        except (BrokenPipeError, EOFError, OSError):
-            pass
-        await asyncio.to_thread(process.join, graceful_timeout)
+        if force:
+            # A hierarchy stop is intentionally not a cooperative shutdown:
+            # the target may be stuck in a model/tool call and must not delay
+            # the caller or receive another turn before it exits.
+            process.terminate()
+            await asyncio.to_thread(process.join, graceful_timeout)
+        else:
+            try:
+                await self._send(
+                    entry, {"type": "shutdown"}, connection=connection
+                )
+            except (BrokenPipeError, EOFError, OSError):
+                pass
+            await asyncio.to_thread(process.join, graceful_timeout)
         if process.is_alive():
             process.terminate()
             await asyncio.to_thread(process.join, graceful_timeout)
@@ -1016,10 +1212,10 @@ class AgentManager:
             await self._kill_locked(entry)
             await self._start_locked(entry)
 
-    async def unregister(self, agent_id: str) -> None:
+    async def unregister(self, agent_id: str, *, force: bool = False) -> None:
         entry = self._entry(agent_id)
         async with entry.lifecycle_lock:
-            await self._kill_locked(entry)
+            await self._kill_locked(entry, force=force)
             async with self._lock:
                 if self._agents.get(agent_id) is entry:
                     self._agents.pop(agent_id)
@@ -1127,6 +1323,16 @@ class AgentManager:
             entry.status = AgentStatus.READY
             if entry.ready is not None and not entry.ready.done():
                 entry.ready.set_result(None)
+            return
+        if kind == "log":
+            logger_name = str(message.get("logger") or "ursa.runtime.agent")
+            level = message.get("level")
+            logging.getLogger(logger_name).log(
+                int(level) if isinstance(level, int) else logging.INFO,
+                "[%s] %s",
+                entry.spec.agent_id,
+                str(message.get("message") or ""),
+            )
             return
         if kind == "fatal":
             error = AgentInvocationError(

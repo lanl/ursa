@@ -10,7 +10,6 @@ _lazy_attrs: dict[str, tuple[str, str]] = {
     "BaseChatModel": (".base", "BaseChatModel"),
     "AgentMessage": (".base", "AgentMessage"),
     "AsyncMessageMixin": (".base", "AsyncMessageMixin"),
-    "DEFAULT_INTERRUPT_MESSAGE": (".base", "DEFAULT_INTERRUPT_MESSAGE"),
     "SubagentLimitError": (".base", "SubagentLimitError"),
     "ChatAgent": (".chat_agent", "ChatAgent"),
     "DSIAgent": (".dsi_agent", "DSIAgent"),

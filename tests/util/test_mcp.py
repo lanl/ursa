@@ -139,6 +139,103 @@ async def test_stdio_server_stderr_is_discarded(capsys):
     assert "dummy MCP diagnostic" not in capsys.readouterr().err
 
 
+def test_cached_mcp_specs_rebuild_tools_without_tool_discovery():
+    details = [
+        {
+            "name": "lookup",
+            "description": "Look something up.",
+            "schema": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+            "mcp_input_schema": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            "mcp_server": "demo",
+            "mcp_metadata": {
+                "readOnlyHint": True,
+                "_meta": {"display_name": "Remote lookup"},
+            },
+        },
+        # Built-in tools are not MCP specs and must not be cached here.
+        {"name": "read_file", "schema": {}, "mcp_server": ""},
+    ]
+    specs = mcp_mod.mcp_tool_specs_from_details(details)
+
+    client = SimpleNamespace(
+        connections={
+            "demo": {
+                "transport": "streamable_http",
+                "url": "https://example.test/mcp",
+            }
+        }
+    )
+    tools, sources = mcp_mod.mcp_tools_from_specs(client, specs)
+
+    assert [tool.name for tool in tools] == ["lookup"]
+    assert sources == {"lookup": "demo"}
+    assert tools[0].args_schema == specs[0]["input_schema"]
+    assert tools[0].args_schema["additionalProperties"] is False
+    assert tools[0].metadata == details[0]["mcp_metadata"]
+
+
+def test_cached_mcp_specs_reject_unknown_server():
+    client = SimpleNamespace(connections={})
+    with pytest.raises(ValueError, match="unknown server"):
+        mcp_mod.mcp_tools_from_specs(
+            client,
+            [
+                {
+                    "server": "missing",
+                    "name": "lookup",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+        )
+
+
+async def test_cached_mcp_tool_invokes_through_a_fresh_session():
+    client = mcp_mod.start_mcp_client({
+        "demo": StdioServerParameters(
+            command=sys.executable,
+            args=[str(DUMMY_SERVER)],
+        )
+    })
+    tools, sources = mcp_mod.mcp_tools_from_specs(
+        client,
+        [
+            {
+                "server": "demo",
+                "name": "add",
+                "description": "Add two numbers",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "a": {"type": "integer"},
+                        "b": {"type": "integer"},
+                    },
+                    "required": ["a", "b"],
+                },
+            }
+        ],
+    )
+
+    result = await tools[0].ainvoke({
+        "type": "tool_call",
+        "name": "add",
+        "args": {"a": 2, "b": 3},
+        "id": "cached-add",
+    })
+
+    assert sources == {"add": "demo"}
+    assert isinstance(result, ToolMessage)
+    assert result.artifact == {"structured_content": {"result": 5}}
+
+
 def test_stdio_proxy_can_redirect_stderr_to_file(tmp_path):
     stderr_path = tmp_path / "demo-mcp.log"
     subprocess.run(

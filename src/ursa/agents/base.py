@@ -26,7 +26,7 @@ import sqlite3
 from abc import ABC, abstractmethod
 from contextvars import ContextVar, copy_context
 from copy import deepcopy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from threading import RLock
@@ -45,6 +45,7 @@ from typing import (
 )
 from uuid import uuid4
 
+from filelock import AsyncFileLock, FileLock
 from langchain.chat_models import BaseChatModel
 from langchain.embeddings import Embeddings
 from langchain.tools import BaseTool, ToolException
@@ -233,13 +234,73 @@ class _QueuedAgentMessage:
     message: AgentMessage
     response: asyncio.Future[Any] | None = None
     on_start: Callable[[AgentMessage], Awaitable[None] | None] | None = None
+    on_end: Callable[[AgentMessage, bool], Awaitable[None] | None] | None = None
+
+
+@dataclass(eq=False, slots=True)
+class _AgentMessageWait:
+    """One local wait that may directly receive a one-way message."""
+
+    event: asyncio.Event = field(default_factory=asyncio.Event)
+    message: AgentMessage | None = None
+    targets: tuple[BaseAgent, ...] = ()
 
 
 _STOP_MESSAGE_LOOP = object()
-DEFAULT_INTERRUPT_MESSAGE = (
-    "The user interrupted the agent's previous work. Stop pursuing the prior "
-    "direction and respond to the new user message immediately."
-)
+
+
+def agent_message_system_instruction(sender: str, recipient: str) -> str:
+    """Describe a routed message without changing its original content."""
+    return (
+        "Message delivery metadata (trusted URSA runtime):\n"
+        f"Sender: {sender}\n"
+        f"Recipient: {recipient}\n"
+        "The following human message is the exact message content sent by "
+        "the sender."
+    )
+
+
+def agent_message_wait_result(sender: str, recipient: str, content: str) -> str:
+    """Expose one routed message directly to a model blocked in ``wait_for``."""
+    return (
+        "Received a message while waiting.\n"
+        f"Sender: {sender}\n"
+        f"Recipient: {recipient}\n"
+        "Exact message content:\n"
+        f"{content}"
+    )
+
+
+def attach_agent_message_instructions(
+    inputs: InputLike,
+    *,
+    sender: str,
+    recipient: str,
+    system_message: str | None = None,
+) -> Mapping[str, Any]:
+    """Attach delivery context immediately before the delivered human input."""
+    normalized: dict[str, Any]
+    if isinstance(inputs, str):
+        normalized = {"messages": [HumanMessage(content=inputs)]}
+    else:
+        normalized = dict(inputs)
+    messages = list(normalized.get("messages") or [])
+    insert_at = len(messages)
+    for index in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[index], HumanMessage):
+            insert_at = index
+            break
+    instructions = []
+    if system_message:
+        instructions.append(SystemMessage(content=system_message))
+    instructions.append(
+        SystemMessage(
+            content=agent_message_system_instruction(sender, recipient)
+        )
+    )
+    messages[insert_at:insert_at] = instructions
+    normalized["messages"] = messages
+    return normalized
 
 
 class SubagentLimitError(RuntimeError):
@@ -259,8 +320,11 @@ class AsyncMessageMixin:
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._parent_agent: BaseAgent | None = None
         self._subagents: dict[str, BaseAgent] = {}
+        self._subagent_stop_tasks: set[asyncio.Task[None]] = set()
         self._subagent_hierarchy_lock = RLock()
         self._hierarchy_name: str | None = None
+        self._hierarchy_stopping = False
+        self._stopping_agent_path: str | None = None
         self._message_inbox: (
             asyncio.Queue[_QueuedAgentMessage | object] | None
         ) = None
@@ -269,6 +333,10 @@ class AsyncMessageMixin:
         self._message_loop_stopping = False
         self._current_agent_message: AgentMessage | None = None
         self._active_message_task: asyncio.Task[Any] | None = None
+        # Tools such as ``wait_for`` can await another member's work without
+        # blocking this actor's inbox.  A newly accepted message wakes those
+        # tools so the model can handle the message promptly.
+        self._message_waiters: set[_AgentMessageWait] = set()
         self._async_invocation_lock: asyncio.Lock | None = None
         self._async_invocation_loop: asyncio.AbstractEventLoop | None = None
         self._async_invocation_owner: asyncio.Task[Any] | None = None
@@ -331,6 +399,8 @@ class AsyncMessageMixin:
         system_message: str | None = None,
         on_start: Callable[[AgentMessage], Awaitable[None] | None]
         | None = None,
+        on_end: Callable[[AgentMessage, bool], Awaitable[None] | None]
+        | None = None,
     ) -> AgentMessage:
         """Queue a one-way message to this agent."""
         message = self._make_agent_message(
@@ -340,7 +410,11 @@ class AsyncMessageMixin:
             config=config,
             system_message=system_message,
         )
-        await self._enqueue_agent_message(message, on_start=on_start)
+        await self._enqueue_agent_message(
+            message,
+            on_start=on_start,
+            on_end=on_end,
+        )
         return message
 
     async def request(
@@ -366,79 +440,6 @@ class AsyncMessageMixin:
             message,
             on_start=on_start,
         )
-
-    async def interrupt(
-        self,
-        content: InputLike,
-        *,
-        sender: str = "user",
-        metadata: Mapping[str, Any] | None = None,
-        config: Mapping[str, Any] | None = None,
-        system_message: str = DEFAULT_INTERRUPT_MESSAGE,
-        on_start: Callable[[AgentMessage], Awaitable[None] | None]
-        | None = None,
-    ) -> Any:
-        """Interrupt the active async invocation and handle a new message.
-
-        The replacement input is prefixed with a system instruction explaining
-        that the user interrupted the prior work. If the agent is idle, this is
-        equivalent to :meth:`request` with that instruction.
-        """
-        message = self._make_agent_message(
-            content,
-            sender=sender,
-            metadata=metadata,
-            config=config,
-            system_message=system_message,
-        )
-        response = asyncio.get_running_loop().create_future()
-        await self._enqueue_agent_message(
-            message,
-            response=response,
-            priority=True,
-            on_start=on_start,
-        )
-
-        owner = self._async_invocation_owner or self._active_message_task
-        current = asyncio.current_task()
-        if owner is not None and owner is not current and not owner.done():
-            owner.cancel()
-        return await response
-
-    def interrupt_for_queued_messages(self) -> bool:
-        """Cancel the current handler so an already-queued message can run.
-
-        The caller is responsible for marking the oldest queued message with
-        the interruption system instruction. This split lets higher-level
-        queues retain their original message order without inventing an empty
-        user message solely to stop the current model call.
-        """
-        inbox = self._message_inbox
-        if inbox is not None:
-            pending: list[_QueuedAgentMessage | object] = []
-            while True:
-                try:
-                    item = inbox.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-                inbox.task_done()
-                pending.append(item)
-            for item in pending:
-                if isinstance(item, _QueuedAgentMessage):
-                    item.message = replace(
-                        item.message,
-                        system_message=DEFAULT_INTERRUPT_MESSAGE,
-                    )
-                    break
-            for item in pending:
-                inbox.put_nowait(item)
-
-        owner = self._async_invocation_owner or self._active_message_task
-        current = asyncio.current_task()
-        if owner is None or owner is current or owner.done():
-            return False
-        owner.cancel()
-        return True
 
     async def send_message(
         self,
@@ -567,11 +568,12 @@ class AsyncMessageMixin:
 
     async def ahandle_message(self, message: AgentMessage) -> Any:
         """Handle an inbox message; subclasses may override this hook."""
-        inputs: InputLike = message.content
-        if message.system_message:
-            inputs = self._prepend_system_message(
-                inputs, message.system_message
-            )
+        inputs = attach_agent_message_instructions(
+            message.content,
+            sender=message.sender,
+            recipient=message.recipient,
+            system_message=message.system_message,
+        )
         config = dict(message.config)
         metadata = dict(config.get("metadata") or {})
         metadata.update(message.metadata)
@@ -621,30 +623,89 @@ class AsyncMessageMixin:
         message: AgentMessage,
         *,
         response: asyncio.Future[Any] | None = None,
-        priority: bool = False,
         on_start: Callable[[AgentMessage], Awaitable[None] | None]
         | None = None,
+        on_end: Callable[[AgentMessage, bool], Awaitable[None] | None]
+        | None = None,
     ) -> None:
+        self._ensure_hierarchy_accepting_messages()
+        if response is None and self._wake_message_waiters(message):
+            return
+        self._wake_message_waiters()
         self.start_message_loop()
         if self._message_inbox is None:  # pragma: no cover
             raise RuntimeError("Agent inbox failed to initialize")
-        pending: list[_QueuedAgentMessage | object] = []
-        if priority:
-            while True:
-                try:
-                    pending.append(self._message_inbox.get_nowait())
-                except asyncio.QueueEmpty:
-                    break
-                self._message_inbox.task_done()
         await self._message_inbox.put(
             _QueuedAgentMessage(
                 message=message,
                 response=response,
                 on_start=on_start,
+                on_end=on_end,
             )
         )
-        for item in pending:
-            await self._message_inbox.put(item)
+
+    def _begin_message_wait(
+        self, targets: Sequence[BaseAgent] = ()
+    ) -> _AgentMessageWait:
+        """Register an interruptible wait for this agent's next message."""
+        waiter = _AgentMessageWait(targets=tuple(targets))
+        self._message_waiters.add(waiter)
+        return waiter
+
+    def _end_message_wait(self, waiter: _AgentMessageWait) -> None:
+        """Remove a wait previously created by :meth:`_begin_message_wait`."""
+        self._message_waiters.discard(waiter)
+
+    def _wake_message_waiters(
+        self, message: AgentMessage | None = None
+    ) -> bool:
+        """Wake local waits, optionally delivering one message in-band."""
+        available = [
+            waiter
+            for waiter in tuple(self._message_waiters)
+            if not waiter.event.is_set()
+        ]
+        if not available:
+            return False
+        if message is not None:
+            available[0].message = message
+        for waiter in available:
+            waiter.event.set()
+        return message is not None
+
+    def _wait_depends_on(
+        self, target: BaseAgent, visited: set[int] | None = None
+    ) -> bool:
+        """Whether an active wait dependency path from ``self`` reaches target."""
+        if self is target:
+            return True
+        visited = set() if visited is None else visited
+        identity = id(self)
+        if identity in visited:
+            return False
+        visited.add(identity)
+        return any(
+            dependency._wait_depends_on(target, visited)
+            for waiter in self._message_waiters
+            for dependency in waiter.targets
+        )
+
+    def _wait_dependency_relation(
+        self, target: BaseAgent, visited: set[int] | None = None
+    ) -> str | None:
+        """Return whether an active path to ``target`` is direct or indirect."""
+        visited = set() if visited is None else visited
+        identity = id(self)
+        if identity in visited:
+            return None
+        visited.add(identity)
+        for waiter in self._message_waiters:
+            for dependency in waiter.targets:
+                if dependency is target:
+                    return "directly"
+                if dependency._wait_depends_on(target, set(visited)):
+                    return "indirectly"
+        return None
 
     async def _run_message_loop(self) -> None:
         inbox = self._message_inbox
@@ -675,6 +736,7 @@ class AsyncMessageMixin:
                     self.ahandle_message(item.message)
                 )
                 self._active_message_task = handler
+                succeeded = False
                 try:
                     result = await handler
                 except asyncio.CancelledError:
@@ -692,9 +754,21 @@ class AsyncMessageMixin:
                             item.message.message_id,
                         )
                 else:
+                    succeeded = True
                     if item.response is not None and not item.response.done():
                         item.response.set_result(result)
                 finally:
+                    if item.on_end is not None:
+                        try:
+                            ended = item.on_end(item.message, succeeded)
+                            if inspect.isawaitable(ended):
+                                await ended
+                        except Exception:
+                            logger.exception(
+                                "Agent %s message-end callback failed for %s",
+                                self.agent_path,
+                                item.message.message_id,
+                            )
                     self._active_message_task = None
                     self._current_agent_message = None
                     inbox.task_done()
@@ -789,27 +863,6 @@ class AsyncMessageMixin:
                 "contain only letters, digits, '.', '-', or '_'"
             )
 
-    @staticmethod
-    def _prepend_system_message(
-        inputs: InputLike, instruction: str
-    ) -> Mapping[str, Any]:
-        normalized: dict[str, Any]
-        if isinstance(inputs, str):
-            normalized = {"messages": [HumanMessage(content=inputs)]}
-        else:
-            normalized = dict(inputs)
-        messages = list(normalized.get("messages") or [])
-        if messages and isinstance(messages[0], SystemMessage):
-            existing = _message_text(messages[0])
-            messages[0] = SystemMessage(
-                content=f"{instruction}\n\n{existing}",
-                id=messages[0].id,
-            )
-        else:
-            messages.insert(0, SystemMessage(content=instruction))
-        normalized["messages"] = messages
-        return normalized
-
     def _get_async_invocation_lock(self) -> asyncio.Lock:
         loop = asyncio.get_running_loop()
         if self._async_invocation_loop is not loop:
@@ -835,7 +888,20 @@ class AsyncMessageMixin:
     def is_working(self) -> bool:
         """Whether this agent is currently handling an invocation."""
         task = self._async_invocation_owner or self._active_message_task
-        return task is not None and not task.done()
+        return (
+            self._current_agent_message is not None
+            or self.pending_messages > 0
+            or (task is not None and not task.done())
+        )
+
+    @property
+    def is_waiting(self) -> bool:
+        """Whether a hierarchy ``wait_for`` call currently blocks this agent.
+
+        A waiting agent has yielded its model turn. Wait tools use the active
+        dependency graph to recognize only reciprocal wait cycles as ready.
+        """
+        return bool(self._message_waiters)
 
     @property
     def message_loop_running(self) -> bool:
@@ -852,8 +918,14 @@ class AsyncMessageMixin:
         for child in tuple(self._subagents.values()):
             yield from child.walk_agents()
 
+    def _ensure_hierarchy_accepting_messages(self) -> None:
+        if self._hierarchy_stopping:
+            path = self._stopping_agent_path or self.agent_path
+            raise RuntimeError(f"Agent {path!r} is stopping")
+
     def attach_subagent(self, name: str, agent: BaseAgent) -> BaseAgent:
         """Attach an existing agent as an immediate child."""
+        self._ensure_hierarchy_accepting_messages()
         self._validate_subagent_name(name)
         if not isinstance(agent, BaseAgent):
             raise TypeError("subagent must be a BaseAgent instance")
@@ -887,6 +959,7 @@ class AsyncMessageMixin:
         **agent_kwargs: Any,
     ) -> BaseAgent:
         """Construct and attach a child, inheriting common configuration."""
+        self._ensure_hierarchy_accepting_messages()
         if isinstance(agent, BaseAgent):
             if agent_kwargs:
                 raise TypeError("agent_kwargs cannot accompany an instance")
@@ -912,6 +985,7 @@ class AsyncMessageMixin:
         **agent_kwargs: Any,
     ) -> BaseAgent:
         """Async-factory variant of :meth:`spawn_subagent`."""
+        self._ensure_hierarchy_accepting_messages()
         if isinstance(agent, BaseAgent):
             if agent_kwargs:
                 raise TypeError("agent_kwargs cannot accompany an instance")
@@ -952,6 +1026,39 @@ class AsyncMessageMixin:
             raise KeyError(f"Unknown immediate subagent: {name!r}") from None
         await child.stop_message_loop(descendants=True, cancel=cancel)
         return self.detach_subagent(name)
+
+    def stop_subagent(self, name: str) -> BaseAgent:
+        """Detach a child immediately and stop its subtree in the background."""
+        with self.root_agent._subagent_hierarchy_lock:
+            try:
+                child = self._subagents.pop(name)
+            except KeyError:
+                raise KeyError(
+                    f"Unknown immediate subagent: {name!r}"
+                ) from None
+            child_path = child.agent_path
+            for member in child.walk_agents():
+                member._hierarchy_stopping = True
+                member._stopping_agent_path = member.agent_path
+            child._parent_agent = None
+            child._hierarchy_name = None
+        task = asyncio.create_task(
+            child.stop_message_loop(descendants=True, cancel=True),
+            name=f"ursa-stop-subagent:{child_path}",
+        )
+        self._subagent_stop_tasks.add(task)
+
+        def stopped(completed: asyncio.Task[None]) -> None:
+            self._subagent_stop_tasks.discard(completed)
+            if completed.cancelled():
+                return
+            try:
+                completed.result()
+            except Exception:
+                logger.exception("Failed stopping subagent %s", name)
+
+        task.add_done_callback(stopped)
+        return child
 
     def resolve_agent(self, target: str | BaseAgent) -> BaseAgent:
         """Resolve an object, relative path, or root-qualified path."""
@@ -2097,7 +2204,11 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
             store_path, check_same_thread=False, isolation_level=None
         )
         store = SqliteStore(conn)
-        store.setup()
+        # Hierarchy members share this store across processes. LangGraph's
+        # migration check and insert are separate statements, so concurrent
+        # first-use can otherwise insert the same migration version twice.
+        with FileLock(f"{store_path}.setup.lock", mode=0o600):
+            store.setup()
         self.hook_storage_setup(store)
         return store
 
@@ -2109,7 +2220,8 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
             store_path = self.den / "graph_store.sqlite"
             conn = await aiosqlite.connect(store_path, isolation_level=None)
             store = AsyncSqliteStore(conn)
-            await store.setup()
+            async with AsyncFileLock(f"{store_path}.setup.lock", mode=0o600):
+                await store.setup()
             await self.ahook_storage_setup(store)
             self._async_storage = store
         return self._async_storage
@@ -2679,6 +2791,34 @@ class AgentWithTools:
     @tools.setter
     def tools(self, tools: dict[str, BaseTool] | list[BaseTool] | None):
         self._apply_tools(tools)
+
+    @staticmethod
+    def bind_tools_prefer_parallel(
+        llm: BaseChatModel,
+        tools: Sequence[BaseTool],
+    ) -> Any:
+        """Bind tools while explicitly enabling OpenAI parallel tool calls.
+
+        LangGraph's :class:`~langgraph.prebuilt.ToolNode` already executes all
+        calls from one model turn concurrently. OpenAI models also expose a
+        request-level ``parallel_tool_calls`` switch; set it explicitly so a
+        provider default cannot accidentally disable that behavior. Other
+        LangChain providers keep their existing ``bind_tools`` call and
+        semantics.
+        """
+        from langchain_openai.chat_models.base import BaseChatOpenAI
+
+        underlying_model = llm
+        # BaseAgent binds URSA's request headers before this mixin sees the
+        # model. LangChain represents that as a RunnableBinding, whose
+        # ``bound`` member is the actual provider model.
+        while (
+            bound := getattr(underlying_model, "bound", None)
+        ) is not None and bound is not underlying_model:
+            underlying_model = bound
+        if isinstance(underlying_model, BaseChatOpenAI):
+            return llm.bind_tools(tools, parallel_tool_calls=True)
+        return llm.bind_tools(tools)
 
     def add_tool(self, tools: BaseTool | list[BaseTool]) -> None:
         bundle = tools if isinstance(tools, list) else [tools]

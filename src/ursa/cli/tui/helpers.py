@@ -1,5 +1,7 @@
 """Pure helpers and constants shared by the Textual CLI."""
 
+from __future__ import annotations
+
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -39,6 +41,7 @@ AGENT_LABELS = {
 COMMAND_CHOICES = {
     "agents": "Configured agents, descriptions, options, and tools",
     "exit": "Quit URSA gracefully",
+    "messages": "Read-only message log across the agent hierarchy",
     "subagents": "Switch to an agent in the active hierarchy",
     "status": "Tokens, models, endpoints, group, and MCP servers",
     "keymap": "Complete keyboard map",
@@ -156,6 +159,31 @@ class TokenUsage:
     output_tokens: int = 0
     cached_tokens: int = 0
     total_tokens: int = 0
+
+    @property
+    def uncached_input_tokens(self) -> int:
+        """Input tokens billed as new rather than served from cache."""
+        return max(self.input_tokens - self.cached_tokens, 0)
+
+    def __add__(self, other: TokenUsage) -> TokenUsage:
+        if not isinstance(other, TokenUsage):
+            return NotImplemented
+        return TokenUsage(
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            cached_tokens=self.cached_tokens + other.cached_tokens,
+            total_tokens=self.total_tokens + other.total_tokens,
+        )
+
+    def __sub__(self, other: TokenUsage) -> TokenUsage:
+        if not isinstance(other, TokenUsage):
+            return NotImplemented
+        return TokenUsage(
+            input_tokens=self.input_tokens - other.input_tokens,
+            output_tokens=self.output_tokens - other.output_tokens,
+            cached_tokens=self.cached_tokens - other.cached_tokens,
+            total_tokens=self.total_tokens - other.total_tokens,
+        )
 
 
 def _token_usage_breakdown(value: Any) -> TokenUsage:

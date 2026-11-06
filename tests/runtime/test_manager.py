@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import gc
+import logging
 import os
 import threading
 from pathlib import Path
@@ -53,6 +55,38 @@ async def test_agent_process_isolated_config_and_heartbeat() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_process_routes_all_output_through_logging(
+    capfd: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    manager = AgentManager(heartbeat_interval=0.05, heartbeat_timeout=1)
+    try:
+        await manager.register(
+            AgentSpec(
+                "output",
+                "tests.runtime.fixtures:output_factory",
+            ),
+            start=True,
+        )
+        assert await manager.invoke("output", {}) == "ok"
+
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("agent factory marker" in message for message in messages)
+        assert any("agent stdout marker" in message for message in messages)
+        assert any("agent stderr marker" in message for message in messages)
+        assert any("agent log marker" in message for message in messages)
+
+        captured = capfd.readouterr()
+        terminal = captured.out + captured.err
+        assert "agent factory marker" not in terminal
+        assert "agent stdout marker" not in terminal
+        assert "agent stderr marker" not in terminal
+        assert "agent log marker" not in terminal
+    finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
 async def test_restart_keeps_only_committed_invocation_state(
     tmp_path: Path,
 ) -> None:
@@ -96,6 +130,38 @@ async def test_cancelled_waiter_does_not_discard_completed_state() -> None:
 
         assert (await manager.invoke("agent", {}))["calls"] == 2
     finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_observes_exception_for_cancelled_invocation() -> None:
+    """Hard TUI shutdown must not leak an unhandled Future exception."""
+    manager = AgentManager(heartbeat_interval=0.05, heartbeat_timeout=1)
+    loop = asyncio.get_running_loop()
+    original_handler = loop.get_exception_handler()
+    unhandled: list[dict] = []
+    loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+    try:
+        await manager.register(AgentSpec("agent", FACTORY), start=True)
+        waiter = asyncio.create_task(
+            manager.invoke("agent", {"announce": "host", "sleep": 30})
+        )
+        await manager.receive_message(timeout=1)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+
+        await manager.aclose()
+        del waiter
+        gc.collect()
+        await asyncio.sleep(0)
+
+        assert not any(
+            context.get("message") == "Future exception was never retrieved"
+            for context in unhandled
+        )
+    finally:
+        loop.set_exception_handler(original_handler)
         await manager.aclose()
 
 
@@ -166,17 +232,40 @@ async def test_send_message_propagates_recipient_handler_failure() -> None:
 
 @pytest.mark.asyncio
 async def test_callbacks_are_dispatched_in_host_process() -> None:
-    calls: list[tuple[str, dict, str, int]] = []
+    calls: list[tuple[str, dict, str, dict, int]] = []
 
     class Callback:
-        async def on_custom_event(self, name, data, *, run_id, **_kwargs):
-            calls.append((name, data, run_id, os.getpid()))
+        async def on_custom_event(
+            self, name, data, *, run_id, metadata=None, **_kwargs
+        ):
+            calls.append((name, data, run_id, metadata, os.getpid()))
 
     manager = AgentManager(heartbeat_interval=0.05, heartbeat_timeout=1)
     try:
         await manager.register(AgentSpec("agent", FACTORY))
-        await manager.invoke("agent", {}, callbacks=[Callback()])
-        assert calls == [("test", {"calls": 1}, "run", os.getpid())]
+        await manager.invoke(
+            "agent",
+            {},
+            config={
+                "metadata": {
+                    "ursa_message_recipient": "root/reviewer",
+                    "request_kind": "delegated",
+                }
+            },
+            callbacks=[Callback()],
+        )
+        assert calls == [
+            (
+                "test",
+                {"calls": 1},
+                "run",
+                {
+                    "ursa_message_recipient": "root/reviewer",
+                    "request_kind": "delegated",
+                },
+                os.getpid(),
+            )
+        ]
     finally:
         await manager.aclose()
 

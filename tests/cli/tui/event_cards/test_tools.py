@@ -4,7 +4,11 @@ from textual.widgets import Markdown, Static
 
 from tests.cli._app_helpers import make_runtime, wait_for
 from ursa.cli.tui.app import UrsaTextualApp
-from ursa.cli.tui.event_cards import AgentToolCard, ToolCallCard
+from ursa.cli.tui.event_cards import (
+    AgentToolCard,
+    CoordinationCard,
+    ToolCallCard,
+)
 from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.turn import Turn
 
@@ -82,7 +86,7 @@ async def test_default_tool_card_shows_failure_output(tmp_path):
         assert card.query_one(".tool-call-state", Static).content == "✗"
 
 
-async def test_spawn_agent_card_shows_task_and_initial_reply(tmp_path):
+async def test_spawn_agent_card_shows_task_and_queue_acknowledgement(tmp_path):
     app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 30)) as pilot:
@@ -101,6 +105,10 @@ async def test_spawn_agent_card_shows_task_and_initial_reply(tmp_path):
         )
         await pilot.pause()
 
+        group = turn.query_one(CoordinationCard)
+        assert not turn.query(AgentToolCard)
+        group.set_expanded(True)
+        assert await wait_for(pilot, lambda: bool(turn.query(AgentToolCard)))
         card = turn.query_one(AgentToolCard)
         assert card.tool == "spawn_agent"
         assert str(card.query_one(".agent-tool-title", Static).content) == (
@@ -115,22 +123,25 @@ async def test_spawn_agent_card_shows_task_and_initial_reply(tmp_path):
         assert card.query_one(".agent-tool-details").has_class("hidden")
 
         card.set_expanded(True)
+        assert await wait_for(
+            pilot, lambda: card.task.startswith("Review the implementation")
+        )
         assert "Review the implementation" in str(
             card.query_one(".agent-tool-task", Markdown).source
         )
 
         await handler.on_tool_end(
-            "Spawned agent root/reviewer\n\nLooks correct.",
+            "Spawned agent root/reviewer\n\nMessage queued for root/reviewer.",
             run_id="spawn-reviewer",
         )
         await pilot.pause()
 
         assert card.completed
         assert card.query_one(".agent-tool-state", Static).content == "✓"
-        assert "completed" in str(
+        assert "started" in str(
             card.query_one(".agent-tool-preview", Static).content
         )
-        assert "Looks correct" in str(
+        assert "Message queued" in str(
             card.query_one(".agent-tool-result", Markdown).source
         )
 
@@ -150,17 +161,24 @@ async def test_agent_message_and_listing_cards_render_specialized_outcomes(
             run_id="message-reviewer",
             inputs={"target": "root/reviewer", "message": "Check tests."},
         )
-        await handler.on_tool_end("Tests look good.", run_id="message-reviewer")
+        await handler.on_tool_end(
+            "Message queued for root/reviewer.",
+            run_id="message-reviewer",
+        )
         await handler.on_tool_start(
             {"name": "list_agents"}, "", run_id="list", inputs={}
         )
         await handler.on_tool_end("root (self)\nroot/reviewer", run_id="list")
         await pilot.pause()
 
+        turn.query_one(CoordinationCard).set_expanded(True)
+        assert await wait_for(
+            pilot, lambda: len(turn.query(AgentToolCard)) == 2
+        )
         cards = list(turn.query(AgentToolCard))
         assert len(cards) == 2
         message, listing = cards
-        assert "Reply received from root/reviewer" in str(
+        assert "Message queued for root/reviewer" in str(
             message.query_one(".agent-tool-preview", Static).content
         )
         assert "2 agents in the hierarchy" in str(
@@ -170,6 +188,76 @@ async def test_agent_message_and_listing_cards_render_specialized_outcomes(
         assert "root/reviewer" in str(
             listing.query_one(".agent-tool-result", Markdown).source
         )
+
+
+async def test_agent_message_card_summarizes_broadcast_results(tmp_path):
+    app = UrsaTextualApp(make_runtime(tmp_path))
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        turn = Turn("coordinate everyone", tmp_path)
+        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        handler = TextualEventHandler(app, turn)
+        await handler.on_tool_start(
+            {"name": "send_message"},
+            "",
+            run_id="broadcast",
+            inputs={
+                "target": ["root/analyst", "root/reviewer", "root/missing"],
+                "message": "Compare findings.",
+            },
+        )
+        await handler.on_tool_end(
+            "root/analyst: Message queued for root/analyst.\n\n"
+            "root/reviewer: Message queued for root/reviewer.\n\n"
+            "root/critic: Message queued for root/critic.",
+            run_id="broadcast",
+        )
+        await pilot.pause()
+
+        turn.query_one(CoordinationCard).set_expanded(True)
+        assert await wait_for(pilot, lambda: bool(turn.query(AgentToolCard)))
+        card = turn.query_one(AgentToolCard)
+        assert "Messages queued for 3 agents" in str(
+            card.query_one(".agent-tool-preview", Static).content
+        )
+
+
+async def test_wait_card_renders_batched_agent_messages_as_plain_text(tmp_path):
+    """Bracketed delivery JSON is content, never Textual markup."""
+    app = UrsaTextualApp(make_runtime(tmp_path))
+    output = (
+        "Received 2 messages while waiting. Each entry retains its sender, "
+        "recipient, and exact content:\n"
+        '[{"sender": "root/p08", "recipient": "root", '
+        '"content": "SETUP ACK: role=Villager"}, '
+        '{"sender": "root/p20", "recipient": "root", '
+        '"content": "SETUP ACK: identity p20"}]'
+    )
+
+    async with app.run_test(size=(125, 24)) as pilot:
+        turn = Turn("coordinate", tmp_path)
+        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        handler = TextualEventHandler(app, turn)
+        await handler.on_tool_start(
+            {"name": "wait_for"},
+            "",
+            run_id="batched-wait",
+            inputs={"target": ["root/p08", "root/p20"]},
+        )
+        await handler.on_tool_end(output, run_id="batched-wait")
+        # Rendering the mounted card used to raise MarkupError here.
+        await pilot.pause()
+
+        turn.query_one(CoordinationCard).set_expanded(True)
+        assert await wait_for(pilot, lambda: bool(turn.query(AgentToolCard)))
+        card = turn.query_one(AgentToolCard)
+        preview = card.query_one(".agent-tool-preview", Static)
+        assert card.completed
+        assert len(card.output) <= 241
+        card.set_expanded(True)
+        assert await wait_for(pilot, lambda: card.output == output)
+        assert str(preview.content) == output
+        assert '"sender": "root/p08"' in str(preview.content)
 
 
 async def test_tool_call_preview_renders_code_brackets_as_plain_text(tmp_path):

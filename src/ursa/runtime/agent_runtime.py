@@ -3,22 +3,29 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
+import json
 import logging
+from collections import deque
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from dataclasses import dataclass, field
+from time import monotonic
 from typing import Any
 from uuid import uuid4
 
 from fastmcp import FastMCP
+from langchain_core.messages import HumanMessage
 
 from ursa import agents
 from ursa.agents.base import (
-    DEFAULT_INTERRUPT_MESSAGE,
     AgentWithTools,
     BaseAgent,
     SubagentLimitError,
+    agent_message_wait_result,
+    attach_agent_message_instructions,
 )
 from ursa.cli.config import (
     ChatModelConfig,
@@ -29,7 +36,11 @@ from ursa.cli.config import (
 from ursa.security import enforce_model_group_policy
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.inference_providers import validate_model_provider
-from ursa.util.mcp import start_mcp_client
+from ursa.util.mcp import (
+    mcp_tool_specs_from_details,
+    mcp_tools_from_specs,
+    start_mcp_client,
+)
 from ursa.util.secrets import SecretReference
 
 from .manager import AgentContext, AgentManager, AgentSpec
@@ -103,8 +114,33 @@ class _RuntimePrompt:
     config: dict[str, Any]
     response: asyncio.Future[str]
     request_id: str | None = None
-    interrupted: bool = False
+    message_sender: str | None = None
+    message_recipient: str | None = None
+    additional_messages: tuple[tuple[str, str, str], ...] = ()
     on_start: Any = None
+
+
+@dataclass(eq=False, slots=True)
+class _RuntimeWait:
+    """One host-owned wait that may directly receive a routed message."""
+
+    event: asyncio.Event = field(default_factory=asyncio.Event)
+    delivery: str | None = None
+    targets: tuple[str, ...] = ()
+
+
+@dataclass(slots=True)
+class _BufferedAgentMessage:
+    """A routed message held until its busy recipient can accept it."""
+
+    sender_path: str
+    target_id: str
+    target_path: str
+    message: str
+    callbacks: tuple[Any, ...]
+    # User-originated deliveries wait for a response. Peer messages are
+    # fire-and-forget and leave this unset.
+    response: asyncio.Future[str | None] | None = None
 
 
 class _ProcessRuntimeBridge:
@@ -133,9 +169,43 @@ class _ProcessRuntimeBridge:
             "invoke", target=target, message=message
         )
 
+    async def send_messages(
+        self, targets: list[str], message: str
+    ) -> list[Any]:
+        result = await self.context.request_runtime(
+            "invoke_many", targets=targets, message=message
+        )
+        if not isinstance(result, list):
+            raise TypeError("The host returned invalid batched agent results")
+        return result
+
     async def list_agents(self) -> list[str]:
         result = await self.context.request_runtime("list")
         return [str(path) for path in result]
+
+    async def wait_for_agent(
+        self,
+        target: str | list[str],
+        timeout_seconds: float,
+        *,
+        wait_all: bool = False,
+    ) -> str:
+        return str(
+            await self.context.request_runtime(
+                "wait_for",
+                target=target,
+                timeout_seconds=timeout_seconds,
+                wait_all=wait_all,
+            )
+        )
+
+    async def stop_subagent(self, target: str) -> str:
+        """Stop a descendant hierarchy subtree through the host."""
+        return str(await self.context.request_runtime("stop", target=target))
+
+    async def wake_waiters(self) -> None:
+        """Wake this agent's host-managed waits after an inbox delivery."""
+        await self.context.request_runtime("wake_waiters")
 
 
 class _UrsaProcessAgent:
@@ -164,17 +234,26 @@ class _UrsaProcessAgent:
 
     async def on_message(self, message: Any) -> Any:
         """Accept queued user messages without blocking an active invoke."""
+        # A wait_for call is deliberately hosted outside this process, so an
+        # incoming message can always wake it even while its model invocation
+        # is paused in the tool call.
+        runtime = getattr(self.agent, "_process_runtime", None)
+        if runtime is not None:
+            await runtime.wake_waiters()
         payload = message.payload
         if not isinstance(payload, Mapping):
             return await self._submit(str(payload))
         action = str(payload.get("action") or "request")
-        if action == "interrupt_queued":
-            return self._interrupt_for_queued_messages()
         if action != "request":
             raise ValueError(f"Unknown runtime message action {action!r}")
         config = dict(payload.get("config") or {})
         callbacks = list(config.get("callbacks") or ())
-        callbacks.append(self.context.callback_handler())
+        metadata = config.get("metadata")
+        callbacks.append(
+            self.context.callback_handler(
+                metadata if isinstance(metadata, Mapping) else None
+            )
+        )
         config["callbacks"] = callbacks
 
         async def on_start() -> None:
@@ -187,7 +266,6 @@ class _UrsaProcessAgent:
             result = await self._submit(
                 str(payload.get("prompt") or ""),
                 config=config,
-                interrupted=bool(payload.get("interrupt", False)),
                 on_start=on_start,
             )
             succeeded = True
@@ -204,7 +282,6 @@ class _UrsaProcessAgent:
         prompt: str,
         *,
         config: Mapping[str, Any] | None = None,
-        interrupted: bool = False,
         on_start: Any = None,
     ) -> str:
         if self._worker is None or self._worker.done():
@@ -213,45 +290,46 @@ class _UrsaProcessAgent:
                 name=f"ursa-runtime-inbox:{self.agent_path}",
             )
         response = asyncio.get_running_loop().create_future()
+        configured = dict(config or {})
+        metadata = configured.get("metadata")
+        message_sender = None
+        message_recipient = None
+        additional_messages = []
+        if isinstance(metadata, Mapping):
+            sender = metadata.get("ursa_message_sender")
+            recipient = metadata.get("ursa_message_recipient")
+            if isinstance(sender, str) and isinstance(recipient, str):
+                message_sender = sender
+                message_recipient = recipient
+        # Consume transport-only content here; do not copy it into every model
+        # callback's metadata or forward it to LangChain's runnable config.
+        for envelope in configured.pop("ursa_additional_messages", ()):
+            if (
+                not isinstance(envelope, Mapping)
+                or not all(
+                    isinstance(envelope.get(key), str)
+                    for key in ("sender", "recipient", "content")
+                )
+                or envelope["recipient"] != self.agent_path
+            ):
+                raise ValueError("Invalid batched agent-message envelope")
+            additional_messages.append((
+                envelope["sender"],
+                envelope["recipient"],
+                envelope["content"],
+            ))
         item = _RuntimePrompt(
             prompt=prompt,
-            config=dict(config or {}),
+            config=configured,
             response=response,
             request_id=self.context.active_request_id,
-            interrupted=interrupted,
+            message_sender=message_sender,
+            message_recipient=message_recipient,
+            additional_messages=tuple(additional_messages),
             on_start=on_start,
         )
-        if interrupted:
-            pending: list[_RuntimePrompt | None] = []
-            while True:
-                try:
-                    pending.append(self._inbox.get_nowait())
-                except asyncio.QueueEmpty:
-                    break
-                self._inbox.task_done()
-            await self._inbox.put(item)
-            for queued in pending:
-                await self._inbox.put(queued)
-            self._cancel_active()
-        else:
-            await self._inbox.put(item)
+        await self._inbox.put(item)
         return await response
-
-    def _interrupt_for_queued_messages(self) -> bool:
-        pending: list[_RuntimePrompt | None] = []
-        while True:
-            try:
-                pending.append(self._inbox.get_nowait())
-            except asyncio.QueueEmpty:
-                break
-            self._inbox.task_done()
-        for item in pending:
-            if isinstance(item, _RuntimePrompt):
-                item.interrupted = True
-                break
-        for item in pending:
-            self._inbox.put_nowait(item)
-        return self._cancel_active()
 
     def _cancel_active(self) -> bool:
         task = self._active_task
@@ -260,23 +338,85 @@ class _UrsaProcessAgent:
         task.cancel()
         return True
 
+    def _format_prompt(self, item: _RuntimePrompt) -> Any:
+        """Format once, retaining every delivery envelope in a batched turn."""
+        if not item.additional_messages:
+            query = self.agent.format_query(item.prompt, state=self.state)
+            if item.message_sender and item.message_recipient:
+                return attach_agent_message_instructions(
+                    query,
+                    sender=item.message_sender,
+                    recipient=item.message_recipient,
+                )
+            return query
+
+        envelopes = [
+            (
+                item.message_sender or "user",
+                item.message_recipient or self.agent_path,
+                item.prompt,
+            ),
+            *item.additional_messages,
+        ]
+        combined = (
+            "Messages received together, oldest first. Read all before acting:\n"
+            + json.dumps(
+                [
+                    {
+                        "sender": sender,
+                        "recipient": recipient,
+                        "content": content,
+                    }
+                    for sender, recipient, content in envelopes
+                ],
+                ensure_ascii=False,
+            )
+        )
+        # Some agent types reset history or set task/query fields here. A
+        # single call keeps those fields aware of the complete incoming batch.
+        formatted = self.agent.format_query(combined, state=self.state)
+        query = dict(formatted) if isinstance(formatted, Mapping) else {}
+        messages = list(query.get("messages") or [])
+        if (
+            messages
+            and isinstance(messages[-1], HumanMessage)
+            and messages[-1].content == combined
+        ):
+            messages.pop()
+        query["messages"] = messages
+        for sender, recipient, content in envelopes:
+            query["messages"].append(HumanMessage(content=content))
+            query = dict(
+                attach_agent_message_instructions(
+                    query,
+                    sender=sender,
+                    recipient=recipient,
+                )
+            )
+        return query
+
     async def _run_inbox(self) -> None:
         while True:
             item = await self._inbox.get()
             if item is None:
                 self._inbox.task_done()
                 return
-            request_token = self.context._enter_request(item.request_id or "")
+            request_token = None
+            # Keep the original available if a custom state cannot be copied.
+            # The copy itself belongs to this item's failure domain, rather
+            # than the long-lived inbox worker's.
+            state_before_prompt = self.state
+            task: asyncio.Task[Any] | None = None
             try:
+                request_token = self.context._enter_request(
+                    item.request_id or ""
+                )
+                state_before_prompt = deepcopy(self.state)
                 if item.on_start is not None:
                     started = item.on_start()
                     if inspect.isawaitable(started):
                         await started
-                query = self.agent.format_query(item.prompt, state=self.state)
-                if item.interrupted:
-                    query = self.agent._prepend_system_message(
-                        query, DEFAULT_INTERRUPT_MESSAGE
-                    )
+                query = self._format_prompt(item)
                 task = asyncio.create_task(
                     self.agent.ainvoke(query, config=item.config or None)
                 )
@@ -284,24 +424,48 @@ class _UrsaProcessAgent:
                 try:
                     self.state = await task
                 except asyncio.CancelledError:
+                    # Preserve worker cancellation for shutdown. If the model
+                    # task was cancelled independently, retain committed state
+                    # and fail this request without killing the inbox worker.
+                    if asyncio.current_task().cancelling():
+                        raise
+                    self.state = state_before_prompt
                     if not item.response.done():
                         item.response.set_exception(
-                            RuntimeError(
-                                "Agent invocation interrupted by a newer message"
-                            )
+                            RuntimeError("Agent invocation was cancelled")
                         )
                 except Exception as exc:
+                    self.state = state_before_prompt
                     if not item.response.done():
                         item.response.set_exception(exc)
                 else:
                     if not item.response.done():
-                        item.response.set_result(
-                            str(self.agent.format_result(self.state))
-                        )
+                        try:
+                            item.response.set_result(
+                                str(self.agent.format_result(self.state))
+                            )
+                        except Exception as exc:
+                            item.response.set_exception(exc)
                 finally:
                     self._active_task = None
+            except asyncio.CancelledError:
+                # The current item has already left ``_inbox``, so aclose()
+                # cannot drain its response future.  Resolve it before
+                # passing through the worker cancellation.
+                self.state = state_before_prompt
+                if not item.response.done():
+                    item.response.cancel()
+                raise
+            except Exception as exc:
+                # Formatting and lifecycle hooks run before ``task`` exists.
+                # Never let a bad incoming message kill the sole inbox worker:
+                # that leaves every later root message waiting forever.
+                self.state = state_before_prompt
+                if not item.response.done():
+                    item.response.set_exception(exc)
             finally:
-                self.context._leave_request(request_token)
+                if request_token is not None:
+                    self.context._leave_request(request_token)
                 self._inbox.task_done()
 
     async def describe_tools(self) -> list[dict[str, Any]]:
@@ -317,9 +481,17 @@ class _UrsaProcessAgent:
             return []
         details = []
         for fallback_name, tool in items:
+            tool_name = str(getattr(tool, "name", None) or fallback_name)
             schema_json = await _tool_schema(tool)
+            # MCP adapter tools retain the server's unmodified input schema as
+            # a dict.  Keep it separately from the presentation schema so a
+            # child can recreate the same MCP ``Tool`` without a second
+            # list-tools request.
+            raw_mcp_schema = getattr(tool, "args_schema", None)
+            if not isinstance(raw_mcp_schema, Mapping):
+                raw_mcp_schema = None
             details.append({
-                "name": str(getattr(tool, "name", None) or fallback_name),
+                "name": tool_name,
                 "class_name": tool.__class__.__name__,
                 "description": str(
                     getattr(tool, "description", None)
@@ -327,13 +499,35 @@ class _UrsaProcessAgent:
                 ).strip(),
                 "schema": schema_json,
                 "return_direct": getattr(tool, "return_direct", None),
-                "mcp_server": str(
-                    self.tool_sources.get(
-                        str(getattr(tool, "name", None) or fallback_name), ""
-                    )
+                "mcp_server": str(self.tool_sources.get(tool_name, "")),
+                "mcp_input_schema": (
+                    dict(raw_mcp_schema)
+                    if tool_name in self.tool_sources
+                    and raw_mcp_schema is not None
+                    else None
+                ),
+                "mcp_metadata": (
+                    getattr(tool, "metadata", None)
+                    if tool_name in self.tool_sources
+                    else None
                 ),
             })
         return details
+
+    async def describe_mcp_tools(self) -> dict[str, Any]:
+        """Describe only MCP tools when their discovery is known complete.
+
+        A general tool listing cannot tell whether absent MCP provenance means
+        the server returned no tools or that the agent does not support MCP.
+        Cache only the former.
+        """
+        if not isinstance(self.agent, AgentWithTools):
+            return {"complete": False, "tools": []}
+        details = await self.describe_tools()
+        return {
+            "complete": True,
+            "tools": [detail for detail in details if detail.get("mcp_server")],
+        }
 
     async def spawn_subagent(
         self,
@@ -350,8 +544,26 @@ class _UrsaProcessAgent:
         """Send through the bridge used by the model-facing tool."""
         return await self.agent._process_runtime.send_message(target, message)
 
+    async def send_subagent_messages(
+        self, targets: list[str], message: str
+    ) -> list[Any]:
+        """Send a prevalidated batch through the host-owned bridge."""
+        return await self.agent._process_runtime.send_messages(targets, message)
+
     async def list_subagents(self) -> list[str]:
         return await self.agent._process_runtime.list_agents()
+
+    async def wait_for_subagent(
+        self,
+        target: str | list[str],
+        timeout_seconds: float = 120,
+        *,
+        wait_all: bool = False,
+    ) -> str:
+        """Wait through the host bridge without blocking message routing."""
+        return await self.agent._process_runtime.wait_for_agent(
+            target, timeout_seconds, wait_all=wait_all
+        )
 
     async def aclose(self) -> None:
         self._cancel_active()
@@ -477,7 +689,29 @@ async def _ursa_agent_factory(
             client = await asyncio.to_thread(
                 start_mcp_client, resolved.mcp_servers
             )
-            tool_sources = await agent.add_mcp_tools(client)
+            cached_specs = config.get("mcp_tool_specs")
+            if cached_specs is not None:
+                try:
+                    if not isinstance(cached_specs, list):
+                        raise TypeError(
+                            "Cached MCP tool specifications must be a list"
+                        )
+                    tools, tool_sources = mcp_tools_from_specs(
+                        client, cached_specs
+                    )
+                    agent.add_tool(tools)
+                except (TypeError, ValueError, KeyError):
+                    # Preserve tool availability if a captured specification
+                    # is malformed or incompatible with this MCP adapter.
+                    # Normal cached starts still avoid discovery entirely.
+                    LOGGER.warning(
+                        "Cached MCP schemas are unusable for %s; rediscovering",
+                        agent_path,
+                        exc_info=True,
+                    )
+                    tool_sources = await agent.add_mcp_tools(client)
+            else:
+                tool_sources = await agent.add_mcp_tools(client)
     except BaseException:
         await _close_built_agent(agent)
         raise
@@ -538,8 +772,12 @@ class RuntimeHierarchyStatus:
 class _MessageStartCallback:
     def __init__(self, callback: Any) -> None:
         self.callback = callback
+        self.started = False
 
     async def on_agent_message_start(self, *_args: Any, **_kwargs: Any) -> None:
+        if self.started:
+            return
+        self.started = True
         result = self.callback(None)
         if inspect.isawaitable(result):
             await result
@@ -573,17 +811,31 @@ class AgentRuntime:
         self._owns_manager = manager is None
         self._manager = manager or AgentManager()
         self._registered: set[str] = set()
+        self._mcp_tool_specs: list[dict[str, Any]] | None = None
+        self._mcp_tool_specs_fingerprint: str | None = None
+        self._mcp_tool_specs_lock = asyncio.Lock()
         self._dynamic_runtime_ids: set[str] = set()
+        self._subagent_start_tasks: dict[str, asyncio.Task[None]] = {}
         self._runtime_paths: dict[str, str] = {}
         self._runtime_roots: dict[str, str] = {}
         self._runtime_agent_names: dict[str, str] = {}
         self._hierarchies: dict[str, dict[str, str]] = {}
         self._working_counts: dict[str, int] = {}
         self._pending_counts: dict[str, int] = {}
+        self._waiting_counts: dict[str, int] = {}
+        self._background_agent_tasks: set[asyncio.Task[Any]] = set()
+        self._background_teardown_tasks: set[asyncio.Task[None]] = set()
+        self._stopping_subtrees: set[tuple[str, str]] = set()
+        self._wait_wake_events: dict[str, set[_RuntimeWait]] = {}
+        self._wait_dependencies: dict[str, set[_RuntimeWait]] = {}
+        self._buffered_agent_messages: dict[
+            str, deque[_BufferedAgentMessage]
+        ] = {}
         self._active_root_id: str | None = None
         self._active_agent_ready = asyncio.Event()
         self._register_lock = asyncio.Lock()
         self._hierarchy_lock = asyncio.Lock()
+        self._subagent_cleanup_lock = asyncio.Lock()
         self._operation_lock = asyncio.Lock()
         self._close_task: asyncio.Task[None] | None = None
         self._closed = False
@@ -655,14 +907,18 @@ class AgentRuntime:
     async def get_agent(self, name: str) -> RuntimeAgent:
         async with self._operation_lock:
             await self._ensure_registered(name)
-            await self._manager.start_agent(self.agents[name].runtime_id)
+            runtime_id = self.agents[name].runtime_id
+            await self._manager.start_agent(runtime_id)
+            await self._capture_mcp_tool_specs(runtime_id)
             return self.agents[name]
 
     @asynccontextmanager
     async def use_agent(self, name: str) -> AsyncGenerator[RuntimeAgent]:
         async with self._operation_lock:
             await self._ensure_registered(name)
-            await self._manager.start_agent(self.agents[name].runtime_id)
+            runtime_id = self.agents[name].runtime_id
+            await self._manager.start_agent(runtime_id)
+            await self._capture_mcp_tool_specs(runtime_id)
             yield self.agents[name]
 
     async def run_agent(
@@ -675,21 +931,94 @@ class AgentRuntime:
         async with self._operation_lock:
             await self._ensure_registered(name)
             runtime_id = self.agents[name].runtime_id
+            await self._manager.start_agent(runtime_id)
+            await self._capture_mcp_tool_specs(runtime_id)
             self._active_root_id = runtime_id
             self._active_agent_ready.set()
+        configured = tuple(callbacks or ())
+        await self._notify_callbacks(
+            configured,
+            "on_hierarchy_message",
+            "user",
+            ("root",),
+            prompt,
+        )
         self._mark_working("root", 1)
         try:
             result = await self._manager.invoke(
                 runtime_id,
                 prompt,
-                config={"metadata": {"ursa_message_recipient": "root"}},
-                callbacks=callbacks,
+                config={
+                    "metadata": {
+                        "ursa_message_sender": "user",
+                        "ursa_message_recipient": "root",
+                    }
+                },
+                callbacks=configured,
             )
         finally:
             self._mark_working("root", -1)
         if not isinstance(result, str):
             raise TypeError(f"Agent {name!r} returned a non-string result")
+        await self._notify_callbacks(
+            configured,
+            "on_hierarchy_message",
+            "root",
+            ("user",),
+            result,
+        )
         return result
+
+    async def _capture_mcp_tool_specs(self, runtime_id: str) -> None:
+        """Reuse root MCP schemas when starting equivalent child agents."""
+        fingerprint = self._mcp_server_fingerprint()
+        if not self.config.mcp_servers:
+            return
+        async with self._mcp_tool_specs_lock:
+            if (
+                self._mcp_tool_specs is not None
+                and self._mcp_tool_specs_fingerprint == fingerprint
+            ):
+                return
+            # A config change with an existing root must never let an old
+            # schema through to children. Its next start will recapture.
+            self._mcp_tool_specs = None
+            self._mcp_tool_specs_fingerprint = None
+            result = await self._manager.call(runtime_id, "describe_mcp_tools")
+            if not isinstance(result, Mapping):
+                raise TypeError("Agent returned invalid MCP tool descriptions")
+            if result.get("complete") is not True:
+                return
+            details = result.get("tools")
+            if not isinstance(details, list) or not all(
+                isinstance(detail, Mapping) for detail in details
+            ):
+                raise TypeError("Agent returned invalid MCP tool descriptions")
+            self._mcp_tool_specs = mcp_tool_specs_from_details(details)
+            self._mcp_tool_specs_fingerprint = fingerprint
+
+    def _mcp_server_fingerprint(self) -> str:
+        """Return a host-only identity for the resolved MCP configuration."""
+        payload: dict[str, Any] = {}
+        for name, server in self.config.mcp_servers.items():
+            dump = getattr(server, "model_dump", None)
+            payload[name] = (
+                dump(mode="json") if callable(dump) else repr(server)
+            )
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), default=str
+        ).encode()
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _cached_mcp_tool_specs(self) -> list[dict[str, Any]] | None:
+        """Return a cache entry only when it matches this server config."""
+        if (
+            self._mcp_tool_specs is not None
+            and self._mcp_tool_specs_fingerprint
+            == self._mcp_server_fingerprint()
+        ):
+            return self._mcp_tool_specs
+        return None
 
     @property
     def active_agent_path(self) -> str | None:
@@ -712,9 +1041,15 @@ class AgentRuntime:
         if root_id is None:
             return []
         statuses = []
-        for path in self._hierarchies.get(root_id, {}):
+        for path, runtime_id in self._hierarchies.get(root_id, {}).items():
             pending = self._pending_counts.get(path, 0)
-            if self._working_counts.get(path, 0):
+            if self._is_stopping_path(root_id, path):
+                state = "Stopping"
+            elif runtime_id in self._subagent_start_tasks:
+                state = "Starting"
+            elif self._waiting_counts.get(path, 0):
+                state = "Waiting"
+            elif self._working_counts.get(path, 0):
                 state = "Working"
             elif pending:
                 state = "Queued"
@@ -736,66 +1071,95 @@ class AgentRuntime:
         prompt: str,
         *,
         callbacks: Sequence[Any] | None = None,
-        interrupt: bool = False,
         on_start: Any = None,
-    ) -> str:
-        """Queue a user message for any process in the active hierarchy."""
+    ) -> str | None:
+        """Deliver a user message through the same queue as peer messages.
+
+        ``None`` means the message was consumed by a running ``wait_for`` or
+        included in a batch whose reply belongs to another user turn. There
+        is no separate response to render for that delivery.
+        """
         runtime_id, resolved_path = self._resolve_active_path(path)
         configured = list(callbacks or ())
+        message_start = None
         if on_start is not None:
-            configured.append(_MessageStartCallback(on_start))
-        self._pending_counts[resolved_path] = (
-            self._pending_counts.get(resolved_path, 0) + 1
+            message_start = _MessageStartCallback(on_start)
+            configured.append(message_start)
+        await self._notify_callbacks(
+            configured,
+            "on_hierarchy_message",
+            "user",
+            (resolved_path,),
+            prompt,
         )
-        self._mark_working(resolved_path, 1)
+        response = asyncio.get_running_loop().create_future()
         try:
-            result = await self._manager.send_message(
-                runtime_id,
-                {
-                    "action": "request",
-                    "prompt": prompt,
-                    "interrupt": interrupt,
-                    "config": {
-                        "metadata": {"ursa_message_recipient": resolved_path}
-                    },
-                },
-                callbacks=configured,
-            )
-        finally:
-            self._pending_counts[resolved_path] = max(
-                0, self._pending_counts.get(resolved_path, 1) - 1
-            )
-            self._mark_working(resolved_path, -1)
+            async with self._hierarchy_lock:
+                root_id = self._runtime_roots.get(runtime_id)
+                if (
+                    root_id is None
+                    or self._hierarchies.get(root_id, {}).get(resolved_path)
+                    != runtime_id
+                ):
+                    raise RuntimeError(
+                        f"Unknown active agent {resolved_path!r}"
+                    )
+                if self._is_stopping_path(root_id, resolved_path):
+                    raise RuntimeError(f"Agent {resolved_path!r} is stopping")
+                self._accept_message_target(
+                    "user",
+                    runtime_id,
+                    resolved_path,
+                    prompt,
+                    configured,
+                    response=response,
+                )
+            result = await response
+        except BaseException:
+            if not response.done():
+                response.cancel()
+            raise
+        if result is None:
+            if message_start is not None:
+                await message_start.on_agent_message_start()
+            return None
         if not isinstance(result, str):
             raise TypeError(
                 f"Agent {resolved_path!r} returned a non-string result"
             )
-        return result
-
-    async def interrupt_active_agent(self, path: str) -> bool:
-        """Cancel current work so all already-queued messages can proceed."""
-        runtime_id, _resolved_path = self._resolve_active_path(path)
-        result = await self._manager.send_message(
-            runtime_id, {"action": "interrupt_queued"}
+        await self._notify_callbacks(
+            configured,
+            "on_hierarchy_message",
+            resolved_path,
+            ("user",),
+            result,
         )
-        return bool(result)
+        return result
 
     async def restart_agent(self, name: str) -> None:
         async with self._operation_lock:
             await self._ensure_registered(name)
-            await self._manager.restart_agent(self.agents[name].runtime_id)
+            self._mcp_tool_specs = None
+            self._mcp_tool_specs_fingerprint = None
+            runtime_id = self.agents[name].runtime_id
+            await self._manager.restart_agent(runtime_id)
+            await self._capture_mcp_tool_specs(runtime_id)
 
     async def kill_agent(self, name: str) -> None:
         async with self._operation_lock:
             await self._ensure_registered(name)
             runtime_id = self.agents[name].runtime_id
+            self._mcp_tool_specs = None
+            self._mcp_tool_specs_fingerprint = None
         root_id = self._runtime_roots.get(runtime_id, runtime_id)
         hierarchy = self._hierarchies.get(root_id, {})
         runtime_ids = tuple(hierarchy.values()) or (runtime_id,)
+        await self._cancel_subagent_starts(runtime_ids)
         await asyncio.gather(
             *(
                 self._manager.kill_agent(child_id)
                 for child_id in reversed(runtime_ids)
+                if child_id == root_id or child_id in self._dynamic_runtime_ids
             )
         )
 
@@ -813,6 +1177,75 @@ class AgentRuntime:
             self._working_counts[path] = count
         else:
             self._working_counts.pop(path, None)
+            self._flush_buffered_agent_messages(path)
+
+    def _flush_buffered_agent_messages(self, path: str) -> None:
+        """Schedule messages that were not consumed by an in-flight wait."""
+        buffered = self._buffered_agent_messages.pop(path, None)
+        if not buffered:
+            return
+        items = tuple(buffered)
+        primary, additional = items[0], items[1:]
+        for item in items:
+            self._decrement_pending(item.target_path)
+        root_id = self._runtime_roots.get(primary.target_id)
+        if (
+            self._closed
+            or root_id is None
+            or self._is_stopping_path(root_id, path)
+        ):
+            self._fail_buffered_messages(
+                (primary, *additional),
+                RuntimeError(f"Agent {path!r} is no longer available"),
+            )
+            return
+        self._schedule_message_target(primary, additional=additional)
+
+    def _take_buffered_agent_messages(
+        self, path: str
+    ) -> tuple[_BufferedAgentMessage, ...]:
+        """Drain arrivals together so one busy turn cannot hide newer input."""
+        buffered = self._buffered_agent_messages.pop(path, None)
+        if not buffered:
+            return ()
+        for item in buffered:
+            self._decrement_pending(item.target_path)
+            self._complete_in_band_delivery(item)
+        return tuple(buffered)
+
+    @staticmethod
+    def _complete_in_band_delivery(item: _BufferedAgentMessage) -> None:
+        """Settle a user message that was consumed by a wait tool result."""
+        if item.response is not None and not item.response.done():
+            item.response.set_result(None)
+
+    @staticmethod
+    def _fail_buffered_messages(
+        items: Sequence[_BufferedAgentMessage], error: BaseException
+    ) -> None:
+        for item in items:
+            if item.response is not None and not item.response.done():
+                item.response.set_exception(error)
+
+    def _fail_all_buffered_messages(self, error: BaseException) -> None:
+        """Unblock TUI workers when a lifecycle operation drops delivery."""
+        for buffered in self._buffered_agent_messages.values():
+            self._fail_buffered_messages(tuple(buffered), error)
+        self._buffered_agent_messages.clear()
+
+    def _decrement_pending(self, path: str) -> None:
+        count = max(0, self._pending_counts.get(path, 0) - 1)
+        if count:
+            self._pending_counts[path] = count
+        else:
+            self._pending_counts.pop(path, None)
+
+    def _mark_waiting(self, path: str, delta: int) -> None:
+        count = max(0, self._waiting_counts.get(path, 0) + delta)
+        if count:
+            self._waiting_counts[path] = count
+        else:
+            self._waiting_counts.pop(path, None)
 
     async def _handle_runtime_request(
         self,
@@ -822,6 +1255,7 @@ class AgentRuntime:
         callbacks: Sequence[Any],
     ) -> Any:
         if action == "spawn":
+            message = str(payload.get("message") or "")
             child_path = await self._spawn_runtime_subagent(
                 sender_runtime_id,
                 str(payload.get("name") or ""),
@@ -830,78 +1264,687 @@ class AgentRuntime:
             child_id, child_path = self._resolve_path(
                 sender_runtime_id, child_path
             )
-            await self._notify_callbacks(
-                callbacks, "on_agent_message_start", child_path
+            acknowledgement = await self._queue_message_target(
+                sender_runtime_id,
+                child_id,
+                child_path,
+                message,
+                callbacks,
             )
-            succeeded = False
-            self._mark_working(child_path, 1)
-            try:
-                result = await self._manager.invoke(
-                    child_id,
-                    str(payload.get("message") or ""),
-                    config={
-                        "metadata": {
-                            "ursa_message_recipient": child_path,
-                            "ursa_message_sender": self._runtime_paths[
-                                sender_runtime_id
-                            ],
-                        }
-                    },
-                    callbacks=callbacks,
-                )
-                succeeded = True
-                return {"path": child_path, "response": result}
-            finally:
-                self._mark_working(child_path, -1)
-                await self._notify_callbacks(
-                    callbacks,
-                    "on_agent_message_end",
-                    child_path,
-                    succeeded=succeeded,
-                )
+            return {"path": child_path, "response": acknowledgement}
         if action == "list":
             root_id = self._runtime_roots[sender_runtime_id]
             return list(self._hierarchies[root_id])
-        if action == "invoke":
-            target_id, target_path = self._resolve_path(
+        if action == "wait_for":
+            return await self._wait_for_runtime_agent(
+                sender_runtime_id,
+                payload.get("target"),
+                payload.get("timeout_seconds", 120),
+                wait_all=bool(payload.get("wait_all", False)),
+            )
+        if action == "stop":
+            return await self._stop_runtime_subagent(
                 sender_runtime_id, str(payload.get("target") or "")
             )
-            sender_path = self._runtime_paths[sender_runtime_id]
-            if target_id == sender_runtime_id:
-                raise ValueError("An agent cannot synchronously message itself")
-            if sender_path.startswith(f"{target_path}/"):
-                raise ValueError(
-                    "Cannot synchronously message an ancestor; send work to "
-                    "a child or sibling agent instead"
-                )
-            await self._notify_callbacks(
-                callbacks, "on_agent_message_start", target_path
+        if action == "wake_waiters":
+            self._wake_runtime_waiters(sender_runtime_id)
+            return None
+        if action == "invoke":
+            target_id, target_path = self._validate_message_target(
+                sender_runtime_id, str(payload.get("target") or "")
             )
-            succeeded = False
-            self._mark_working(target_path, 1)
-            try:
-                result = await self._manager.invoke(
-                    target_id,
-                    str(payload.get("message") or ""),
-                    config={
-                        "metadata": {
-                            "ursa_message_recipient": target_path,
-                            "ursa_message_sender": sender_path,
-                        }
-                    },
-                    callbacks=callbacks,
+            return await self._queue_message_target(
+                sender_runtime_id,
+                target_id,
+                target_path,
+                str(payload.get("message") or ""),
+                callbacks,
+            )
+        if action == "invoke_many":
+            targets = payload.get("targets")
+            if not isinstance(targets, list) or not targets:
+                raise ValueError(
+                    "targets must be a non-empty list of agent paths"
                 )
-                succeeded = True
-                return result
-            finally:
-                self._mark_working(target_path, -1)
+            if not all(
+                isinstance(target, str) and target.strip() for target in targets
+            ):
+                raise ValueError("each target must be a non-empty agent path")
+
+            # Validate the complete batch before one recipient is invoked. This
+            # keeps a bad address from partially delivering a user request.
+            resolved = [
+                self._validate_message_target(sender_runtime_id, target)
+                for target in targets
+            ]
+            message = str(payload.get("message") or "")
+            await self._notify_callbacks(
+                callbacks,
+                "on_hierarchy_message",
+                self._runtime_paths[sender_runtime_id],
+                tuple(target_path for _target_id, target_path in resolved),
+                message,
+            )
+            # Recheck the whole batch under the hierarchy lock and accept all
+            # targets without yielding. A concurrent stop therefore cannot
+            # partially deliver a prevalidated broadcast.
+            sender_path = self._runtime_paths[sender_runtime_id]
+            async with self._hierarchy_lock:
+                root_id = self._runtime_roots[sender_runtime_id]
+                for _target_id, target_path in resolved:
+                    if (
+                        self._hierarchies[root_id].get(target_path)
+                        != _target_id
+                    ):
+                        raise KeyError(
+                            f"Unknown agent path {target_path!r} from "
+                            f"{self._runtime_paths[sender_runtime_id]!r}"
+                        )
+                    if self._is_stopping_path(root_id, target_path):
+                        raise ValueError(f"Agent {target_path!r} is stopping")
+                results = [
+                    self._accept_message_target(
+                        sender_path,
+                        target_id,
+                        target_path,
+                        message,
+                        callbacks,
+                    )
+                    for target_id, target_path in resolved
+                ]
+            return [{"result": result} for result in results]
+        raise ValueError(f"Unknown runtime request {action!r}")
+
+    def _validate_message_target(
+        self, sender_runtime_id: str, target: str
+    ) -> tuple[str, str]:
+        """Resolve a route before queueing a one-way message."""
+        target_id, target_path = self._resolve_path(sender_runtime_id, target)
+        root_id = self._runtime_roots[sender_runtime_id]
+        if self._is_stopping_path(root_id, target_path):
+            raise ValueError(f"Agent {target_path!r} is stopping")
+        return target_id, target_path
+
+    def _is_stopping_path(self, root_id: str, path: str) -> bool:
+        return any(
+            stopping_root == root_id
+            and (path == stopping_path or path.startswith(f"{stopping_path}/"))
+            for stopping_root, stopping_path in self._stopping_subtrees
+        )
+
+    async def _stop_runtime_subagent(
+        self, sender_runtime_id: str, target: str
+    ) -> str:
+        """Recursively unregister a descendant subtree owned by the caller."""
+        target_id, target_path = self._resolve_path(sender_runtime_id, target)
+        sender_path = self._runtime_paths[sender_runtime_id]
+        if target_id == sender_runtime_id or not target_path.startswith(
+            f"{sender_path}/"
+        ):
+            raise ValueError("An agent can only stop one of its descendants")
+
+        async with self._hierarchy_lock:
+            root_id = self._runtime_roots[sender_runtime_id]
+            hierarchy = self._hierarchies[root_id]
+            subtree = [
+                (path, runtime_id)
+                for path, runtime_id in hierarchy.items()
+                if path == target_path or path.startswith(f"{target_path}/")
+            ]
+            # A valid resolved target is necessarily in this hierarchy, but
+            # retaining a defensive error makes a race recoverable to the tool.
+            if not subtree:
+                raise KeyError(
+                    f"Unknown agent path {target!r} from {sender_path!r}"
+                )
+            if self._is_stopping_path(root_id, target_path):
+                raise ValueError(f"Agent {target_path!r} is already stopping")
+            self._stopping_subtrees.add((root_id, target_path))
+            subtree_paths = {path for path, _runtime_id in subtree}
+            for task in tuple(self._background_agent_tasks):
+                task_name = task.get_name()
+                if any(
+                    task_name == f"ursa-message-{path}"
+                    for path in subtree_paths
+                ):
+                    task.cancel()
+            teardown = asyncio.create_task(
+                self._teardown_runtime_subagent(root_id, target_path, subtree),
+                name=f"ursa-stop-agent-{target_path}",
+            )
+            self._background_teardown_tasks.add(teardown)
+            teardown.add_done_callback(self._teardown_task_done)
+        return f"Stopped agent {target_path} and its subagents."
+
+    async def _teardown_runtime_subagent(
+        self,
+        root_id: str,
+        target_path: str,
+        subtree: list[tuple[str, str]],
+    ) -> None:
+        """Kill an already-marked subtree without blocking its caller."""
+        try:
+            await self._cancel_subagent_starts(
+                tuple(runtime_id for _path, runtime_id in subtree)
+            )
+            for _path, runtime_id in sorted(
+                subtree, key=lambda item: item[0].count("/"), reverse=True
+            ):
+                await self._unregister_subagent(runtime_id)
+        finally:
+            async with self._hierarchy_lock:
+                hierarchy = self._hierarchies.get(root_id)
+                for path, runtime_id in subtree:
+                    if (
+                        hierarchy is not None
+                        and hierarchy.get(path) == runtime_id
+                    ):
+                        hierarchy.pop(path, None)
+                    self._dynamic_runtime_ids.discard(runtime_id)
+                    self._runtime_paths.pop(runtime_id, None)
+                    self._runtime_roots.pop(runtime_id, None)
+                    self._runtime_agent_names.pop(runtime_id, None)
+                    self._working_counts.pop(path, None)
+                    self._pending_counts.pop(path, None)
+                    self._waiting_counts.pop(path, None)
+                    buffered = self._buffered_agent_messages.pop(path, ())
+                    self._fail_buffered_messages(
+                        tuple(buffered),
+                        RuntimeError(f"Agent {path!r} was stopped"),
+                    )
+                self._stopping_subtrees.discard((root_id, target_path))
+                self._wake_all_waiters()
+
+    def _teardown_task_done(self, task: asyncio.Task[None]) -> None:
+        self._background_teardown_tasks.discard(task)
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except Exception as exc:
+            LOGGER.error(
+                "Asynchronous subagent teardown failed",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+
+    async def _cancel_background_teardown_tasks(self) -> None:
+        tasks = tuple(self._background_teardown_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._background_teardown_tasks.clear()
+
+    async def _wait_for_runtime_agent(
+        self,
+        sender_runtime_id: str,
+        target: Any,
+        timeout_value: Any,
+        *,
+        wait_all: bool = False,
+    ) -> str:
+        """Wait interruptibly for any or all hierarchy members to become idle."""
+        targets = self._normalize_wait_targets(target)
+        resolved = [
+            self._resolve_path(sender_runtime_id, item) for item in targets
+        ]
+        target_paths = [path for _target_id, path in resolved]
+        if any(target_id == sender_runtime_id for target_id, _path in resolved):
+            raise ValueError("An agent cannot wait for itself")
+        sender_path = self._runtime_paths[sender_runtime_id]
+        try:
+            timeout = float(timeout_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("timeout_seconds must be a number") from exc
+        if not 0 <= timeout <= 120:
+            raise ValueError("timeout_seconds must be between 0 and 120")
+        if buffered := self._take_buffered_agent_messages(sender_path):
+            if len(buffered) == 1:
+                item = buffered[0]
+                return agent_message_wait_result(
+                    item.sender_path, item.target_path, item.message
+                )
+            return (
+                f"Received {len(buffered)} messages while waiting. "
+                "Each entry retains its sender, recipient, and exact content:\n"
+                + json.dumps(
+                    [
+                        {
+                            "sender": item.sender_path,
+                            "recipient": item.target_path,
+                            "content": item.message,
+                        }
+                        for item in buffered
+                    ],
+                    ensure_ascii=False,
+                )
+            )
+
+        waiter = _RuntimeWait(targets=tuple(target_paths))
+        self._wait_wake_events.setdefault(sender_runtime_id, set()).add(waiter)
+        self._wait_dependencies.setdefault(sender_path, set()).add(waiter)
+        self._mark_waiting(sender_path, 1)
+        deadline = monotonic() + timeout
+        try:
+            completed = self._completed_wait_targets(resolved, sender_path)
+            if self._wait_satisfied(completed, len(resolved), wait_all):
+                return self._wait_result(
+                    completed, target_paths, wait_all, already_finished=True
+                )
+            while True:
+                if waiter.event.is_set():
+                    return waiter.delivery or (
+                        "Stopped waiting because a new message arrived."
+                    )
+                completed = self._completed_wait_targets(resolved, sender_path)
+                if self._wait_satisfied(completed, len(resolved), wait_all):
+                    return self._wait_result(completed, target_paths, wait_all)
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    return self._wait_timeout_result(
+                        target_paths, timeout, wait_all
+                    )
+                try:
+                    await asyncio.wait_for(
+                        waiter.event.wait(), timeout=min(remaining, 0.1)
+                    )
+                except TimeoutError:
+                    pass
+        finally:
+            events = self._wait_wake_events.get(sender_runtime_id)
+            if events is not None:
+                events.discard(waiter)
+                if not events:
+                    self._wait_wake_events.pop(sender_runtime_id, None)
+            dependencies = self._wait_dependencies.get(sender_path)
+            if dependencies is not None:
+                dependencies.discard(waiter)
+                if not dependencies:
+                    self._wait_dependencies.pop(sender_path, None)
+            self._mark_waiting(sender_path, -1)
+
+    @staticmethod
+    def _normalize_wait_targets(target: Any) -> list[str]:
+        """Validate one or more targets before the wait observes any state."""
+        if isinstance(target, str):
+            if target.strip():
+                return [target]
+        elif (
+            isinstance(target, list)
+            and target
+            and all(isinstance(item, str) and item.strip() for item in target)
+        ):
+            return list(target)
+        raise ValueError(
+            "target must be a non-empty agent path or list of paths"
+        )
+
+    def _completed_wait_targets(
+        self, resolved: list[tuple[str, str]], waiting_path: str
+    ) -> list[tuple[str, str | None]]:
+        """Return idle targets or targets that would close a wait cycle."""
+        completed = []
+        for runtime_id, path in resolved:
+            if runtime_id in self._subagent_start_tasks:
+                continue
+            if not self._working_counts.get(path, 0):
+                completed.append((path, None))
+            elif relation := self._runtime_wait_dependency_relation(
+                path, waiting_path
+            ):
+                completed.append((path, relation))
+        return completed
+
+    def _runtime_wait_depends_on(
+        self, path: str, target_path: str, visited: set[str] | None = None
+    ) -> bool:
+        """Whether a live host wait edge path reaches ``target_path``."""
+        if path == target_path:
+            return True
+        visited = set() if visited is None else visited
+        if path in visited:
+            return False
+        visited.add(path)
+        return any(
+            self._runtime_wait_depends_on(target, target_path, visited)
+            for waiter in self._wait_dependencies.get(path, ())
+            for target in waiter.targets
+        )
+
+    def _runtime_wait_dependency_relation(
+        self, path: str, target_path: str, visited: set[str] | None = None
+    ) -> str | None:
+        """Return whether a live wait path reaches the target directly or not."""
+        visited = set() if visited is None else visited
+        if path in visited:
+            return None
+        visited.add(path)
+        for waiter in self._wait_dependencies.get(path, ()):
+            for target in waiter.targets:
+                if target == target_path:
+                    return "directly"
+                if self._runtime_wait_depends_on(
+                    target, target_path, set(visited)
+                ):
+                    return "indirectly"
+        return None
+
+    @staticmethod
+    def _wait_satisfied(
+        completed: list[tuple[str, str | None]],
+        target_count: int,
+        wait_all: bool,
+    ) -> bool:
+        return len(completed) == target_count if wait_all else bool(completed)
+
+    @staticmethod
+    def _wait_result(
+        completed: list[tuple[str, str | None]],
+        targets: list[str],
+        wait_all: bool,
+        *,
+        already_finished: bool = False,
+    ) -> str:
+        path, relation = completed[0]
+        if relation is not None:
+            cycle_result = (
+                f"Agent {path} is ready for this wait because it is waiting "
+                f"on you {relation}."
+            )
+        else:
+            cycle_result = None
+        if len(targets) == 1:
+            if cycle_result is not None:
+                return cycle_result
+            verb = "has already finished" if already_finished else "finished"
+            return f"Agent {path} {verb} its work."
+        if wait_all:
+            if any(item_relation is not None for _, item_relation in completed):
+                details = ", ".join(
+                    f"{item_path} ({'finished' if item_relation is None else f'waiting on you {item_relation}'})"
+                    for item_path, item_relation in completed
+                )
+                return f"All agents are ready for this wait: {details}."
+            verb = "have already finished" if already_finished else "finished"
+            return (
+                f"All agents {verb} their work: "
+                f"{', '.join(item_path for item_path, _relation in completed)}."
+            )
+        if cycle_result is not None:
+            return cycle_result
+        verb = "has already finished" if already_finished else "finished"
+        return f"Agent {path} {verb} its work."
+
+    @staticmethod
+    def _wait_timeout_result(
+        targets: list[str], timeout: float, wait_all: bool
+    ) -> str:
+        if len(targets) == 1:
+            return (
+                f"Agent {targets[0]} did not finish within {timeout:g} seconds."
+            )
+        if wait_all:
+            return (
+                f"Not all agents finished within {timeout:g} seconds: "
+                f"{', '.join(targets)}."
+            )
+        return (
+            f"No agents finished within {timeout:g} seconds: "
+            f"{', '.join(targets)}."
+        )
+
+    def _wake_runtime_waiters(
+        self,
+        sender_runtime_id: str,
+        *,
+        delivery: str | None = None,
+    ) -> bool:
+        """Wake waits, optionally delivering one routed message in-band."""
+        waiters = tuple(self._wait_wake_events.get(sender_runtime_id, ()))
+        available = [waiter for waiter in waiters if not waiter.event.is_set()]
+        if not available:
+            return False
+        if delivery is not None:
+            available[0].delivery = delivery
+        for waiter in available:
+            waiter.event.set()
+        return delivery is not None
+
+    async def _queue_message_target(
+        self,
+        sender_runtime_id: str,
+        target_id: str,
+        target_path: str,
+        message: str,
+        callbacks: Sequence[Any],
+        *,
+        log_request: bool = True,
+    ) -> str:
+        """Record and queue a validated one-way message."""
+        sender_path = self._runtime_paths[sender_runtime_id]
+        if log_request:
+            await self._notify_callbacks(
+                callbacks,
+                "on_hierarchy_message",
+                sender_path,
+                (target_path,),
+                message,
+            )
+        async with self._hierarchy_lock:
+            root_id = self._runtime_roots[sender_runtime_id]
+            if self._hierarchies[root_id].get(target_path) != target_id:
+                raise KeyError(
+                    f"Unknown agent path {target_path!r} from {sender_path!r}"
+                )
+            if self._is_stopping_path(root_id, target_path):
+                raise ValueError(f"Agent {target_path!r} is stopping")
+            acknowledgement = self._accept_message_target(
+                sender_path,
+                target_id,
+                target_path,
+                message,
+                callbacks,
+            )
+        return acknowledgement
+
+    def _accept_message_target(
+        self,
+        sender_path: str,
+        target_id: str,
+        target_path: str,
+        message: str,
+        callbacks: Sequence[Any],
+        *,
+        response: asyncio.Future[str | None] | None = None,
+    ) -> str:
+        """Accept a message while the caller holds ``_hierarchy_lock``."""
+        # A model paused inside wait_for cannot process a separate inbox turn
+        # until its current invocation finishes. Deliver the first arriving
+        # message as the tool result instead, so it can react immediately and
+        # do not queue the same message for a duplicate later turn.
+        if self._wake_runtime_waiters(
+            target_id,
+            delivery=agent_message_wait_result(
+                sender_path, target_path, message
+            ),
+        ):
+            if response is not None and not response.done():
+                response.set_result(None)
+            return f"Message queued for {target_path}."
+        item = _BufferedAgentMessage(
+            sender_path=sender_path,
+            target_id=target_id,
+            target_path=target_path,
+            message=message,
+            callbacks=tuple(callbacks),
+            response=response,
+        )
+        if self._working_counts.get(target_path, 0):
+            self._buffered_agent_messages.setdefault(
+                target_path, deque()
+            ).append(item)
+            self._pending_counts[target_path] = (
+                self._pending_counts.get(target_path, 0) + 1
+            )
+            return f"Message queued for {target_path}."
+        self._schedule_message_target(item)
+        return f"Message queued for {target_path}."
+
+    def _schedule_message_target(
+        self,
+        item: _BufferedAgentMessage,
+        *,
+        additional: Sequence[_BufferedAgentMessage] = (),
+    ) -> None:
+        """Start one turn for already-validated messages to the same agent."""
+        self._mark_working(item.target_path, 1)
+        items = (item, *additional)
+        response_item = next(
+            (candidate for candidate in reversed(items) if candidate.response),
+            None,
+        )
+        deliveries = tuple(
+            candidate for candidate in items if candidate.response is not None
+        )
+        execution_callbacks = (
+            response_item.callbacks
+            if response_item is not None
+            else item.callbacks
+        )
+        task_state = {"started": False}
+        task = asyncio.create_task(
+            self._invoke_message_target(
+                item.sender_path,
+                item.target_id,
+                item.target_path,
+                item.message,
+                execution_callbacks,
+                response=(response_item.response if response_item else None),
+                deliveries=deliveries,
+                additional=additional,
+                task_state=task_state,
+            ),
+            name=f"ursa-message-{item.target_path}",
+        )
+        self._background_agent_tasks.add(task)
+        task.add_done_callback(
+            lambda done: self._agent_task_done(
+                done,
+                target_path=item.target_path,
+                deliveries=deliveries,
+                task_state=task_state,
+            )
+        )
+
+    async def _invoke_message_target(
+        self,
+        sender_path: str,
+        target_id: str,
+        target_path: str,
+        message: str,
+        callbacks: Sequence[Any],
+        *,
+        response: asyncio.Future[str | None] | None = None,
+        deliveries: Sequence[_BufferedAgentMessage] = (),
+        additional: Sequence[_BufferedAgentMessage] = (),
+        task_state: dict[str, bool] | None = None,
+    ) -> None:
+        """Run a queued message in the background and report its lifecycle."""
+        if task_state is not None:
+            task_state["started"] = True
+        succeeded = False
+        try:
+            if deliveries:
+                await self._notify_user_delivery_starts(deliveries)
+                for delivery in deliveries:
+                    if delivery.response is not response:
+                        self._complete_in_band_delivery(delivery)
+            else:
+                await self._notify_callbacks(
+                    callbacks, "on_agent_message_start", target_path
+                )
+            result = await self._manager.invoke(
+                target_id,
+                message,
+                config={
+                    "metadata": {
+                        "ursa_message_recipient": target_path,
+                        "ursa_message_sender": sender_path,
+                    },
+                    "ursa_additional_messages": [
+                        {
+                            "sender": item.sender_path,
+                            "recipient": item.target_path,
+                            "content": item.message,
+                        }
+                        for item in additional
+                    ],
+                },
+                callbacks=callbacks,
+            )
+            if response is not None and not response.done():
+                response.set_result(result)
+            succeeded = True
+        except BaseException as exc:
+            self._fail_buffered_messages(deliveries, exc)
+            if response is not None and not response.done():
+                response.set_exception(exc)
+            raise
+        finally:
+            self._mark_working(target_path, -1)
+            if not deliveries:
                 await self._notify_callbacks(
                     callbacks,
                     "on_agent_message_end",
                     target_path,
                     succeeded=succeeded,
                 )
-        raise ValueError(f"Unknown runtime request {action!r}")
+
+    @staticmethod
+    async def _notify_user_delivery_starts(
+        deliveries: Sequence[_BufferedAgentMessage],
+    ) -> None:
+        """Promote queued user rows without adding delegated spinners."""
+        for delivery in deliveries:
+            for callback in delivery.callbacks:
+                if isinstance(callback, _MessageStartCallback):
+                    await callback.on_agent_message_start()
+
+    def _agent_task_done(
+        self,
+        task: asyncio.Task[Any],
+        *,
+        target_path: str,
+        deliveries: Sequence[_BufferedAgentMessage],
+        task_state: Mapping[str, bool],
+    ) -> None:
+        """Retrieve background failures so they only reach structured logs."""
+        self._background_agent_tasks.discard(task)
+        if not task_state.get("started"):
+            self._fail_buffered_messages(
+                deliveries,
+                RuntimeError(
+                    f"Message delivery to {target_path!r} was cancelled before start"
+                ),
+            )
+            self._mark_working(target_path, -1)
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except Exception as exc:
+            LOGGER.error(
+                "Asynchronous agent message failed",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+
+    async def _cancel_background_agent_tasks(self) -> None:
+        tasks = tuple(self._background_agent_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._background_agent_tasks.clear()
 
     async def _spawn_runtime_subagent(
         self,
@@ -911,9 +1954,13 @@ class AgentRuntime:
     ) -> str:
         BaseAgent._validate_subagent_name(name)
         async with self._hierarchy_lock:
+            if self._closed:
+                raise RuntimeError("Subagent runtime is closed")
             root_id = self._runtime_roots[parent_runtime_id]
             hierarchy = self._hierarchies[root_id]
             parent_path = self._runtime_paths[parent_runtime_id]
+            if self._is_stopping_path(root_id, parent_path):
+                raise ValueError(f"Agent {parent_path!r} is stopping")
             child_path = f"{parent_path}/{name}"
             if child_path in hierarchy:
                 raise ValueError(f"Subagent name already exists: {name!r}")
@@ -943,6 +1990,7 @@ class AgentRuntime:
             agent_name = self._resolve_subagent_type(
                 agent_type, parent_agent_name
             )
+            cached_mcp_tool_specs = self._cached_mcp_tool_specs()
             runtime_id = f"{root_id}:sub:{child_path}"
             child_config = _resolve_host_secrets(
                 self.config.model_copy(
@@ -956,7 +2004,11 @@ class AgentRuntime:
                             if self.config.subagents.embedding_model is not None
                             else self.config.emb_model
                         ),
-                        "agent_name": None,
+                        # Every hierarchy member writes to the root's durable
+                        # agent store. Their thread IDs below remain distinct,
+                        # so LangGraph keeps each agent's history isolated
+                        # inside the shared checkpoint database.
+                        "agent_name": self.config.agent_name,
                         "thread_id": f"{self.thread_id}:{child_path}",
                         "agent_config": {
                             agent_name: dict(
@@ -974,23 +2026,106 @@ class AgentRuntime:
                         "agent_name": agent_name,
                         "agent_path": child_path,
                         "ursa_config": _runner_config(child_config),
+                        **(
+                            {"mcp_tool_specs": cached_mcp_tool_specs}
+                            if cached_mcp_tool_specs is not None
+                            else {}
+                        ),
                     },
                 )
             )
             self._manager.set_runtime_request_handler(
                 runtime_id, self._handle_runtime_request
             )
-            try:
-                await self._manager.start_agent(runtime_id)
-            except BaseException:
-                await self._manager.unregister(runtime_id)
-                raise
+            # Reserve both the name and capacity before yielding. Process
+            # initialization runs outside the shared lock, so independent
+            # starts and message routing can proceed concurrently.
             hierarchy[child_path] = runtime_id
             self._dynamic_runtime_ids.add(runtime_id)
             self._runtime_paths[runtime_id] = child_path
             self._runtime_roots[runtime_id] = root_id
             self._runtime_agent_names[runtime_id] = agent_name
-            return child_path
+            startup = asyncio.create_task(
+                self._start_reserved_subagent(runtime_id),
+                name=f"ursa-start-agent-{child_path}",
+            )
+            self._subagent_start_tasks[runtime_id] = startup
+        try:
+            await startup
+        except asyncio.CancelledError:
+            # Cancellation can occur before the startup task ever runs, in
+            # which case its own finally block cannot release the reservation.
+            await self._unregister_subagent(runtime_id, startup=startup)
+            if self._subagent_start_tasks.get(runtime_id) is startup:
+                self._subagent_start_tasks.pop(runtime_id, None)
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
+            raise ValueError(
+                f"Subagent {child_path!r} was stopped during startup"
+            ) from None
+        return child_path
+
+    async def _start_reserved_subagent(self, runtime_id: str) -> None:
+        """Start a reserved child, rolling back a failure or cancellation."""
+        startup = asyncio.current_task()
+        try:
+            await self._manager.start_agent(runtime_id)
+        except BaseException:
+            await self._unregister_subagent(runtime_id, startup=startup)
+            raise
+        finally:
+            if self._subagent_start_tasks.get(runtime_id) is startup:
+                self._subagent_start_tasks.pop(runtime_id, None)
+
+    async def _unregister_subagent(
+        self, runtime_id: str, *, startup: asyncio.Task[None] | None = None
+    ) -> None:
+        """Unregister once when startup cancellation and subtree stop race."""
+        async with self._subagent_cleanup_lock:
+            if (
+                startup is not None
+                and self._subagent_start_tasks.get(runtime_id) is not startup
+            ):
+                return
+            if runtime_id not in self._dynamic_runtime_ids:
+                return
+            root_id = self._runtime_roots[runtime_id]
+            path = self._runtime_paths[runtime_id]
+            try:
+                await self._manager.unregister(runtime_id, force=True)
+            finally:
+                async with self._hierarchy_lock:
+                    hierarchy = self._hierarchies.get(root_id, {})
+                    if hierarchy.get(path) == runtime_id:
+                        hierarchy.pop(path, None)
+                    self._dynamic_runtime_ids.discard(runtime_id)
+                    self._runtime_paths.pop(runtime_id, None)
+                    self._runtime_roots.pop(runtime_id, None)
+                    self._runtime_agent_names.pop(runtime_id, None)
+
+    async def _cancel_subagent_starts(
+        self, runtime_ids: Sequence[str] | None = None
+    ) -> None:
+        """Release startup lifecycle locks before killing or closing agents."""
+        selected = set(runtime_ids) if runtime_ids is not None else None
+        starts = tuple(
+            (runtime_id, task)
+            for runtime_id, task in self._subagent_start_tasks.items()
+            if selected is None or runtime_id in selected
+        )
+        for _runtime_id, task in starts:
+            if not task.cancelling():
+                task.cancel()
+        if starts:
+            await asyncio.gather(
+                *(task for _runtime_id, task in starts), return_exceptions=True
+            )
+        for runtime_id, task in starts:
+            if task.cancelled():
+                await self._unregister_subagent(runtime_id, startup=task)
+            if self._subagent_start_tasks.get(runtime_id) is task:
+                self._subagent_start_tasks.pop(runtime_id, None)
 
     def _resolve_subagent_type(self, requested: Any, inherited: str) -> str:
         """Validate a host-selected child type, defaulting to the parent."""
@@ -1011,7 +2146,10 @@ class AgentRuntime:
         root_id = self._active_root_id
         if root_id is None:
             raise RuntimeError("No active agent hierarchy")
-        return self._resolve_path(root_id, path)
+        runtime_id, resolved_path = self._resolve_path(root_id, path)
+        if self._is_stopping_path(root_id, resolved_path):
+            raise RuntimeError(f"Agent {resolved_path!r} is stopping")
+        return runtime_id, resolved_path
 
     def _resolve_path(
         self, sender_runtime_id: str, target: str
@@ -1087,6 +2225,12 @@ class AgentRuntime:
                 }
             )
             resolved = _resolve_host_secrets(candidate)
+            self._stopping_subtrees.update(
+                (root_id, "root") for root_id in self._hierarchies
+            )
+            await self._cancel_subagent_starts()
+            await self._cancel_background_agent_tasks()
+            await self._cancel_background_teardown_tasks()
             for runtime_id in reversed(tuple(self._dynamic_runtime_ids)):
                 await self._manager.unregister(runtime_id)
             self._dynamic_runtime_ids.clear()
@@ -1099,8 +2243,17 @@ class AgentRuntime:
             self._hierarchies.clear()
             self._working_counts.clear()
             self._pending_counts.clear()
+            self._fail_all_buffered_messages(
+                RuntimeError("Agent runtime was reconfigured")
+            )
+            self._wake_all_waiters()
+            self._wait_dependencies.clear()
+            self._waiting_counts.clear()
+            self._stopping_subtrees.clear()
             self._active_root_id = None
             self._active_agent_ready.clear()
+            self._mcp_tool_specs = None
+            self._mcp_tool_specs_fingerprint = None
             self.config = resolved
             self.inference_provider = chat_config.inference_provider
             self.embedding_inference_provider = (
@@ -1121,6 +2274,13 @@ class AgentRuntime:
             if self._closed:
                 return
             self._closed = True
+            self._wake_all_waiters()
+            await self._cancel_subagent_starts()
+            await self._cancel_background_agent_tasks()
+            self._fail_all_buffered_messages(
+                RuntimeError("Agent runtime closed")
+            )
+            await self._cancel_background_teardown_tasks()
             if self._owns_manager:
                 await self._manager.aclose()
             else:
@@ -1130,6 +2290,13 @@ class AgentRuntime:
                 for name in tuple(self._registered):
                     await self._manager.unregister(self.agents[name].runtime_id)
                     self._registered.discard(name)
+
+    def _wake_all_waiters(self) -> None:
+        """Release host waits before hierarchy ownership is discarded."""
+        for events in self._wait_wake_events.values():
+            for waiter in tuple(events):
+                waiter.event.set()
+        self._wait_wake_events.clear()
 
     async def close(self) -> None:
         await self.aclose()

@@ -14,6 +14,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.graph.message import add_messages
 from langgraph.runtime import Runtime
+from langgraph.store.sqlite.aio import AsyncSqliteStore
 
 # Your project imports
 from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
@@ -368,6 +369,45 @@ async def test_agent_with_tools_seeds_safe_codes_in_async_store(tmp_path: Path):
         agent.close()
 
     assert set(safe_codes) == {"python", "julia"}
+
+
+@pytest.mark.asyncio
+async def test_shared_async_store_serializes_first_use_migrations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agents = [
+        Agent(
+            llm=TinyCountingModel(),
+            workspace=tmp_path,
+            enable_metrics=False,
+        )
+        for _ in range(4)
+    ]
+    original_setup = AsyncSqliteStore.setup
+    active_setups = 0
+    max_active_setups = 0
+
+    async def observed_setup(store: AsyncSqliteStore) -> None:
+        nonlocal active_setups, max_active_setups
+        active_setups += 1
+        max_active_setups = max(max_active_setups, active_setups)
+        try:
+            await asyncio.sleep(0.01)
+            await original_setup(store)
+        finally:
+            active_setups -= 1
+
+    monkeypatch.setattr(AsyncSqliteStore, "setup", observed_setup)
+    try:
+        stores = await asyncio.gather(
+            *(agent._aget_async_storage() for agent in agents)
+        )
+        assert max_active_setups == 1
+        assert all(store is not None for store in stores)
+    finally:
+        await asyncio.gather(*(agent.aclose() for agent in agents))
+        for agent in agents:
+            agent.close()
 
 
 @pytest.mark.asyncio

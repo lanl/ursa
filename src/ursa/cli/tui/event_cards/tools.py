@@ -84,6 +84,8 @@ class ToolCallCard(EventCard):
         )
 
     def _advance_spinner(self) -> None:
+        if not self.is_mounted or self.screen is not self.app.screen:
+            return
         self.query_one(".tool-call-state", Static).update(
             ActivityIndicator.FRAMES[self._frame]
         )

@@ -10,6 +10,9 @@ from ursa.cli.tui.event_cards.commands import (
 from ursa.cli.tui.event_cards.commands import (
     RunCommandCard as RunCommandCard,
 )
+from ursa.cli.tui.event_cards.coordination import (
+    CoordinationCard as CoordinationCard,
+)
 from ursa.cli.tui.event_cards.files import EditCard as EditCard
 from ursa.cli.tui.event_cards.files import FileActivityCard as FileActivityCard
 from ursa.cli.tui.event_cards.hierarchy import AgentToolCard as AgentToolCard

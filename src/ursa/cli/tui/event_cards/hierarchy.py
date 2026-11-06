@@ -1,11 +1,14 @@
+# ruff: noqa: TID251
+
 """Purpose-built cards for agents delegating work to one another."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from langchain_core.messages import ToolMessage
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Markdown, Static
@@ -20,16 +23,30 @@ class AgentToolCard(EventCard):
     _PRESENTATION = {
         "spawn_agent": ("✦", "Delegating work", "subagent"),
         "send_message": ("↗", "Messaging agent", "recipient"),
+        "stop_agent": ("■", "Stopping agent", "agent"),
+        "wait_for": ("◌", "Waiting for agents", "agent"),
         "list_agents": ("⌘", "Inspecting agents", "hierarchy"),
     }
 
-    def __init__(self, key: str, tool: str, tool_input: Any) -> None:
+    def __init__(
+        self,
+        key: str,
+        tool: str,
+        tool_input: Any,
+        *,
+        details_loader: Callable[[], Awaitable[tuple[dict[str, Any], str]]]
+        | None = None,
+    ) -> None:
         icon, title, subject = self._PRESENTATION[tool]
         super().__init__(key, f"{icon} {title}")
         self.tool = tool
         self.tool_input = tool_input if isinstance(tool_input, Mapping) else {}
         self.subject = subject
         self.output = ""
+        self._details_loader = details_loader
+        self._details_loaded = False
+        self._compact_input = self.tool_input
+        self._compact_output = ""
         self.completed = False
         self.failed = False
         self._frame = 0
@@ -42,8 +59,29 @@ class AgentToolCard(EventCard):
             agent_type = str(self.tool_input.get("agent_type") or "").strip()
             return f"{name} ({agent_type})" if agent_type else name
         if self.tool == "send_message":
+            targets = self.targets
+            if len(targets) == 1:
+                return targets[0]
+            return f"{len(targets)} agents"
+        if self.tool == "wait_for":
+            targets = self.targets
+            if len(targets) == 1:
+                return targets[0]
+            return f"{len(targets)} agents"
+        if self.tool == "stop_agent":
             return str(self.tool_input.get("target") or "another agent")
         return "agent hierarchy"
+
+    @property
+    def targets(self) -> list[str]:
+        """Return one or more display-safe message targets."""
+        value = self.tool_input.get("target")
+        if isinstance(value, list):
+            targets = [
+                str(target).strip() for target in value if str(target).strip()
+            ]
+            return targets or ["other agents"]
+        return [str(value or "another agent")]
 
     @property
     def task(self) -> str:
@@ -55,11 +93,17 @@ class AgentToolCard(EventCard):
             yield Static(
                 ActivityIndicator.FRAMES[0], classes="agent-tool-state"
             )
-            yield Static(self._summary(), classes="agent-tool-preview")
+            # Tool results can include arbitrary agent messages (including
+            # bracketed JSON from a batched wait). Keep this compact preview
+            # as literal text instead of Textual markup.
+            yield Static(Text(self._summary()), classes="agent-tool-preview")
         with Vertical(classes="agent-tool-details hidden"):
             yield Static("Task", classes="agent-tool-detail-title task-title")
             yield Markdown(
-                self.task or "_No task provided._", classes="agent-tool-task"
+                ""
+                if self._details_loader
+                else self.task or "_No task provided._",
+                classes="agent-tool-task",
             )
             yield Static(
                 "Result", classes="agent-tool-detail-title result-title hidden"
@@ -68,12 +112,17 @@ class AgentToolCard(EventCard):
         yield Static("Click to expand", classes="event-expand-hint")
 
     def on_mount(self) -> None:
-        self._spinner_timer = self.set_interval(0.08, self._advance_spinner)
+        if not self.completed:
+            self._spinner_timer = self.set_interval(0.08, self._advance_spinner)
         self._render_card()
         self._update_expand_hint()
 
     def _advance_spinner(self) -> None:
-        if not self.is_mounted or self.completed:
+        if (
+            not self.is_mounted
+            or self.completed
+            or self.screen is not self.app.screen
+        ):
             return
         self.query_one(".agent-tool-state", Static).update(
             ActivityIndicator.FRAMES[self._frame]
@@ -85,14 +134,24 @@ class AgentToolCard(EventCard):
             if self.tool == "spawn_agent":
                 return f"Starting {self.target}"
             if self.tool == "send_message":
-                return f"Waiting for {self.target}"
+                return f"Queueing for {self.target}"
+            if self.tool == "wait_for":
+                return f"Watching {self.target} for completion"
+            if self.tool == "stop_agent":
+                return f"Stopping {self.target} and its subagents"
             return "Reading the active hierarchy"
         if self.failed:
             return f"Could not reach {self.target}"
         if self.tool == "spawn_agent":
-            return f"{self.target} completed its initial task"
+            return f"{self.target} started with its initial task"
         if self.tool == "send_message":
-            return f"Reply received from {self.target}"
+            if len(self.targets) > 1:
+                return f"Messages queued for {len(self.targets)} agents"
+            return f"Message queued for {self.target}"
+        if self.tool == "wait_for":
+            return self.output or f"Stopped waiting for {self.target}"
+        if self.tool == "stop_agent":
+            return self.output or f"Stopped {self.target} and its subagents"
         count = len([line for line in self.output.splitlines() if line.strip()])
         return f"{count} agent{'s' if count != 1 else ''} in the hierarchy"
 
@@ -115,12 +174,16 @@ class AgentToolCard(EventCard):
 
     def complete(self, output: Any, *, failed: bool = False) -> None:
         self.output = self._text_content(output)
+        self._compact_output = self.output
+        self._details_loaded = False
         self.completed = True
         self.failed = failed
         self.mark_done()
         if self._spinner_timer is not None:
             self._spinner_timer.pause()
         self._render_card()
+        if self._details_loader and self.expanded and self.is_mounted:
+            self._request_details()
 
     def update_event(self, payload: Mapping[str, Any]) -> None:
         phase = str(payload.get("phase") or "")
@@ -136,8 +199,29 @@ class AgentToolCard(EventCard):
 
     def set_expanded(self, expanded: bool) -> None:
         self.expanded = expanded
+        if self._details_loader and not expanded:
+            self.tool_input = self._compact_input
+            self.output = self._compact_output
+            self._details_loaded = False
         self._render_card()
         self._update_expand_hint()
+        if self._details_loader and expanded and self.is_mounted:
+            self._request_details()
+
+    def _request_details(self) -> None:
+        self.run_worker(
+            self._load_details, exclusive=True, group="agent-tool-details"
+        )
+
+    async def _load_details(self) -> None:
+        if self._details_loader is None:
+            return
+        tool_input, output = await self._details_loader()
+        if self.expanded and self.is_mounted:
+            self.tool_input = tool_input
+            self.output = output
+            self._details_loaded = True
+            self._render_card()
 
     def _render_card(self) -> None:
         if not self.is_mounted:
@@ -149,12 +233,20 @@ class AgentToolCard(EventCard):
             if self.completed
             else ActivityIndicator.FRAMES[self._frame]
         )
-        self.query_one(".agent-tool-preview", Static).update(self._summary())
+        self.query_one(".agent-tool-preview", Static).update(
+            Text(self._summary())
+        )
         details = self.query_one(".agent-tool-details", Vertical)
         details.set_class(not self.expanded, "hidden")
         result_title = self.query_one(".result-title", Static)
         result = self.query_one(".agent-tool-result", Markdown)
         result_title.set_class(not self.completed, "hidden")
         result.set_class(not self.completed, "hidden")
+        task = self.query_one(".agent-tool-task", Markdown)
+        if self._details_loader and not self._details_loaded:
+            task.update("_Loading…_" if self.expanded else "")
+            result.update("_Loading…_" if self.expanded else "")
+            return
+        task.update(self.task or "_No task provided._")
         if self.completed:
             result.update(self.output or "_No response returned._")

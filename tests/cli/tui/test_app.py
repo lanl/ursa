@@ -1,5 +1,8 @@
 import asyncio
 import io
+import logging
+import sys
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -20,8 +23,10 @@ from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.turn import Turn
 from ursa.cli.tui.widgets import (
     ActivityIndicator,
+    HierarchyMessageCard,
     HotlistScreen,
     MessageCard,
+    MessagesScreen,
     PromptArea,
     QueuedMessage,
     WelcomeBanner,
@@ -48,6 +53,113 @@ def test_copy_bindings_are_uniform_and_global():
         assert bindings[key].priority
 
 
+def test_hierarchy_activity_uses_uniform_labels():
+    assert (
+        UrsaTextualApp._event_activity({
+            "tool": "inspect_code",
+            "phase": "start",
+            "message": "provider-specific input",
+        })
+        == "Running inspect code"
+    )
+    assert (
+        UrsaTextualApp._event_activity({
+            "tool": "inspect_code",
+            "phase": "end",
+        })
+        == "Finished inspect code"
+    )
+    assert (
+        UrsaTextualApp._event_activity({
+            "reasoning_summary": "  checking\nimports  "
+        })
+        == "Thinking: checking imports"
+    )
+
+
+async def test_messages_command_shows_live_collapsible_colored_log(tmp_path):
+    app = UrsaTextualApp(make_runtime(tmp_path))
+    content = (
+        "[OPENING round=1 root/p08] Review the first line.\n\n"
+        "Include the complete supporting detail. [red]literal brackets[/red]"
+    )
+    await app.record_hierarchy_message(
+        "root",
+        ("root/researcher", "root/reviewer"),
+        content,
+    )
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await app._show_command("messages")
+        assert isinstance(app.screen, MessagesScreen)
+        await wait_for(
+            pilot, lambda: len(app.screen.query(HierarchyMessageCard)) == 1
+        )
+
+        card = app.screen.query_one(HierarchyMessageCard)
+        header = card.query_one(".hierarchy-message-header")
+        route = card.query_one(".hierarchy-message-route", Static)
+        timestamp = card.query_one(".hierarchy-message-time", Static)
+        preview = card.query_one(".hierarchy-message-preview", Static)
+        full = card.query_one(".hierarchy-message-full", Markdown)
+        assert "root" in str(route.content)
+        assert "root/researcher" in str(route.content)
+        assert "root/reviewer" in str(route.content)
+        assert str(timestamp.content) == "now"
+        assert timestamp.region.right == header.content_region.right
+        assert "\n" not in str(preview.content)
+        assert str(preview.content) == " ".join(content.split())
+        assert full.has_class("hidden")
+        assert not card.query(".hierarchy-message-expand-hint")
+        assert "Click a message" in str(
+            app.screen.query_one("#messages-footer", Static).content
+        )
+        assert len(set(app._agent_colors.values())) == 3
+        assert card.sender_color == app._agent_color("root")
+
+        thirty_seconds_later = card.message.timestamp + timedelta(seconds=30)
+        card.refresh_timestamp(thirty_seconds_later)
+        assert str(timestamp.content) == "30s ago"
+
+        await pilot.click(card)
+        await pilot.pause()
+        assert card.expanded
+        assert preview.has_class("hidden")
+        assert not full.has_class("hidden")
+        assert "complete supporting detail" in str(full.source)
+
+        await app.record_hierarchy_message(
+            "root/researcher",
+            ("root",),
+            "[DISCUSS round=1 root/p08] Research complete.",
+        )
+        assert await wait_for(
+            pilot,
+            lambda: len(app.screen.query(HierarchyMessageCard)) == 2,
+        )
+        assert not app.screen.query("#messages-body Input")
+
+
+def test_tui_logging_never_writes_through_terminal_handler(capsys):
+    root = logging.getLogger()
+    terminal_handler = logging.StreamHandler(sys.stderr)
+    root.addHandler(terminal_handler)
+    try:
+        with app_module._tui_logging():
+            assert terminal_handler not in root.handlers
+            assert any(
+                isinstance(handler, app_module.TextualHandler)
+                for handler in root.handlers
+            )
+            logging.getLogger("tests.tui.output").warning("tui logging marker")
+        assert terminal_handler in root.handlers
+    finally:
+        root.removeHandler(terminal_handler)
+
+    captured = capsys.readouterr()
+    assert "tui logging marker" not in captured.out + captured.err
+
+
 async def test_welcome_banner_starts_at_top_of_conversation(tmp_path):
     app = UrsaTextualApp(make_runtime(tmp_path))
 
@@ -71,6 +183,7 @@ async def test_welcome_banner_starts_at_top_of_conversation(tmp_path):
 
 async def test_prompt_submission_events_and_history(tmp_path):
     runtime = make_runtime(tmp_path)
+    _activate_hierarchy(runtime, "root")
     calls = []
 
     async def run_agent(name, prompt, callbacks=None):
@@ -115,6 +228,11 @@ async def test_prompt_submission_events_and_history(tmp_path):
         assert app.input_tokens == 30
         assert app.output_tokens == 7
         assert app.cached_tokens == 12
+        assert app._agent_token_usage["root"].input_tokens == 30
+        assert app._agent_token_usage["root"].output_tokens == 7
+        assert app._agent_token_usage["root"].cached_tokens == 12
+        assert app._agent_token_usage["root"].total_tokens == 37
+        assert app._agent_last_activity["root"] == "Running read file"
         status = str(app.query_one("#status", Static).content)
         assert "37 tokens" in status
         assert "input" not in status
@@ -128,13 +246,94 @@ async def test_prompt_submission_events_and_history(tmp_path):
         roles = list(app.query(".message-role"))
         assert len(roles) == 1
         assert str(roles[0].content) == "URSA"
-        for message in app.query(MessageCard):
-            markdown = message.query_one(Markdown)
-            assert list(markdown.children)[-1].styles.margin.bottom == 0
+        markdown = messages[1].query_one(Markdown)
+        assert list(markdown.children)[-1].styles.margin.bottom == 0
+        assert isinstance(messages[0].query_one(".message-body"), Static)
 
         prompt = app.query_one(PromptArea)
         await pilot.press("up")
         assert prompt.text == "hello"
+
+
+async def test_long_submitted_prompt_is_not_clipped(tmp_path):
+    runtime = make_runtime(tmp_path)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def run_agent(_name, _prompt, callbacks=None):
+        started.set()
+        await release.wait()
+        return "Finished"
+
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
+    prompt_text = (
+        "Act as GM and run a complete compact game of Werewolf with exactly "
+        "five player subagents. Privately assign roles, collect every reply "
+        "with wait_for, and report whether all expected messages were "
+        "received exactly once."
+    )
+
+    async with app.run_test(size=(140, 48)) as pilot:
+        prompt = app.query_one(PromptArea)
+        prompt.load_text(prompt_text)
+        await pilot.press("enter")
+        await started.wait()
+        await pilot.pause()
+
+        user = app.query_one(".message-card.user", MessageCard)
+        body = user.query_one(".message-body", Static)
+        rendered = " ".join(
+            body.render_line(line).text.strip()
+            for line in range(body.region.height)
+        )
+        assert body.region.height >= 2
+        assert "received exactly once." in rendered
+
+        release.set()
+        await app.workers.wait_for_complete()
+
+
+async def test_root_view_hides_duplicate_child_progress_during_initial_run(
+    tmp_path,
+):
+    runtime = make_runtime(tmp_path)
+    child_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def run_agent(_name, _prompt, callbacks=None):
+        await callbacks[0].on_chat_model_start(
+            metadata={"ursa_message_recipient": "root"}
+        )
+        await callbacks[0].on_agent_message_start("root/player1")
+        child_started.set()
+        await release.wait()
+        await callbacks[0].on_agent_message_end("root/player1", succeeded=True)
+        return "Finished"
+
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.press("g", "o", "enter")
+        await child_started.wait()
+        await pilot.pause()
+
+        root_turn = app._agent_turns["root"]
+        child_turn = app._agent_turns["root/player1"]
+        assert app._active_agent_path == "root"
+        assert app._view_agent_path == "root"
+        assert not root_turn.has_class("hidden")
+        assert child_turn.has_class("hidden")
+
+        app._active_agent_path = "root/player1"
+        app._view_agent_path = "root/player1"
+        app._apply_agent_turn_visibility()
+        assert root_turn.has_class("hidden")
+        assert not child_turn.has_class("hidden")
+
+        release.set()
+        await app.workers.wait_for_complete()
 
 
 async def test_agent_exception_card_expands_to_full_traceback(tmp_path):
@@ -244,7 +443,7 @@ async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
         done_mark = activity.query_one(".activity-done-mark", Static)
         first_frame = str(spinner.content)
         assert first_frame in ActivityIndicator.FRAMES
-        assert str(label.content) == "Inspecting the request"
+        assert str(label.content) == "Thinking: Inspecting the request"
 
         assert await wait_for(
             pilot, lambda: str(spinner.content) != first_frame
@@ -331,7 +530,6 @@ async def test_message_stays_dimmed_until_active_agent_accepts_it(tmp_path):
         prompt,
         *,
         callbacks=None,
-        interrupt=False,
         on_start=None,
     ):
         await accept_message.wait()
@@ -354,66 +552,60 @@ async def test_message_stays_dimmed_until_active_agent_accepts_it(tmp_path):
         assert queued.region.y < prompt.region.y
         assert all(card.content != "update" for card in app.query(MessageCard))
 
+        await pilot.press("escape")
+        assert queued.is_mounted
+        assert not release_root.is_set()
+        prompt.load_text("unsent draft")
+        await pilot.press("escape")
+        assert prompt.text == "unsent draft"
+        assert len(app.query(QueuedMessage)) == 1
+        assert not release_root.is_set()
+
         accept_message.set()
         assert await wait_for(pilot, lambda: not app.query(QueuedMessage))
         assert any(card.content == "update" for card in app.query(MessageCard))
         await app.workers.wait_for_complete()
 
 
-async def test_escape_interrupts_and_submits_the_message_queue(tmp_path):
+async def test_in_band_message_promotes_without_a_duplicate_empty_reply(
+    tmp_path,
+):
     runtime = make_runtime(tmp_path)
     _activate_hierarchy(runtime, "root")
     started = asyncio.Event()
     release_root = asyncio.Event()
-    deliver = asyncio.Event()
-    messages = []
-    interrupts = []
 
     async def run_agent(_name, _prompt, callbacks=None):
         started.set()
         await release_root.wait()
-        return "Original interrupted"
+        return "Original response"
 
     async def run_active_agent(
-        path,
-        prompt,
+        _path,
+        _prompt,
         *,
         callbacks=None,
-        interrupt=False,
         on_start=None,
     ):
-        messages.append((path, prompt, interrupt))
-        await deliver.wait()
+        del callbacks
         await on_start(None)
-        return f"Processed {prompt}"
-
-    async def interrupt_active_agent(path):
-        interrupts.append(path)
         release_root.set()
-        deliver.set()
-        return True
+        # The message reached a wait_for tool result in the existing turn.
+        return None
 
     runtime.run_agent = run_agent
     runtime.run_active_agent = run_active_agent
-    runtime.interrupt_active_agent = interrupt_active_agent
     app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("s", "t", "a", "r", "t", "enter")
         await started.wait()
-        await pilot.press("f", "i", "r", "s", "t", "enter")
-        await pilot.press("s", "e", "c", "o", "n", "d", "enter")
-        assert await wait_for(pilot, lambda: len(messages) == 2)
+        await pilot.press("u", "p", "d", "a", "t", "e", "enter")
 
-        await pilot.press("escape")
-
-        assert await wait_for(pilot, lambda: interrupts == ["root"])
+        assert await wait_for(pilot, lambda: not app.query(QueuedMessage))
+        assert any(card.content == "update" for card in app.query(MessageCard))
+        assert all(card.content != "None" for card in app.query(MessageCard))
         await app.workers.wait_for_complete()
-        assert messages == [
-            ("root", "first", False),
-            ("root", "second", False),
-        ]
-        assert not app.query(QueuedMessage)
 
 
 async def test_subagents_command_switches_message_and_progress_target(tmp_path):
@@ -426,7 +618,6 @@ async def test_subagents_command_switches_message_and_progress_target(tmp_path):
         prompt,
         *,
         callbacks=None,
-        interrupt=False,
         on_start=None,
     ):
         messages.append((path, prompt))
@@ -448,6 +639,15 @@ async def test_subagents_command_switches_message_and_progress_target(tmp_path):
             '{"path": "src/example.py"}',
             run_id="child-tool",
             metadata={"ursa_message_recipient": "root/researcher"},
+        )
+        assert (
+            app._agent_last_activity["root/researcher"]
+            == "Running inspect code"
+        )
+        await handler.on_agent_message_end("root/researcher", succeeded=True)
+        assert (
+            app._agent_last_activity["root/researcher"]
+            == "Running inspect code"
         )
 
         await app._show_command("subagents")

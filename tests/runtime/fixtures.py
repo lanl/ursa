@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -55,6 +57,23 @@ def stateful_factory(
     return StatefulAsyncAgent(config, context)
 
 
+class OutputAgent:
+    async def ainvoke(self, inputs: Any, config=None) -> str:
+        del inputs, config
+        print("agent stdout marker")
+        print("agent stderr marker", file=sys.stderr)
+        logging.getLogger("tests.runtime.output").warning("agent log marker")
+        return "ok"
+
+
+def output_factory(
+    config: dict[str, Any], context: AgentContext
+) -> OutputAgent:
+    del config, context
+    print("agent factory marker")
+    return OutputAgent()
+
+
 def tool_describing_factory(config: dict[str, Any], context: AgentContext):
     """Expose a real URSA tool through the production metadata adapter."""
     del config
@@ -65,44 +84,4 @@ def tool_describing_factory(config: dict[str, Any], context: AgentContext):
         SimpleNamespace(tools={"run_command": run_command}),
         context,
         "root",
-    )
-
-
-class InterruptibleProcessAgent:
-    def __init__(self, context: AgentContext) -> None:
-        self.context = context
-
-    @staticmethod
-    def format_query(prompt: str, state=None):
-        return {"prompt": prompt, "interrupted": False}
-
-    @staticmethod
-    def _prepend_system_message(query, _instruction: str):
-        return {**query, "interrupted": True}
-
-    async def ainvoke(self, inputs, config=None):
-        del config
-        if inputs["prompt"] == "block":
-            await self.context.send_message("host", "started")
-            await asyncio.Event().wait()
-        await self.context.send_message(
-            "host",
-            {
-                "processed": inputs["prompt"],
-                "interrupted": inputs["interrupted"],
-            },
-        )
-        return inputs
-
-    @staticmethod
-    def format_result(result) -> str:
-        return f"{result['prompt']}:{result['interrupted']}"
-
-
-async def interruptible_ursa_factory(config, context: AgentContext):
-    del config
-    from ursa.runtime.agent_runtime import _UrsaProcessAgent
-
-    return _UrsaProcessAgent(
-        InterruptibleProcessAgent(context), context, "root"
     )

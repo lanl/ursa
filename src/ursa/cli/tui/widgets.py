@@ -3,10 +3,11 @@
 """Reusable widgets and modal screens for the Textual CLI."""
 
 import asyncio
-import inspect
+import textwrap
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
+from datetime import datetime
 from itertools import islice
 from math import ceil
 from pathlib import Path
@@ -34,6 +35,7 @@ from textual.widgets import (
     TabbedContent,
     TabPane,
     TextArea,
+    Tree,
 )
 from textual.widgets._select import SelectCurrent, SelectOverlay
 from textual.widgets.option_list import Option
@@ -47,6 +49,7 @@ from ursa.cli.config import (
 )
 from ursa.cli.tui.agent_info import AgentDetails, ToolDetails, load_agent_tools
 from ursa.cli.tui.helpers import _fuzzy_score
+from ursa.cli.tui.message_store import HierarchyMessage, MessageStore
 from ursa.cli.tui.tips import random_tip
 from ursa.runtime import AgentRuntime
 from ursa.util.inference_providers import (
@@ -123,13 +126,6 @@ class PromptArea(TextArea):
             "/",
             "command_macro",
             "Open command picker",
-            show=False,
-            priority=True,
-        ),
-        Binding(
-            "escape",
-            "message_active_agent",
-            "Message or interrupt the active agent",
             show=False,
             priority=True,
         ),
@@ -239,14 +235,6 @@ class PromptArea(TextArea):
 
     def action_command_macro(self) -> None:
         self._insert_macro("/")
-
-    async def action_message_active_agent(self) -> None:
-        """Delegate live-message handling to the application."""
-        action = getattr(self.app, "action_message_active_agent", None)
-        if callable(action):
-            result = action()
-            if inspect.isawaitable(result):
-                await result
 
 
 class HotlistScreen(ModalScreen[str | None]):
@@ -1206,6 +1194,141 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
                 select.expanded = False
 
 
+@dataclass(frozen=True)
+class HierarchyTreeRow:
+    """One presentation-ready row in the live agent hierarchy."""
+
+    path: str
+    parent: str | None
+    state: str
+    tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    pending_messages: int = 0
+    last_action: str = ""
+    active: bool = False
+
+
+class LiveHierarchyTree(Tree[HierarchyTreeRow]):
+    """A low-churn live tree for the managed agent hierarchy."""
+
+    REFRESH_INTERVAL = 0.5
+
+    def __init__(
+        self, snapshot: Callable[[], Sequence[HierarchyTreeRow]]
+    ) -> None:
+        super().__init__("Live hierarchy", id="status-subagents-tree")
+        self._snapshot = snapshot
+        self._signature: tuple[HierarchyTreeRow, ...] | None = None
+        self._refresh_timer: Timer | None = None
+
+    def on_mount(self) -> None:
+        self.refresh_hierarchy(force=True)
+        self._refresh_timer = self.set_interval(
+            self.REFRESH_INTERVAL, self.refresh_hierarchy
+        )
+
+    def on_unmount(self) -> None:
+        if self._refresh_timer is not None:
+            self._refresh_timer.stop()
+            self._refresh_timer = None
+
+    def refresh_hierarchy(self, *, force: bool = False) -> None:
+        """Redraw only after the host snapshot changes."""
+        rows = tuple(self._snapshot())
+        if not force and rows == self._signature:
+            return
+        expanded = self._expanded_paths()
+        previous_paths = {row.path for row in self._signature or ()}
+        first_render = self._signature is None
+        self._signature = rows
+        self.reset(
+            Text(
+                "Live hierarchy"
+                if rows
+                else "No active agent hierarchy — start an agent to inspect it."
+            )
+        )
+        self.root.expand()
+        nodes = {}
+        for row in sorted(
+            rows, key=lambda item: (item.path.count("/"), item.path)
+        ):
+            parent = nodes.get(row.parent, self.root)
+            node = parent.add(
+                self._label(row),
+                row,
+                expand=(
+                    first_render
+                    or row.path not in previous_paths
+                    or row.path in expanded
+                ),
+            )
+            nodes[row.path] = node
+            for detail in self._detail_labels(row):
+                node.add_leaf(detail)
+
+    def _expanded_paths(self) -> set[str]:
+        expanded: set[str] = set()
+
+        def visit(node) -> None:
+            if isinstance(node.data, HierarchyTreeRow) and node.is_expanded:
+                expanded.add(node.data.path)
+            for child in node.children:
+                visit(child)
+
+        visit(self.root)
+        return expanded
+
+    @staticmethod
+    def _label(row: HierarchyTreeRow) -> Text:
+        label = Text()
+        if row.active:
+            label.append("● ", style="bold green")
+        label.append(row.path.rsplit("/", 1)[-1], style="bold")
+        state = row.state
+        if row.pending_messages:
+            state += f" · {row.pending_messages} queued"
+        state_style = {
+            "Working": "yellow",
+            "Queued": "cyan",
+            "Waiting": "magenta",
+            "Ready": "green",
+        }.get(row.state, "dim")
+        label.append(f"  {state}", style=state_style)
+        return label
+
+    @staticmethod
+    def _detail_labels(row: HierarchyTreeRow) -> list[Text]:
+        """Render usage and activity as readable child rows."""
+        usage = Text("Tokens: ", style="dim")
+        usage.append(f"{row.tokens:,} total", style="dim")
+        if row.input_tokens or row.output_tokens or row.cached_tokens:
+            usage.append(
+                f" · {row.input_tokens:,} input · {row.output_tokens:,} output",
+                style="dim",
+            )
+            if row.cached_tokens:
+                usage.append(f" · {row.cached_tokens:,} cached", style="dim")
+        details = [usage]
+        action = " ".join(row.last_action.split())
+        if not action:
+            return details
+        if len(action) > 320:
+            action = f"{action[:319]}…"
+        lines = textwrap.wrap(
+            action,
+            width=72,
+            break_long_words=True,
+            break_on_hyphens=False,
+        ) or [action]
+        for index, line in enumerate(lines):
+            prefix = "Last activity: " if index == 0 else "               "
+            details.append(Text(f"{prefix}{line}", style="dim italic"))
+        return details
+
+
 class InformationScreen(ModalScreen[None]):
     """Scrollable command output displayed without leaving the application."""
 
@@ -1225,13 +1348,17 @@ class InformationScreen(ModalScreen[None]):
         content: str,
         *,
         config_yaml: str | None = None,
-        subagents: str | None = None,
+        subagent_rows: Callable[[], Sequence[HierarchyTreeRow]] | None = None,
+        status_content: Callable[[], str] | None = None,
     ) -> None:
         super().__init__()
         self.screen_title = title
         self.content = content
         self.config_yaml = config_yaml
-        self.subagents = subagents
+        self.subagent_rows = subagent_rows
+        self.status_content = status_content
+        self._status_content_signature = content
+        self._status_refresh_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="information"):
@@ -1258,20 +1385,44 @@ class InformationScreen(ModalScreen[None]):
                             show_line_numbers=True,
                             id="status-config-yaml",
                         )
-                    if self.subagents is not None:
+                    if self.subagent_rows is not None:
                         with TabPane("Subagents", id="status-subagents-tab"):
-                            yield VerticalScroll(
-                                Markdown(self.subagents),
-                                id="status-subagents-body",
+                            yield Static(
+                                "Live state, token usage, and latest activity",
+                                id="status-subagents-summary",
                             )
+                            yield LiveHierarchyTree(self.subagent_rows)
+
+    def on_mount(self) -> None:
+        if self.status_content is not None:
+            self._status_refresh_timer = self.set_interval(
+                LiveHierarchyTree.REFRESH_INTERVAL,
+                self._refresh_status_content,
+            )
+
+    def on_unmount(self) -> None:
+        if self._status_refresh_timer is not None:
+            self._status_refresh_timer.stop()
+            self._status_refresh_timer = None
+
+    async def _refresh_status_content(self) -> None:
+        """Keep the overview token totals current without needless rerenders."""
+        content = (
+            self.status_content() if self.status_content is not None else None
+        )
+        if content is None or content == self._status_content_signature:
+            return
+        self._status_content_signature = content
+        body = self.query_one("#information-body", VerticalScroll)
+        await body.query_one(Markdown).update(content)
 
     def action_close(self) -> None:
         self.dismiss(None)
 
-    def _scroll_view(self) -> VerticalScroll:
+    def _scroll_view(self):
         tabs = self.query("#status-tabs")
         if tabs and tabs.first().active == "status-subagents-tab":
-            return self.query_one("#status-subagents-body", VerticalScroll)
+            return self.query_one("#status-subagents-tree", LiveHierarchyTree)
         return self.query_one("#information-body", VerticalScroll)
 
     def action_scroll_up(self) -> None:
@@ -1714,14 +1865,19 @@ class WelcomeBanner(Vertical):
 
 class MessageCard(Static):
     def __init__(self, role: str, content: str) -> None:
-        super().__init__(classes=f"message-card {role}")
+        super().__init__(classes=f"message-card {role}", markup=False)
         self.role = role
         self.content = content
 
     def compose(self) -> ComposeResult:
         if self.role == "assistant":
             yield Static("URSA", classes="message-role")
-        yield Markdown(str(self.content), classes="message-body")
+            yield Markdown(str(self.content), classes="message-body")
+        else:
+            # User input is plain text. A Static recalculates its wrapped
+            # height with the final card width, avoiding Markdown's stale
+            # auto-height when a scrollbar appears during submission.
+            yield Static(Text(str(self.content)), classes="message-body")
 
     @on(Markdown.TableOfContentsUpdated)
     def remove_trailing_markdown_margin(
@@ -1730,6 +1886,292 @@ class MessageCard(Static):
         blocks = list(event.markdown.children)
         if blocks:
             blocks[-1].styles.margin = 0
+
+
+class HierarchyMessageCard(MessageCard):
+    """A compact routed message that expands to its complete Markdown body."""
+
+    def __init__(
+        self,
+        message: HierarchyMessage,
+        color_for: Callable[[str], str],
+        store: MessageStore,
+    ) -> None:
+        super().__init__("hierarchy-message", message.content)
+        self.message = message
+        self.store = store
+        self.color_for = color_for
+        self.expanded = False
+        self.sender_color = color_for(message.sender)
+        self.styles.border_left = ("thick", self.sender_color)
+
+    @staticmethod
+    def _display_name(agent: str) -> str:
+        return "You" if agent == "user" else agent
+
+    def _route(self) -> Text:
+        route = Text()
+        route.append(
+            self._display_name(self.message.sender),
+            style=f"bold {self.sender_color}",
+        )
+        route.append(" → ", style="dim")
+        for index, recipient in enumerate(self.message.recipients):
+            if index:
+                route.append(", ", style="dim")
+            route.append(
+                self._display_name(recipient),
+                style=f"bold {self.color_for(recipient)}",
+            )
+        return route
+
+    def _relative_timestamp(self, now: datetime | None = None) -> str:
+        now = now or datetime.now().astimezone()
+        timestamp = self.message.timestamp
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.astimezone()
+        elapsed = max(
+            0,
+            int((now - timestamp.astimezone(now.tzinfo)).total_seconds()),
+        )
+        if elapsed < 5:
+            return "now"
+        if elapsed < 60:
+            return f"{elapsed}s ago"
+        if elapsed < 3_600:
+            return f"{elapsed // 60}m ago"
+        if elapsed < 86_400:
+            return f"{elapsed // 3_600}h ago"
+        return f"{elapsed // 86_400}d ago"
+
+    def refresh_timestamp(self, now: datetime | None = None) -> None:
+        timestamp = self.query_one_optional(".hierarchy-message-time", Static)
+        if timestamp is not None:
+            timestamp.update(self._relative_timestamp(now))
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(classes="hierarchy-message-header"):
+            yield Static(self._route(), classes="hierarchy-message-route")
+            yield Static(
+                self._relative_timestamp(),
+                classes="hierarchy-message-time",
+            )
+        preview = " ".join(self.content.split()) or "(empty message)"
+        yield Static(Text(preview), classes="hierarchy-message-preview")
+        yield Markdown(
+            "",
+            classes="message-body hierarchy-message-full hidden",
+        )
+
+    def set_expanded(self, expanded: bool) -> None:
+        self.expanded = expanded
+        self.query_one(".hierarchy-message-preview").set_class(
+            expanded, "hidden"
+        )
+        self.query_one(".hierarchy-message-full").set_class(
+            not expanded, "hidden"
+        )
+        self.run_worker(self._load_body, exclusive=True, group="message-body")
+
+    async def _load_body(self) -> None:
+        full = self.query_one(".hierarchy-message-full", Markdown)
+        if not self.expanded:
+            full.update("")
+            return
+        content = await self.store.message_body(self.message.id)
+        if self.expanded and self.is_mounted:
+            full.update(content or "_(empty message)_")
+
+    def on_click(self, event: events.Click) -> None:
+        event.stop()
+        self.set_expanded(not self.expanded)
+
+
+class MessagesScreen(ModalScreen[None]):
+    """Live, read-only log of messages routed through the hierarchy."""
+
+    BINDINGS = [
+        Binding("escape,q", "close", "Close", priority=True),
+        Binding("up", "scroll_up", "Scroll up"),
+        Binding("down", "scroll_down", "Scroll down"),
+        Binding("home", "scroll_home", "Scroll to top"),
+        Binding("end", "scroll_end", "Scroll to bottom"),
+        Binding("pageup", "page_up", "Page up"),
+        Binding("pagedown", "page_down", "Page down"),
+        Binding("left", "older", "Older messages"),
+        Binding("right", "newer", "Newer messages"),
+    ]
+
+    PAGE_SIZE = 50
+
+    def __init__(
+        self,
+        messages: MessageStore,
+        color_for: Callable[[str], str],
+    ) -> None:
+        super().__init__()
+        self._messages = messages
+        self._color_for = color_for
+        self._ids: tuple[int, ...] = ()
+        self._live = True
+        self._sync_lock = asyncio.Lock()
+        self._refresh_timer: Timer | None = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="messages-dialog"):
+            with Horizontal(id="messages-header"):
+                yield Static("Messages", id="messages-title")
+                yield Button("← Older", id="messages-older")
+                yield Button("Newer →", id="messages-newer")
+                yield Button("Latest", id="messages-latest")
+            yield VerticalScroll(id="messages-body")
+            yield Static(
+                "Click a message to expand or collapse  •  Esc to close",
+                id="messages-footer",
+            )
+
+    async def on_mount(self) -> None:
+        await self._sync_messages()
+        self._refresh_timer = self.set_interval(0.5, self._sync_messages)
+
+    def on_unmount(self) -> None:
+        if self._refresh_timer is not None:
+            self._refresh_timer.stop()
+            self._refresh_timer = None
+
+    async def _sync_messages(self) -> None:
+        async with self._sync_lock:
+            body = self._body()
+            now = datetime.now().astimezone()
+            for card in body.query(HierarchyMessageCard):
+                card.refresh_timestamp(now)
+            # Reading old messages must not jump the user back to live traffic.
+            if self._ids and (
+                not self._live or body.scroll_y < body.max_scroll_y
+            ):
+                newer = await self._messages.messages(
+                    after=self._ids[-1], limit=1
+                )
+                self.query_one("#messages-newer", Button).disabled = not newer
+                return
+            latest = await self._messages.messages(limit=1)
+            if self._ids and latest and latest[0].id == self._ids[-1]:
+                return
+            await self._show_page(
+                await self._messages.messages(limit=self.PAGE_SIZE)
+            )
+            self.call_after_refresh(body.scroll_end, animate=False)
+
+    async def _show_page(self, messages: Sequence[HierarchyMessage]) -> None:
+        body = self._body()
+        ids = tuple(message.id for message in messages)
+        existing = {
+            card.message.id: card for card in body.query(HierarchyMessageCard)
+        }
+        if not messages:
+            if not body.children:
+                await body.mount(
+                    Static("No hierarchy messages yet.", id="messages-empty")
+                )
+        else:
+            # Live updates append only new rows. Historical paging replaces
+            # the bounded page, releasing both previews and expanded bodies.
+            prepend = bool(self._ids and ids[0] < self._ids[0])
+            if prepend:
+                await body.remove_children()
+                existing = {}
+            else:
+                for message_id, card in existing.items():
+                    if message_id not in ids:
+                        await card.remove()
+                empty = body.query("#messages-empty")
+                if empty:
+                    await empty.first().remove()
+            new = [
+                HierarchyMessageCard(message, self._color_for, self._messages)
+                for message in messages
+                if message.id not in existing
+            ]
+            if new:
+                await body.mount(*new)
+        self._ids = ids
+        older = bool(
+            ids and await self._messages.messages(before=ids[0], limit=1)
+        )
+        newer = bool(
+            ids and await self._messages.messages(after=ids[-1], limit=1)
+        )
+        self.query_one("#messages-older", Button).disabled = not older
+        self.query_one("#messages-newer", Button).disabled = not newer
+        self.query_one("#messages-title", Static).update(
+            f"Messages · {'Live' if self._live else 'History'} · {len(ids)} shown"
+        )
+
+    @on(Button.Pressed, "#messages-older")
+    async def action_older(self) -> None:
+        async with self._sync_lock:
+            if not self._ids:
+                return
+            page = await self._messages.messages(
+                before=self._ids[0], limit=self.PAGE_SIZE
+            )
+            if page:
+                self._live = False
+                await self._show_page(page)
+                self.call_after_refresh(self._body().scroll_end, animate=False)
+
+    @on(Button.Pressed, "#messages-newer")
+    async def action_newer(self) -> None:
+        async with self._sync_lock:
+            if not self._ids:
+                return
+            page = await self._messages.messages(
+                after=self._ids[-1], limit=self.PAGE_SIZE
+            )
+            if page:
+                self._live = not bool(
+                    await self._messages.messages(after=page[-1].id, limit=1)
+                )
+                await self._show_page(page)
+                self.call_after_refresh(self._body().scroll_home, animate=False)
+
+    @on(Button.Pressed, "#messages-latest")
+    async def action_latest(self) -> None:
+        async with self._sync_lock:
+            self._live = True
+            await self._show_page(
+                await self._messages.messages(limit=self.PAGE_SIZE)
+            )
+            self.call_after_refresh(self._body().scroll_end, animate=False)
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+    def _body(self) -> VerticalScroll:
+        return self.query_one("#messages-body", VerticalScroll)
+
+    def action_scroll_up(self) -> None:
+        self._body().action_scroll_up()
+
+    def action_scroll_down(self) -> None:
+        self._body().action_scroll_down()
+
+    async def action_scroll_home(self) -> None:
+        async with self._sync_lock:
+            self._live = False
+            await self._show_page(
+                await self._messages.messages(after=0, limit=self.PAGE_SIZE)
+            )
+            self.call_after_refresh(self._body().scroll_home, animate=False)
+
+    async def action_scroll_end(self) -> None:
+        await self.action_latest()
+
+    def action_page_up(self) -> None:
+        self._body().action_page_up()
+
+    def action_page_down(self) -> None:
+        self._body().action_page_down()
 
 
 class QueuedMessage(Static):
@@ -1791,6 +2233,8 @@ class ActivityIndicator(Horizontal):
         self._timer = self.set_interval(0.08, self._advance)
 
     def _advance(self) -> None:
+        if not self.is_mounted or self.screen is not self.app.screen:
+            return
         self.query_one(".activity-spinner", Static).update(
             self.FRAMES[self._frame]
         )

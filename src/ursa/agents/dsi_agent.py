@@ -275,7 +275,9 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
         )
 
     def _build_graph(self):
-        self.llm = self.llm.bind_tools(self.tools.values())
+        self.llm = self.bind_tools_prefer_parallel(
+            self.llm, list(self.tools.values())
+        )
 
         self.add_node(self._response_node, "response")
         self.add_node(self.tool_node, "tools")

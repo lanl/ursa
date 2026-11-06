@@ -16,6 +16,7 @@ from ursa.cli.tui.event_cards import (
     AgentEventCard,
     AgentToolCard,
     ArtifactCard,
+    CoordinationCard,
     EditCard,
     EventCard,
     ExceptionCard,
@@ -30,7 +31,9 @@ from ursa.cli.tui.helpers import (
     FILE_TOOLS,
     SEARCH_TOOLS,
     SUMMARY_GROUP_GRACE_SECONDS,
+    TokenUsage,
 )
+from ursa.cli.tui.message_store import COORDINATION_TOOLS
 from ursa.cli.tui.widgets import ActivityIndicator, MessageCard
 from ursa.util.rendering import event_artifacts
 
@@ -54,11 +57,15 @@ class Turn(Static):
         self.cards: dict[str, EventCard] = {}
         self.started_at = monotonic()
         self.token_usage = 0
+        self.token_usage_breakdown = TokenUsage()
+        self._attributed_token_usage = TokenUsage()
+        self.last_activity = ""
         self._command_count = 0
         self._commands: list[RunCommandCard] = []
         self._commands_by_id: dict[str, RunCommandCard] = {}
         self._commands_overlapped = False
         self._tool_calls_by_id: dict[str, ToolCallCard | AgentToolCard] = {}
+        self._coordination_card: CoordinationCard | None = None
         self._edits_by_id: dict[str, EditCard] = {}
         self._summary_count = 0
         self._summary_cards: dict[str, EventCard] = {}
@@ -120,6 +127,9 @@ class Turn(Static):
         new = payload.get("new_code")
         if tool == "run_command":
             await self._run_command_event(payload)
+            return
+        if tool in COORDINATION_TOOLS:
+            await self._default_tool_event(payload)
             return
         artifacts = event_artifacts(payload)
         if artifacts:
@@ -298,6 +308,15 @@ class Turn(Static):
             )
 
     async def _default_tool_event(self, payload: Mapping[str, Any]) -> None:
+        if payload.get("tool") in COORDINATION_TOOLS:
+            if self._coordination_card is None:
+                key = self._next_summary_key("coordination")
+                self._coordination_card = CoordinationCard(
+                    key, self.app.message_store
+                )
+                await self._replace_or_mount(key, self._coordination_card)
+            await self._coordination_card.update_action(payload)
+            return
         run_id = str(payload.get("_run_id") or "")
         card = self._tool_calls_by_id.get(run_id) if run_id else None
         phase = str(payload.get("phase") or "")
@@ -322,7 +341,14 @@ class Turn(Static):
             tool = str(payload.get("tool"))
             card = (
                 AgentToolCard(key, tool, tool_input)
-                if tool in {"spawn_agent", "send_message", "list_agents"}
+                if tool
+                in {
+                    "spawn_agent",
+                    "send_message",
+                    "wait_for",
+                    "stop_agent",
+                    "list_agents",
+                }
                 else ToolCallCard(key, tool, tool_input)
             )
             await self._replace_or_mount(key, card)
@@ -467,8 +493,15 @@ class Turn(Static):
     def update_activity(self, message: str) -> None:
         self.query_one(ActivityIndicator).update_message(message)
 
-    def add_tokens(self, count: int) -> None:
-        self.token_usage += count
+    def add_tokens(self, usage: TokenUsage) -> None:
+        self.token_usage_breakdown += usage
+        self.token_usage = self.token_usage_breakdown.total_tokens
+
+    def take_unattributed_token_usage(self) -> TokenUsage:
+        """Return usage not yet assigned to this turn's hierarchy path."""
+        usage = self.token_usage_breakdown - self._attributed_token_usage
+        self._attributed_token_usage = self.token_usage_breakdown
+        return usage
 
     def finish_activity(self, *, succeeded: bool = True) -> None:
         self.activity_finished = True

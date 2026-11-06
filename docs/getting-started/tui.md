@@ -58,16 +58,24 @@ the allocated window may only become available after the first response.
 |---|---|
 | `/` | Browse application commands. Use `/keymap` for every keyboard shortcut. |
 | `/subagents` | Switch the message target within the active agent hierarchy. |
+| `/messages` | Open the live, read-only message log for the full hierarchy. |
 | `#` | Choose an agent and route the message to it. |
 | `@` | Insert a workspace file or directory into the message. |
 | **Enter** | Submit the message. During active work, queue it for the selected agent. |
-| **Esc** | During active work, interrupt the selected agent and immediately send every queued message, including the current draft. With no queued messages or draft, work continues unchanged. |
+| **Esc** | Close an open picker or dialog. Does not submit messages or cancel agent work. |
 | **Shift+Enter** or **Ctrl+J** | Insert a newline. Some terminals cannot distinguish Shift+Enter, so Ctrl+J is the portable option. |
 | **Ctrl+Q** or `/exit` | Exit gracefully, waiting for an active turn to finish. |
 | **Ctrl+D** | Exit immediately without cleanup; reserve this for a stuck turn. |
 
 Messages waiting for an agent appear dimmed above the prompt. They move into
 the conversation only when that agent begins processing them.
+
+Each turn groups agent messaging, spawning, waiting, and stopping into one
+**Coordination** card with a summary and its two latest actions. Expand the
+card to inspect individual calls. `/messages` displays 50 previews at a time;
+use **Older** and **Newer** to browse, then **Latest** to follow live messages.
+Message bodies and coordination details are stored in SQLite and loaded when
+expanded.
 
 See [Async messages and subagents](../agents/async-messages.md) for the Python
 API and hierarchy addressing rules.

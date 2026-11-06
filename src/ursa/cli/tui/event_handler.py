@@ -16,6 +16,7 @@ from ursa.cli.tui.helpers import (
     _reasoning_trace,
     _token_usage_breakdown,
 )
+from ursa.cli.tui.message_store import COORDINATION_TOOLS
 from ursa.cli.tui.turn import Turn
 from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.model_metadata import refresh_ollama_context
@@ -138,7 +139,7 @@ class TextualEventHandler(AsyncCallbackHandler):
         # publish reasoning summaries place them in explicit reasoning or
         # thinking fields on the chunk.
         if trace := _reasoning_trace(chunk):
-            await self._update_activity(trace, metadata=metadata)
+            await self._update_activity(f"Thinking: {trace}", metadata=metadata)
 
     async def on_tool_start(
         self,
@@ -165,7 +166,17 @@ class TextualEventHandler(AsyncCallbackHandler):
             data["_command_id"] = data["_run_id"]
         if agent_path := self._agent_path(metadata):
             data["_agent_path"] = agent_path
-        self.tools[run_id] = data
+        # Coordination inputs can contain large message bodies. They are
+        # persisted by the card, so retain only routing keys for the end event.
+        self.tools[run_id] = (
+            {
+                key: value
+                for key, value in data.items()
+                if key in {"tool", "_run_id", "_agent_path"}
+            }
+            if data["tool"] in COORDINATION_TOOLS
+            else data
+        )
         await self._emit(data, metadata=metadata)
 
     async def on_tool_end(
@@ -285,4 +296,21 @@ class TextualEventHandler(AsyncCallbackHandler):
                 agent_path,
                 succeeded=succeeded,
                 turn=turn,
+            )
+
+    async def on_hierarchy_message(
+        self,
+        sender: str,
+        recipients: list[str] | tuple[str, ...],
+        message: str,
+    ) -> None:
+        """Retain one user/agent message in the session-wide log."""
+        if self.app.is_ui_thread:
+            await self.app.record_hierarchy_message(sender, recipients, message)
+        else:
+            self.app.call_from_thread(
+                self.app.record_hierarchy_message,
+                sender,
+                recipients,
+                message,
             )

@@ -50,6 +50,11 @@ InformationScreen {
     background: $background 50%;
 }
 
+MessagesScreen {
+    align: center middle;
+    background: $background 50%;
+}
+
 ModelScreen {
     align: center middle;
     background: $background 50%;
@@ -180,12 +185,107 @@ ModelScreen SelectCurrent {
     color: $accent;
 }
 
+#messages-dialog {
+    width: 90%;
+    height: 85%;
+    padding: 1 2;
+    border: round $accent;
+    background: $surface;
+}
+
+#messages-header {
+    height: 3;
+}
+
+#messages-header Button {
+    min-width: 10;
+    margin-left: 1;
+}
+
+#messages-title {
+    width: 1fr;
+    text-style: bold;
+    color: $accent;
+}
+
+#messages-footer {
+    height: 1;
+    color: $text-muted;
+    text-style: italic;
+    content-align: right middle;
+}
+
+#messages-body {
+    height: 1fr;
+    padding: 0 1;
+}
+
+#messages-empty {
+    height: 1;
+    color: $text-muted;
+    text-style: italic;
+}
+
+.hierarchy-message {
+    height: auto;
+    margin-bottom: 1;
+    padding: 0 1;
+    background: $panel;
+}
+
+.hierarchy-message-header {
+    height: 1;
+}
+
+.hierarchy-message-route {
+    width: 1fr;
+    height: 1;
+    overflow: hidden hidden;
+    text-overflow: ellipsis;
+}
+
+.hierarchy-message-time {
+    width: auto;
+    height: 1;
+    margin-left: 1;
+    color: $text-muted;
+    content-align: right middle;
+}
+
+.hierarchy-message-preview {
+    height: 1;
+    color: $text-muted;
+    overflow: hidden hidden;
+    text-overflow: ellipsis;
+}
+
+.hierarchy-message-full {
+    height: auto;
+}
+
 #information-body {
     height: 1fr;
 }
 
-#status-tabs, #status-summary-tab, #status-config-tab {
+#status-tabs,
+#status-summary-tab,
+#status-config-tab,
+#status-subagents-tab {
     height: 1fr;
+}
+
+#status-subagents-summary {
+    height: 1;
+    color: $text-muted;
+    text-style: italic;
+}
+
+#status-subagents-tree {
+    height: 1fr;
+    margin-top: 1;
+    border: round $accent;
+    padding: 0 1;
+    background: $surface;
 }
 
 #status-config-readonly {
@@ -473,6 +573,45 @@ ModelScreen SelectCurrent {
     padding: 0 1;
     text-style: bold;
     color: $accent;
+}
+
+.coordination-summary {
+    height: 1;
+    padding: 0 1;
+    text-style: bold;
+    color: $accent;
+}
+
+.coordination-recent {
+    height: 2;
+    padding: 0 1;
+}
+
+.coordination-action-preview {
+    height: 1;
+    overflow: hidden hidden;
+    text-overflow: ellipsis;
+}
+
+.coordination-details,
+.coordination-actions {
+    height: auto;
+}
+
+.coordination-navigation {
+    height: 3;
+    padding: 0 1;
+}
+
+.coordination-navigation Button {
+    min-width: 10;
+}
+
+.coordination-page {
+    width: 1fr;
+    height: 3;
+    content-align: center middle;
+    color: $text-muted;
 }
 
 .agent-tool-summary {

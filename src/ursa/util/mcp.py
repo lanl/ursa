@@ -7,11 +7,13 @@ from typing import Annotated, Any
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.tools import convert_mcp_tool_to_langchain_tool
 from mcp import StdioServerParameters
 from mcp.client.session_group import (
     SseServerParameters,
     StreamableHttpParameters,
 )
+from mcp.types import Tool as MCPTool
 from pydantic import BaseModel, BeforeValidator, ValidationError
 
 from ursa.util.http import build_mcp_httpx_async_client
@@ -62,6 +64,96 @@ async def load_mcp_tools_with_sources(
     ):
         tools.extend(server_tools)
         sources.update({tool.name: server_name for tool in server_tools})
+    return tools, sources
+
+
+def mcp_tool_specs_from_details(
+    details: list[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Extract transport-safe MCP schemas from a runner's tool description.
+
+    Tool discovery opens a network session and can dominate child-process
+    startup. The host captures the root agent's already-discovered schemas and
+    passes these small, serializable specs to equivalent child agents. A child
+    still builds its own client connection for actual invocations.
+    """
+    specs: list[dict[str, Any]] = []
+    for detail in details:
+        server = detail.get("mcp_server")
+        name = detail.get("name")
+        # Prefer the exact MCP input schema over the tool's display schema.
+        # Some LangChain wrappers enrich their display schema with generated
+        # titles and descriptions; those must not alter what we send back to
+        # the MCP adapter.
+        schema = detail.get("mcp_input_schema", detail.get("schema"))
+        if not (
+            isinstance(server, str)
+            and server
+            and isinstance(name, str)
+            and name
+            and isinstance(schema, Mapping)
+        ):
+            continue
+        specs.append({
+            "server": server,
+            "name": name,
+            "description": str(detail.get("description") or ""),
+            "input_schema": dict(schema),
+            **(
+                {"metadata": dict(detail["mcp_metadata"])}
+                if isinstance(detail.get("mcp_metadata"), Mapping)
+                else {}
+            ),
+        })
+    return specs
+
+
+def mcp_tools_from_specs(
+    client: MultiServerMCPClient,
+    specs: list[Mapping[str, Any]],
+) -> tuple[list[BaseTool], dict[str, str]]:
+    """Rebuild MCP wrappers from captured schemas without rediscovery I/O."""
+    connections = getattr(client, "connections", None)
+    if not isinstance(connections, Mapping):
+        raise TypeError("MCP client does not expose connection settings")
+    tools: list[BaseTool] = []
+    sources: dict[str, str] = {}
+    for spec in specs:
+        server = spec.get("server")
+        name = spec.get("name")
+        schema = spec.get("input_schema")
+        if not (
+            isinstance(server, str)
+            and isinstance(name, str)
+            and isinstance(schema, Mapping)
+        ):
+            raise ValueError("Invalid cached MCP tool specification")
+        try:
+            connection = connections[server]
+        except KeyError:
+            raise ValueError(
+                f"Cached MCP tool {name!r} refers to unknown server {server!r}"
+            ) from None
+        tool = MCPTool(
+            name=name,
+            description=str(spec.get("description") or ""),
+            inputSchema=dict(schema),
+        )
+        wrapped = convert_mcp_tool_to_langchain_tool(
+            None,
+            tool,
+            connection=connection,
+            server_name=server,
+        )
+        metadata = spec.get("metadata")
+        if metadata is not None:
+            if not isinstance(metadata, Mapping):
+                raise ValueError("Invalid cached MCP tool metadata")
+            # Preserve the adapter's annotations and _meta, including hints
+            # such as readOnlyHint/destructiveHint used by tool consumers.
+            wrapped.metadata = dict(metadata)
+        tools.append(wrapped)
+        sources[wrapped.name] = server
     return tools, sources
 
 
