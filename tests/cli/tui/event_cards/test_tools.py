@@ -263,6 +263,35 @@ async def test_wait_card_renders_batched_agent_messages_as_plain_text(tmp_path):
         assert '"sender": "root/p08"' in str(preview.content)
 
 
+async def test_agent_tool_card_survives_unavailable_lazy_details(tmp_path):
+    app = UrsaTextualApp(make_runtime(tmp_path))
+
+    async def unavailable():
+        raise LookupError("action was pruned")
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        turn = Turn("coordinate", tmp_path)
+        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        card = AgentToolCard(
+            "missing-details",
+            "send_message",
+            {"target": "root/reviewer"},
+            details_loader=unavailable,
+        )
+        await turn._replace_or_mount("missing-details", card)
+        card.complete("Message queued for root/reviewer.")
+        card.set_expanded(True)
+        assert await wait_for(
+            pilot,
+            lambda: "Details unavailable"
+            in card.query_one(".agent-tool-task", Markdown).source,
+        )
+        assert card.completed and not card.failed
+        assert "Message queued" in str(
+            card.query_one(".agent-tool-result", Markdown).source
+        )
+
+
 async def test_tool_call_preview_renders_code_brackets_as_plain_text(tmp_path):
     app = UrsaTextualApp(make_runtime(tmp_path))
     output = "[patch={'old_code': 'ax.set_xticklabels([labels])'}]"

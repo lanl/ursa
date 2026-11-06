@@ -3,6 +3,7 @@
 """Reusable widgets and modal screens for the Textual CLI."""
 
 import asyncio
+import logging
 import textwrap
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
@@ -60,6 +61,8 @@ from ursa.util.inference_providers import (
     sort_provider_models,
     supported_model_providers,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 class PromptArea(TextArea):
@@ -1891,16 +1894,23 @@ class MessageCard(Static):
 class HierarchyMessageCard(MessageCard):
     """A compact routed message that expands to its complete Markdown body."""
 
+    can_focus = True
+    BINDINGS = [
+        Binding("enter,space", "toggle", "Expand message", show=False),
+    ]
+
     def __init__(
         self,
         message: HierarchyMessage,
         color_for: Callable[[str], str],
         store: MessageStore,
+        on_expand: Callable[[], None] | None = None,
     ) -> None:
         super().__init__("hierarchy-message", message.content)
         self.message = message
         self.store = store
         self.color_for = color_for
+        self._on_expand = on_expand
         self.expanded = False
         self.sender_color = color_for(message.sender)
         self.styles.border_left = ("thick", self.sender_color)
@@ -1972,6 +1982,8 @@ class HierarchyMessageCard(MessageCard):
             not expanded, "hidden"
         )
         if expanded:
+            if self._on_expand is not None:
+                self._on_expand()
             self.query_one(".hierarchy-message-full", Markdown).update(
                 "_Loading message…_"
             )
@@ -1982,7 +1994,13 @@ class HierarchyMessageCard(MessageCard):
         if not self.expanded:
             full.update("")
             return
-        content = await self.store.message_body(self.message.id)
+        try:
+            content = await self.store.message_body(self.message.id)
+        except Exception:
+            LOGGER.exception(
+                "Could not load hierarchy message %s", self.message.id
+            )
+            content = None
         if self.expanded and self.is_mounted:
             full.update(
                 "_(empty message)_"
@@ -1994,6 +2012,11 @@ class HierarchyMessageCard(MessageCard):
 
     def on_click(self, event: events.Click) -> None:
         event.stop()
+        self.focus()
+        self.set_expanded(not self.expanded)
+
+    def action_toggle(self) -> None:
+        """Expand or collapse the focused message without a mouse."""
         self.set_expanded(not self.expanded)
 
 
@@ -2002,14 +2025,14 @@ class MessagesScreen(ModalScreen[None]):
 
     BINDINGS = [
         Binding("escape,q", "close", "Close", priority=True),
-        Binding("up", "scroll_up", "Scroll up"),
-        Binding("down", "scroll_down", "Scroll down"),
-        Binding("home", "scroll_home", "Scroll to top"),
-        Binding("end", "scroll_end", "Scroll to bottom"),
-        Binding("pageup", "page_up", "Page up"),
-        Binding("pagedown", "page_down", "Page down"),
-        Binding("left", "older", "Older messages"),
-        Binding("right", "newer", "Newer messages"),
+        Binding("up", "scroll_up", "Scroll up", priority=True),
+        Binding("down", "scroll_down", "Scroll down", priority=True),
+        Binding("home", "scroll_home", "Scroll to top", priority=True),
+        Binding("end", "scroll_end", "Resume live messages", priority=True),
+        Binding("pageup", "page_up", "Page up", priority=True),
+        Binding("pagedown", "page_down", "Page down", priority=True),
+        Binding("left", "older", "Older messages", priority=True),
+        Binding("right", "newer", "Newer messages", priority=True),
     ]
 
     PAGE_SIZE = 50
@@ -2024,6 +2047,7 @@ class MessagesScreen(ModalScreen[None]):
         self._color_for = color_for
         self._ids: tuple[int, ...] = ()
         self._live = True
+        self._resuming_live = False
         self._sync_lock = asyncio.Lock()
         self._refresh_timer: Timer | None = None
 
@@ -2055,14 +2079,20 @@ class MessagesScreen(ModalScreen[None]):
             now = datetime.now().astimezone()
             for card in body.query(HierarchyMessageCard):
                 card.refresh_timestamp(now)
-            # Reading old messages must not jump the user back to live traffic.
-            if self._ids and (
-                not self._live or body.scroll_y < body.max_scroll_y
+            # Moving away from the lower edge pauses follow before a later
+            # update can replace the page or scroll away from what is open.
+            if (
+                self._live
+                and not self._resuming_live
+                and body.scroll_y < body.max_scroll_y
             ):
+                self._live = False
+            if self._ids and not self._live:
                 newer = await self._messages.messages(
                     after=self._ids[-1], limit=1
                 )
                 self.query_one("#messages-newer", Button).disabled = not newer
+                self.query_one("#messages-latest", Button).disabled = False
                 self._refresh_navigation(has_newer=bool(newer))
                 return
             latest = await self._messages.messages(limit=1)
@@ -2071,7 +2101,7 @@ class MessagesScreen(ModalScreen[None]):
             await self._show_page(
                 await self._messages.messages(limit=self.PAGE_SIZE)
             )
-            self.call_after_refresh(body.scroll_end, animate=False)
+            self._schedule_live_bottom()
 
     async def _show_page(self, messages: Sequence[HierarchyMessage]) -> None:
         body = self._body()
@@ -2099,7 +2129,12 @@ class MessagesScreen(ModalScreen[None]):
                 if empty:
                     await empty.first().remove()
             new = [
-                HierarchyMessageCard(message, self._color_for, self._messages)
+                HierarchyMessageCard(
+                    message,
+                    self._color_for,
+                    self._messages,
+                    on_expand=self._pause_live_follow,
+                )
                 for message in messages
                 if message.id not in existing
             ]
@@ -2115,20 +2150,35 @@ class MessagesScreen(ModalScreen[None]):
         self.query_one("#messages-older", Button).disabled = not older
         self.query_one("#messages-newer", Button).disabled = not newer
         self.query_one("#messages-latest", Button).disabled = self._live
-        self.query_one("#messages-title", Static).update(
-            f"Messages · {'Live' if self._live else 'History'} · {len(ids)} shown"
-        )
         self._refresh_navigation(has_newer=newer)
 
     def _refresh_navigation(self, *, has_newer: bool) -> None:
         """State the current reading mode where it is useful, in the footer."""
         if self._live:
-            text = "Following live messages · Click a message to expand · ←/→ browse · Esc to close"
+            text = "Live · click or Enter expands · ←/→ browse · Esc"
         elif has_newer:
-            text = "History · newer messages available · Click a message to expand · → newer · End for latest · Esc to close"
+            text = "History · newer available · → newer · End for latest · Esc"
         else:
-            text = "History · Click a message to expand · ← older · End for latest · Esc to close"
+            text = "Paused · click or Enter expands · End resumes live · Esc"
+        state = "Live" if self._live else "History" if has_newer else "Paused"
+        self.query_one("#messages-title", Static).update(
+            f"Messages · {state} · {len(self._ids)} shown"
+        )
         self.query_one("#messages-footer", Static).update(text)
+
+    def _pause_live_follow(self) -> None:
+        """Keep an expanded body stable while its reader is inspecting it."""
+        if not self._live:
+            return
+        self._live = False
+        self._resuming_live = False
+        self.query_one("#messages-latest", Button).disabled = False
+        self._refresh_navigation(has_newer=False)
+
+    def _schedule_live_bottom(self) -> None:
+        """Avoid treating a just-mounted latest page as reader scrollback."""
+        self._resuming_live = True
+        self.call_after_refresh(self._finish_resuming_live)
 
     @on(Button.Pressed, "#messages-older")
     async def action_older(self) -> None:
@@ -2155,8 +2205,14 @@ class MessagesScreen(ModalScreen[None]):
                 self._live = not bool(
                     await self._messages.messages(after=page[-1].id, limit=1)
                 )
+                self._resuming_live = self._live
                 await self._show_page(page)
-                self.call_after_refresh(self._body().scroll_home, animate=False)
+                if self._live:
+                    self._schedule_live_bottom()
+                else:
+                    self.call_after_refresh(
+                        self._body().scroll_home, animate=False
+                    )
 
     @on(Button.Pressed, "#messages-latest")
     async def action_latest(self) -> None:
@@ -2165,7 +2221,14 @@ class MessagesScreen(ModalScreen[None]):
             await self._show_page(
                 await self._messages.messages(limit=self.PAGE_SIZE)
             )
-            self.call_after_refresh(self._body().scroll_end, animate=False)
+            self._schedule_live_bottom()
+
+    def _finish_resuming_live(self) -> None:
+        """Reach the lower edge before allowing the next live refresh."""
+        if not self.is_mounted:
+            return
+        self._body().scroll_end(animate=False, immediate=True)
+        self._resuming_live = False
 
     def action_close(self) -> None:
         self.dismiss(None)

@@ -511,7 +511,8 @@ ModelScreen SelectCurrent {
 }
 
 CoordinationCard:focus,
-AgentToolCard:focus {
+AgentToolCard:focus,
+HierarchyMessageCard:focus {
     outline: solid $accent;
 }
 

@@ -68,6 +68,7 @@ async def test_coordinated_actions_keep_input_on_completion_and_isolate_turns(
     counts, recent = await store.action_summary("turn-a")
     assert counts == {"total": 2, "running": 0, "failed": 1}
     assert len(recent) == 2
+    assert all(row["target_count"] >= 1 for row in recent)
     assert all(len(row["preview"]) <= 241 for row in recent)
     assert all("input" not in row and "output" not in row for row in recent)
     actions = await store.actions("turn-a")
@@ -78,6 +79,48 @@ async def test_coordinated_actions_keep_input_on_completion_and_isolate_turns(
     assert (await store.action_body("turn-a", actions[0]["id"]))[1] == result
     assert (await store.action_body("turn-a", actions[1]["id"]))[0] == task
     assert len(await store.actions("turn-b")) == 1
+
+
+async def test_coordination_target_count_survives_preview_truncation(tmp_path):
+    store = MessageStore(tmp_path / "checkpointer.db", "thread")
+    targets = [f"root/reviewer-{index:03}" for index in range(80)]
+    await store.record_action(
+        "turn",
+        "broadcast",
+        "send_message",
+        {"target": targets, "message": "go"},
+    )
+    _, recent = await store.action_summary("turn")
+    assert recent[0]["target_count"] == len(targets)
+    assert len(recent[0]["target"]) <= 241
+
+
+async def test_coordination_store_migrates_target_count_for_existing_sessions(
+    tmp_path,
+):
+    path = tmp_path / "checkpointer.db"
+    db = sqlite3.connect(path)
+    try:
+        db.execute("""
+            CREATE TABLE coordination_actions (
+                id INTEGER PRIMARY KEY, turn_id TEXT NOT NULL, run_id TEXT NOT NULL,
+                tool TEXT NOT NULL, target TEXT NOT NULL, input_preview TEXT NOT NULL,
+                input TEXT NOT NULL, output TEXT NOT NULL DEFAULT '',
+                preview TEXT NOT NULL DEFAULT '', completed INTEGER NOT NULL DEFAULT 0,
+                failed INTEGER NOT NULL DEFAULT 0, UNIQUE(turn_id, run_id)
+            )
+        """)
+        db.execute(
+            "INSERT INTO coordination_actions "
+            "(turn_id, run_id, tool, target, input_preview, input) "
+            "VALUES ('turn', 'old', 'send_message', 'root/a', '{}', '{}')"
+        )
+        db.commit()
+    finally:
+        db.close()
+    store = MessageStore(path, "thread")
+    _, recent = await store.action_summary("turn")
+    assert recent[0]["target_count"] == 1
 
 
 async def test_checkpoint_writer_lock_does_not_block_event_loop(tmp_path):

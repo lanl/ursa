@@ -2835,6 +2835,11 @@ def test_command_details_and_keymap_come_from_live_bindings(
     assert "shift+⏎ / ^j" in keymap
     assert "^c" in keymap
     assert "Clear prompt" in keymap
+    assert "## Message card" in keymap
+    assert "## Coordination card" in keymap
+    assert "## Agent action card" in keymap
+    assert "Expand coordination" in keymap
+    assert "Expand action" in keymap
     for expected in (
         "## Application",
         "## Prompt editor",

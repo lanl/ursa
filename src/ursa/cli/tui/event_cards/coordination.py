@@ -40,10 +40,12 @@ class CoordinationCard(EventCard):
     }
 
     @staticmethod
-    def _recent_target(tool: str, target: str) -> str:
+    def _recent_target(
+        tool: str, target: str, target_count: int | None = None
+    ) -> str:
         """Keep the two-line rollup scannable for broadcasts and waits."""
         if tool in {"send_message", "wait_for"}:
-            count = len(target.split(", "))
+            count = target_count or len(target.split(", "))
             if count > 1:
                 return f"{count} agents"
         return target
@@ -73,6 +75,7 @@ class CoordinationCard(EventCard):
         self._update_expand_hint()
 
     async def update_action(self, payload: Mapping[str, Any]) -> None:
+        previous_total = self.total
         phase = str(payload.get("phase") or "")
         completed = phase in {"end", "error"}
         failed = phase == "error" or payload.get("status") == "error"
@@ -106,6 +109,11 @@ class CoordinationCard(EventCard):
         )
         counts, recent = await self.store.action_summary(self.turn_id)
         self.total = counts["total"]
+        # ``actions`` is newest-first. Hold a reader's historical page in
+        # place when a new action arrives, rather than silently replacing its
+        # oldest visible row with the new action.
+        if self.expanded and self._offset:
+            self._offset += max(0, self.total - previous_total)
         parts = [
             f"Coordination · {self.total} action{'s' if self.total != 1 else ''}"
         ]
@@ -124,7 +132,9 @@ class CoordinationCard(EventCard):
             state = "✗" if row["failed"] else "✓" if row["completed"] else "…"
             action = self._ACTION_NAMES[row["tool"]]
             result = f" — {row['preview']}" if row["completed"] else ""
-            target = self._recent_target(row["tool"], row["target"])
+            target = self._recent_target(
+                row["tool"], row["target"], row.get("target_count")
+            )
             lines.append(f"{state} {action} → {target}{result}")
         for index, widget in enumerate(
             self.query(".coordination-action-preview")
@@ -140,7 +150,11 @@ class CoordinationCard(EventCard):
     def _update_expand_hint(self) -> None:
         if not self.is_mounted:
             return
-        self.query_one(".event-expand-hint", Static).update(
+        next(
+            child
+            for child in self.children
+            if child.has_class("event-expand-hint")
+        ).update(
             "Click or Enter to collapse"
             if self.expanded
             else "Click or Enter to expand"

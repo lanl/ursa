@@ -37,6 +37,7 @@ from textual.widgets import Static, TextArea
 from ursa.cli.callbacks import AgentLogEventHandler
 from ursa.cli.config import config_file_value
 from ursa.cli.tui.agent_info import load_agent_details
+from ursa.cli.tui.event_cards import AgentToolCard, CoordinationCard
 from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.helpers import (
     COMMAND_CHOICES,
@@ -48,6 +49,7 @@ from ursa.cli.tui.themes import AVAILABLE_THEMES
 from ursa.cli.tui.turn import Turn
 from ursa.cli.tui.widgets import (
     AgentsScreen,
+    HierarchyMessageCard,
     HierarchyTreeRow,
     HotlistScreen,
     InformationScreen,
@@ -1256,6 +1258,9 @@ class UrsaTextualApp(App[None]):
             ("Prompt editor", PromptArea),
             ("Picker", HotlistScreen),
             ("Message log", MessagesScreen),
+            ("Message card", HierarchyMessageCard),
+            ("Coordination card", CoordinationCard),
+            ("Agent action card", AgentToolCard),
             ("Information screen", InformationScreen),
         )
         priority_keys = {

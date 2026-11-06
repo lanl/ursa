@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
@@ -16,6 +17,8 @@ from textual.widgets import Markdown, Static
 
 from ursa.cli.tui.event_cards.base import EventCard
 from ursa.cli.tui.widgets import ActivityIndicator
+
+LOGGER = logging.getLogger(__name__)
 
 
 class AgentToolCard(EventCard):
@@ -50,6 +53,7 @@ class AgentToolCard(EventCard):
         self.output = ""
         self._details_loader = details_loader
         self._details_loaded = False
+        self._details_error: str | None = None
         self._compact_input = self.tool_input
         self._compact_output = ""
         self.completed = False
@@ -95,7 +99,7 @@ class AgentToolCard(EventCard):
     @property
     def request(self) -> str:
         """Describe the actual tool request, including non-message actions."""
-        target = self.target
+        targets = self._request_targets()
         if self.tool == "spawn_agent":
             name = str(self.tool_input.get("name") or "new subagent")
             agent_type = str(self.tool_input.get("agent_type") or "").strip()
@@ -106,20 +110,35 @@ class AgentToolCard(EventCard):
                 details += f"\n\n**Initial task**\n\n{self.task}"
             return details
         if self.tool == "send_message":
-            return f"**Recipient:** `{target}`\n\n{self.task or '_Empty message._'}"
+            return (
+                f"**Recipient{'s' if len(targets) != 1 else ''}:**\n"
+                f"{self._target_list(targets)}\n\n"
+                f"{self.task or '_Empty message._'}"
+            )
         if self.tool == "wait_for":
             wait_all = bool(self.tool_input.get("wait_all"))
             timeout = self.tool_input.get("timeout_seconds")
             details = (
-                f"**Watching:** `{target}`\n\n"
+                f"**Watching:**\n{self._target_list(targets)}\n\n"
                 f"**Return:** {'all agents finish' if wait_all else 'first agent finishes'}"
             )
             if timeout is not None:
                 details += f"\n\n**Timeout:** {timeout} seconds"
             return details
         if self.tool == "stop_agent":
-            return f"**Stopping:** `{target}` and its descendants"
+            return f"**Stopping:** `{targets[0]}` and its descendants"
         return "_No request details available._"
+
+    def _request_targets(self) -> list[str]:
+        value = self.tool_input.get("target")
+        if isinstance(value, list):
+            targets = [str(item).strip() for item in value if str(item).strip()]
+            return targets or ["other agents"]
+        return [str(value or "another agent")]
+
+    @staticmethod
+    def _target_list(targets: list[str]) -> str:
+        return "\n".join(f"- `{target}`" for target in targets)
 
     @property
     def request_title(self) -> str:
@@ -253,13 +272,18 @@ class AgentToolCard(EventCard):
     def _update_expand_hint(self) -> None:
         if not self.is_mounted:
             return
-        self.query_one(".event-expand-hint", Static).update(
+        next(
+            child
+            for child in self.children
+            if child.has_class("event-expand-hint")
+        ).update(
             "Click or Enter to collapse"
             if self.expanded
             else "Click or Enter to expand"
         )
 
     def _request_details(self) -> None:
+        self._details_error = None
         self.run_worker(
             self._load_details, exclusive=True, group="agent-tool-details"
         )
@@ -267,7 +291,19 @@ class AgentToolCard(EventCard):
     async def _load_details(self) -> None:
         if self._details_loader is None:
             return
-        tool_input, output = await self._details_loader()
+        try:
+            tool_input, output = await self._details_loader()
+        except Exception:
+            # Detail loading is an optional read from the history database.
+            # A missing or locked row must not make the TUI worker fail.
+            LOGGER.exception("Could not load %s action details", self.tool)
+            if self.expanded and self.is_mounted:
+                self._details_error = (
+                    "Full details are unavailable. The compact action summary "
+                    "is still shown above."
+                )
+                self._render_card()
+            return
         if self.expanded and self.is_mounted:
             self.tool_input = tool_input
             self.output = output
@@ -294,6 +330,13 @@ class AgentToolCard(EventCard):
         result_title.set_class(not self.completed, "hidden")
         result.set_class(not self.completed, "hidden")
         task = self.query_one(".agent-tool-task", Markdown)
+        if self._details_error:
+            task.update(f"**Details unavailable**\n\n{self._details_error}")
+            if self.completed:
+                result.update(
+                    self.output or "_Full result details are unavailable._"
+                )
+            return
         if self._details_loader and not self._details_loaded:
             task.update("_Loading…_" if self.expanded else "")
             result.update("_Loading…_" if self.expanded else "")

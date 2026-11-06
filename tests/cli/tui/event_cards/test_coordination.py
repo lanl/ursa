@@ -176,9 +176,21 @@ async def test_coordination_actions_have_clear_status_and_keyboard_expansion(
             lambda: "all agents finish"
             in card.query_one(".agent-tool-task", Markdown).source,
         )
-        assert (
-            "120 seconds" in card.query_one(".agent-tool-task", Markdown).source
+        request = card.query_one(".agent-tool-task", Markdown).source
+        assert "120 seconds" in request
+        assert "`root/a`" in request and "`root/b`" in request
+        # The nested action owns a hint too. Updating it must never replace
+        # the coordination group's direct hint.
+        hint = next(
+            child
+            for child in group.children
+            if child.has_class("event-expand-hint")
         )
+        assert "Click or Enter to collapse" in str(hint.content)
+        group.set_expanded(False)
+        assert "Click or Enter to expand" in str(hint.content)
+        group.set_expanded(True)
+        assert "Click or Enter to collapse" in str(hint.content)
 
         await handler.on_tool_end(
             "All requested agents completed.", run_id="wait"
@@ -190,6 +202,25 @@ async def test_coordination_actions_have_clear_status_and_keyboard_expansion(
         assert "All requested agents completed." in str(
             card.query_one(".agent-tool-preview", Static).content
         )
+
+
+async def test_compact_recipient_count_survives_long_target_preview(tmp_path):
+    app = UrsaTextualApp(make_runtime(tmp_path))
+    targets = [
+        f"root/reviewer-with-a-long-name-{index:03}" for index in range(80)
+    ]
+    async with app.run_test(size=(100, 30)):
+        turn = await app._mount_turn("broadcast")
+        await turn.event({
+            "tool": "send_message",
+            "phase": "start",
+            "_run_id": "broadcast",
+            "target": targets,
+            "message": "Coordinate findings.",
+        })
+        preview = turn.query_one(".coordination-action-preview", Static)
+        assert "80 agents" in str(preview.content)
+        assert targets[-1] not in str(preview.content)
 
 
 async def test_expanded_coordination_pages_bound_widget_count(tmp_path):
@@ -222,11 +253,35 @@ async def test_expanded_coordination_pages_bound_widget_count(tmp_path):
             pilot, lambda: len(group.query(AgentToolCard)) == 5
         )
         assert group.query(AgentToolCard).first().target == "root/p0"
+        # A new action must not displace a historical page being read.
+        await turn.event({
+            "tool": "send_message",
+            "phase": "start",
+            "_run_id": "newest",
+            "target": "root/p25",
+            "message": "new task",
+        })
+        await turn.event({
+            "tool": "send_message",
+            "phase": "end",
+            "_run_id": "newest",
+            "result": "queued",
+        })
+        assert await wait_for(
+            pilot,
+            lambda: [card.target for card in group.query(AgentToolCard)]
+            == [f"root/p{index}" for index in range(5)],
+        )
         group.query_one(".coordination-newer", Button).press()
         assert await wait_for(
             pilot, lambda: len(group.query(AgentToolCard)) == group.PAGE_SIZE
         )
         assert group.query(AgentToolCard).last().target == "root/p24"
+        group.query_one(".coordination-newer", Button).press()
+        assert await wait_for(
+            pilot,
+            lambda: group.query(AgentToolCard).last().target == "root/p25",
+        )
 
 
 async def test_coordination_errors_keep_exact_body_and_two_visible_rows(

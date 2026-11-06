@@ -76,6 +76,7 @@ class MessageStore:
                             run_id TEXT NOT NULL,
                             tool TEXT NOT NULL,
                             target TEXT NOT NULL,
+                            target_count INTEGER NOT NULL DEFAULT 1,
                             input_preview TEXT NOT NULL,
                             input TEXT NOT NULL,
                             output TEXT NOT NULL DEFAULT '',
@@ -89,6 +90,19 @@ class MessageStore:
                         CREATE INDEX IF NOT EXISTS coordination_action_state
                             ON coordination_actions(turn_id, completed, failed);
                     """)
+                    columns = {
+                        row["name"]
+                        for row in db.execute(
+                            "PRAGMA table_info(coordination_actions)"
+                        )
+                    }
+                    if "target_count" not in columns:
+                        # Existing sessions created before coordination cards
+                        # need the compact count without losing their history.
+                        db.execute(
+                            "ALTER TABLE coordination_actions "
+                            "ADD COLUMN target_count INTEGER NOT NULL DEFAULT 1"
+                        )
                     self._ready = True
             with db:
                 return operation(db)
@@ -180,6 +194,7 @@ class MessageStore:
         failed: bool = False,
     ) -> None:
         target = tool_input.get("name" if tool == "spawn_agent" else "target")
+        target_count = len(target) if isinstance(target, list) else 1
         if isinstance(target, list):
             target = ", ".join(str(item) for item in target)
         if tool == "spawn_agent" and tool_input.get("agent_type"):
@@ -188,8 +203,8 @@ class MessageStore:
         def write(db: sqlite3.Connection) -> None:
             db.execute(
                 "INSERT INTO coordination_actions "
-                "(turn_id, run_id, tool, target, input_preview, input, output, preview, completed, failed) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "(turn_id, run_id, tool, target, target_count, input_preview, input, output, preview, completed, failed) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(turn_id, run_id) DO UPDATE SET "
                 "output=excluded.output, preview=excluded.preview, "
                 "completed=excluded.completed, failed=excluded.failed",
@@ -198,6 +213,7 @@ class MessageStore:
                     run_id,
                     tool,
                     preview_text(str(target or "agents")),
+                    target_count,
                     json.dumps(
                         {
                             key: value
@@ -237,7 +253,7 @@ class MessageStore:
                 ).fetchone()
             )
             rows = db.execute(
-                "SELECT tool, target, preview, completed, failed "
+                "SELECT tool, target, target_count, preview, completed, failed "
                 "FROM coordination_actions WHERE turn_id = ? "
                 "ORDER BY id DESC LIMIT 2",
                 (turn_id,),

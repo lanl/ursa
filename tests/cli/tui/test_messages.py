@@ -1,3 +1,4 @@
+import pytest
 from textual.widgets import Button, Markdown, Static
 
 from tests.cli._app_helpers import make_runtime, wait_for
@@ -37,9 +38,9 @@ async def test_message_screen_pages_without_retaining_full_bodies(
         assert all(not card.query_one(Markdown).source for card in cards)
         assert not hasattr(app, "_hierarchy_messages")
         assert app.screen.query_one("#messages-latest", Button).disabled
-        assert "Following live messages" in str(
+        assert str(
             app.screen.query_one("#messages-footer", Static).content
-        )
+        ).startswith("Live ·")
 
         card = cards[-1]
         card.set_expanded(True)
@@ -66,7 +67,7 @@ async def test_message_screen_pages_without_retaining_full_bodies(
             .first()
             .message.content.startswith("25:")
         )
-        assert "newer messages available" in str(
+        assert "newer available" in str(
             screen.query_one("#messages-footer", Static).content
         )
         await screen.action_scroll_home()
@@ -105,3 +106,68 @@ async def test_message_screen_pages_without_retaining_full_bodies(
             == "next live message"
         )
         assert len(reads) == 1
+
+
+async def test_message_log_pauses_on_scroll_or_expansion_and_keyboard_toggles(
+    tmp_path,
+):
+    app = UrsaTextualApp(make_runtime(tmp_path))
+    for index in range(16):
+        await app.record_hierarchy_message(
+            "root", ("root/peer",), f"message {index}\nfull detail"
+        )
+
+    async with app.run_test(size=(80, 14)) as pilot:
+        await app._show_command("messages")
+        screen = app.screen
+        assert isinstance(screen, MessagesScreen)
+        assert await wait_for(
+            pilot, lambda: len(screen.query(HierarchyMessageCard)) == 16
+        )
+        body = screen.query_one("#messages-body")
+        assert await wait_for(pilot, lambda: body.scroll_y == body.max_scroll_y)
+
+        # A focused card is usable without a mouse and reading it pauses live
+        # follow before the body grows or new traffic arrives.
+        card = screen.query(HierarchyMessageCard).last()
+        assert card.can_focus
+        card.focus()
+        await pilot.press("enter")
+        assert await wait_for(pilot, lambda: card.expanded)
+        assert not screen._live
+        assert not screen.query_one("#messages-latest", Button).disabled
+        await pilot.press("space")
+        assert await wait_for(pilot, lambda: not card.expanded)
+
+        # A plain upward scroll pauses the latest page as well. Incoming
+        # traffic remains in SQLite until the reader deliberately resumes.
+        body.scroll_end(animate=False, immediate=True)
+        screen._live = True
+        body.action_scroll_up()
+        await pilot.pause(0.25)
+        await screen._sync_messages()
+        paused_at = body.scroll_y
+        assert not screen._live
+        assert not screen.query_one("#messages-latest", Button).disabled
+        assert str(
+            screen.query_one("#messages-footer", Static).content
+        ).startswith("Paused ·")
+        await app.record_hierarchy_message(
+            "root/peer", ("root",), "new traffic"
+        )
+        await screen._sync_messages()
+        assert body.scroll_y == pytest.approx(paused_at)
+        assert all(
+            card.content != "new traffic"
+            for card in screen.query(HierarchyMessageCard)
+        )
+
+        # End is the keyboard equivalent of Latest and resumes follow.
+        await pilot.press("end")
+        assert await wait_for(
+            pilot,
+            lambda: screen._live
+            and screen.query(HierarchyMessageCard).last().content
+            == "new traffic",
+        )
+        assert body.scroll_y == body.max_scroll_y
