@@ -8,7 +8,6 @@ from langchain_core.tools import tool
 
 from ursa.agents.base import AgentContext
 from ursa.util.events import ToolEvents
-from ursa.util.parse import read_text_file
 from ursa.util.rendering import event_artifact, file_artifact
 from ursa.util.types import (
     AsciiStr,
@@ -234,6 +233,8 @@ def edit_code(
     Returns:
         Success / failure message.
     """
+    from ursa.util.parse import read_text_file
+
     try:
         filename = validate_ascii(filename)
     except AsciiValidationError as exc:

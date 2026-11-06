@@ -51,13 +51,6 @@ def _shares_message_history(agent: Any) -> bool:
     ) is not None and "messages" in getattr(state_type, "__annotations__", {})
 
 
-def start_mcp_client(server_configs):
-    """Load MCP clients only when an agent first needs them."""
-    from ursa.util.mcp import start_mcp_client as factory
-
-    return factory(server_configs)
-
-
 @dataclass(init=False)
 class AgentHITL:
     """Wrapper for BaseAgent to delay instantiation and async method calls"""
@@ -338,10 +331,21 @@ class HITL:
 
     @cached_property
     def mcp_client(self):
+        if not self.config.mcp_servers:
+            return None
+        from ursa.util.mcp import start_mcp_client
+
         return start_mcp_client(self.config.mcp_servers)
 
     def _agent_dependencies(self):
-        return self.model, self.embedding, self.mcp_client
+        needs_embedding = any(
+            agent.config.get("rag_tools") for agent in self.agents.values()
+        )
+        return (
+            self.model,
+            self.embedding if needs_embedding else None,
+            self.mcp_client,
+        )
 
     def _dependencies_done(self, task: asyncio.Task) -> None:
         if task.cancelled() or task.exception() is not None:

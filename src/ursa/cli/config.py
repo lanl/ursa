@@ -33,7 +33,11 @@ from ursa.util.http import (
     build_httpx_client,
     httpx_verify_value,
 )
-from ursa.util.mcp_config import ServerParameters as MCPServerParameters
+from ursa.util.mcp_config import (
+    ServerParameters,
+    parse_server_parameters,
+    serialize_server_parameters,
+)
 from ursa.util.model_context import DEFAULT_SUMMARIZATION_THRESHOLD
 from ursa.util.secrets import SecretReference
 
@@ -603,7 +607,7 @@ class UrsaConfig(BaseModel):
     agent_config: dict[str, dict[str, Any]] = Field(default_factory=dict)
     """ Configuration options for URSA Agents """
 
-    mcp_servers: dict[str, MCPServerParameters] = Field(default_factory=dict)
+    mcp_servers: dict[str, ServerParameters] = Field(default_factory=dict)
     """MCP Servers to connect to Ursa."""
 
     @field_validator("inference_providers", mode="before")
@@ -720,12 +724,8 @@ class UrsaConfig(BaseModel):
 
     @field_serializer("mcp_servers")
     def serialize_mcp_servers(
-        self, mcp_servers: dict[str, MCPServerParameters], info
+        self, mcp_servers: dict[str, ServerParameters], info
     ):
-        if not mcp_servers:
-            return {}
-        from ursa.util.mcp_config import serialize_server_parameters
-
         include_defaults = bool(
             info.context and info.context.get("include_defaults")
         )
@@ -740,13 +740,8 @@ class UrsaConfig(BaseModel):
         }
 
 
-def interpolate_mcp_server(config: MCPServerParameters) -> MCPServerParameters:
+def interpolate_mcp_server(config: ServerParameters) -> ServerParameters:
     """Apply config-file environment interpolation to a typed MCP server."""
-    from ursa.util.mcp_config import (
-        parse_server_parameters,
-        serialize_server_parameters,
-    )
-
     values = serialize_server_parameters(
         config,
         exclude_defaults=False,

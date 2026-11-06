@@ -6,13 +6,20 @@ import threading
 import pytest
 from pydantic import ValidationError
 
-from benchmark._startup import MCP_SCENARIOS, measure
-from ursa.cli.config import UrsaConfig
+from benchmark.benchmarks._startup import MCP_SCENARIOS, measure
+from ursa.cli.config import EmbModelConfig, UrsaConfig
 from ursa.cli.runtime import HITL, AgentHITL
 
 
 @pytest.mark.parametrize(
-    "scenario", ["prompt", "named-prompt", "provider-prompt", *MCP_SCENARIOS]
+    "scenario",
+    [
+        "prompt",
+        "named-prompt",
+        "provider-prompt",
+        "saved-config-prompt",
+        *MCP_SCENARIOS,
+    ],
 )
 def test_first_prompt_does_not_load_agent_implementations(scenario):
     _, modules = measure(scenario, timeout=30, headless=True)
@@ -65,6 +72,41 @@ def test_runtime_agent_accepts_concrete_class():
     agent = AgentHITL(Agent)
     assert agent.agent_class is Agent
     assert agent.description == Agent.__doc__
+
+
+@pytest.mark.parametrize("rag_tools", [[], ["saved-rag"]])
+async def test_embedding_initialization_waits_until_rag_is_configured(
+    tmp_path, monkeypatch, rag_tools
+):
+    runtime = HITL(
+        UrsaConfig(
+            workspace=tmp_path,
+            emb_model=EmbModelConfig(model="unused", model_provider="openai"),
+            rag_tools=rag_tools,
+        )
+    )
+    model, embedding = object(), object()
+    runtime.model = model
+    runtime.mcp_client = None
+    calls = []
+    monkeypatch.setattr(
+        "ursa.cli.runtime.validate_model_provider", lambda *args: None
+    )
+    monkeypatch.setattr(
+        "ursa.cli.runtime.enforce_model_group_policy", lambda *args: None
+    )
+    monkeypatch.setattr(
+        EmbModelConfig,
+        "init_embedding",
+        lambda self: calls.append(True) or embedding,
+    )
+    assert runtime._agent_dependencies() == (
+        model,
+        embedding if rag_tools else None,
+        None,
+    )
+    assert calls == ([True] if rag_tools else [])
+    await runtime.aclose()
 
 
 @pytest.mark.parametrize("cancel_waiters", [False, True])

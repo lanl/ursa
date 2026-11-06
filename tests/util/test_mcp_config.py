@@ -76,10 +76,29 @@ SERVER_CONFIGS = [
 ]
 
 
+def sdk_parameters(values):
+    kind = values.get(
+        "transport", "stdio" if "command" in values else "streamable_http"
+    )
+    cls = {
+        "stdio": sdk.StdioServerParameters,
+        "sse": sdk.SseServerParameters,
+    }.get(kind, sdk.StreamableHttpParameters)
+    payload = {
+        key: value for key, value in values.items() if key != "transport"
+    }
+    if isinstance(payload.get("headers"), dict):
+        payload["headers"] = {
+            key: SecretTemplate.maybe_validate(value)
+            for key, value in payload["headers"].items()
+        }
+    return cls(**payload)
+
+
 @pytest.mark.parametrize("values", SERVER_CONFIGS)
 def test_parameter_validation_and_serialization_match_sdk(values):
     local = config.parse_server_parameters(values)
-    original = sdk.parse_server_parameters(values)
+    original = sdk_parameters(values)
     assert local.model_dump() == original.model_dump()
     assert local.model_fields_set == original.model_fields_set
     assert config.transport(local) == sdk.transport(original)
@@ -87,9 +106,16 @@ def test_parameter_validation_and_serialization_match_sdk(values):
         flags = dict(
             exclude_defaults=defaults, exclude_none=none, exclude_unset=unset
         )
-        assert config.serialize_server_parameters(local, **flags) == (
-            sdk.serialize_server_parameters(original, **flags)
-        )
+        expected = {
+            "transport": config.transport(local),
+            **{
+                key: value.total_seconds()
+                if isinstance(value, timedelta)
+                else value
+                for key, value in original.model_dump(**flags).items()
+            },
+        }
+        assert config.serialize_server_parameters(local, **flags) == expected
     # Python callers can still supply SDK objects to UrsaConfig.
     converted = UrsaConfig(mcp_servers={"tools": original}).mcp_servers["tools"]
     assert type(converted) is type(local)
@@ -124,7 +150,7 @@ def test_parameter_validation_and_serialization_match_sdk(values):
 )
 def test_invalid_parameters_still_fail_before_connecting(values):
     with pytest.raises(ValidationError):
-        sdk.parse_server_parameters(values)
+        sdk_parameters(values)
     with pytest.raises(ValidationError):
         UrsaConfig(mcp_servers={"invalid": values})
 
@@ -156,7 +182,7 @@ def test_client_connections_match_sdk(monkeypatch, values):
     )
     monkeypatch.setattr(sdk, "UrsaMCPClient", lambda connections: connections)
     local = UrsaConfig(mcp_servers={"tools": values}).mcp_servers["tools"]
-    original = sdk.parse_server_parameters(values)
+    original = sdk_parameters(values)
     assert sdk.start_mcp_client({"tools": local}) == sdk.start_mcp_client({
         "tools": original
     })

@@ -9,9 +9,13 @@ help:
 test:
     uv run pytest -s
 
-# Measure fresh-process time to the first usable prompt with ASV.
+# Measure CLI startup and exec response latency.
 benchmark *flags:
-    uv run --no-sync asv run --environment existing --show-stderr {{ flags }}
+    just asv run --environment existing --show-stderr {{ flags }}
+
+# Run an ASV command using the benchmark project's configuration.
+asv *args:
+    uv run --no-sync asv {{ args }} --config benchmark/asv.conf.json
 
 clean-workspaces:
     rm -rf workspace

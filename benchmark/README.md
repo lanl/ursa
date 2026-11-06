@@ -1,103 +1,55 @@
-# Startup benchmarks with ASV
+# CLI latency benchmarks
+
+This is an [ASV benchmark project](https://asv.readthedocs.io/en/stable/using.html)
+with `asv.conf.json` beside the `benchmarks/` Python package. Run it from the
+repository root through the just recipes:
 
 ```sh
 uv sync --locked --group dev
-uv run --no-sync asv machine --yes  # Once per machine
-just benchmark
-# Or: uv run --no-sync asv run --environment existing --show-stderr
+just asv machine --yes                      # Once per machine
+just benchmark                             # All latency measurements
+just benchmark --bench 'startup.Startup'    # Time to first prompt
+just benchmark --bench 'startup.Exec'       # Time to exec response
+just asv check --environment existing
 ```
 
-ASV runs `startup.Startup.track_max_ready` for nine scenarios: default, named,
-provider-prefixed model, stdio MCP, SSE MCP, streamable HTTP MCP, all three MCP
-transports together, help, and version. Each result is the **maximum of five
-fresh-process startup measurements**, in seconds. The target is **less than
-1.0 second for every scenario**. Raw samples are included in ASV's captured
-stderr (`--show-stderr`). No warmup samples are discarded.
+The existing uv environment measures the current checkout, including uncommitted
+changes. Results are the maximum of five fresh processes; individual samples
+appear in the output. ASV reports execution failures, but does not fail a run
+when a measurement exceeds the one-second target.
+
+To save results for a **clean** checkout and view them:
 
 ```sh
-# Run just the mixed MCP configuration:
-just benchmark --bench 'startup.Startup.track_max_ready.*mcp-mixed'
-
-# Check benchmark discovery and syntax:
-uv run --no-sync asv check --environment existing
-
-# Record the currently installed checkout under its commit, then build reports:
-# Do this on a clean checkout so the commit label describes the measured code.
 just benchmark --set-commit-hash HEAD
-uv run --no-sync asv publish
-uv run --no-sync asv preview
+just asv publish
+just asv preview
 ```
 
-`asv.conf.json` uses the existing uv environment so development runs include
-uncommitted source and the dependencies from `uv.lock`. Ordinary existing-env
-runs print results but do not save historical measurements. ASV manages saved
-results and reports under `.asv/`, which is ignored by Git. Its exit status
-reports benchmark execution failures; inspect the recorded maximum against the
-one-second target. ASV does not automatically enforce an absolute time limit.
+Results and reports live in `benchmark/.asv/` (ignored by Git). Ordinary runs
+without `--set-commit-hash` print results without saving history.
 
-## Measurement boundary
+## What is measured
 
-ASV's `track_` benchmark records the probe's measured duration rather than timing
-its entire subprocess lifetime. A normal `time_` benchmark would also include
-shutdown and cleanup, while `timeraw_` starts its timer after interpreter startup.
-The small standard-library helper in `_startup.py` exists to measure exactly the
-boundary we care about; ASV owns benchmark discovery, execution, and reporting.
+- **Startup:** Python process creation through the first rendered, focused,
+  editable prompt. Scenarios cover default/named sessions, a model-provider
+  prefix, saved provider credentials, each MCP transport, and mixed MCP
+  settings. Help/version measure through exit. POSIX uses a pseudo-terminal;
+  Windows uses Textual's headless driver. These measurements exclude uv.
+- **Exec:** `uv run ursa exec 'say hello'` through the visible response, using a
+  local HTTP model fixture. This includes uv, the real SDK, model validation,
+  agent construction, tool schemas, and rendering. Samples also report time to
+  the model request and process exit. Server setup is outside the measurement.
 
-Timing starts before spawning the fresh child and stops after Textual's first
-screen refresh. The probe checks that the real `PromptArea` is focused, enabled,
-and accepts text. POSIX runs use a 100-column, 35-row pseudo-terminal; Windows
-uses Textual's headless driver at the same dimensions. Both paths exercise the
-real parser, configuration loading, runtime, widgets, and graceful cleanup.
-The runtime is never mocked. Help/version timing runs through successful exit
-with nonempty output.
+`track_` benchmarks report these precise boundaries instead of timing teardown.
+Helpers use temporary configuration, credentials, and workspaces. MCP startup
+fixtures cannot connect; exec uses only the local model endpoint. Neither path
+mocks the runtime. External inference/MCP latency must be measured separately
+with a real configuration. Run on an idle machine; filesystem caches are warm.
 
-Each child uses a temporary home, cache, configuration, and workspace. Named
-sessions start without saved history. The provider scenario parses an Ollama
-model prefix without making a request. MCP scenarios load real configuration
-files, including an environment-backed authorization header with a test token.
-Their commands and endpoints are deliberately unusable: startup must reach the
-prompt without starting a server or contacting an endpoint. Regression tests
-also verify that the MCP SDK and agent implementations stay unloaded.
+On Linux aarch64/Python 3.11.16, the latest five-sample batches measured a maximum
+of 0.462 s to the prompt and 0.880 s to the local exec response. Exec exited in
+1.018–1.119 s, versus 2.216 s in the initial diagnostic before its loading fixes.
+These are observations on one machine, not portable performance guarantees.
 
-These are fresh-process measurements with warm filesystem caches. Installation,
-uv environment checks, terminal emulator paint latency, and first model-response
-or MCP connection time are excluded. Python startup and probe imports are
-included. Run on an otherwise idle machine: the maximum deliberately exposes
-scheduler and filesystem delays on shared hosts instead of hiding outliers.
-
-## Example results
-
-On Linux aarch64 with Python 3.11.16, the locked development environment, and
-the PTY driver, the startup changes based on `origin/main` at `8270b21f`
-measured the following maxima across five fresh processes per scenario:
-
-| Scenario | Maximum |
-| --- | ---: |
-| Default prompt | 0.359 s |
-| Named prompt | 0.378 s |
-| Provider-prefixed model | 0.464 s |
-| Stdio MCP | 0.361 s |
-| SSE MCP | 0.368 s |
-| Streamable HTTP MCP | 0.365 s |
-| All three MCP transports | 0.361 s |
-| Help | 0.222 s |
-| Version | 0.235 s |
-
-All 45 samples were below one second. These are measurements of the modified
-checkout on one machine, not the unmodified base commit or a performance
-guarantee for other machines.
-
-## Where loading is delayed
-
-The runtime registers agent class names and loads implementations when metadata
-or execution is requested. `has_extra(extra, package="ursa")` checks declared
-optional dependencies through distribution metadata and `find_spec`, without
-importing them. Model factories, MCP clients, checkpoint backends, RAG tools,
-and callback rendering load at their use sites. Lightweight MCP configuration
-models preserve validation without loading the SDK. Configuration and endpoint
-policy validation still happen at startup. Model construction, provider
-connectivity checks, and MCP credential resolution happen on first use, before
-an agent executes. Concurrent requests share that initialization, and shutdown
-waits for it even if its callers are cancelled.
-
-Dependency provenance is recorded in [DEPENDENCIES.md](DEPENDENCIES.md).
+Dependency provenance: [DEPENDENCIES.md](DEPENDENCIES.md).

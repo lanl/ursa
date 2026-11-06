@@ -46,6 +46,7 @@ SCENARIOS = (
     "prompt",
     "named-prompt",
     "provider-prompt",
+    "saved-config-prompt",
     *MCP_SCENARIOS,
     "help",
     "version",
@@ -70,6 +71,11 @@ def probe(scenario: str, result_path: Path, *, headless: bool) -> None:
         prompt = app.query_one(PromptArea)
         assert app.focused is prompt and not prompt.disabled
         ready_ns = time.perf_counter_ns()
+        if scenario == "saved-config-prompt":
+            assert (
+                app.hitl.config.llm_model.inference_provider == "saved-provider"
+            )
+            assert app.hitl.config.llm_model.api_key.keyring == "saved-provider"
         if scenario in MCP_SCENARIOS:
             expected = (
                 set(MCP_SERVERS)
@@ -116,32 +122,56 @@ def _drain_terminal(fd: int) -> None:
             raise
 
 
+def isolated_env(root: Path) -> dict[str, str]:
+    # Do not read user credentials, workspace files, or system configuration.
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("URSA_", "OTEL_", "LANGSMITH_", "LANGCHAIN_"))
+        and key not in {"OPENAI_API_KEY", "PYTHONPROFILEIMPORTTIME"}
+    }
+    for key in (
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "PROGRAMDATA",
+        "XDG_CONFIG_HOME",
+        "XDG_CONFIG_DIRS",
+        "XDG_CACHE_HOME",
+        "URSA_CACHE_HOME",
+    ):
+        env[key] = str(root)
+    env["URSA_SYSTEM_CONFIG"] = str(root / "system.yaml")
+    env["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
+    env["TERM"] = "xterm-256color"
+    return env
+
+
 def measure(
     scenario: str, timeout: float, *, headless: bool = False
 ) -> tuple[float, list[str]]:
     with tempfile.TemporaryDirectory(prefix="ursa-startup-") as temporary:
         root = Path(temporary)
-        # Do not read user credentials, workspace files, or system configuration.
-        env = {
-            key: value
-            for key, value in os.environ.items()
-            if not key.startswith("URSA_")
-            and key not in {"OPENAI_API_KEY", "PYTHONPROFILEIMPORTTIME"}
-        }
-        for key in (
-            "HOME",
-            "USERPROFILE",
-            "APPDATA",
-            "PROGRAMDATA",
-            "XDG_CONFIG_HOME",
-            "XDG_CONFIG_DIRS",
-            "XDG_CACHE_HOME",
-            "URSA_CACHE_HOME",
-        ):
-            env[key] = temporary
-        env["URSA_SYSTEM_CONFIG"] = str(root / "system.yaml")
-        env["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
-        env["TERM"] = "xterm-256color"
+        env = isolated_env(root)
+        if scenario == "saved-config-prompt":
+            config = root / "ursa" / "config.yaml"
+            config.parent.mkdir()
+            # Load a saved user config through the ordinary search path, with
+            # the identity template written by older versions. No keyring
+            # lookup or server connection should be necessary to start.
+            config.write_text(
+                json.dumps({
+                    "inference_providers": {
+                        "saved-provider": {
+                            "base_url": "http://127.0.0.1:9/v1",
+                            "api_key": {"keyring": True, "template": "%s"},
+                        }
+                    },
+                    "llm_model": {"inference_provider": "saved-provider"},
+                    "mcp_servers": MCP_SERVERS,
+                })
+            )
+            env["URSA_BENCHMARK_MCP_TOKEN"] = "startup-benchmark-token"
         if scenario in MCP_SCENARIOS:
             servers = (
                 MCP_SERVERS

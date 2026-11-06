@@ -405,7 +405,7 @@ async def test_complete_agent_loading_pipeline_does_not_block_event_loop(
         return [], {"remote_tool": "laboratory"}
 
     monkeypatch.setattr(
-        "ursa.agents.base.load_mcp_tools_with_sources", slow_mcp_discovery
+        "ursa.util.mcp.load_mcp_tools_with_sources", slow_mcp_discovery
     )
 
     class SlowMcpAgent(AgentWithTools):
@@ -1094,9 +1094,7 @@ def _stub_hitl_dependencies(monkeypatch):
     monkeypatch.setattr(
         "ursa.cli.config.init_embeddings", lambda **_: fake_embedding
     )
-    monkeypatch.setattr(
-        "ursa.cli.runtime.start_mcp_client", lambda servers: None
-    )
+    monkeypatch.setattr("ursa.util.mcp.start_mcp_client", lambda servers: None)
     return fake_llm, fake_embedding
 
 

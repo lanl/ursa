@@ -105,11 +105,11 @@ uv run pytest
 
 ## Startup benchmarks
 
-Run `uv run --no-sync asv machine --yes` once, then `just benchmark` after
-syncing development dependencies. ASV records the slowest of five fresh-process
-starts per scenario, measured through the rendered, focused prompt. The target
-is under one second. See [benchmark/README.md](benchmark/README.md) for filtering,
-saving results, and measurement limits.
+After syncing development dependencies, run `just asv machine --yes` once and
+`just benchmark` to measure CLI startup and exec response latency. Use
+`just asv check --environment existing` to validate the suite. See
+[benchmark/README.md](benchmark/README.md) for filtering, saved results, and
+measurement boundaries.
 
 ## Building Documentation
 

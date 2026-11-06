@@ -7,17 +7,14 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-import sys
 import threading
 import traceback
 from collections.abc import Callable, Iterable, Mapping
 from math import ceil
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import Any, ClassVar
 
 import yaml
-from rich.console import Console
-from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
@@ -27,6 +24,8 @@ from textual.widget import Widget
 from textual.widgets import Static, TextArea
 
 from ursa.cli.config import config_file_value
+from ursa.cli.one_shot import run_once as run_textual_once  # noqa: F401
+from ursa.cli.runtime import HITL
 from ursa.cli.tui.agent_info import load_agent_details
 from ursa.cli.tui.helpers import (
     COMMAND_CHOICES,
@@ -48,14 +47,12 @@ from ursa.cli.tui.widgets import (
     WelcomeBanner,
 )
 from ursa.util import crossplatform
+from ursa.util import mcp_config as ursa_mcp
 from ursa.util.model_context import (
     model_context_window,
     summarization_threshold,
 )
 from ursa.util.tqdm_lock import install_thread_only_tqdm_lock
-
-if TYPE_CHECKING:
-    from ursa.cli.runtime import HITL
 
 
 class ConversationScroll(VerticalScroll):
@@ -696,8 +693,6 @@ class UrsaTextualApp(App[None]):
         servers = self.hitl.config.mcp_servers
         if not servers:
             return model_table + "\n\n## MCP servers\n\nNone configured."
-        from ursa.util import mcp_config as ursa_mcp
-
         server_rows = []
         for name, server in servers.items():
             server = ursa_mcp.parse_server_parameters(server)
@@ -856,31 +851,3 @@ def run_textual(hitl: HITL) -> None:
         UrsaTextualApp(hitl).run()
     finally:
         asyncio.run(hitl.aclose())
-
-
-def run_textual_once(hitl: HITL, prompt: str, *, stdout: Any = None) -> str:
-    """Run one routed prompt and render its event stream to standard output."""
-    from ursa.cli.callbacks import HITLLogEventHandler
-
-    install_thread_only_tqdm_lock()
-    output = stdout or sys.stdout
-    console = Console(file=output)
-    handler = HITLLogEventHandler(console=console, workspace=hitl.workspace)
-    agent, routed_prompt = _route_prompt(hitl, prompt)
-
-    async def invoke() -> str:
-        try:
-            return await hitl.run_agent(
-                agent, routed_prompt, callbacks=[handler]
-            )
-        finally:
-            await hitl.aclose()
-
-    response = asyncio.run(invoke())
-    if handler.emitted_any:
-        console.print()
-    if console.is_terminal:
-        console.print(RichMarkdown(response))
-    else:
-        print(response, file=output)  # noqa: T201
-    return response
