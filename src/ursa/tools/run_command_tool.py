@@ -123,7 +123,9 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
         ) as span:
             access_network = os.getenv("URSA_ACCESS_NETWORK", "1") == "1"
             enable_sbx = os.getenv("URSA_SBX", "1") == "1"
-            extra_writable_paths = parse_extra_writable_paths()
+            extra_writable_paths = parse_extra_writable_paths(
+                "URSA_EXTRA_WRITABLE_PATHS"
+            )
             match (pf := platform.system()), prompt_level.lower(), enable_sbx:
                 # NOTE:
                 # * No sandbox if URSA_SAFETY_LEVEL=yolo or URSA_SBX=0
