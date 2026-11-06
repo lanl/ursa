@@ -243,15 +243,7 @@ class _UrsaProcessAgent(_ProcessRuntimeBridge):
         action = str(payload.get("action") or "request")
         if action != "request":
             raise ValueError(f"Unknown runtime message action {action!r}")
-        config = dict(payload.get("config") or {})
-        callbacks = list(config.get("callbacks") or ())
-        metadata = config.get("metadata")
-        callbacks.append(
-            self.context.callback_handler(
-                metadata if isinstance(metadata, Mapping) else None
-            )
-        )
-        config["callbacks"] = callbacks
+        config = self.context.callback_config(payload.get("config"))
 
         async def on_start() -> None:
             await self.context.emit_callback(

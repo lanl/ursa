@@ -100,8 +100,8 @@ class FakeMcpTool(FakeConfiguredTool):
     name = "remote_read"
 
 
-async def test_agent_hotlist_routes_selected_agent(tmp_path):
-    runtime = make_runtime(tmp_path)
+async def test_agent_hotlist_routes_selected_agent(app):
+    runtime = app.runtime
     calls = []
 
     async def run_agent(name, prompt, callbacks=None):
@@ -109,7 +109,6 @@ async def test_agent_hotlist_routes_selected_agent(tmp_path):
         return "Finished"
 
     runtime.run_agent = run_agent
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("#")
@@ -267,11 +266,10 @@ async def test_programmatic_and_pasted_macro_characters_do_not_open_picker(
         assert not isinstance(app.screen, HotlistScreen)
 
 
-async def test_file_hotlist_uses_at_trigger(tmp_path):
+async def test_file_hotlist_uses_at_trigger(app, tmp_path):
     (tmp_path / "notes.md").write_text("hello")
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "guide.md").write_text("guide")
-    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("@")
@@ -391,14 +389,13 @@ async def test_prompt_supports_option_arrow_word_navigation(app):
         assert prompt.cursor_location == (0, 10)
 
 
-async def test_ctrl_c_clears_prompt_and_adds_it_to_history(tmp_path):
-    runtime = make_runtime(tmp_path)
+async def test_ctrl_c_clears_prompt_and_adds_it_to_history(app):
+    runtime = app.runtime
 
     async def run_agent(_name, _prompt, callbacks=None):
         return "Finished"
 
     runtime.run_agent = run_agent
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test() as pilot:
         await pilot.press("o", "l", "d", "enter")
@@ -809,8 +806,8 @@ async def test_exit_command_quits_the_app(app):
         assert app._exit
 
 
-async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
-    runtime = make_runtime(tmp_path)
+async def test_model_command_switches_provider_and_model(app, model_discovery):
+    runtime = app.runtime
     runtime.config.llm_model.max_completion_tokens = 4096
     runtime.inference_provider = "stale-provider"
     runtime.config.inference_providers["stale-provider"] = (
@@ -825,11 +822,7 @@ async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
             ProviderModel("text-embedding-3-large", "openai", type="embedding"),
         ]
 
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models",
-        provider_models,
-    )
-    app = UrsaTextualApp(runtime)
+    model_discovery(provider_models)
 
     async with app.run_test(size=(80, 24)) as pilot:
         await open_model_screen(app, pilot)
@@ -1009,14 +1002,9 @@ async def test_invalid_model_selection_notifies_without_closing_modal(
 
 
 async def test_model_yaml_round_trips_extras_and_updates_controls(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    runtime = make_runtime(tmp_path)
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models",
-        lambda _config: [ProviderModel("yaml-model", "openai")],
-    )
-    app = UrsaTextualApp(runtime)
+    model_discovery(lambda _config: [ProviderModel("yaml-model", "openai")])
 
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
@@ -1061,14 +1049,11 @@ provider_options:
 
 
 async def test_valid_yaml_is_committed_only_when_apply_is_pressed(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    runtime = make_runtime(tmp_path)
+    model_discovery(lambda _config: [])
+    runtime = app.runtime
     original = runtime.config.llm_model.model_copy(deep=True)
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
@@ -1098,13 +1083,11 @@ provider_options:
 
 
 async def test_yaml_validation_keeps_unavailable_model_as_not_found(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models",
-        lambda _config: [ProviderModel("available-model", "openai")],
+    model_discovery(
+        lambda _config: [ProviderModel("available-model", "openai")]
     )
-    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
@@ -1131,12 +1114,9 @@ inference_provider: openai
 
 
 async def test_yaml_keeps_unavailable_model_provider_visible(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    app = UrsaTextualApp(make_runtime(tmp_path))
+    model_discovery(lambda _config: [])
 
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
@@ -1191,120 +1171,61 @@ inference_provider: openai
         )
 
 
-async def test_whitespace_chat_model_yaml_is_rejected_before_apply(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("kind", ["chat", "embedding"])
+async def test_whitespace_model_yaml_is_rejected_before_apply(
+    app, model_discovery, kind
 ):
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
+    model_discovery(lambda _config: [])
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
-        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        editor = app.screen.query_one(f"#{kind}-config-yaml", TextArea)
         editor.text = "model: '   '\nmodel_provider: openai\n"
-
         app.screen.action_apply()
-
         assert isinstance(app.screen, ModelScreen)
         assert editor.has_class("yaml-invalid")
-        assert "Chat model must not be blank" in str(
-            app.screen.query_one("#chat-yaml-error", Static).content
+        assert f"{kind.title()} model must not be blank" in str(
+            app.screen.query_one(f"#{kind}-yaml-error", Static).content
         )
+        if kind == "embedding":
+            editor.text = "model: ''\nmodel_provider: openai\n"
+            app.screen.action_apply()
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            assert app.runtime.config.emb_model is None
 
 
-async def test_whitespace_embedding_model_yaml_is_rejected_before_apply(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("kind", ["chat", "embedding"])
+async def test_structured_none_updates_yaml_and_validates_model_kind(
+    app, model_discovery, kind
 ):
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    runtime = make_runtime(tmp_path)
-    app = UrsaTextualApp(runtime)
-
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
-        editor = app.screen.query_one("#embedding-config-yaml", TextArea)
-        editor.text = "model: '   '\nmodel_provider: openai\n"
-
-        app.screen.action_apply()
-
-        assert isinstance(app.screen, ModelScreen)
-        assert editor.has_class("yaml-invalid")
-        assert "Embedding model must not be blank" in str(
-            app.screen.query_one("#embedding-yaml-error", Static).content
-        )
-
-        editor.text = "model: ''\nmodel_provider: openai\n"
-        app.screen.action_apply()
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert runtime.config.emb_model is None
-
-
-async def test_structured_chat_none_updates_yaml_and_blocks_apply(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    runtime = make_runtime(tmp_path)
-    original = runtime.config.llm_model.model_copy(deep=True)
-    app = UrsaTextualApp(runtime)
-
+    model_discovery(lambda _config: [])
+    original = app.runtime.config.llm_model.model_copy(deep=True)
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
         app.screen.query_one(
-            "#chat-model-name", Select
+            f"#{kind}-model-name", Select
         ).value = ModelScreen.NONE_VALUE
         await pilot.pause()
-
-        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        editor = app.screen.query_one(f"#{kind}-config-yaml", TextArea)
         assert yaml.safe_load(editor.text)["model"] == ""
-        assert app.screen.drafts["chat"].model == ""
-
+        assert app.screen.drafts[kind].model == ""
+        if kind == "embedding":
+            assert editor.has_class("yaml-valid")
         app.screen.action_apply()
-
-        assert isinstance(app.screen, ModelScreen)
-        assert editor.has_class("yaml-invalid")
-        assert runtime.config.llm_model == original
-
-
-async def test_structured_embedding_none_removes_configured_embedding(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    runtime = make_runtime(tmp_path)
-    app = UrsaTextualApp(runtime)
-
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
-        app.screen.query_one(
-            "#embedding-model-name", Select
-        ).value = ModelScreen.NONE_VALUE
-        await pilot.pause()
-
-        editor = app.screen.query_one("#embedding-config-yaml", TextArea)
-        assert yaml.safe_load(editor.text)["model"] == ""
-        assert app.screen.drafts["embedding"].model == ""
-        assert editor.has_class("yaml-valid")
-
-        app.screen.action_apply()
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-
-        assert runtime.config.emb_model is None
+        if kind == "chat":
+            assert isinstance(app.screen, ModelScreen)
+            assert editor.has_class("yaml-invalid")
+            assert app.runtime.config.llm_model == original
+        else:
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            assert app.runtime.config.emb_model is None
 
 
 async def test_yaml_validation_names_unknown_inference_provider(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    app = UrsaTextualApp(make_runtime(tmp_path))
+    model_discovery(lambda _config: [])
 
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
@@ -1322,12 +1243,9 @@ async def test_yaml_validation_names_unknown_inference_provider(
 
 
 async def test_model_option_refresh_preserves_sync_guard_and_empty_choice(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    app = UrsaTextualApp(make_runtime(tmp_path))
+    model_discovery(lambda _config: [])
 
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
@@ -1341,7 +1259,7 @@ async def test_model_option_refresh_preserves_sync_guard_and_empty_choice(
 
 
 async def test_programmatic_control_sync_suppresses_queued_events(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
     discoveries = []
 
@@ -1349,10 +1267,7 @@ async def test_programmatic_control_sync_suppresses_queued_events(
         discoveries.append(config)
         return []
 
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", provider_models
-    )
-    app = UrsaTextualApp(make_runtime(tmp_path))
+    model_discovery(provider_models)
 
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
@@ -1374,20 +1289,15 @@ async def test_programmatic_control_sync_suppresses_queued_events(
         assert discoveries == []
 
 
-async def test_masked_yaml_api_key_preserves_secret_value(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _: []
-    )
-    runtime = make_runtime(tmp_path)
+async def test_masked_yaml_api_key_preserves_secret_value(app, model_discovery):
+    model_discovery(lambda _: [])
+    runtime = app.runtime
     runtime.config.llm_model = ChatModelConfig(
         model="secret-model",
         model_provider="openai",
         base_url="https://secret.example/v1",
         api_key=SecretStr("actual-secret"),
     )
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
@@ -1404,7 +1314,7 @@ async def test_masked_yaml_api_key_preserves_secret_value(
 
 
 async def test_direct_provider_selection_refreshes_model_catalog(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
     calls = []
 
@@ -1414,10 +1324,7 @@ async def test_direct_provider_selection_refreshes_model_catalog(
             return [ProviderModel("direct-only", "openai")]
         return [ProviderModel("provider-only", "openai")]
 
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", provider_models
-    )
-    app = UrsaTextualApp(make_runtime(tmp_path))
+    model_discovery(provider_models)
 
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
@@ -1439,9 +1346,9 @@ async def test_direct_provider_selection_refreshes_model_catalog(
 
 
 async def test_yaml_provider_change_refreshes_model_catalog(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    runtime = make_runtime(tmp_path)
+    runtime = app.runtime
     runtime.config.inference_providers["fast"] = InferenceProviderConfig(
         base_url="https://fast.example/v1"
     )
@@ -1454,10 +1361,7 @@ async def test_yaml_provider_change_refreshes_model_catalog(
         )
         return [ProviderModel(name, "openai")]
 
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", provider_models
-    )
-    app = UrsaTextualApp(runtime)
+    model_discovery(provider_models)
 
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
@@ -1482,9 +1386,9 @@ inference_provider: fast
 
 
 async def test_provider_discovery_failure_clears_previous_catalog(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    runtime = make_runtime(tmp_path)
+    runtime = app.runtime
     runtime.config.inference_providers["broken"] = InferenceProviderConfig(
         base_url="https://broken.example/v1"
     )
@@ -1494,10 +1398,7 @@ async def test_provider_discovery_failure_clears_previous_catalog(
             raise RuntimeError("discovery failed")
         return [ProviderModel("old-only", "openai")]
 
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", provider_models
-    )
-    app = UrsaTextualApp(runtime)
+    model_discovery(provider_models)
 
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
@@ -1516,12 +1417,9 @@ async def test_provider_discovery_failure_clears_previous_catalog(
 
 
 async def test_expanded_advanced_modal_is_scrollable_on_short_terminal(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    app = UrsaTextualApp(make_runtime(tmp_path))
+    model_discovery(lambda _config: [])
 
     async with app.run_test(size=(80, 20)) as pilot:
         await open_model_screen(app, pilot)
@@ -1541,14 +1439,11 @@ async def test_expanded_advanced_modal_is_scrollable_on_short_terminal(
 
 
 async def test_advanced_yaml_seeded_fuzz_never_mutates_running_config(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    runtime = make_runtime(tmp_path)
+    model_discovery(lambda _config: [])
+    runtime = app.runtime
     original = runtime.config.llm_model.model_copy(deep=True)
-    app = UrsaTextualApp(runtime)
     cases = [
         ("model: valid\nmodel_provider: openai\n", True),
         ("model: [broken", False),
@@ -1619,15 +1514,12 @@ async def test_advanced_yaml_seeded_fuzz_never_mutates_running_config(
 
 
 async def test_cancel_discards_yaml_with_pending_validation(
-    tmp_path, monkeypatch
+    app, model_discovery, monkeypatch
 ):
     monkeypatch.setattr(ModelScreen, "YAML_VALIDATION_DELAY", 30.0)
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    runtime = make_runtime(tmp_path)
+    model_discovery(lambda _config: [])
+    runtime = app.runtime
     original = runtime.config.llm_model.model_copy(deep=True)
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
@@ -1650,11 +1542,8 @@ async def test_cancel_discards_yaml_with_pending_validation(
         assert timer._task is None
 
 
-async def test_yaml_debounce_restarts_from_latest_edit(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    app = UrsaTextualApp(make_runtime(tmp_path))
+async def test_yaml_debounce_restarts_from_latest_edit(app, model_discovery):
+    model_discovery(lambda _config: [])
 
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
@@ -1676,11 +1565,10 @@ async def test_yaml_debounce_restarts_from_latest_edit(tmp_path, monkeypatch):
         assert app.screen.drafts["chat"].model == "second-edit"
 
 
-async def test_invalid_yaml_blocks_model_accept(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    app = UrsaTextualApp(make_runtime(tmp_path))
+async def test_invalid_yaml_blocks_model_accept(
+    app, model_discovery, monkeypatch
+):
+    model_discovery(lambda _config: [])
     notifications = []
     monkeypatch.setattr(
         app,
@@ -1702,12 +1590,9 @@ async def test_invalid_yaml_blocks_model_accept(tmp_path, monkeypatch):
 
 
 async def test_yaml_validation_error_with_rich_markup_is_plain_text(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    app = UrsaTextualApp(make_runtime(tmp_path))
+    model_discovery(lambda _config: [])
 
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
@@ -1739,12 +1624,9 @@ api_key:
 
 
 async def test_yaml_validation_lists_all_errors_in_bounded_scroll_area(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    app = UrsaTextualApp(make_runtime(tmp_path))
+    model_discovery(lambda _config: [])
 
     async with app.run_test(size=(80, 30)) as pilot:
         await open_model_screen(app, pilot)
@@ -1775,9 +1657,8 @@ api_key:
         assert error.styles.overflow_y == "auto"
 
 
-async def test_model_change_only_reports_changed_embedding(tmp_path):
-    runtime = make_runtime(tmp_path)
-    app = UrsaTextualApp(runtime)
+async def test_model_change_only_reports_changed_embedding(app):
+    runtime = app.runtime
     new_embedding = runtime.config.emb_model.model_copy(
         update={"model": "text-embedding-3-small"}
     )
@@ -1801,19 +1682,16 @@ async def test_model_change_only_reports_changed_embedding(tmp_path):
 
 
 async def test_model_modal_preserves_direct_embedding_endpoint(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    runtime = make_runtime(tmp_path)
+    runtime = app.runtime
     runtime.config.emb_model = EmbModelConfig(
         model="old-embedding",
         model_provider="openai",
         base_url="https://embeddings.example/v1",
         check_embedding_ctx_length=False,
     )
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    app = UrsaTextualApp(runtime)
+    model_discovery(lambda _config: [])
 
     async with app.run_test(size=(80, 24)) as pilot:
         await open_model_screen(app, pilot)
@@ -1838,9 +1716,9 @@ async def test_model_modal_preserves_direct_embedding_endpoint(
 
 
 async def test_switching_direct_endpoint_to_named_provider_stays_in_sync(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    runtime = make_runtime(tmp_path)
+    runtime = app.runtime
     runtime.config.llm_model = ChatModelConfig(
         model="direct-model",
         model_provider="openai",
@@ -1852,10 +1730,7 @@ async def test_switching_direct_endpoint_to_named_provider_stays_in_sync(
         discovered_with.append(config)
         return [ProviderModel("provider-model", "openai")]
 
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", provider_models
-    )
-    app = UrsaTextualApp(runtime)
+    model_discovery(provider_models)
 
     async with app.run_test(size=(80, 24)) as pilot:
         await open_model_screen(app, pilot)
@@ -1886,17 +1761,14 @@ async def test_switching_direct_endpoint_to_named_provider_stays_in_sync(
 
 
 async def test_named_provider_control_removes_direct_url_in_one_sync(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    runtime = make_runtime(tmp_path)
+    runtime = app.runtime
     runtime.config.llm_model = ChatModelConfig(
         model="direct-model",
         base_url="https://direct.example/v1",
     )
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    app = UrsaTextualApp(runtime)
+    model_discovery(lambda _config: [])
 
     async with app.run_test(size=(80, 24)) as pilot:
         await open_model_screen(app, pilot)
@@ -1922,18 +1794,15 @@ async def test_named_provider_control_removes_direct_url_in_one_sync(
 
 
 async def test_immediate_apply_clears_direct_url_for_named_provider(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    runtime = make_runtime(tmp_path)
+    runtime = app.runtime
     runtime.config.llm_model = ChatModelConfig(
         model="direct-model",
         base_url="https://direct.example/v1",
         temperature=0.2,
     )
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    app = UrsaTextualApp(runtime)
+    model_discovery(lambda _config: [])
 
     async with app.run_test(size=(80, 24)) as pilot:
         await open_model_screen(app, pilot)
@@ -1956,9 +1825,9 @@ async def test_immediate_apply_clears_direct_url_for_named_provider(
 
 
 async def test_model_modal_preserves_only_explicit_overrides_when_switching_provider(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    runtime = make_runtime(tmp_path)
+    runtime = app.runtime
     runtime.config.inference_providers["other"] = InferenceProviderConfig(
         base_url="https://other.example/v1",
         ssl_verify=False,
@@ -1979,11 +1848,7 @@ async def test_model_modal_preserves_only_explicit_overrides_when_switching_prov
     runtime.config.llm_model = configured.resolve_inference_provider(
         runtime.config.inference_providers
     )
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models",
-        lambda _config: [ProviderModel("gpt-test", "openai")],
-    )
-    app = UrsaTextualApp(runtime)
+    model_discovery(lambda _config: [ProviderModel("gpt-test", "openai")])
 
     async with app.run_test(size=(80, 24)) as pilot:
         await open_model_screen(app, pilot)
@@ -1998,9 +1863,9 @@ async def test_model_modal_preserves_only_explicit_overrides_when_switching_prov
 
 
 async def test_model_modal_uses_default_provider_for_new_embedding(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    runtime = make_runtime(tmp_path)
+    runtime = app.runtime
     runtime.config.emb_model = None
     discovered_with = []
 
@@ -2008,10 +1873,7 @@ async def test_model_modal_uses_default_provider_for_new_embedding(
         discovered_with.append(config)
         return [ProviderModel("text-embedding-test", "openai", "embedding")]
 
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", provider_models
-    )
-    app = UrsaTextualApp(runtime)
+    model_discovery(provider_models)
 
     async with app.run_test(size=(80, 24)) as pilot:
         await open_model_screen(app, pilot)
@@ -2040,9 +1902,9 @@ async def test_model_modal_uses_default_provider_for_new_embedding(
 
 
 async def test_stale_model_discovery_cannot_replace_new_provider_catalog(
-    tmp_path, monkeypatch
+    app, model_discovery, monkeypatch
 ):
-    runtime = make_runtime(tmp_path)
+    runtime = app.runtime
     runtime.config.inference_providers["fast"] = InferenceProviderConfig(
         base_url="https://fast.example/v1"
     )
@@ -2058,10 +1920,7 @@ async def test_stale_model_discovery_cannot_replace_new_provider_catalog(
             return [ProviderModel("gpt-5.4", "openai")]
         return [ProviderModel("fast-only", "openai")]
 
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", provider_models
-    )
-    app = UrsaTextualApp(runtime)
+    model_discovery(provider_models)
 
     async with app.run_test(size=(80, 24)) as pilot:
         await app._show_command("models")
@@ -2105,9 +1964,9 @@ async def test_stale_model_discovery_cannot_replace_new_provider_catalog(
 
 
 async def test_model_modal_seeded_provider_fuzz_preserves_invariants(
-    tmp_path, monkeypatch
+    app, model_discovery
 ):
-    runtime = make_runtime(tmp_path)
+    runtime = app.runtime
     for index in range(3):
         runtime.config.inference_providers[f"provider-{index}"] = (
             InferenceProviderConfig(
@@ -2126,10 +1985,7 @@ async def test_model_modal_seeded_provider_fuzz_preserves_invariants(
             for model_index in range(3)
         ]
 
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", provider_models
-    )
-    app = UrsaTextualApp(runtime)
+    model_discovery(provider_models)
     choices = [f"provider-{index}" for index in range(3)]
     rng = random.Random(20260826)
 
@@ -2363,9 +2219,7 @@ async def test_agents_lazily_load_each_real_process_only_once(tmp_path):
         ).generation == 1
 
 
-async def test_immediate_switch_preempts_large_tool_render(
-    tmp_path, monkeypatch
-):
+async def test_immediate_switch_preempts_large_tool_render(app, monkeypatch):
     hydration_started = asyncio.Event()
     hydration_release = asyncio.Event()
     construction_started = asyncio.Event()
@@ -2383,7 +2237,7 @@ async def test_immediate_switch_preempts_large_tool_render(
         tool_sources={},
         _agent=None,
     )
-    runtime = make_runtime(tmp_path)
+    runtime = app.runtime
     runtime.agents = {"safe": safe, "execute": execute}
 
     async def get_agent(name):
@@ -2420,7 +2274,6 @@ async def test_immediate_switch_preempts_large_tool_render(
         "ursa.cli.tui.widgets.AgentToolDetails", deliberately_slow_card
     )
     runtime.get_agent = get_agent
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await app._show_command("agents")
@@ -2476,7 +2329,7 @@ async def test_immediate_switch_preempts_large_tool_render(
         app.screen._advance_tool_loading(1)
 
 
-async def test_agent_tool_render_failure_is_displayed(tmp_path, monkeypatch):
+async def test_agent_tool_render_failure_is_displayed(app, monkeypatch):
     construction_attempts = 0
     safe = SimpleNamespace(
         description="safe agent",
@@ -2491,7 +2344,7 @@ async def test_agent_tool_render_failure_is_displayed(tmp_path, monkeypatch):
         tool_sources={},
         _agent=SimpleNamespace(tools={broken_tool.name: broken_tool}),
     )
-    runtime = make_runtime(tmp_path)
+    runtime = app.runtime
     runtime.agents = {"safe": safe, "broken": broken}
 
     async def get_agent(name):
@@ -2506,7 +2359,6 @@ async def test_agent_tool_render_failure_is_displayed(tmp_path, monkeypatch):
         "ursa.cli.tui.widgets.AgentToolDetails", fail_to_build_card
     )
     runtime.get_agent = get_agent
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await app._show_command("agents")
@@ -2542,7 +2394,7 @@ async def test_agent_tool_render_failure_is_displayed(tmp_path, monkeypatch):
 
 
 async def test_initialized_tools_render_while_schema_hydration_is_pending(
-    tmp_path,
+    app,
 ):
     schema_started = threading.Event()
     schema_release = threading.Event()
@@ -2562,14 +2414,13 @@ async def test_initialized_tools_render_while_schema_hydration_is_pending(
         tool_sources={},
         _agent=SimpleNamespace(tools={"read_file": configured_tool}),
     )
-    runtime = make_runtime(tmp_path)
+    runtime = app.runtime
     runtime.agents = {"ready": wrapper}
 
     async def get_agent(_name):
         return wrapper
 
     runtime.get_agent = get_agent
-    app = UrsaTextualApp(runtime)
 
     try:
         async with app.run_test(size=(100, 36)) as pilot:
@@ -2593,8 +2444,8 @@ async def test_initialized_tools_render_while_schema_hydration_is_pending(
         schema_release.set()
 
 
-async def test_agents_display_tool_load_failure(tmp_path):
-    runtime = make_runtime(tmp_path)
+async def test_agents_display_tool_load_failure(app):
+    runtime = app.runtime
     wrapper = SimpleNamespace(
         description="broken agent",
         config={},
@@ -2607,7 +2458,6 @@ async def test_agents_display_tool_load_failure(tmp_path):
         raise RuntimeError("MCP server unavailable")
 
     runtime.get_agent = get_agent
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await app._show_command("agents")

@@ -404,6 +404,20 @@ class AgentContext:
             raise RuntimeError("No active host operation")
         return _RemoteCallbackHandler(self, request_id, metadata)
 
+    def callback_config(
+        self, config: Mapping[str, Any] | None
+    ) -> dict[str, Any]:
+        """Copy invocation settings and append this operation's host callbacks."""
+        configured = dict(config or {})
+        metadata = configured.get("metadata")
+        configured["callbacks"] = [
+            *(configured.get("callbacks") or ()),
+            self.callback_handler(
+                metadata if isinstance(metadata, Mapping) else None
+            ),
+        ]
+        return configured
+
     async def emit_callback(
         self, method: str, *args: Any, **kwargs: Any
     ) -> None:
@@ -654,7 +668,6 @@ class AgentProcess:
             kind = message.get("type")
             if kind == "invoke":
                 result = await self._invoke(
-                    request_id,
                     message.get("inputs"),
                     message.get("config"),
                     bool(message.get("callbacks")),
@@ -698,7 +711,6 @@ class AgentProcess:
 
     async def _invoke(
         self,
-        request_id: str,
         inputs: Any,
         config: Mapping[str, Any] | None,
         callbacks: bool,
@@ -708,18 +720,11 @@ class AgentProcess:
             raise TypeError(
                 f"{type(self.agent).__name__} must implement async ainvoke()"
             )
-        invoke_config = dict(config or {})
-        if callbacks:
-            configured: list[Any] = list(invoke_config.get("callbacks") or ())
-            metadata = invoke_config.get("metadata")
-            configured.append(
-                _RemoteCallbackHandler(
-                    self.context,
-                    request_id,
-                    metadata if isinstance(metadata, Mapping) else None,
-                )
-            )
-            invoke_config["callbacks"] = configured
+        invoke_config = (
+            self.context.callback_config(config)
+            if callbacks
+            else dict(config or {})
+        )
         return await invoke(inputs, config=invoke_config or None)
 
     async def _snapshot_state(self) -> tuple[bool, Any]:

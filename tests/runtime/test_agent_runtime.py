@@ -325,6 +325,22 @@ async def test_subagent_model_usage_callbacks_keep_recipient_metadata(
         ("user", ("root/reviewer",), "Follow up."),
         ("root/reviewer", ("user",), "ok"),
     ]
+    recipients.clear()
+    assert (
+        await manager.send_message(
+            root.runtime_id,
+            {
+                "prompt": "Message the root directly.",
+                "config": {
+                    "callbacks": None,
+                    "metadata": {"ursa_message_recipient": "root"},
+                },
+            },
+            callbacks=(Callback(),),
+        )
+        == "ok"
+    )
+    assert recipients and set(recipients) == {"root"}
 
 
 @pytest.mark.asyncio
@@ -423,18 +439,14 @@ async def test_host_spawn_returns_before_initial_task_finishes(
 ) -> None:
     runtime, manager = runtime_factory()
     root_id, worker_id = "root-id", "worker-id"
-    runtime._runtime_roots[root_id] = root_id
-    runtime._runtime_paths[root_id] = "root"
+    set_hierarchy(runtime, {root_id: "root"})
     runtime._runtime_agent_names[root_id] = "chat"
-    runtime._hierarchies[root_id] = {"root": root_id}
     started = asyncio.Event()
     release = asyncio.Event()
 
     async def spawn(_parent_id, _name, _agent_type=None):
-        runtime._runtime_roots[worker_id] = root_id
-        runtime._runtime_paths[worker_id] = "root/worker"
+        set_hierarchy(runtime, {root_id: "root", worker_id: "root/worker"})
         runtime._runtime_agent_names[worker_id] = "chat"
-        runtime._hierarchies[root_id]["root/worker"] = worker_id
         return "root/worker"
 
     async def invoke(*_args, **_kwargs):
@@ -562,12 +574,9 @@ async def test_host_stops_only_a_descendant_subtree(
             analyst_id: "root/analyst",
         },
     )
-    runtime._runtime_agent_names.update({
-        root_id: "chat",
-        reviewer_id: "chat",
-        critic_id: "chat",
-        analyst_id: "chat",
-    })
+    runtime._runtime_agent_names.update(
+        dict.fromkeys((root_id, reviewer_id, critic_id, analyst_id), "chat")
+    )
     runtime._active_root_id = root_id
     runtime._dynamic_runtime_ids.update({reviewer_id, critic_id, analyst_id})
     removed: list[tuple[str, dict[str, object]]] = []
@@ -629,85 +638,53 @@ async def test_host_stops_only_a_descendant_subtree(
         allow_teardown.set()
 
 
-@pytest.mark.asyncio
-async def test_run_active_agent_message_wakes_a_managed_wait(
-    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A user message reaches a waiting process without stalling routing."""
+@pytest.mark.parametrize(
+    ("sender", "buffered", "message"),
+    [("user", False, "wake now"), ("root/worker", True, "VOTE: player4")],
+)
+async def test_message_reaches_managed_wait_without_duplicate_invocation(
+    runtime_factory, sender, buffered, message
+):
+    """Preserve delivery both before a wait and while its tool call is active."""
     runtime, manager = runtime_factory(fork=True)
     root = await runtime.get_agent("chat")
     child_path = "root/worker"
-    await spawn_managed(runtime, child_path, "long task")
-    runtime._active_root_id = root.runtime_id
-    runtime._mark_working(child_path, 1)
-    wait = asyncio.create_task(
-        manager.call(
-            root.runtime_id,
-            "wait_for_subagent",
-            child_path,
-            1,
-        )
-    )
-    for _ in range(100):
-        if runtime._wait_dependencies.get("root"):
-            break
-        await asyncio.sleep(0.01)
-    assert runtime._wait_dependencies.get("root")
-
-    # User messages take the same in-band path as peer messages. The
-    # waiting invocation receives the exact delivery, so no second model
-    # turn or duplicate response is created.
-    assert await runtime.run_active_agent("root", "wake now") is None
-    assert await wait == (
-        "Received a message while waiting.\n"
-        "Sender: user\nRecipient: root\n"
-        "Exact message content:\nwake now"
-    )
-    runtime._mark_working(child_path, -1)
-    assert (await manager.snapshot(root.runtime_id)).status.value == "ready"
-
-
-@pytest.mark.asyncio
-async def test_agent_message_is_returned_to_managed_wait(
-    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A model receives a reply that reaches the host just before its wait."""
-    runtime, manager = runtime_factory(fork=True)
-    root = await runtime.get_agent("chat")
-    child_path = "root/worker"
-    await spawn_managed(runtime, child_path, "long task")
-    child_id = runtime._hierarchies[root.runtime_id][child_path]
+    child_id = await spawn_managed(runtime, child_path, "long task")
     await _wait_for_background_agent_tasks(runtime)
     runtime._active_root_id = root.runtime_id
     runtime._mark_working(child_path, 1)
-    runtime._mark_working("root", 1)
-    assert (
-        await runtime_request(
-            runtime, child_id, "invoke", target="root", message="VOTE: player4"
+    if buffered:
+        runtime._mark_working("root", 1)
+        assert (
+            await runtime_request(
+                runtime, child_id, "invoke", target="root", message=message
+            )
+            == "Message queued for root."
         )
-        == "Message queued for root."
-    )
-    assert len(runtime._buffered_agent_messages["root"]) == 1
-    assert not runtime._background_agent_tasks
+        assert len(runtime._buffered_agent_messages["root"]) == 1
+        assert not runtime._background_agent_tasks
+
     wait = asyncio.create_task(
-        manager.call(
-            root.runtime_id,
-            "wait_for_subagent",
-            child_path,
-            1,
-        )
+        manager.call(root.runtime_id, "wait_for_subagent", child_path, 1)
     )
-    assert (
-        await wait == "Received a message while waiting.\n"
-        "Sender: root/worker\n"
-        "Recipient: root\n"
-        "Exact message content:\n"
-        "VOTE: player4"
+    if not buffered:
+        async with asyncio.timeout(1):
+            while not runtime._wait_dependencies.get("root"):
+                await asyncio.sleep(0.01)
+        assert runtime._wait_dependencies.get("root")
+        # Delivery is consumed by the existing turn, with no separate reply.
+        assert await runtime.run_active_agent("root", message) is None
+    assert await wait == (
+        "Received a message while waiting.\n"
+        f"Sender: {sender}\nRecipient: root\n"
+        f"Exact message content:\n{message}"
     )
     assert runtime._buffered_agent_messages == {}
     assert not runtime._background_agent_tasks
-    runtime._mark_working("root", -1)
+    if buffered:
+        runtime._mark_working("root", -1)
     runtime._mark_working(child_path, -1)
+    assert (await manager.snapshot(root.runtime_id)).status.value == "ready"
 
 
 @pytest.mark.asyncio
