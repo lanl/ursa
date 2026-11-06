@@ -1,63 +1,24 @@
-from importlib import metadata
-
 import pytest
 from dotenv import load_dotenv
 from langchain_core.embeddings import FakeEmbeddings
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
-from packaging.requirements import Requirement
-from packaging.utils import canonicalize_name
 from pydantic import BaseModel
+
+from ursa.util.has_extra import has_extra
 
 
 def extraskip(extra: str, package: str = "ursa-ai") -> None:
-    """Skip the calling test module unless an extra's requirements are installed.
+    """Skip the calling module unless its declared extra is available.
 
-    Like ``pytest.importorskip``, call this before module-level imports.
-    Extras aren't recorded as installed, so check their direct dependencies
-    using distribution metadata, including versions and environment markers.
-    Base-package dependencies are not checked. Unknown extras raise ValueError
-    so typos cannot silently skip tests.
+    Call before module-level imports, like ``pytest.importorskip``. Unknown
+    extras raise ValueError so typos cannot silently skip tests.
     """
-    extra = canonicalize_name(extra)
-    reason = f"Tests require {package}[{extra}]"
-    try:
-        dist = metadata.distribution(package)
-    except metadata.PackageNotFoundError:
+    if not has_extra(extra, package=package):
         pytest.skip(
-            f"{reason}: {package} is not installed", allow_module_level=True
+            f"Tests require {package}[{extra}]", allow_module_level=True
         )
-
-    extras = {
-        canonicalize_name(name)
-        for name in dist.metadata.get_all("Provides-Extra", [])
-    }
-    if extra not in extras:
-        raise ValueError(f"Unknown extra {extra!r} for {package}")
-
-    for raw_requirement in dist.requires or []:
-        requirement = Requirement(raw_requirement)
-        marker = requirement.marker
-        if (
-            marker is None
-            or not marker.evaluate({"extra": extra})
-            or marker.evaluate({"extra": ""})
-        ):
-            continue
-        try:
-            installed = metadata.version(requirement.name)
-        except metadata.PackageNotFoundError:
-            pytest.skip(
-                f"{reason}: {requirement.name} is not installed",
-                allow_module_level=True,
-            )
-        if not requirement.specifier.contains(installed, prereleases=True):
-            pytest.skip(
-                f"{reason}: {requirement.name}{requirement.specifier} required, "
-                f"found {installed}",
-                allow_module_level=True,
-            )
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -167,22 +128,6 @@ def _stub_model_init(monkeypatch, request):
     )
     monkeypatch.setattr(
         "langchain.embeddings.init_embeddings", fake_init_embeddings
-    )
-    monkeypatch.setattr(
-        "ursa.cli.runtime.init_chat_model", fake_init_chat_model, raising=False
-    )
-    monkeypatch.setattr(
-        "ursa.cli.runtime.init_embeddings", fake_init_embeddings, raising=False
-    )
-    monkeypatch.setattr(
-        "ursa.cli.config.init_chat_model",
-        fake_init_chat_model,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        "ursa.cli.config.init_embeddings",
-        fake_init_embeddings,
-        raising=False,
     )
     monkeypatch.setattr(
         "ursa.agents.rag_agent.init_embeddings",

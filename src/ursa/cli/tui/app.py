@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-import sys
 import threading
 import traceback
 from collections.abc import Callable, Iterable, Mapping
@@ -16,8 +15,6 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import yaml
-from rich.console import Console
-from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
@@ -26,11 +23,10 @@ from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Static, TextArea
 
-from ursa.cli.callbacks import HITLLogEventHandler
-from ursa.cli.config import config_file_value
+from ursa.cli.config import config_file_value, mcp_server_values
+from ursa.cli.one_shot import run_once as run_textual_once  # noqa: F401
 from ursa.cli.runtime import HITL
 from ursa.cli.tui.agent_info import load_agent_details
-from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.helpers import (
     COMMAND_CHOICES,
     TokenUsage,
@@ -51,11 +47,11 @@ from ursa.cli.tui.widgets import (
     WelcomeBanner,
 )
 from ursa.util import crossplatform
-from ursa.util import mcp as ursa_mcp
 from ursa.util.model_context import (
     model_context_window,
     summarization_threshold,
 )
+from ursa.util.secrets import unlock_keychain
 from ursa.util.tqdm_lock import install_thread_only_tqdm_lock
 
 
@@ -290,6 +286,8 @@ class UrsaTextualApp(App[None]):
         )
 
     async def _run_agent(self, turn: Turn, prompt: str) -> None:
+        from ursa.cli.tui.event_handler import TextualEventHandler
+
         name, prompt = self._route_prompt(prompt)
         handler = TextualEventHandler(self, turn)
         succeeded = True
@@ -508,10 +506,8 @@ class UrsaTextualApp(App[None]):
             self.action_quit()
             return
         if command == "agents":
-            details = load_agent_details(self.hitl)
-            await self.push_screen(
-                AgentsScreen(details, self.hitl),
-                callback=lambda _: self.query_one(PromptArea).focus(),
+            self.run_worker(
+                self._show_agents(), group="agent-descriptions", exclusive=True
             )
             return
         if command == "models":
@@ -558,8 +554,27 @@ class UrsaTextualApp(App[None]):
             callback=lambda _: self.query_one(PromptArea).focus(),
         )
 
+    async def _show_agents(self) -> None:
+        try:
+            details = await asyncio.to_thread(load_agent_details, self.hitl)
+        except Exception as exc:
+            self.notify(
+                str(exc),
+                title="Unable to load agents",
+                severity="error",
+                markup=False,
+            )
+            return
+        if self._exit:
+            return
+        await self.push_screen(
+            AgentsScreen(details, self.hitl),
+            callback=lambda _: self.query_one(PromptArea).focus(),
+        )
+
     def _resolved_config_yaml(self) -> str:
         """Serialize the active, already-resolved runtime configuration."""
+        model = self.hitl.initialized_model
         values = config_file_value(self.hitl.config, include_defaults=True)
         fallbacks = [("global", values)]
         fallbacks.extend((values.get("agent_config") or {}).items())
@@ -568,7 +583,7 @@ class UrsaTextualApp(App[None]):
             if "tokens_before_summarize" in config:
                 fallback = config["tokens_before_summarize"]
                 config["tokens_before_summarize"] = summarization_threshold(
-                    self.hitl.model, fallback
+                    model, fallback
                 )
                 comments.append(
                     f"# Configured fallback ({name}): {fallback} tokens."
@@ -640,9 +655,10 @@ class UrsaTextualApp(App[None]):
 
     def _status_markdown(self) -> str:
         emb_model_cfg = self.hitl.config.emb_model
-        window = model_context_window(self.hitl.model)
+        model = self.hitl.initialized_model
+        window = model_context_window(model)
         threshold = summarization_threshold(
-            self.hitl.model, self.hitl.config.tokens_before_summarize
+            model, self.hitl.config.tokens_before_summarize
         )
         rows = [
             ("Input tokens", f"{self.input_tokens:,}"),
@@ -661,9 +677,9 @@ class UrsaTextualApp(App[None]):
             (
                 "Context source",
                 "Ollama num_ctx"
-                if getattr(self.hitl.model, "num_ctx", None) is not None
+                if getattr(model, "num_ctx", None) is not None
                 else getattr(
-                    self.hitl.model,
+                    model,
                     "_ursa_context_source",
                     "LangChain profile" if window is not None else "Unknown",
                 ),
@@ -697,14 +713,12 @@ class UrsaTextualApp(App[None]):
             return model_table + "\n\n## MCP servers\n\nNone configured."
         server_rows = []
         for name, server in servers.items():
-            location = (
-                server.command
-                if isinstance(server, ursa_mcp.StdioServerParameters)
-                else server.url
+            server = mcp_server_values(server)
+            kind = server.get("transport") or (
+                "stdio" if "command" in server else "streamable_http"
             )
-            server_rows.append(
-                f"| `{name}` | {ursa_mcp.transport(server)} | `{location}` |"
-            )
+            location = server.get("command" if kind == "stdio" else "url", "")
+            server_rows.append(f"| `{name}` | {kind} | `{location}` |")
         return (
             model_table
             + "\n\n## MCP servers\n\n"
@@ -849,32 +863,7 @@ def run_textual(hitl: HITL) -> None:
     # first time a progress bar is built (e.g. RAG document ingestion).
     install_thread_only_tqdm_lock()
     try:
+        unlock_keychain(hitl.config)
         UrsaTextualApp(hitl).run()
     finally:
         asyncio.run(hitl.aclose())
-
-
-def run_textual_once(hitl: HITL, prompt: str, *, stdout: Any = None) -> str:
-    """Run one routed prompt and render its event stream to standard output."""
-    install_thread_only_tqdm_lock()
-    output = stdout or sys.stdout
-    console = Console(file=output)
-    handler = HITLLogEventHandler(console=console, workspace=hitl.workspace)
-    agent, routed_prompt = _route_prompt(hitl, prompt)
-
-    async def invoke() -> str:
-        try:
-            return await hitl.run_agent(
-                agent, routed_prompt, callbacks=[handler]
-            )
-        finally:
-            await hitl.aclose()
-
-    response = asyncio.run(invoke())
-    if handler.emitted_any:
-        console.print()
-    if console.is_terminal:
-        console.print(RichMarkdown(response))
-    else:
-        print(response, file=output)  # noqa: T201
-    return response

@@ -708,8 +708,7 @@ def test_chat_model_initialization_returns_factory_result(monkeypatch):
     sentinel = object()
     calls = []
     monkeypatch.setattr(
-        config_mod,
-        "init_chat_model",
+        "langchain.chat_models.init_chat_model",
         lambda **kwargs: calls.append(kwargs) or sentinel,
     )
 

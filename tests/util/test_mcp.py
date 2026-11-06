@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,57 +12,101 @@ from mcp.client.session_group import (
     SseServerParameters,
     StreamableHttpParameters,
 )
+from pydantic import Field
 
+from ursa.cli.config import UrsaConfig, config_file_value
 from ursa.util import mcp as mcp_mod
 from ursa.util.secrets import SecretTemplate
 
 DUMMY_SERVER = Path(__file__).parents[1] / "tools" / "dummy_mcp_server.py"
 
 
-def test_start_mcp_client_adds_httpx_factory_for_sse(monkeypatch):
-    captured = {}
+class DefaultStdioParameters(StdioServerParameters):
+    command: str = "tool"
+    args: list[str] = Field(default_factory=lambda: ["--test"])
 
-    class DummyClient:
-        def __init__(self, connections):
-            captured["connections"] = connections
 
-    monkeypatch.setattr(mcp_mod, "UrsaMCPClient", DummyClient)
+class DefaultSseParameters(SseServerParameters):
+    url: str = "http://localhost/sse"
+    timeout: float = 60
 
-    mcp_mod.start_mcp_client({
-        "demo": SseServerParameters(url="https://example.com/sse")
+
+class DefaultHttpParameters(StreamableHttpParameters):
+    url: str = "http://localhost/mcp"
+    timeout: timedelta = timedelta(seconds=60)
+    terminate_on_close: bool = False
+
+
+@pytest.mark.parametrize(
+    "cls", [DefaultStdioParameters, DefaultSseParameters, DefaultHttpParameters]
+)
+def test_sdk_defaults_survive_config_round_trip(cls, monkeypatch):
+    original = cls()
+    config = UrsaConfig(mcp_servers={"tools": original})
+    assert config.mcp_servers["tools"] is original
+    assert mcp_mod.parse_server_parameters(original) is original
+    assert original.model_fields_set == set()
+
+    saved = config_file_value(config)["mcp_servers"]["tools"]
+    restored = mcp_mod.parse_server_parameters(saved)
+    assert restored.model_dump() == original.model_dump()
+    monkeypatch.setattr(
+        mcp_mod, "UrsaMCPClient", lambda connections: connections
+    )
+    assert mcp_mod.start_mcp_client({"tools": saved}) == (
+        mcp_mod.start_mcp_client(config.mcp_servers)
+    )
+
+
+@pytest.mark.parametrize(
+    "server",
+    [
+        {"transport": "unknown", "url": "http://localhost/mcp"},
+        {"transport": "stdio"},
+        {"transport": "stdio", "command": "tool", "args": "bad"},
+        {"transport": "sse", "url": 123},
+        {
+            "transport": "streamable-http",
+            "url": "http://localhost/mcp",
+            "timeout": "bad",
+        },
+    ],
+)
+def test_invalid_parameters_fail_before_connecting(server, monkeypatch):
+    def unexpected_client(connections):
+        pytest.fail("Invalid parameters reached the MCP client")
+
+    monkeypatch.setattr(mcp_mod, "UrsaMCPClient", unexpected_client)
+    with pytest.raises(ValueError):
+        mcp_mod.start_mcp_client({"invalid": server})
+
+
+@pytest.mark.parametrize(
+    "parameters,transport",
+    [
+        (SseServerParameters, "sse"),
+        (StreamableHttpParameters, "streamable_http"),
+    ],
+)
+def test_start_mcp_client_adds_httpx_factory(
+    monkeypatch, parameters, transport
+):
+    monkeypatch.setattr(
+        mcp_mod, "UrsaMCPClient", lambda connections: connections
+    )
+    connections = mcp_mod.start_mcp_client({
+        "demo": parameters(url="https://example.com/mcp")
     })
 
-    conn = captured["connections"]["demo"]
-    assert conn["transport"] == "sse"
-    assert conn["httpx_client_factory"] is mcp_mod.build_mcp_httpx_async_client
-
-
-def test_start_mcp_client_adds_httpx_factory_for_streamable_http(monkeypatch):
-    captured = {}
-
-    class DummyClient:
-        def __init__(self, connections):
-            captured["connections"] = connections
-
-    monkeypatch.setattr(mcp_mod, "UrsaMCPClient", DummyClient)
-
-    mcp_mod.start_mcp_client({
-        "demo": StreamableHttpParameters(url="https://example.com/mcp")
-    })
-
-    conn = captured["connections"]["demo"]
-    assert conn["transport"] == "streamable_http"
+    conn = connections["demo"]
+    assert conn["transport"] == transport
     assert conn["httpx_client_factory"] is mcp_mod.build_mcp_httpx_async_client
 
 
 def test_mcp_header_resolves_keyring_secret_template(monkeypatch):
-    captured = {}
-
-    class DummyClient:
-        def __init__(self, connections):
-            captured["connections"] = connections
-
-    monkeypatch.setattr(mcp_mod, "UrsaMCPClient", DummyClient)
+    monkeypatch.setattr(
+        mcp_mod, "UrsaMCPClient", lambda connections: connections
+    )
     monkeypatch.setattr(
         "ursa.util.secrets.get_keyring",
         lambda: SimpleNamespace(
@@ -71,7 +116,7 @@ def test_mcp_header_resolves_keyring_secret_template(monkeypatch):
         ),
     )
 
-    mcp_mod.start_mcp_client({
+    connections = mcp_mod.start_mcp_client({
         "demo": StreamableHttpParameters(
             url="https://example.com/mcp",
             headers={
@@ -83,9 +128,7 @@ def test_mcp_header_resolves_keyring_secret_template(monkeypatch):
         )
     })
 
-    assert captured["connections"]["demo"]["headers"] == {
-        "Authorization": "Bearer token"
-    }
+    assert connections["demo"]["headers"] == {"Authorization": "Bearer token"}
 
 
 def test_mcp_config_loading_types_secret_headers():
@@ -185,13 +228,21 @@ def test_stdio_proxy_launches_windows_command_shim(tmp_path, extension):
     assert stderr_path.read_text().strip() == "shim diagnostic"
 
 
-async def test_upstream_adapter_puts_structured_content_in_tool_artifact():
-    client = mcp_mod.start_mcp_client({
-        "demo": StdioServerParameters(
-            command=sys.executable,
-            args=[str(DUMMY_SERVER)],
-        )
-    })
+@pytest.mark.parametrize("from_config", [False, True])
+async def test_upstream_adapter_puts_structured_content_in_tool_artifact(
+    from_config,
+):
+    server = StdioServerParameters(
+        command=sys.executable,
+        args=[str(DUMMY_SERVER)],
+    )
+    if from_config:
+        server = UrsaConfig.model_validate({
+            "mcp_servers": {
+                "demo": {"transport": "stdio", **server.model_dump()}
+            }
+        }).mcp_servers["demo"]
+    client = mcp_mod.start_mcp_client({"demo": server})
     tools = await client.get_tools(server_name="demo")
     add = next(tool for tool in tools if tool.name == "add")
     result = await add.ainvoke({

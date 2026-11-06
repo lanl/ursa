@@ -37,7 +37,7 @@ from textual.widgets import (
 from textual.widgets._select import SelectCurrent, SelectOverlay
 from textual.widgets.option_list import Option
 
-from ursa.agents.base import URSA_VERSION
+from ursa import __version__ as URSA_VERSION
 from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,

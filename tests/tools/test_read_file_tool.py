@@ -71,9 +71,7 @@ def test_read_file_uses_pdf_reader(
     def fail_text_reader(path: Path) -> str:
         raise AssertionError("read_text_file should not be called for PDFs")
 
-    monkeypatch.setattr(
-        "ursa.tools.read_file_tool.read_text_from_file", fake_pdf_reader
-    )
+    monkeypatch.setattr("ursa.util.parse.read_text_from_file", fake_pdf_reader)
     monkeypatch.setattr(parse, "read_text_file", fail_text_reader)
 
     result = invoke_with_parent_run(

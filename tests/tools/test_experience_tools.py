@@ -58,9 +58,7 @@ def test_read_experience_emits_error_event_when_read_fails(
     def fail_read(path: Path) -> str:
         raise OSError("unreadable")
 
-    monkeypatch.setattr(
-        "ursa.tools.experience_tools.read_text_from_file", fail_read
-    )
+    monkeypatch.setattr("ursa.util.parse.read_text_from_file", fail_read)
 
     result, recorder = invoke_with_event_recorder(
         read_experience.func,

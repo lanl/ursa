@@ -3,7 +3,6 @@ import logging
 import mimetypes
 from pathlib import Path
 
-import pymupdf
 from langchain.tools import ToolRuntime
 from langchain_core.messages.content import (
     ImageContentBlock,
@@ -68,6 +67,8 @@ def image_block_from_file(
     assert mime_type is not None
 
     if mime_type == "image/svg+xml":
+        import pymupdf
+
         with pymupdf.open(filename) as document:
             page = document[0]
             pixmap = page.get_pixmap()
