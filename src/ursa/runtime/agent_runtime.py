@@ -1319,13 +1319,11 @@ class AgentRuntime:
             if self._is_stopping_path(root_id, target_path):
                 raise ValueError(f"Agent {target_path!r} is already stopping")
             self._stopping_subtrees.add((root_id, target_path))
-            subtree_paths = {path for path, _runtime_id in subtree}
+            task_names = {
+                f"ursa-message-{path}" for path, _runtime_id in subtree
+            }
             for task in tuple(self._background_agent_tasks):
-                task_name = task.get_name()
-                if any(
-                    task_name == f"ursa-message-{path}"
-                    for path in subtree_paths
-                ):
+                if task.get_name() in task_names:
                     task.cancel()
             teardown = asyncio.create_task(
                 self._teardown_runtime_subagent(root_id, target_path, subtree),
@@ -1551,19 +1549,12 @@ class AgentRuntime:
         """Run one FIFO batch and give its reply to the newest user message."""
         task_state["started"] = True
         item, *additional = items
-        response_item = next(
-            (candidate for candidate in reversed(items) if candidate.response),
-            None,
-        )
         deliveries = tuple(
             candidate for candidate in items if candidate.response is not None
         )
-        callbacks = (
-            response_item.callbacks
-            if response_item is not None
-            else item.callbacks
-        )
-        response = response_item.response if response_item else None
+        response_item = deliveries[-1] if deliveries else item
+        callbacks = response_item.callbacks
+        response = response_item.response
         succeeded = False
         try:
             if deliveries:

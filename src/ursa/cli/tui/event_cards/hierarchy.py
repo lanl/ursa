@@ -25,12 +25,12 @@ class AgentToolCard(ToolEventCard):
     """Show the intent and outcome of a hierarchy-management tool call."""
 
     STATE_CLASS = "agent-tool-state"
-    _PRESENTATION = {
-        "spawn_agent": ("✦", "Delegating work", "subagent"),
-        "send_message": ("↗", "Messaging agent", "recipient"),
-        "stop_agent": ("■", "Stopping agent", "agent"),
-        "wait_for": ("◌", "Waiting for agents", "agent"),
-        "list_agents": ("⌘", "Inspecting agents", "hierarchy"),
+    _LABELS = {
+        "spawn_agent": "✦ Delegating work",
+        "send_message": "↗ Messaging agent",
+        "stop_agent": "■ Stopping agent",
+        "wait_for": "◌ Waiting for agents",
+        "list_agents": "⌘ Inspecting agents",
     }
     can_focus = True
     BINDINGS = [
@@ -46,11 +46,9 @@ class AgentToolCard(ToolEventCard):
         details_loader: Callable[[], Awaitable[tuple[dict[str, Any], str]]]
         | None = None,
     ) -> None:
-        icon, title, subject = self._PRESENTATION[tool]
-        super().__init__(key, f"{icon} {title}")
+        super().__init__(key, self._LABELS[tool])
         self.tool = tool
         self.tool_input = tool_input if isinstance(tool_input, Mapping) else {}
-        self.subject = subject
         self.output = ""
         self._details_loader = details_loader
         self._details_loaded = False
