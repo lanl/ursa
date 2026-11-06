@@ -497,11 +497,8 @@ class _UrsaProcessAgent(_ProcessRuntimeBridge):
         if self._worker is not None:
             self._worker.cancel()
             await asyncio.gather(self._worker, return_exceptions=True)
-        while True:
-            try:
-                item = self._inbox.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        while not self._inbox.empty():
+            item = self._inbox.get_nowait()
             if not item.response.done():
                 item.response.cancel()
             self._inbox.task_done()

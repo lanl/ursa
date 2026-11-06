@@ -21,14 +21,6 @@ from ursa.runtime.manager import (
 )
 
 
-class _Connection:
-    def send(self, _message: Any) -> None:
-        pass
-
-    def close(self) -> None:
-        pass
-
-
 class _UnitAgent:
     def __init__(self) -> None:
         self.state = {"calls": 0}
@@ -47,7 +39,7 @@ def _process() -> AgentProcess:
     process = AgentProcess(
         AgentSpec("unit", lambda _config, _context: _UnitAgent()),
         None,
-        _Connection(),
+        Mock(spec=["send", "close"]),
         SimpleNamespace(value=0.0),
         1,
     )
@@ -98,12 +90,7 @@ def test_agent_spec_accepts_import_factory_reference() -> None:
 async def test_spawn_manager_primes_resource_tracker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls = 0
-
-    def ensure_running() -> None:
-        nonlocal calls
-        calls += 1
-
+    ensure_running = Mock()
     monkeypatch.setattr(
         "multiprocessing.resource_tracker.ensure_running", ensure_running
     )
@@ -111,7 +98,7 @@ async def test_spawn_manager_primes_resource_tracker(
 
     await manager.aclose()
 
-    assert calls == 1
+    ensure_running.assert_called_once_with()
 
 
 @pytest.mark.asyncio
@@ -135,25 +122,22 @@ async def test_process_start_failure_rolls_back_cleanly(
     await manager.aclose()
 
 
-@pytest.mark.asyncio
-async def test_agent_process_dispatches_invoke_and_snapshots_exact_state() -> (
-    None
-):
+@pytest.mark.parametrize("kind", ["invoke", "message_handler"])
+async def test_process_dispatch_returns_exact_result_and_committed_state(kind):
     process = _process()
-
-    await process._dispatch({
-        "type": "invoke",
-        "request_id": "request-1",
-        "inputs": "hello",
-    })
-
+    message = AgentMessage("host", "unit", {"value": 7})
+    invoking = kind == "invoke"
+    payload = {"inputs": "hello"} if invoking else {"message": message}
+    calls = 1 if invoking else 0
+    await process._dispatch({"type": kind, "request_id": "request", **payload})
+    assert process.agent.messages == ([] if invoking else [message])
     assert await process.outgoing.get() == {
         "type": "response",
-        "request_id": "request-1",
+        "request_id": "request",
         "ok": True,
-        "result": {"input": "hello", "calls": 1},
+        "result": {"input": "hello", "calls": calls} if invoking else None,
         "has_state": True,
-        "state": {"calls": 1},
+        "state": {"calls": calls},
     }
 
 
@@ -202,28 +186,6 @@ async def test_unserializable_result_fails_only_its_request(kind, monkeypatch):
     assert succeeded["state"] == {"calls": 0}
 
 
-@pytest.mark.asyncio
-async def test_agent_process_delivers_exact_message_before_snapshot() -> None:
-    process = _process()
-    message = AgentMessage("host", "unit", {"value": 7})
-
-    await process._dispatch({
-        "type": "message_handler",
-        "request_id": "request-3",
-        "message": message,
-    })
-
-    assert process.agent.messages == [message]
-    assert await process.outgoing.get() == {
-        "type": "response",
-        "request_id": "request-3",
-        "ok": True,
-        "result": None,
-        "has_state": True,
-        "state": {"calls": 0},
-    }
-
-
 @pytest.mark.parametrize("new_generation", [False, True])
 async def test_stopping_process_closes_only_its_own_generation(new_generation):
     manager = AgentManager()
@@ -233,7 +195,9 @@ async def test_stopping_process_closes_only_its_own_generation(new_generation):
     entry.process = current
     entry.generation = 2 if new_generation else 1
 
-    await manager._finish_stopped(entry, 1, _Connection(), stopped)
+    await manager._finish_stopped(
+        entry, 1, Mock(spec=["send", "close"]), stopped
+    )
 
     stopped.close.assert_called_once_with()
     assert entry.process is (current if new_generation else None)

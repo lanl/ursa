@@ -100,8 +100,10 @@ async def test_failed_start_releases_name_and_capacity(runtime, monkeypatch):
     )
 
 
-@pytest.mark.asyncio
-async def test_stop_cancels_startup_and_rejects_messages(runtime, monkeypatch):
+@pytest.mark.parametrize("operation", ["stop", "close"])
+async def test_shutdown_cancels_pending_startup(
+    runtime, monkeypatch, operation
+):
     root = runtime.agents["chat"].runtime_id
     started = asyncio.Event()
 
@@ -112,20 +114,27 @@ async def test_stop_cancels_startup_and_rejects_messages(runtime, monkeypatch):
     monkeypatch.setattr(runtime._manager, "start_agent", start)
     spawn = asyncio.create_task(runtime._spawn_runtime_subagent(root, "worker"))
     await asyncio.wait_for(started.wait(), 1)
-    result = await asyncio.wait_for(
-        runtime._stop_runtime_subagent(root, "worker"), 1
-    )
-    assert result == "Stopped agent root/worker and its subagents."
-    with pytest.raises(
-        (ValueError, KeyError), match="is stopping|Unknown agent path"
-    ):
-        runtime._validate_message_target(root, "worker")
+    if operation == "stop":
+        result = await asyncio.wait_for(
+            runtime._stop_runtime_subagent(root, "worker"), 1
+        )
+        assert result == "Stopped agent root/worker and its subagents."
+        with pytest.raises(
+            (ValueError, KeyError), match="is stopping|Unknown agent path"
+        ):
+            runtime._validate_message_target(root, "worker")
+    else:
+        await asyncio.wait_for(runtime.aclose(), 1)
     with pytest.raises(ValueError, match="stopped during startup"):
         await asyncio.wait_for(spawn, 1)
     await asyncio.gather(*runtime._background_teardown_tasks)
-    assert runtime._hierarchies[root] == {"root": root}
     assert not runtime._subagent_start_tasks
-    assert set(runtime._manager._agents) == {root}
+    assert not runtime._dynamic_runtime_ids
+    if operation == "stop":
+        assert runtime._hierarchies[root] == {"root": root}
+        assert set(runtime._manager._agents) == {root}
+    else:
+        assert not runtime._manager._agents
 
 
 @pytest.mark.asyncio
@@ -147,23 +156,3 @@ async def test_cancel_before_startup_task_runs_releases_reservation(
     assert runtime._hierarchies[root] == {"root": root}
     assert not runtime._subagent_start_tasks
     assert set(runtime._manager._agents) == {root}
-
-
-@pytest.mark.asyncio
-async def test_close_cancels_pending_startup(runtime, monkeypatch):
-    root = runtime.agents["chat"].runtime_id
-    started = asyncio.Event()
-
-    async def start(_agent_id):
-        started.set()
-        await asyncio.Event().wait()
-
-    monkeypatch.setattr(runtime._manager, "start_agent", start)
-    spawn = asyncio.create_task(runtime._spawn_runtime_subagent(root, "worker"))
-    await asyncio.wait_for(started.wait(), 1)
-    await asyncio.wait_for(runtime.aclose(), 1)
-    with pytest.raises(ValueError, match="stopped during startup"):
-        await spawn
-    assert not runtime._dynamic_runtime_ids
-    assert not runtime._subagent_start_tasks
-    assert not runtime._manager._agents

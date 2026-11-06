@@ -6,6 +6,7 @@ import logging
 import os
 import threading
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -128,6 +129,29 @@ async def test_cancelled_waiter_does_not_discard_completed_state(
         await waiter
 
     assert (await manager.invoke("agent", {}))["calls"] == 2
+
+
+@pytest.mark.parametrize("shutdown", ["unexpected", "broken_pipe"])
+async def test_process_loss_settles_pending_invocations(
+    manager, monkeypatch, shutdown
+):
+    await manager.register(AgentSpec("agent", FACTORY), start=True)
+    pending = asyncio.create_task(
+        manager.invoke("agent", {"announce": "host", "sleep": 30})
+    )
+    await manager.receive_message(timeout=1)
+    if shutdown == "unexpected":
+        manager._entry("agent").process.kill()
+        expected = AgentStatus.FAILED
+    else:
+        monkeypatch.setattr(
+            manager, "_send", AsyncMock(side_effect=BrokenPipeError())
+        )
+        await manager.kill_agent("agent", graceful_timeout=0.01)
+        expected = AgentStatus.STOPPED
+    with pytest.raises(AgentProcessExitedError):
+        await asyncio.wait_for(pending, 2)
+    assert (await manager.snapshot("agent")).status is expected
 
 
 @pytest.mark.asyncio

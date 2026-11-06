@@ -247,9 +247,6 @@ class _QueuedAgentMessage:
     on_end: Callable[[AgentMessage, bool], Awaitable[None] | None] | None = None
 
 
-_STOP_MESSAGE_LOOP = object()
-
-
 def agent_message_system_instruction(sender: str, recipient: str) -> str:
     """Describe a routed message without changing its original content."""
     return (
@@ -323,7 +320,7 @@ class AsyncMessageMixin:
         self._hierarchy_stopping = False
         self._stopping_agent_path: str | None = None
         self._message_inbox: (
-            asyncio.Queue[_QueuedAgentMessage | object] | None
+            asyncio.Queue[_QueuedAgentMessage | None] | None
         ) = None
         self._message_loop_task: asyncio.Task[None] | None = None
         self._message_event_loop: asyncio.AbstractEventLoop | None = None
@@ -400,11 +397,12 @@ class AsyncMessageMixin:
         | None = None,
     ) -> AgentMessage:
         """Queue a one-way message to this agent."""
-        message = self._make_agent_message(
-            content,
+        message = AgentMessage(
+            content=content,
             sender=sender,
-            metadata=metadata,
-            config=config,
+            recipient=self.agent_path,
+            metadata=metadata or {},
+            config=config or {},
             system_message=system_message,
         )
         await self._enqueue_agent_message(
@@ -426,17 +424,21 @@ class AsyncMessageMixin:
         | None = None,
     ) -> Any:
         """Queue a message and wait for the agent's result."""
-        message = self._make_agent_message(
-            content,
+        message = AgentMessage(
+            content=content,
             sender=sender,
-            metadata=metadata,
-            config=config,
+            recipient=self.agent_path,
+            metadata=metadata or {},
+            config=config or {},
             system_message=system_message,
         )
-        return await self._request_agent_message(
+        response = asyncio.get_running_loop().create_future()
+        await self._enqueue_agent_message(
             message,
+            response=response,
             on_start=on_start,
         )
+        return await response
 
     async def send_message(
         self,
@@ -551,7 +553,7 @@ class AsyncMessageMixin:
             if cancel:
                 task.cancel()
             elif inbox is not None:
-                await inbox.put(_STOP_MESSAGE_LOOP)
+                await inbox.put(None)
             try:
                 await task
             except asyncio.CancelledError:
@@ -581,39 +583,6 @@ class AsyncMessageMixin:
         })
         config["metadata"] = metadata
         return await self.ainvoke(inputs, config=config)
-
-    def _make_agent_message(
-        self,
-        content: InputLike,
-        *,
-        sender: str,
-        metadata: Mapping[str, Any] | None,
-        config: Mapping[str, Any] | None,
-        system_message: str | None,
-    ) -> AgentMessage:
-        return AgentMessage(
-            content=content,
-            sender=sender,
-            recipient=self.agent_path,
-            metadata=metadata or {},
-            config=config or {},
-            system_message=system_message,
-        )
-
-    async def _request_agent_message(
-        self,
-        message: AgentMessage,
-        *,
-        on_start: Callable[[AgentMessage], Awaitable[None] | None]
-        | None = None,
-    ) -> Any:
-        response = asyncio.get_running_loop().create_future()
-        await self._enqueue_agent_message(
-            message,
-            response=response,
-            on_start=on_start,
-        )
-        return await response
 
     async def _enqueue_agent_message(
         self,
@@ -683,12 +652,9 @@ class AsyncMessageMixin:
         try:
             while True:
                 item = await inbox.get()
-                if item is _STOP_MESSAGE_LOOP:
+                if item is None:
                     inbox.task_done()
                     break
-                if not isinstance(item, _QueuedAgentMessage):
-                    inbox.task_done()
-                    continue
                 self._current_agent_message = item.message
                 if item.on_start is not None:
                     try:
@@ -749,12 +715,9 @@ class AsyncMessageMixin:
         inbox = self._message_inbox
         if inbox is None:
             return
-        while True:
-            try:
-                item = inbox.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-            if isinstance(item, _QueuedAgentMessage):
+        while not inbox.empty():
+            item = inbox.get_nowait()
+            if item is not None:
                 if item.response is not None and not item.response.done():
                     item.response.cancel()
             inbox.task_done()
