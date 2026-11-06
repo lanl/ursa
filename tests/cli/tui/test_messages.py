@@ -40,6 +40,10 @@ async def test_message_screen_pages_without_retaining_full_bodies(
         assert str(
             app.screen.query_one("#messages-footer", Static).content
         ).startswith("Live ·")
+        assert await wait_for(pilot, lambda: not screen._resuming_live)
+        await screen._sync_messages()
+        assert screen._live
+        assert list(screen.query(HierarchyMessageCard)) == cards
 
         card = cards[-1]
         card.set_expanded(True)

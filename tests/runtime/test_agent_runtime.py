@@ -6,12 +6,13 @@ import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import AsyncMock
 
 import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import SecretStr
 
-from tests.runtime.fixtures import runtime_request, set_hierarchy
+from tests.runtime.fixtures import runtime_request, set_hierarchy, spawn_managed
 from ursa.cli.config import UrsaConfig
 from ursa.runtime import (
     AgentContext,
@@ -38,41 +39,35 @@ async def _wait_for_background_agent_tasks(runtime: AgentRuntime) -> None:
 async def test_process_agent_receives_message_delivery_envelope(process_runner):
     process_agent = process_runner("root/reviewer", result="ok")
     agent = process_agent.agent
-    result = await process_agent.ainvoke(
-        "Tell one short joke.",
-        config={
-            "metadata": {
-                "ursa_message_sender": "root",
-                "ursa_message_recipient": "root/reviewer",
-            }
-        },
-    )
-    second_result = await process_agent.ainvoke(
-        "Use a penguin this time.",
-        config={
-            "metadata": {
-                "ursa_message_sender": "root/editor",
-                "ursa_message_recipient": "root/reviewer",
-            }
-        },
-    )
+    deliveries = [
+        ("root", "Tell one short joke."),
+        ("root/editor", "Use a penguin this time."),
+    ]
+    for sender, content in deliveries:
+        assert (
+            await process_agent.ainvoke(
+                content,
+                config={
+                    "metadata": {
+                        "ursa_message_sender": sender,
+                        "ursa_message_recipient": "root/reviewer",
+                    }
+                },
+            )
+            == "ok"
+        )
 
-    assert result == "ok"
-    assert second_result == "ok"
     messages = agent.seen[-1]["messages"]
     assert isinstance(messages[0], SystemMessage)
     assert messages[0].content == "Agent instructions"
-    assert isinstance(messages[1], SystemMessage)
-    assert "Sender: root" in messages[1].content
-    assert "Recipient: root/reviewer" in messages[1].content
-    assert "exact message content" in messages[1].content
-    assert isinstance(messages[2], HumanMessage)
-    assert messages[2].content == "Tell one short joke."
-    assert isinstance(messages[3], SystemMessage)
-    assert "Sender: root/editor" in messages[3].content
-    assert "Recipient: root/reviewer" in messages[3].content
-    assert isinstance(messages[4], HumanMessage)
-    assert messages[4].content == "Use a penguin this time."
+    for index, (sender, content) in enumerate(deliveries):
+        envelope, message = messages[1 + index * 2 : 3 + index * 2]
+        assert isinstance(envelope, SystemMessage)
+        assert f"Sender: {sender}" in envelope.content
+        assert "Recipient: root/reviewer" in envelope.content
+        assert "exact message content" in envelope.content
+        assert isinstance(message, HumanMessage)
+        assert message.content == content
 
 
 @pytest.mark.asyncio
@@ -80,28 +75,18 @@ async def test_process_runtime_bridge_forwards_list_wait_options() -> None:
     """Child-side wait calls preserve list targets and all-mode for the host."""
     from ursa.runtime.agent_runtime import _ProcessRuntimeBridge
 
-    calls: list[tuple[str, dict[str, object]]] = []
-
-    class Context:
-        async def request_runtime(self, action: str, **payload: object) -> str:
-            calls.append((action, payload))
-            return "done"
-
-    bridge = _ProcessRuntimeBridge(cast(AgentContext, Context()), "root/child")
+    context = SimpleNamespace(request_runtime=AsyncMock(return_value="done"))
+    bridge = _ProcessRuntimeBridge(cast(AgentContext, context), "root/child")
     assert (
         await bridge.wait_for_agent(["sibling", "reviewer"], 30, wait_all=True)
         == "done"
     )
-    assert calls == [
-        (
-            "wait_for",
-            {
-                "target": ["sibling", "reviewer"],
-                "timeout_seconds": 30,
-                "wait_all": True,
-            },
-        )
-    ]
+    context.request_runtime.assert_awaited_once_with(
+        "wait_for",
+        target=["sibling", "reviewer"],
+        timeout_seconds=30,
+        wait_all=True,
+    )
 
 
 class _BlockingManager:
@@ -193,28 +178,11 @@ async def test_subagents_are_launched_as_managed_processes(
         },
     )
     root = await runtime.get_agent("chat")
-    assert await manager.call(
-        root.runtime_id,
-        "spawn_subagent",
-        "reviewer",
-        "review this",
-    ) == (
-        "root/reviewer",
-        "Message queued for root/reviewer.",
-    )
-    reviewer_id = runtime._hierarchies[root.runtime_id]["root/reviewer"]
+    reviewer_id = await spawn_managed(runtime, "root/reviewer", "review this")
     reviewer_config = manager._entry(reviewer_id).spec.config["ursa_config"]
     assert reviewer_config.llm_model.model == "fake:subagent"
     assert reviewer_config.emb_model.model == "subagent-embeddings"
-    assert await manager.call(
-        reviewer_id,
-        "spawn_subagent",
-        "critic",
-        "critique this",
-    ) == (
-        "root/reviewer/critic",
-        "Message queued for root/reviewer/critic.",
-    )
+    await spawn_managed(runtime, "root/reviewer/critic", "critique this")
 
     snapshots = [
         await manager.snapshot(runtime_id)
@@ -269,26 +237,10 @@ async def test_hierarchy_shares_checkpoint_file_with_distinct_threads(
     )
     assert await runtime.run_agent("chat", "Root work") == "ok"
     root = await runtime.get_agent("chat")
-    assert await manager.call(
-        root.runtime_id,
-        "spawn_subagent",
-        "reviewer",
-        "Review this.",
-    ) == (
-        "root/reviewer",
-        "Message queued for root/reviewer.",
+    reviewer_id = await spawn_managed(runtime, "root/reviewer", "Review this.")
+    critic_id = await spawn_managed(
+        runtime, "root/reviewer/critic", "Critique this."
     )
-    reviewer_id = runtime._hierarchies[root.runtime_id]["root/reviewer"]
-    assert await manager.call(
-        reviewer_id,
-        "spawn_subagent",
-        "critic",
-        "Critique this.",
-    ) == (
-        "root/reviewer/critic",
-        "Message queued for root/reviewer/critic.",
-    )
-    critic_id = runtime._hierarchies[root.runtime_id]["root/reviewer/critic"]
 
     configs = [
         manager._entry(runtime_id).spec.config["ursa_config"]
@@ -383,17 +335,9 @@ async def test_host_selects_requested_subagent_type(
         fork=True, agent_config={"plan": {"max_reflection_steps": 7}}
     )
     root = await runtime.get_agent("chat")
-    child_path, response = await manager.call(
-        root.runtime_id,
-        "spawn_subagent",
-        "planner",
-        "Create a plan.",
-        "plan",
+    child_id = await spawn_managed(
+        runtime, "root/planner", "Create a plan.", "plan"
     )
-    assert child_path == "root/planner"
-    assert response
-
-    child_id = runtime._hierarchies[root.runtime_id]["root/planner"]
     child_spec = manager._entry(child_id).spec.config
     assert child_spec["agent_name"] == "plan"
     assert runtime._runtime_agent_names[child_id] == "plan"
@@ -443,13 +387,7 @@ async def test_unknown_subagent_path_does_not_fail_managed_agent(
 ) -> None:
     runtime, manager = runtime_factory(fork=True)
     root = await runtime.get_agent("chat")
-    await manager.call(
-        root.runtime_id,
-        "spawn_subagent",
-        "reviewer",
-        "Review this.",
-    )
-    reviewer_id = runtime._hierarchies[root.runtime_id]["root/reviewer"]
+    reviewer_id = await spawn_managed(runtime, "root/reviewer", "Review this.")
 
     with pytest.raises(AgentInvocationError, match="Unknown agent path"):
         await manager.call(
@@ -698,12 +636,8 @@ async def test_run_active_agent_message_wakes_a_managed_wait(
     """A user message reaches a waiting process without stalling routing."""
     runtime, manager = runtime_factory(fork=True)
     root = await runtime.get_agent("chat")
-    child_path, _ = await manager.call(
-        root.runtime_id,
-        "spawn_subagent",
-        "worker",
-        "long task",
-    )
+    child_path = "root/worker"
+    await spawn_managed(runtime, child_path, "long task")
     runtime._active_root_id = root.runtime_id
     runtime._mark_working(child_path, 1)
     wait = asyncio.create_task(
@@ -740,12 +674,8 @@ async def test_agent_message_is_returned_to_managed_wait(
     """A model receives a reply that reaches the host just before its wait."""
     runtime, manager = runtime_factory(fork=True)
     root = await runtime.get_agent("chat")
-    child_path, _ = await manager.call(
-        root.runtime_id,
-        "spawn_subagent",
-        "worker",
-        "long task",
-    )
+    child_path = "root/worker"
+    await spawn_managed(runtime, child_path, "long task")
     child_id = runtime._hierarchies[root.runtime_id][child_path]
     await _wait_for_background_agent_tasks(runtime)
     runtime._active_root_id = root.runtime_id
@@ -798,12 +728,8 @@ async def test_agent_message_emits_one_activity_lifecycle(
             lifecycle.append(("end", path, succeeded))
 
     root = await runtime.get_agent("chat")
-    child_path, _ = await manager.call(
-        root.runtime_id,
-        "spawn_subagent",
-        "worker",
-        "initial task",
-    )
+    child_path = "root/worker"
+    await spawn_managed(runtime, child_path, "initial task")
     await _wait_for_background_agent_tasks(runtime)
     assert (
         await runtime_request(

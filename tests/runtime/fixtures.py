@@ -102,3 +102,14 @@ def set_hierarchy(runtime, paths):
     runtime._hierarchies[root] = {
         path: identity for identity, path in paths.items()
     }
+
+
+async def spawn_managed(runtime, path, message, agent_type=None):
+    """Spawn through a real process RPC and verify its exact acknowledgement."""
+    hierarchy = runtime._hierarchies[runtime.agents["chat"].runtime_id]
+    parent, _, name = path.rpartition("/")
+    result = await runtime._manager.call(
+        hierarchy[parent], "spawn_subagent", name, message, agent_type
+    )
+    assert result == (path, f"Message queued for {path}.")
+    return hierarchy[path]

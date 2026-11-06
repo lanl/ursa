@@ -1,3 +1,6 @@
+import json
+
+import pytest
 from langchain_core.messages import ToolMessage
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
@@ -63,23 +66,6 @@ async def test_default_tool_card_switches_from_input_to_output(tmp_path, app):
         output_syntax = card.query_one(".tool-output-json", Static).content
         assert type(output_syntax).__name__ == "Syntax"
         assert '"grizzly"' in output_syntax.code
-
-
-async def test_default_tool_card_shows_failure_output(tmp_path, app):
-    async with app.run_test(size=(100, 24)) as pilot:
-        turn = Turn("call it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "lookup_widget"}, "", run_id="bad", inputs={}
-        )
-        await handler.on_tool_error(ValueError("bad filter"), run_id="bad")
-        await pilot.pause()
-
-        card = turn.query_one(ToolCallCard)
-        assert card.failed
-        assert card.output == "bad filter"
-        assert card.query_one(".tool-call-state", Static).content == "✗"
 
 
 async def test_spawn_agent_card_shows_task_and_queue_acknowledgement(
@@ -283,79 +269,77 @@ async def test_agent_tool_card_survives_unavailable_lazy_details(tmp_path, app):
         )
 
 
-async def test_tool_call_preview_renders_code_brackets_as_plain_text(
-    tmp_path, app
-):
-    output = "[patch={'old_code': 'ax.set_xticklabels([labels])'}]"
-
-    async with app.run_test(size=(100, 24)) as pilot:
-        turn = Turn("edit it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "edit_plot"}, "", run_id="code", inputs={}
-        )
-        await handler.on_tool_end(output, run_id="code")
-        await pilot.pause()
-
-        card = turn.query_one(ToolCallCard)
-        assert card.completed
-        assert card.output == output
-
-
-async def test_tool_message_prefers_structured_content_as_json(tmp_path, app):
-    async with app.run_test(size=(100, 24)) as pilot:
-        turn = Turn("call it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "lookup_widget"}, "", run_id="structured", inputs={}
-        )
-        await handler.on_tool_end(
+@pytest.mark.parametrize(
+    ("tool", "output", "expected"),
+    [
+        pytest.param(
+            "lookup_widget",
+            ValueError("bad filter"),
+            "bad filter",
+            id="failure",
+        ),
+        pytest.param(
+            "edit_plot",
+            "[patch={'old_code': 'ax.set_xticklabels([labels])'}]",
+            "[patch={'old_code': 'ax.set_xticklabels([labels])'}]",
+            id="literal-code-brackets",
+        ),
+        pytest.param(
+            "lookup_widget",
             ToolMessage(
                 content="Human-readable fallback",
                 artifact={
                     "structured_content": {"matches": ["polar", "grizzly"]}
                 },
-                tool_call_id="structured",
+                tool_call_id="result",
             ),
-            run_id="structured",
-        )
-        await pilot.pause()
-
-        card = turn.query_one(ToolCallCard)
-        card.set_expanded(True)
-        output = card.query_one(".tool-output-json", Static)
-        assert not output.has_class("hidden")
-        assert '"grizzly"' in output.content.code
-        assert card.query_one(".tool-output-markdown").has_class("hidden")
-
-
-async def test_text_only_tool_message_renders_as_markdown(tmp_path, app):
+            {"matches": ["polar", "grizzly"]},
+            id="structured-tool-message",
+        ),
+        pytest.param(
+            "lookup_widget",
+            ToolMessage(
+                content=[
+                    {"type": "text", "text": "## Result\n\n**Found it.**"}
+                ],
+                tool_call_id="result",
+            ),
+            "## Result\n\n**Found it.**",
+            id="text-block-tool-message",
+        ),
+    ],
+)
+async def test_tool_card_output_formats_and_failure_state(
+    tmp_path, app, tool, output, expected
+):
     async with app.run_test(size=(100, 24)) as pilot:
         turn = Turn("call it", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
         handler = TextualEventHandler(app, turn)
         await handler.on_tool_start(
-            {"name": "lookup_widget"}, "", run_id="text", inputs={}
+            {"name": tool}, "", run_id="result", inputs={}
         )
-        await handler.on_tool_end(
-            ToolMessage(
-                content=[
-                    {
-                        "type": "text",
-                        "text": "## Result\n\n**Found it.**",
-                    }
-                ],
-                tool_call_id="text",
-            ),
-            run_id="text",
-        )
+        failed = isinstance(output, Exception)
+        if failed:
+            await handler.on_tool_error(output, run_id="result")
+        else:
+            await handler.on_tool_end(output, run_id="result")
         await pilot.pause()
 
         card = turn.query_one(ToolCallCard)
+        assert card.completed and card.failed == failed
+        assert card.query_one(".tool-call-state", Static).content == (
+            "✗" if failed else "✓"
+        )
+        if failed or isinstance(output, str):
+            assert card.output == expected
         card.set_expanded(True)
+        json_output = card.query_one(".tool-output-json", Static)
         markdown = card.query_one(".tool-output-markdown", Markdown)
-        assert not markdown.has_class("hidden")
-        assert str(markdown.source) == "## Result\n\n**Found it.**"
-        assert card.query_one(".tool-output-json").has_class("hidden")
+        structured = isinstance(expected, dict)
+        assert json_output.has_class("hidden") != structured
+        assert markdown.has_class("hidden") == structured
+        if structured:
+            assert json.loads(json_output.content.code) == expected
+        else:
+            assert markdown.source == expected

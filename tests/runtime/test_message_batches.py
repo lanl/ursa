@@ -253,48 +253,35 @@ async def test_mixed_user_batch_promotes_every_turn_without_delegated_spinner(
     ]
 
 
-@pytest.mark.asyncio
-async def test_shutdown_fails_a_buffered_user_delivery(runtime):
+@pytest.mark.parametrize(
+    ("operation", "target", "error"),
+    [
+        ("close", "root", "closed"),
+        ("reconfigure", "root", "reconfigured"),
+        ("stop", "root/first", "stopped"),
+    ],
+)
+async def test_lifecycle_change_fails_a_buffered_user_delivery(
+    runtime, operation, target, error
+):
     runtime, root = runtime
     runtime._active_root_id = root
-    runtime._mark_working("root", 1)
-    queued = asyncio.create_task(runtime.run_active_agent("root", "later"))
+    runtime._mark_working(target, 1)
+    queued = asyncio.create_task(runtime.run_active_agent(target, "later"))
     await asyncio.sleep(0)
 
-    await runtime.aclose()
-    with pytest.raises(RuntimeError, match="closed"):
-        await queued
-
-
-@pytest.mark.asyncio
-async def test_reconfigure_fails_a_buffered_user_delivery(runtime):
-    runtime, root = runtime
-    runtime._active_root_id = root
-    runtime._mark_working("root", 1)
-    queued = asyncio.create_task(runtime.run_active_agent("root", "later"))
-    await asyncio.sleep(0)
-
-    await runtime.reconfigure_models(
-        runtime.config.llm_model, runtime.config.emb_model
-    )
-    with pytest.raises(RuntimeError, match="reconfigured"):
-        await queued
-
-
-@pytest.mark.asyncio
-async def test_stop_fails_a_buffered_user_delivery(runtime):
-    runtime, root = runtime
-    runtime._active_root_id = root
-    child_path = "root/first"
-    runtime._mark_working(child_path, 1)
-    queued = asyncio.create_task(runtime.run_active_agent(child_path, "later"))
-    await asyncio.sleep(0)
-
-    assert await runtime._stop_runtime_subagent(root, "first") == (
-        "Stopped agent root/first and its subagents."
-    )
-    await asyncio.gather(*tuple(runtime._background_teardown_tasks))
-    with pytest.raises(RuntimeError, match="stopped"):
+    if operation == "close":
+        await runtime.aclose()
+    elif operation == "reconfigure":
+        await runtime.reconfigure_models(
+            runtime.config.llm_model, runtime.config.emb_model
+        )
+    else:
+        assert await runtime._stop_runtime_subagent(root, "first") == (
+            "Stopped agent root/first and its subagents."
+        )
+        await asyncio.gather(*tuple(runtime._background_teardown_tasks))
+    with pytest.raises(RuntimeError, match=error):
         await queued
 
 
