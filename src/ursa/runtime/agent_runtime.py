@@ -221,9 +221,8 @@ class _UrsaProcessAgent(_ProcessRuntimeBridge):
         self.agent = agent
         self.tool_sources = dict(tool_sources or {})
         self.state: Any = None
-        self._inbox: asyncio.Queue[_RuntimePrompt | None] = asyncio.Queue()
+        self._inbox: asyncio.Queue[_RuntimePrompt] = asyncio.Queue()
         self._worker: asyncio.Task[None] | None = None
-        self._active_task: asyncio.Task[Any] | None = None
 
     async def ainvoke(
         self, inputs: Any, config: Mapping[str, Any] | None = None
@@ -329,13 +328,6 @@ class _UrsaProcessAgent(_ProcessRuntimeBridge):
         await self._inbox.put(item)
         return await response
 
-    def _cancel_active(self) -> bool:
-        task = self._active_task
-        if task is None or task.done():
-            return False
-        task.cancel()
-        return True
-
     def _format_prompt(self, item: _RuntimePrompt) -> Any:
         """Format once, retaining every delivery envelope in a batched turn."""
         if not item.additional_messages:
@@ -396,9 +388,6 @@ class _UrsaProcessAgent(_ProcessRuntimeBridge):
     async def _run_inbox(self) -> None:
         while True:
             item = await self._inbox.get()
-            if item is None:
-                self._inbox.task_done()
-                return
             request_token = None
             # Formatting and copying are part of this request's failure domain;
             # neither may terminate the inbox worker and strand later requests.
@@ -412,12 +401,12 @@ class _UrsaProcessAgent(_ProcessRuntimeBridge):
                     started = item.on_start()
                     if inspect.isawaitable(started):
                         await started
-                self._active_task = asyncio.create_task(
+                # Keep model cancellation separate from worker shutdown.
+                self.state = await asyncio.create_task(
                     self.agent.ainvoke(
                         self._format_prompt(item), config=item.config or None
                     )
                 )
-                self.state = await self._active_task
                 # Rendering failures must preserve the completed model state.
                 committed_state = self.state
                 if not item.response.done():
@@ -441,7 +430,6 @@ class _UrsaProcessAgent(_ProcessRuntimeBridge):
                 if not item.response.done():
                     item.response.set_exception(exc)
             finally:
-                self._active_task = None
                 if request_token is not None:
                     self.context._leave_request(request_token)
                 self._inbox.task_done()
@@ -514,7 +502,6 @@ class _UrsaProcessAgent(_ProcessRuntimeBridge):
     wait_for_subagent = _ProcessRuntimeBridge.wait_for_agent
 
     async def aclose(self) -> None:
-        self._cancel_active()
         if self._worker is not None:
             self._worker.cancel()
             await asyncio.gather(self._worker, return_exceptions=True)
@@ -523,7 +510,7 @@ class _UrsaProcessAgent(_ProcessRuntimeBridge):
                 item = self._inbox.get_nowait()
             except asyncio.QueueEmpty:
                 break
-            if isinstance(item, _RuntimePrompt) and not item.response.done():
+            if not item.response.done():
                 item.response.cancel()
             self._inbox.task_done()
         close = getattr(self.agent, "aclose", None)

@@ -315,6 +315,7 @@ async def test_cancelled_before_start_settles_user_delivery_future(runtime):
         ("snapshot", TypeError, "cannot snapshot root state"),
         ("on_start", ValueError, "cannot start request"),
         ("ainvoke", ValueError, "model failed"),
+        ("ainvoke", asyncio.CancelledError, "Agent invocation was cancelled"),
         ("format_result", ValueError, "cannot format result"),
     ],
 )
@@ -339,7 +340,10 @@ async def test_bad_message_does_not_kill_the_root_inbox_worker(
                 stage,
                 AsyncMock(side_effect=fail) if stage == "ainvoke" else fail,
             )
-        with pytest.raises(error_type, match=message):
+        raised = (
+            RuntimeError if error_type is asyncio.CancelledError else error_type
+        )
+        with pytest.raises(raised, match=message):
             await runner._submit(
                 "bad message", on_start=fail if stage == "on_start" else None
             )
@@ -350,8 +354,9 @@ async def test_bad_message_does_not_kill_the_root_inbox_worker(
     assert runner._worker is not None and not runner._worker.done()
 
 
+@pytest.mark.parametrize("shutdown", ["worker", "close"])
 async def test_shutdown_cancels_the_active_root_message_response(
-    process_runner, monkeypatch
+    process_runner, monkeypatch, shutdown
 ):
     runner = process_runner()
     started = asyncio.Event()
@@ -364,7 +369,16 @@ async def test_shutdown_cancels_the_active_root_message_response(
     active = asyncio.create_task(runner.ainvoke("working"))
     await asyncio.wait_for(started.wait(), 1)
     assert runner._worker is not None
-    runner._worker.cancel()
+    if shutdown == "close":
+        queued = asyncio.create_task(runner.ainvoke("queued"))
+        await asyncio.sleep(0)
+        assert runner._inbox.qsize() == 1
+        await runner.aclose()
+        with pytest.raises(asyncio.CancelledError):
+            await queued
+        assert runner._inbox.empty()
+    else:
+        runner._worker.cancel()
     with pytest.raises(asyncio.CancelledError):
         await active
     assert runner._worker.done()

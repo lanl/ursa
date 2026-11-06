@@ -1,5 +1,6 @@
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from langchain.tools import ToolException, tool
@@ -209,51 +210,35 @@ async def test_local_spawn_agent_rejects_host_agent_type_selection(
     await agent.stop_message_loop(descendants=True)
 
 
+@pytest.mark.parametrize(
+    "bridge_method", [None, "send_message", "wait_for_agent"]
+)
 async def test_unknown_agent_path_is_a_recoverable_hierarchy_tool_error(
-    chat_model, tmp_path
+    chat_model, tmp_path, monkeypatch, bridge_method
 ):
     agent = ChatAgent(llm=chat_model, workspace=tmp_path)
-
     spawned = await agent.tools["spawn_agent"].ainvoke({
         "name": "reviewer",
         "message": "Review this normally.",
     })
     assert spawned.startswith("Spawned agent root/reviewer")
-    reviewer = agent.resolve_agent("root/reviewer")
-
-    with pytest.raises(ToolException, match="Unknown agent path"):
-        await reviewer.tools["send_message"].ainvoke({
-            "target": "../foo",
-            "message": "Please review this.",
+    caller = agent.resolve_agent("root/reviewer")
+    tool_name = "send_message"
+    options = {"target": "../foo", "message": "Please review this."}
+    if bridge_method is not None:
+        caller = agent
+        error = RuntimeError("Unknown agent path '../foo' from 'root'")
+        bridge = SimpleNamespace(**{
+            bridge_method: AsyncMock(side_effect=error)
         })
-
-    async def invalid_target(_target, _message):
-        raise RuntimeError("Unknown agent path '../foo' from 'root'")
-
-    async def invalid_wait_target(_target, _timeout, *, wait_all=False):
-        del wait_all
-        raise RuntimeError("Unknown agent path '../foo' from 'root'")
-
-    agent._process_runtime = SimpleNamespace(send_message=invalid_target)
-    try:
-        with pytest.raises(ToolException, match="Unknown agent path"):
-            await agent.tools["send_message"].ainvoke({
-                "target": "../foo",
-                "message": "Please review this.",
-            })
-    finally:
-        del agent._process_runtime
-
-    agent._process_runtime = SimpleNamespace(wait_for_agent=invalid_wait_target)
-    try:
-        with pytest.raises(ToolException, match="Unknown agent path"):
-            await agent.tools["wait_for"].ainvoke({
-                "target": "../foo",
-                "timeout_seconds": 0,
-            })
-    finally:
-        del agent._process_runtime
-
+        monkeypatch.setattr(agent, "_process_runtime", bridge, raising=False)
+        if bridge_method == "wait_for_agent":
+            tool_name = "wait_for"
+            options = {"target": "../foo", "timeout_seconds": 0}
+    with pytest.raises(ToolException, match="Unknown agent path"):
+        await caller.tools[tool_name].ainvoke(options)
+    if bridge_method is not None:
+        monkeypatch.delattr(agent, "_process_runtime")
     assert "root/reviewer" in await agent.tools["list_agents"].ainvoke({})
     await agent.stop_message_loop(descendants=True)
 
@@ -263,23 +248,20 @@ async def test_managed_hierarchy_tool_queues_broadcast_in_input_order(
 ):
     agent = ChatAgent(llm=chat_model, workspace=tmp_path)
 
-    async def send_to_runtime(targets, _message):
-        return [
-            {"result": f"Message queued for {target}."} for target in targets
-        ]
-
-    agent._process_runtime = SimpleNamespace(send_messages=send_to_runtime)
-    try:
-        response = await agent.tools["send_message"].ainvoke({
-            "target": ["first", "missing", "second"],
-            "message": "Review this.",
-        })
-    finally:
-        del agent._process_runtime
-
-    assert response.split("\n\n") == [
-        "Message queued for first.",
-        "Message queued for missing.",
-        "Message queued for second.",
+    expected = [
+        f"Message queued for {target}."
+        for target in ("first", "missing", "second")
     ]
+    send_to_runtime = AsyncMock(
+        return_value=[{"result": ack} for ack in expected]
+    )
+    agent._process_runtime = SimpleNamespace(send_messages=send_to_runtime)
+    response = await agent.tools["send_message"].ainvoke({
+        "target": ["first", "missing", "second"],
+        "message": "Review this.",
+    })
+    send_to_runtime.assert_awaited_once_with(
+        ["first", "missing", "second"], "Review this."
+    )
+    assert response.split("\n\n") == expected
     await agent.stop_message_loop(descendants=True)

@@ -182,8 +182,8 @@ async def test_welcome_banner_starts_at_top_of_conversation(tmp_path, app):
         assert banner.region.y == conversation.content_region.y
 
 
-async def test_prompt_submission_events_and_history(tmp_path):
-    runtime = make_runtime(tmp_path)
+async def test_prompt_submission_events_and_history(app):
+    runtime = app.runtime
     _activate_hierarchy(runtime, "root")
     calls = []
 
@@ -212,7 +212,6 @@ async def test_prompt_submission_events_and_history(tmp_path):
         return "**Finished**"
 
     runtime.run_agent = run_agent
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("h", "e", "l", "l", "o", "enter")
@@ -256,8 +255,8 @@ async def test_prompt_submission_events_and_history(tmp_path):
         assert prompt.text == "hello"
 
 
-async def test_long_submitted_prompt_is_not_clipped(tmp_path):
-    runtime = make_runtime(tmp_path)
+async def test_long_submitted_prompt_is_not_clipped(app):
+    runtime = app.runtime
     started = asyncio.Event()
     release = asyncio.Event()
 
@@ -267,7 +266,6 @@ async def test_long_submitted_prompt_is_not_clipped(tmp_path):
         return "Finished"
 
     runtime.run_agent = run_agent
-    app = UrsaTextualApp(runtime)
     prompt_text = (
         "Act as GM and run a complete compact game of Werewolf with exactly "
         "five player subagents. Privately assign roles, collect every reply "
@@ -296,9 +294,9 @@ async def test_long_submitted_prompt_is_not_clipped(tmp_path):
 
 
 async def test_root_view_hides_duplicate_child_progress_during_initial_run(
-    tmp_path,
+    app,
 ):
-    runtime = make_runtime(tmp_path)
+    runtime = app.runtime
     child_started = asyncio.Event()
     release = asyncio.Event()
 
@@ -313,7 +311,6 @@ async def test_root_view_hides_duplicate_child_progress_during_initial_run(
         return "Finished"
 
     runtime.run_agent = run_agent
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("g", "o", "enter")
@@ -337,14 +334,13 @@ async def test_root_view_hides_duplicate_child_progress_during_initial_run(
         await app.workers.wait_for_complete()
 
 
-async def test_agent_exception_card_expands_to_full_traceback(tmp_path):
-    runtime = make_runtime(tmp_path)
+async def test_agent_exception_card_expands_to_full_traceback(app):
+    runtime = app.runtime
 
     async def run_agent(_name, _prompt, callbacks=None):
         raise RuntimeError("provider disconnected")
 
     runtime.run_agent = run_agent
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("h", "e", "l", "l", "o", "enter")
@@ -376,8 +372,8 @@ async def test_agent_exception_card_expands_to_full_traceback(tmp_path):
         )
 
 
-async def test_command_events_from_a_worker_thread_update_the_ui(tmp_path):
-    runtime = make_runtime(tmp_path)
+async def test_command_events_from_a_worker_thread_update_the_ui(app):
+    runtime = app.runtime
 
     async def run_agent(_name, _prompt, callbacks=None):
         handler = callbacks[0]
@@ -400,7 +396,6 @@ async def test_command_events_from_a_worker_thread_update_the_ui(tmp_path):
         return "Command finished"
 
     runtime.run_agent = run_agent
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("r", "u", "n", "enter")
@@ -413,9 +408,9 @@ async def test_command_events_from_a_worker_thread_update_the_ui(tmp_path):
 
 
 async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
-    tmp_path,
+    app,
 ):
-    runtime = make_runtime(tmp_path)
+    runtime = app.runtime
     release_agent = asyncio.Event()
 
     async def run_agent(_name, _prompt, callbacks=None):
@@ -433,7 +428,6 @@ async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
         return "Finished"
 
     runtime.run_agent = run_agent
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("w", "a", "i", "t", "enter")
@@ -471,20 +465,19 @@ async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
         assert activity.has_class("hidden")
 
 
-async def test_ctrl_c_stops_managed_agent_at_committed_state(
-    tmp_path, monkeypatch
-):
-    runtime = make_runtime(tmp_path)
+@pytest.mark.parametrize("key", ["ctrl+c", "ctrl+l", "ctrl+q"])
+async def test_controls_during_active_work(app, monkeypatch, key):
     started = asyncio.Event()
     release = asyncio.Event()
+    finished = asyncio.Event()
 
     async def run_agent(_name, _prompt, callbacks=None):
         started.set()
         await release.wait()
+        finished.set()
         return "Finished"
 
-    runtime.run_agent = run_agent
-    app = UrsaTextualApp(runtime)
+    app.runtime.run_agent = run_agent
     notifications = []
     monkeypatch.setattr(
         app,
@@ -496,26 +489,40 @@ async def test_ctrl_c_stops_managed_agent_at_committed_state(
         await pilot.press("w", "a", "i", "t", "enter")
         await started.wait()
         prompt = app.query_one(PromptArea)
+        turn = app.query_one(Turn)
         assert not prompt.disabled
         assert "Message active agent" in prompt.placeholder
-
-        await pilot.press("ctrl+c")
+        await pilot.press(key)
         assert await wait_for(pilot, lambda: len(notifications) == 1)
-
-        assert not prompt.disabled
-        assert any(worker.group == "agent" for worker in app.workers)
-        assert notifications[0][0] == (
-            "Stopped chat at its last committed state."
-        )
-        assert notifications[0][1]["severity"] == "warning"
+        message, options = notifications[0]
+        if key == "ctrl+c":
+            assert not prompt.disabled
+            assert any(worker.group == "agent" for worker in app.workers)
+            assert message == "Stopped chat at its last committed state."
+            assert options["severity"] == "warning"
+        elif key == "ctrl+l":
+            assert turn.is_mounted
+            assert "not allowed" in message
+            assert "Ctrl+D" in message
+        else:
+            assert not app._exit
+            assert "active turn finishes" in message
+            assert "Ctrl+D" in message
 
         release.set()
-        await app.workers.wait_for_complete()
-        assert not prompt.disabled
+        await finished.wait()
+        if key != "ctrl+q":
+            await app.workers.wait_for_complete()
+            assert not prompt.disabled
+        await pilot.pause()
+
+    if key == "ctrl+q":
+        assert await wait_for(pilot, lambda: app._exit)
+        assert app._exit
 
 
-async def test_message_stays_dimmed_until_active_agent_accepts_it(tmp_path):
-    runtime = make_runtime(tmp_path)
+async def test_message_stays_dimmed_until_active_agent_accepts_it(app):
+    runtime = app.runtime
     _activate_hierarchy(runtime, "root")
     started = asyncio.Event()
     release_root = asyncio.Event()
@@ -540,7 +547,6 @@ async def test_message_stays_dimmed_until_active_agent_accepts_it(tmp_path):
 
     runtime.run_agent = run_agent
     runtime.run_active_agent = run_active_agent
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("s", "t", "a", "r", "t", "enter")
@@ -569,9 +575,9 @@ async def test_message_stays_dimmed_until_active_agent_accepts_it(tmp_path):
 
 
 async def test_in_band_message_promotes_without_a_duplicate_empty_reply(
-    tmp_path,
+    app,
 ):
-    runtime = make_runtime(tmp_path)
+    runtime = app.runtime
     _activate_hierarchy(runtime, "root")
     started = asyncio.Event()
     release_root = asyncio.Event()
@@ -596,7 +602,6 @@ async def test_in_band_message_promotes_without_a_duplicate_empty_reply(
 
     runtime.run_agent = run_agent
     runtime.run_active_agent = run_active_agent
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("s", "t", "a", "r", "t", "enter")
@@ -609,8 +614,10 @@ async def test_in_band_message_promotes_without_a_duplicate_empty_reply(
         await app.workers.wait_for_complete()
 
 
-async def test_subagents_command_switches_message_and_progress_target(tmp_path):
-    runtime = make_runtime(tmp_path)
+async def test_subagents_command_switches_message_and_progress_target(
+    app, tmp_path
+):
+    runtime = app.runtime
     _activate_hierarchy(runtime, "root", "root/researcher")
     messages = []
 
@@ -626,7 +633,6 @@ async def test_subagents_command_switches_message_and_progress_target(tmp_path):
         return "Research complete"
 
     runtime.run_active_agent = run_active_agent
-    app = UrsaTextualApp(runtime)
     app._active_agent_path = "root"
     app._message_mode = True
 
@@ -668,93 +674,13 @@ async def test_subagents_command_switches_message_and_progress_target(tmp_path):
         await app.workers.wait_for_complete()
 
 
-async def test_clear_conversation_is_refused_during_active_turn(
-    tmp_path, monkeypatch
-):
-    runtime = make_runtime(tmp_path)
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def run_agent(_name, _prompt, callbacks=None):
-        started.set()
-        await release.wait()
-        return "Finished"
-
-    runtime.run_agent = run_agent
-    app = UrsaTextualApp(runtime)
-    notifications = []
-    monkeypatch.setattr(
-        app,
-        "notify",
-        lambda message, **kwargs: notifications.append((message, kwargs)),
-    )
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        await pilot.press("w", "a", "i", "t", "enter")
-        await started.wait()
-        turn = app.query_one(Turn)
-
-        await pilot.press("ctrl+l")
-        await pilot.pause()
-
-        await wait_for(pilot, lambda: turn.is_mounted)
-        assert turn.is_mounted
-        assert "not allowed" in notifications[0][0]
-        assert "Ctrl+D" in notifications[0][0]
-        release.set()
-        await pilot.pause()
-
-
-async def test_quitting_waits_for_active_agent_then_exits(
-    tmp_path, monkeypatch
-):
-    runtime = make_runtime(tmp_path)
-    started = asyncio.Event()
-    release = asyncio.Event()
-    finished = asyncio.Event()
-
-    async def run_agent(_name, _prompt, callbacks=None):
-        started.set()
-        await release.wait()
-        finished.set()
-        return "Finished"
-
-    runtime.run_agent = run_agent
-    app = UrsaTextualApp(runtime)
-    notifications = []
-    monkeypatch.setattr(
-        app,
-        "notify",
-        lambda message, **kwargs: notifications.append((message, kwargs)),
-    )
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        await pilot.press("w", "a", "i", "t", "enter")
-        await started.wait()
-        await pilot.press("ctrl+q")
-        await pilot.pause()
-
-        assert not app._exit
-        assert notifications
-        assert "active turn finishes" in notifications[0][0]
-        assert "Ctrl+D" in notifications[0][0]
-
-        release.set()
-        await finished.wait()
-        await pilot.pause()
-
-    await wait_for(pilot, lambda: app._exit)
-    assert app._exit
-
-
-async def test_command_arrows_navigate_turn_markers_and_end_anchor(tmp_path):
-    runtime = make_runtime(tmp_path)
+async def test_command_arrows_navigate_turn_markers_and_end_anchor(app):
+    runtime = app.runtime
 
     async def run_agent(_name, _prompt, callbacks=None):
         return "Finished"
 
     runtime.run_agent = run_agent
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("o", "n", "e", "enter")
@@ -794,14 +720,13 @@ async def test_command_arrows_navigate_turn_markers_and_end_anchor(tmp_path):
         assert app._turn_navigation_marker is markers[5]
 
 
-async def test_turn_navigation_changes_real_scroll_position(tmp_path):
-    runtime = make_runtime(tmp_path)
+async def test_turn_navigation_changes_real_scroll_position(app):
+    runtime = app.runtime
 
     async def run_agent(_name, _prompt, callbacks=None):
         return "Finished"
 
     runtime.run_agent = run_agent
-    app = UrsaTextualApp(runtime)
 
     async with app.run_test(size=(80, 20)) as pilot:
         for index in range(6):
