@@ -1,5 +1,8 @@
 # Advanced Harbor usage
 
+For reusable single-run settings and post-job keep/delete/tar.xz policies, see
+[configuration and retention](CONFIGURATION_AND_RETENTION.md).
+
 ## Install and configure URSA
 
 The adapter installs Python and URSA with `uv` inside each task container. Add
