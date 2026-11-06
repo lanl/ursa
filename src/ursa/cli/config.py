@@ -646,6 +646,12 @@ class UrsaConfig(BaseModel):
     def from_file(cls, path: Path):
         return cls.model_validate(load_config_file(path))
 
+    @classmethod
+    def user_config(cls, resolve: bool = True) -> Self:
+        """Load and merge the default system and user config layers."""
+        config = cls().model_merge(*config_layers(Namespace()))
+        return config.resolve() if resolve else config
+
     def resolve(self) -> Self:
         """Return this config after applying canonical resolution."""
         return resolve_ursa_config(self)
@@ -871,10 +877,8 @@ def config_layers(
 
     if not final:
         return layers
-    if env_overrides is None:
-        raise ValueError("Final config layering requires sparse env overrides")
 
-    layers.append(_ursa_config_values(env_overrides))
+    layers.append(_ursa_config_values(env_overrides or {}))
     if cli_config_path is not None and cli_config_path in paths:
         layers.append(load_config_file(cli_config_path))
     if cli_overrides is not None:

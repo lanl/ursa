@@ -10,12 +10,13 @@ workflows on Go projects.
 ```python
 from pathlib import Path
 
-from langchain.chat_models import init_chat_model
 from ursa.agents import GitGoAgent
+from ursa.cli.config import UrsaConfig
 
 # Initialize the agent
+config = UrsaConfig.user_config()
 agent = GitGoAgent(
-    llm=init_chat_model("openai:gpt-5.4-mini"),
+    llm=config.llm_model.init_chat_model(),
     workspace=Path("/path/to/your/repo"),
 )
 

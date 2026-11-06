@@ -9,10 +9,11 @@ Use it when you want an ordered, model-generated plan before handing work to ano
 ## Basic usage
 
 ```python
-from langchain.chat_models import init_chat_model
 from ursa.agents import PlanningAgent
+from ursa.cli.config import UrsaConfig
 
-llm = init_chat_model("openai:gpt-5.4-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 agent = PlanningAgent(llm=llm)
 
 state = agent.invoke("Design a workflow to compare two simulation outputs.")
@@ -82,10 +83,11 @@ If a provider returns an empty reflection message, the implementation treats it 
 ## Custom reflection budget
 
 ```python
-from langchain.chat_models import init_chat_model
 from ursa.agents import PlanningAgent
+from ursa.cli.config import UrsaConfig
 
-llm = init_chat_model("openai:gpt-5.4-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 agent = PlanningAgent(llm=llm, max_reflection_steps=3)
 
 state = agent.invoke("Plan a validation study for a new materials model.")
