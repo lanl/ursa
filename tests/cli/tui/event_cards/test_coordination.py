@@ -56,7 +56,7 @@ async def test_parallel_coordination_calls_share_one_card_across_entire_turn(
             "message" not in pending for pending in handler.tools.values()
         )
         assert not turn._tool_calls_by_id
-        assert "4 running" in str(
+        assert "4 active" in str(
             group.query_one(".coordination-summary", Static).content
         )
 
@@ -79,14 +79,14 @@ async def test_parallel_coordination_calls_share_one_card_across_entire_turn(
         assert len(turn.query(CoordinationCard)) == 1
         assert len(turn.query(ToolCallCard)) == 1
         summary = str(group.query_one(".coordination-summary", Static).content)
-        assert "5 actions" in summary and "1 failed" in summary
+        assert "5 actions" in summary and "1 need attention" in summary
         recent = "\n".join(
             str(row.content)
             for row in group.query(".coordination-action-preview")
         )
         assert len(recent.splitlines()) == 2
-        assert "stop agent" in recent and "root/b" in recent
-        assert "spawn agent" not in recent
+        assert "Stop agent" in recent and "root/b" in recent
+        assert "Spawn agent" not in recent
         assert len(recent) < 800
 
         group.set_expanded(True)
@@ -132,6 +132,64 @@ async def test_parallel_coordination_calls_share_one_card_across_entire_turn(
             "target": "root/a",
         })
         assert len(app.query(CoordinationCard)) == 2
+
+
+async def test_coordination_actions_have_clear_status_and_keyboard_expansion(
+    tmp_path,
+):
+    app = UrsaTextualApp(make_runtime(tmp_path))
+    async with app.run_test(size=(100, 36)) as pilot:
+        turn = await app._mount_turn("coordinate")
+        handler = TextualEventHandler(app, turn)
+        await handler.on_tool_start(
+            {"name": "wait_for"},
+            "",
+            run_id="wait",
+            inputs={
+                "target": ["root/a", "root/b"],
+                "timeout_seconds": 120,
+                "wait_all": True,
+            },
+        )
+        group = turn.query_one(CoordinationCard)
+        assert group.can_focus
+        assert "1 active" in str(
+            group.query_one(".coordination-summary", Static).content
+        )
+        assert "Wait for → 2 agents" in str(
+            group.query_one(".coordination-action-preview", Static).content
+        )
+        group.focus()
+        await pilot.press("enter")
+        assert await wait_for(
+            pilot, lambda: len(group.query(AgentToolCard)) == 1
+        )
+        card = group.query_one(AgentToolCard)
+        assert card.can_focus
+        assert "Click or Enter to collapse" in str(
+            group.query_one(".event-expand-hint", Static).content
+        )
+        card.focus()
+        await pilot.press("space")
+        assert await wait_for(
+            pilot,
+            lambda: "all agents finish"
+            in card.query_one(".agent-tool-task", Markdown).source,
+        )
+        assert (
+            "120 seconds" in card.query_one(".agent-tool-task", Markdown).source
+        )
+
+        await handler.on_tool_end(
+            "All requested agents completed.", run_id="wait"
+        )
+        assert await wait_for(pilot, lambda: card.completed)
+        assert "complete" in str(
+            group.query_one(".coordination-summary", Static).content
+        )
+        assert "All requested agents completed." in str(
+            card.query_one(".agent-tool-preview", Static).content
+        )
 
 
 async def test_expanded_coordination_pages_bound_widget_count(tmp_path):
@@ -198,8 +256,8 @@ async def test_coordination_errors_keep_exact_body_and_two_visible_rows(
             row.render_lines(Region(0, 0, row.size.width, 1))[0] for row in rows
         ]
         assert len(rendered) == 2
-        assert "send message" in rendered[0].text
-        assert "wait for" in rendered[1].text
+        assert "Send message" in rendered[0].text
+        assert "Wait for" in rendered[1].text
         assert rows[1].region.y == rows[0].region.y + 1
         group.set_expanded(True)
         assert await wait_for(

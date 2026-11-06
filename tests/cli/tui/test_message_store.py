@@ -20,6 +20,7 @@ async def test_messages_persist_exact_bodies_but_list_only_bounded_previews(
     assert "\n" not in rows[0].content
     assert rows[0].recipients == ("root", "root/p02")
     assert await reopened.message_body(message_id) == content
+    assert await reopened.message_body(message_id + 1) is None
     assert await MessageStore(path, "other-thread").messages() == []
     assert not any(
         isinstance(value, (dict, list)) for value in vars(store).values()

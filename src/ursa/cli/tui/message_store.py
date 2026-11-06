@@ -155,15 +155,18 @@ class MessageStore:
 
         return await asyncio.to_thread(self._run, read)
 
-    async def message_body(self, message_id: int) -> str:
-        return await asyncio.to_thread(
-            self._run,
-            lambda db: db.execute(
+    async def message_body(self, message_id: int) -> str | None:
+        """Return an exact message body when it still belongs to this thread."""
+
+        def read(db: sqlite3.Connection) -> str | None:
+            row = db.execute(
                 "SELECT content FROM hierarchy_messages "
                 "WHERE thread_id = ? AND id = ?",
                 (self.thread_id, message_id),
-            ).fetchone()[0],
-        )
+            ).fetchone()
+            return str(row["content"]) if row is not None else None
+
+        return await asyncio.to_thread(self._run, read)
 
     async def record_action(
         self,

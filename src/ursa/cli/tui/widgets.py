@@ -1971,6 +1971,10 @@ class HierarchyMessageCard(MessageCard):
         self.query_one(".hierarchy-message-full").set_class(
             not expanded, "hidden"
         )
+        if expanded:
+            self.query_one(".hierarchy-message-full", Markdown).update(
+                "_Loading message…_"
+            )
         self.run_worker(self._load_body, exclusive=True, group="message-body")
 
     async def _load_body(self) -> None:
@@ -1980,7 +1984,13 @@ class HierarchyMessageCard(MessageCard):
             return
         content = await self.store.message_body(self.message.id)
         if self.expanded and self.is_mounted:
-            full.update(content or "_(empty message)_")
+            full.update(
+                "_(empty message)_"
+                if content == ""
+                else content
+                if content is not None
+                else "_Message is no longer available._"
+            )
 
     def on_click(self, event: events.Click) -> None:
         event.stop()
@@ -2026,7 +2036,7 @@ class MessagesScreen(ModalScreen[None]):
                 yield Button("Latest", id="messages-latest")
             yield VerticalScroll(id="messages-body")
             yield Static(
-                "Click a message to expand or collapse  •  Esc to close",
+                "Loading messages…",
                 id="messages-footer",
             )
 
@@ -2053,6 +2063,7 @@ class MessagesScreen(ModalScreen[None]):
                     after=self._ids[-1], limit=1
                 )
                 self.query_one("#messages-newer", Button).disabled = not newer
+                self._refresh_navigation(has_newer=bool(newer))
                 return
             latest = await self._messages.messages(limit=1)
             if self._ids and latest and latest[0].id == self._ids[-1]:
@@ -2103,9 +2114,21 @@ class MessagesScreen(ModalScreen[None]):
         )
         self.query_one("#messages-older", Button).disabled = not older
         self.query_one("#messages-newer", Button).disabled = not newer
+        self.query_one("#messages-latest", Button).disabled = self._live
         self.query_one("#messages-title", Static).update(
             f"Messages · {'Live' if self._live else 'History'} · {len(ids)} shown"
         )
+        self._refresh_navigation(has_newer=newer)
+
+    def _refresh_navigation(self, *, has_newer: bool) -> None:
+        """State the current reading mode where it is useful, in the footer."""
+        if self._live:
+            text = "Following live messages · Click a message to expand · ←/→ browse · Esc to close"
+        elif has_newer:
+            text = "History · newer messages available · Click a message to expand · → newer · End for latest · Esc to close"
+        else:
+            text = "History · Click a message to expand · ← older · End for latest · Esc to close"
+        self.query_one("#messages-footer", Static).update(text)
 
     @on(Button.Pressed, "#messages-older")
     async def action_older(self) -> None:

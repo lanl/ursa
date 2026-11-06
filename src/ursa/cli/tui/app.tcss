@@ -204,12 +204,17 @@ ModelScreen SelectCurrent {
 
 #messages-title {
     width: 1fr;
+    height: 1;
+    overflow: hidden hidden;
+    text-overflow: ellipsis;
     text-style: bold;
     color: $accent;
 }
 
 #messages-footer {
     height: 1;
+    overflow: hidden hidden;
+    text-overflow: ellipsis;
     color: $text-muted;
     text-style: italic;
     content-align: right middle;
@@ -505,6 +510,21 @@ ModelScreen SelectCurrent {
     color: $text;
 }
 
+CoordinationCard:focus,
+AgentToolCard:focus {
+    outline: solid $accent;
+}
+
+CoordinationCard > .event-expand-hint,
+AgentToolCard > .event-expand-hint {
+    dock: none;
+    width: 100%;
+    padding: 0 1;
+    content-align: left middle;
+    overflow: hidden hidden;
+    text-overflow: ellipsis;
+}
+
 .event-summary {
     height: auto;
     background: transparent;
@@ -596,6 +616,12 @@ ModelScreen SelectCurrent {
 .coordination-details,
 .coordination-actions {
     height: auto;
+}
+
+.coordination-actions {
+    margin: 0 1;
+    padding-left: 1;
+    border-left: solid $accent-muted;
 }
 
 .coordination-navigation {

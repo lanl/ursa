@@ -129,6 +129,9 @@ async def test_spawn_agent_card_shows_task_and_queue_acknowledgement(tmp_path):
         assert "Review the implementation" in str(
             card.query_one(".agent-tool-task", Markdown).source
         )
+        assert "reviewer" in str(
+            card.query_one(".agent-tool-task", Markdown).source
+        )
 
         await handler.on_tool_end(
             "Spawned agent root/reviewer\n\nMessage queued for root/reviewer.",

@@ -10,6 +10,7 @@ from typing import Any
 from langchain_core.messages import ToolMessage
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Markdown, Static
 
@@ -27,6 +28,10 @@ class AgentToolCard(EventCard):
         "wait_for": ("◌", "Waiting for agents", "agent"),
         "list_agents": ("⌘", "Inspecting agents", "hierarchy"),
     }
+    can_focus = True
+    BINDINGS = [
+        Binding("enter,space", "toggle", "Expand action", show=False),
+    ]
 
     def __init__(
         self,
@@ -87,6 +92,39 @@ class AgentToolCard(EventCard):
     def task(self) -> str:
         return str(self.tool_input.get("message") or "").strip()
 
+    @property
+    def request(self) -> str:
+        """Describe the actual tool request, including non-message actions."""
+        target = self.target
+        if self.tool == "spawn_agent":
+            name = str(self.tool_input.get("name") or "new subagent")
+            agent_type = str(self.tool_input.get("agent_type") or "").strip()
+            details = f"**Subagent:** `{name}`"
+            if agent_type:
+                details += f"\n\n**Agent type:** `{agent_type}`"
+            if self.task:
+                details += f"\n\n**Initial task**\n\n{self.task}"
+            return details
+        if self.tool == "send_message":
+            return f"**Recipient:** `{target}`\n\n{self.task or '_Empty message._'}"
+        if self.tool == "wait_for":
+            wait_all = bool(self.tool_input.get("wait_all"))
+            timeout = self.tool_input.get("timeout_seconds")
+            details = (
+                f"**Watching:** `{target}`\n\n"
+                f"**Return:** {'all agents finish' if wait_all else 'first agent finishes'}"
+            )
+            if timeout is not None:
+                details += f"\n\n**Timeout:** {timeout} seconds"
+            return details
+        if self.tool == "stop_agent":
+            return f"**Stopping:** `{target}` and its descendants"
+        return "_No request details available._"
+
+    @property
+    def request_title(self) -> str:
+        return "Message" if self.tool == "send_message" else "Request"
+
     def compose(self) -> ComposeResult:
         yield Static(self.label, classes="agent-tool-title")
         with Horizontal(classes="agent-tool-summary"):
@@ -98,11 +136,11 @@ class AgentToolCard(EventCard):
             # as literal text instead of Textual markup.
             yield Static(Text(self._summary()), classes="agent-tool-preview")
         with Vertical(classes="agent-tool-details hidden"):
-            yield Static("Task", classes="agent-tool-detail-title task-title")
+            yield Static(
+                self.request_title, classes="agent-tool-detail-title task-title"
+            )
             yield Markdown(
-                ""
-                if self._details_loader
-                else self.task or "_No task provided._",
+                "" if self._details_loader else self.request,
                 classes="agent-tool-task",
             )
             yield Static(
@@ -208,6 +246,19 @@ class AgentToolCard(EventCard):
         if self._details_loader and expanded and self.is_mounted:
             self._request_details()
 
+    def action_toggle(self) -> None:
+        """Expand or collapse the action from the keyboard."""
+        self.set_expanded(not self.expanded)
+
+    def _update_expand_hint(self) -> None:
+        if not self.is_mounted:
+            return
+        self.query_one(".event-expand-hint", Static).update(
+            "Click or Enter to collapse"
+            if self.expanded
+            else "Click or Enter to expand"
+        )
+
     def _request_details(self) -> None:
         self.run_worker(
             self._load_details, exclusive=True, group="agent-tool-details"
@@ -247,6 +298,6 @@ class AgentToolCard(EventCard):
             task.update("_Loading…_" if self.expanded else "")
             result.update("_Loading…_" if self.expanded else "")
             return
-        task.update(self.task or "_No task provided._")
+        task.update(self.request)
         if self.completed:
             result.update(self.output or "_No response returned._")

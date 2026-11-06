@@ -14,6 +14,7 @@ from uuid import uuid4
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
@@ -26,6 +27,26 @@ class CoordinationCard(EventCard):
     """Absorb every spawn/send/wait/stop call, retaining only two previews."""
 
     PAGE_SIZE = 20
+    can_focus = True
+    BINDINGS = [
+        Binding("enter,space", "toggle", "Expand coordination", show=False),
+    ]
+
+    _ACTION_NAMES = {
+        "spawn_agent": "Spawn agent",
+        "send_message": "Send message",
+        "wait_for": "Wait for",
+        "stop_agent": "Stop agent",
+    }
+
+    @staticmethod
+    def _recent_target(tool: str, target: str) -> str:
+        """Keep the two-line rollup scannable for broadcasts and waits."""
+        if tool in {"send_message", "wait_for"}:
+            count = len(target.split(", "))
+            if count > 1:
+                return f"{count} agents"
+        return target
 
     def __init__(self, key: str, store: MessageStore) -> None:
         super().__init__(key, "Coordination")
@@ -89,9 +110,11 @@ class CoordinationCard(EventCard):
             f"Coordination · {self.total} action{'s' if self.total != 1 else ''}"
         ]
         if counts["running"]:
-            parts.append(f"{counts['running']} running")
+            parts.append(f"{counts['running']} active")
+        elif not counts["failed"]:
+            parts.append("complete")
         if counts["failed"]:
-            parts.append(f"{counts['failed']} failed")
+            parts.append(f"{counts['failed']} need attention")
         self.done = not counts["running"]
         self.query_one(".coordination-summary", Static).update(
             " · ".join(parts)
@@ -99,15 +122,29 @@ class CoordinationCard(EventCard):
         lines = []
         for row in recent:
             state = "✗" if row["failed"] else "✓" if row["completed"] else "…"
-            action = row["tool"].replace("_", " ")
+            action = self._ACTION_NAMES[row["tool"]]
             result = f" — {row['preview']}" if row["completed"] else ""
-            lines.append(f"{state} {action} → {row['target']}{result}")
+            target = self._recent_target(row["tool"], row["target"])
+            lines.append(f"{state} {action} → {target}{result}")
         for index, widget in enumerate(
             self.query(".coordination-action-preview")
         ):
             widget.update(Text(lines[index] if index < len(lines) else ""))
         if self.expanded:
             await self._refresh_details()
+
+    def action_toggle(self) -> None:
+        """Expand or collapse when keyboard focus is on the group."""
+        self.set_expanded(not self.expanded)
+
+    def _update_expand_hint(self) -> None:
+        if not self.is_mounted:
+            return
+        self.query_one(".event-expand-hint", Static).update(
+            "Click or Enter to collapse"
+            if self.expanded
+            else "Click or Enter to expand"
+        )
 
     def set_expanded(self, expanded: bool) -> None:
         self.expanded = expanded

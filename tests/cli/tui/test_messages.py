@@ -1,4 +1,4 @@
-from textual.widgets import Markdown
+from textual.widgets import Button, Markdown, Static
 
 from tests.cli._app_helpers import make_runtime, wait_for
 from ursa.cli.tui.app import UrsaTextualApp
@@ -36,6 +36,10 @@ async def test_message_screen_pages_without_retaining_full_bodies(
         assert all(len(card.content) <= 241 for card in cards)
         assert all(not card.query_one(Markdown).source for card in cards)
         assert not hasattr(app, "_hierarchy_messages")
+        assert app.screen.query_one("#messages-latest", Button).disabled
+        assert "Following live messages" in str(
+            app.screen.query_one("#messages-footer", Static).content
+        )
 
         card = cards[-1]
         card.set_expanded(True)
@@ -51,6 +55,7 @@ async def test_message_screen_pages_without_retaining_full_bodies(
         await screen.action_older()
         cards = list(screen.query(HierarchyMessageCard))
         assert len(cards) == 50 and cards[0].message.content.startswith("25:")
+        assert not screen.query_one("#messages-latest", Button).disabled
         # Traffic arriving during historical browsing must not move the page.
         await app.record_hierarchy_message(
             "root/p01", ("root",), "new live message"
@@ -60,6 +65,9 @@ async def test_message_screen_pages_without_retaining_full_bodies(
             screen.query(HierarchyMessageCard)
             .first()
             .message.content.startswith("25:")
+        )
+        assert "newer messages available" in str(
+            screen.query_one("#messages-footer", Static).content
         )
         await screen.action_scroll_home()
         assert (
