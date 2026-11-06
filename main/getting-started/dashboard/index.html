@@ -423,6 +423,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#edit-your-default-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Edit your default configuration
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#summarization-settings" class="md-nav__link">
     <span class="md-ellipsis">
       Summarization settings
@@ -2048,6 +2057,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#edit-your-default-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Edit your default configuration
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#summarization-settings" class="md-nav__link">
     <span class="md-ellipsis">
       Summarization settings
@@ -2126,8 +2144,17 @@
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--group<span class="w"> </span>default<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--config<span class="w"> </span>config.yaml
 </code></pre></div>
-<p>The optional config file initializes the dashboard LLM endpoint settings. It is
-not needed for the built-in OpenAI provider.</p>
+<p>The optional config file initializes the dashboard model settings and makes its
+named <code>inference_providers</code> available in the LLM and Embedding/RAG settings.
+Select a provider to use its configured endpoint and load the models advertised
+by that endpoint. Model fields remain editable when an endpoint does not support
+model discovery. The config file is not needed for the built-in OpenAI provider.</p>
+<p>Dashboard model, MCP, and RAG-tool settings use this precedence, from highest
+to lowest: an explicit <code>--config</code> file, standard URSA environment overrides,
+the user config, dashboard <code>settings.json</code>, and the system config. The explicit
+file is applied at runtime and is not copied into <code>settings.json</code>. This means a
+value declared in the user config remains authoritative over the corresponding
+dashboard default.</p>
 <h2 id="enable-web-tools">Enable web tools<a class="headerlink" href="#enable-web-tools" title="Permanent link">&para;</a></h2>
 <p>Web, arXiv, and OSTI search tools are opt in, matching <code>ursa --use-web</code> in the
 CLI and TUI:</p>
@@ -2139,8 +2166,22 @@ planning/execution workflow, prompt refinement, and deep review). Individual
 runs can still override it through the agent's advanced parameters, so you can
 launch with <code>--use-web</code> and disable it for a specific run.</p>
 <h2 id="first-session">First session<a class="headerlink" href="#first-session" title="Permanent link">&para;</a></h2>
+<p>The dashboard offers a guided walkthrough on its first visit. You can close it
+at any point and reopen it with <strong>Take a guided tour</strong> on the welcome page.
+It covers model setup, example prompts, behaviors, persistent agents, workspace
+selection, logs and artifacts, and multi-agent environments. The prime-spacing
+example prepares an editable prompt with Chat selected; it runs only when
+you press <strong>Send</strong>. The workspace picker then asks for the folder where URSA
+will start the session's work. You can change it later with <strong>Set workspace</strong>
+in the Artifacts panel.</p>
+<p>First-time connection setup is split into three short steps: the Base URL,
+the API key source, and the language model. It explains each choice without
+showing the full configuration editor. Choose <strong>Enter a key · store securely</strong>
+to paste a provider key if you have not set an environment variable. Advanced
+options and embedding models remain available in <strong>Default config</strong> later.</p>
 <ol>
-<li>Open <strong>Settings → LLM</strong> and confirm the endpoint and credential source.</li>
+<li>Open <strong>Model and Agent Settings → Default config</strong> to connect your models,
+   or <strong>LLM</strong> to inspect the effective dashboard settings.</li>
 <li>Create a session.</li>
 <li>Select a folder you are comfortable modifying, or choose <strong>Temporary
    workspace</strong> for disposable work.</li>
@@ -2148,6 +2189,44 @@ launch with <code>--use-web</code> and disable it for a specific run.</p>
 <li>Follow the activity timeline and inspect generated files in the artifacts
    panel.</li>
 </ol>
+<p>New sessions snapshot the effective LLM, embedding, MCP, and RAG-tool settings.
+Open <strong>Session settings</strong> from a session card to adjust the same controls for
+that session without changing the dashboard defaults. Securely saved session
+keys use an isolated credential-store entry, so replacing one does not replace
+the global key or another session's key. Theme and agent-management actions
+remain dashboard-wide.</p>
+<h2 id="edit-your-default-configuration">Edit your default configuration<a class="headerlink" href="#edit-your-default-configuration" title="Permanent link">&para;</a></h2>
+<p><strong>Model and Agent Settings → Default config</strong> edits the normal URSA user config,
+shared with the CLI and TUI. It loads the highest-priority existing user config
+(including <code>~/.config/ursa/config.yaml</code>), or offers a starter configuration when
+no user file exists. The selected path is displayed in the editor.</p>
+<p>Add providers using a name, Base URL, API type, and credential source. Keys
+entered here are saved in the operating system keyring under the standard URSA
+service; the YAML contains only a <code>keyring</code> reference. Environment-variable
+references and unauthenticated endpoints are also supported. Select default
+language and optional embedding models, use <strong>Find available models</strong> for
+suggestions, and edit advanced model options if needed.</p>
+<p>If an older config contains a literal API key, saving through the editor moves
+that key into secure storage as well. The original backup retains the original
+file contents and is created with owner-only permissions.</p>
+<p><strong>Test language model</strong> sends a small real generation request;
+<strong>Test embeddings</strong> checks an embedding request. These are explicit actions,
+may incur provider charges, and do not save the draft. A <strong>Passed</strong> or <strong>Failed</strong>
+result appears beside each test; editing the draft marks previous results as
+needing a new test. The walkthrough's
+<strong>Test, save &amp; continue</strong> checks the language model before saving.</p>
+<p><strong>Update</strong> validates the draft, saves the user config, and reloads defaults and
+the provider catalog immediately. An explicit launch config or environment
+override still takes precedence. Existing sessions retain their snapshots.
+External file edits still require a dashboard restart. The Default config pane
+is shared across sessions; the other model/tool panes in Session settings edit
+that session instead.</p>
+<p>Unrelated config options and existing provider options are preserved. YAML is
+rewritten, so comments and formatting may change; an exact backup is saved
+beside the original as <code>config.backup-*.yaml</code>. A concurrent external edit is
+reported instead of silently overwritten. Replacing a provider key creates a
+new keyring reference so old sessions and config backups retain access to the
+previous credential; old entries are not automatically deleted.</p>
 <h2 id="summarization-settings">Summarization settings<a class="headerlink" href="#summarization-settings" title="Permanent link">&para;</a></h2>
 <p>Under <strong>Settings → LLM</strong>, set <strong>Summarization fallback (tokens)</strong> to the threshold
 used when the model's context limit is unknown (default: 50,000). When the limit
@@ -2160,7 +2239,7 @@ threshold. This checks metadata without generating a response. For an unloaded
 Ollama model, the allocated context may be unavailable; configure <code>num_ctx</code> or
 check again once the model is running.</p>
 <h2 id="configure-api-credentials">Configure API credentials<a class="headerlink" href="#configure-api-credentials" title="Permanent link">&para;</a></h2>
-<p>Open <strong>Settings -&gt; LLM</strong> and choose an API-key source:</p>
+<p>Open <strong>Model and Agent Settings → LLM</strong> and choose an API-key source:</p>
 <ul>
 <li><strong>Keyring</strong> stores the key using URSA's <a href="../../configuration/secrets/">keyring
   support</a>. The key field is always blank when
@@ -2168,9 +2247,11 @@ check again once the model is running.</p>
 <li><strong>Environment variable</strong> retains the existing headless and automation
   workflow. Enter the variable name, not its value.</li>
 <li><strong>No API key</strong> is appropriate for endpoints that do not require one.</li>
+<li><strong>URSA config key</strong> uses the standard keyring reference from the selected
+  provider. Edit these keys in <strong>Default config</strong>.</li>
 </ul>
 <p>Embedding credentials are configured independently under
-<strong>Settings -&gt; Embedding/RAG</strong>, or can explicitly reuse the saved LLM key when
+<strong>Model and Agent Settings → Embedding/RAG</strong>, or can explicitly reuse the saved LLM key when
 both configurations resolve to the same provider or endpoint origin. Saved keys
 are bound to the configured provider or endpoint origin. After changing the
 endpoint host, save the key again to approve its use with that host.</p>
@@ -2200,7 +2281,7 @@ team or symposium workspace while creating a separate replay.</p>
 <p>The run is queued in the background and appears on the page immediately. Open it
 to follow the environment graph and work timeline live, inspect the final result,
 or cancel a dashboard-launched run. The dashboard uses the LLM, credential, and
-timeout settings configured under <strong>Settings</strong>. Member-specific model blocks may
+timeout settings configured under <strong>Model and Agent Settings</strong>. Member-specific model blocks may
 refer to API-key environment variable names, but literal API keys are rejected
 and never stored in YAML or run metadata.</p>
 <div class="admonition note">
