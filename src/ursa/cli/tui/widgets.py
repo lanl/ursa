@@ -1668,7 +1668,10 @@ class WelcomeBanner(Vertical):
 
 class MessageCard(Static):
     def __init__(self, role: str, content: str) -> None:
-        super().__init__(classes=f"message-card {role}")
+        # markup=False: the text is arbitrary (model replies, exception messages
+        # such as "[type=missing, input_value=...]") and must never be parsed as
+        # Textual markup, which raises MarkupError and hides the real message.
+        super().__init__(classes=f"message-card {role}", markup=False)
         self.role = role
         self.content = content
 

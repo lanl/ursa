@@ -88,6 +88,7 @@ from ursa.util.checkpoint_retention import (
 )
 from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER, AgentEvents
 from ursa.util.mcp import load_mcp_tools_with_sources
+from ursa.util.message_portability import make_portable
 from ursa.util.model_context import (
     DEFAULT_SUMMARIZATION_THRESHOLD,
     summarization_threshold,
@@ -172,17 +173,25 @@ _SUMMARIZE_INSTRUCTIONS = (
 
 
 def _message_text(m: BaseMessage) -> str:
-    text = getattr(m, "text", None)
-    if isinstance(text, str) and text:
-        return text
+    """Visible content of ``m`` for plain-text transcripts (summaries).
+
+    Only text is rendered. Non-text blocks (reasoning items carrying base64
+    signatures / ``encrypted_content``, Responses ``function_call`` items that
+    duplicate ``tool_calls``, base64 images) used to be dumped via ``str()``,
+    inflating summarization requests far past the model context window.
+    """
     if isinstance(m.content, str):
         return m.content
     parts = []
     for block in m.content or []:
-        if isinstance(block, dict) and block.get("type") == "text":
-            parts.append(block.get("text", ""))
-        else:
-            parts.append(str(block))
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict):
+            kind = str(block.get("type") or "")
+            if kind in ("text", "output_text"):
+                parts.append(block.get("text") or "")
+            elif "image" in kind:
+                parts.append("[image]")
     return "\n".join(p for p in parts if p)
 
 
@@ -1080,6 +1089,7 @@ class BaseAgent(Generic[TState], ABC):
         patch_dangling: bool = True,
         summarize: bool = True,
         sanitize: bool = True,
+        portable: bool = True,
     ) -> tuple[Mapping[str, Any], bool]:
         """Apply standard message-history maintenance before an LLM call.
 
@@ -1087,6 +1097,13 @@ class BaseAgent(Generic[TState], ABC):
         ``add_messages`` reducer should use :meth:`messages_update` with the
         returned flag to avoid appending duplicate history after summarization or
         dangling-tool patching.
+
+        With ``portable`` (default), AI messages produced by a different model
+        than ``self.llm`` are rebuilt from text + tool calls so a model switch
+        (TUI picker, reloaded agent, multi-model gateway) never replays another
+        model's reasoning items/signatures; see
+        :mod:`ursa.util.message_portability`. Runs before summarization so the
+        token count and summary never see foreign signatures.
         """
         new_state = deepcopy(state)
         full_overwrite = False
@@ -1103,12 +1120,21 @@ class BaseAgent(Generic[TState], ABC):
             ):
                 new_state["messages"] = fixed
                 full_overwrite = True
+        if portable and "messages" in new_state:
+            msgs, changed = make_portable(new_state["messages"], self.llm)
+            if changed:
+                new_state["messages"] = msgs
+                full_overwrite = True
         if summarize:
-            new_state, full_overwrite = self._summarize_context(
+            # OR the flag: earlier steps (sanitize, system prompt, portability)
+            # may already require an overwrite that must not be discarded when
+            # no summarization happens.
+            new_state, summarized = self._summarize_context(
                 new_state,
                 system_prompt=system_prompt,
                 summary_prompt=summary_prompt,
             )
+            full_overwrite = full_overwrite or summarized
         if patch_dangling:
             new_state, full_overwrite = self._patch_dangling(
                 new_state, full_overwrite

@@ -19,16 +19,26 @@ from mcp import StdioServerParameters
 from pydantic import ValidationError
 from rich.console import Console as RealConsole
 
+from ursa import security
 from ursa.agents.base import AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import ChatModelConfig, EmbModelConfig, UrsaConfig
-from ursa.cli.runtime import HITL, AgentHITL
+from ursa.cli.runtime import EPHEMERAL_AGENT_PREFIX, HITL, AgentHITL
 from ursa.cli.tui.agent_info import load_agent_tools
 from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.rendering import event_artifact
 
 LOGGER = logging.getLogger(__name__)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ursa_cache(monkeypatch, tmp_path_factory):
+    # Every session now owns a (temporary) agent directory under the cache, so
+    # the real runtime must never be exercised against the user's ~/.cache.
+    monkeypatch.setattr(
+        security, "URSA_CACHE_DIR", tmp_path_factory.mktemp("ursa_cache")
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -98,23 +108,57 @@ async def test_agents_use_configured_workspace(ursa_config, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_unnamed_cli_agent_does_not_create_checkpointer(
+async def test_unnamed_cli_session_uses_temporary_agent_removed_on_close(
     tmp_path, monkeypatch
 ):
     _stub_hitl_dependencies(monkeypatch)
     workspace = tmp_path / "ephemeral-workspace"
     hitl = HITL(UrsaConfig(workspace=workspace))
 
-    async def unexpected_checkpointer(_checkpoint_path):
-        pytest.fail("Unnamed CLI sessions must not create a checkpointer")
-
-    monkeypatch.setattr(hitl, "_get_checkpointer", unexpected_checkpointer)
+    # The user-facing name stays unset, so the UI never shows the generated one.
+    assert hitl.agent_name is None
+    name = hitl.session_agent_name
+    assert name.startswith(EPHEMERAL_AGENT_PREFIX)
+    den = security.group_agents_dir(hitl.group) / name
 
     agent = await hitl.get_agent("chat")
 
+    # History is checkpointed in the agent den, never in the workspace.
     assert agent._agent is not None
-    assert agent._agent.checkpointer is None
+    assert isinstance(agent._agent.checkpointer, AsyncSqliteSaver)
+    assert agent._agent.den == den
+    assert (den / "db" / "checkpointer.db").exists()
     assert not (workspace / "db" / "checkpointer.db").exists()
+
+    await hitl.aclose()
+    assert not den.exists()
+
+
+@pytest.mark.asyncio
+async def test_temporary_agent_names_are_unique_per_session(
+    tmp_path, monkeypatch
+):
+    _stub_hitl_dependencies(monkeypatch)
+    first = HITL(UrsaConfig(workspace=tmp_path / "a"))
+    second = HITL(UrsaConfig(workspace=tmp_path / "b"))
+    try:
+        assert first.session_agent_name != second.session_agent_name
+    finally:
+        await first.aclose()
+        await second.aclose()
+
+
+@pytest.mark.asyncio
+async def test_named_session_agent_is_kept_on_close(tmp_path, monkeypatch):
+    _stub_hitl_dependencies(monkeypatch)
+    hitl = HITL(UrsaConfig(workspace=tmp_path, agent_name="keep-me"))
+    assert hitl.session_agent_name == "keep-me"
+    den = security.group_agents_dir(hitl.group) / "keep-me"
+
+    await hitl.get_agent("chat")
+    await hitl.aclose()
+
+    assert den.exists()  # only generated, prefixed agents are ever removed
 
 
 @pytest.mark.asyncio
@@ -1654,3 +1698,63 @@ async def test_mcp_smoke(mcp_server: Client):
 async def test_mcp_agents(mcp_server: Client, agent: str, query: str):
     response = await mcp_server.call_tool(agent, {"prompt": query})
     assert isinstance(response.structured_content["result"], str)
+
+
+def _recording_models(monkeypatch):
+    """Every chat model the runtime builds, in order (RecordingChatModel)."""
+    from tests.agents.utils import RecordingChatModel
+
+    built = []
+
+    def init_chat_model(self):
+        built.append(RecordingChatModel())
+        return built[-1]
+
+    monkeypatch.setattr(ChatModelConfig, "init_chat_model", init_chat_model)
+    monkeypatch.setattr(
+        "ursa.cli.runtime.validate_model_provider", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        "ursa.cli.runtime.enforce_model_group_policy", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        "ursa.cli.runtime.start_mcp_client", lambda servers: None
+    )
+    return built
+
+
+def _saw(model, text):
+    return any(text in str(m.content) for m in model.calls[-1])
+
+
+@pytest.mark.asyncio
+async def test_unnamed_session_keeps_history_across_model_switch(
+    tmp_path, monkeypatch
+):
+    # Regression: switching models reset the unnamed session's only copy of
+    # the conversation, so every model after a switch started from scratch.
+    built = _recording_models(monkeypatch)
+    hitl = HITL(UrsaConfig(workspace=tmp_path))
+    try:
+        await hitl.run_agent("chat", "My secret word is PINEAPPLE.")
+        await hitl.reconfigure_model("second-model", None)
+        await hitl.run_agent("chat", "What is my secret word?")
+        assert built[-1] is not built[0]  # really a new model
+        assert _saw(built[-1], "PINEAPPLE")
+    finally:
+        await hitl.aclose()
+
+
+@pytest.mark.asyncio
+async def test_unnamed_session_shares_history_across_agent_types(
+    tmp_path, monkeypatch
+):
+    # Same behaviour as a named session: one thread for every agent type.
+    built = _recording_models(monkeypatch)
+    hitl = HITL(UrsaConfig(workspace=tmp_path))
+    try:
+        await hitl.run_agent("chat", "My secret word is PINEAPPLE.")
+        await hitl.run_agent("prompt", "Unrelated request.")
+        assert _saw(built[-1], "PINEAPPLE")
+    finally:
+        await hitl.aclose()

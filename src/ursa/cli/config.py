@@ -463,8 +463,9 @@ class ChatModelConfig(ModelConfig):
 
     def init_chat_model(self) -> BaseChatModel:
         from ursa.util.model_metadata import load_model_context
+        from ursa.util.openai_compat import with_responses_fallback
 
-        llm = init_chat_model(**self.kwargs)
+        llm = with_responses_fallback(init_chat_model(**self.kwargs))
         self.check_instantiated_model(llm)
         load_model_context(
             llm, explicit_profile="profile" in (self.model_extra or {})
