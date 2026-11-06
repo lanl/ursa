@@ -99,6 +99,7 @@ def _init_llm(
 
     from ursa.util.http import build_httpx_async_client, build_httpx_client
     from ursa.util.model_metadata import load_model_context
+    from ursa.util.openai_compat import with_responses_fallback
 
     raw_base_url = llm_cfg.get("base_url")
     base_url = str(raw_base_url).strip() if raw_base_url is not None else None
@@ -138,7 +139,7 @@ def _init_llm(
             build_httpx_async_client(verify=True),
         )
 
-    llm = init_chat_model(**kwargs)
+    llm = with_responses_fallback(init_chat_model(**kwargs))
     load_model_context(llm, explicit_profile="profile" in model_kwargs)
     return llm
 
