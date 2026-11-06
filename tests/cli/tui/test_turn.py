@@ -41,13 +41,13 @@ async def test_turn_spacing_is_one_row_with_or_without_events(tmp_path):
             "tool": "run_command",
             "phase": "start",
             "query": "pwd",
-            "_command_id": "pwd",
+            "tool_call_id": "pwd",
         })
         await with_tool.event({
             "tool": "run_command",
             "phase": "end",
             "query": "pwd",
-            "_command_id": "pwd",
+            "tool_call_id": "pwd",
             "result": str(tmp_path),
             "returncode": 0,
         })
@@ -158,6 +158,7 @@ async def test_event_summary_groups_follow_activity_order(tmp_path):
             {"name": "run_command"},
             "",
             run_id="ordered-command",
+            tool_call_id="ordered-command",
             inputs={"query": "pwd"},
         )
         await handler.on_tool_end("", run_id="ordered-command")
@@ -508,6 +509,7 @@ async def test_parallel_read_callbacks_render_as_one_group(tmp_path):
             {"name": "run_command"},
             "",
             run_id="command-after-reads",
+            tool_call_id="command-after-reads",
             inputs={"query": "pwd"},
         )
         await handler.on_tool_end("output", run_id="command-after-reads")
