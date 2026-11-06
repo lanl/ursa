@@ -22,7 +22,7 @@ from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from enum import StrEnum
-from functools import wraps
+from functools import partialmethod, wraps
 from pathlib import Path
 from time import monotonic
 from typing import Any, Concatenate, ParamSpec, Protocol, TypeAlias, TypeVar
@@ -124,8 +124,6 @@ class _ProcessOutputForwarder:
         outgoing: asyncio.Queue[dict[str, Any]],
         agent_id: str,
     ) -> None:
-        self.outgoing = outgoing
-        self.agent_id = agent_id
         self.root = logging.getLogger()
         self.handler = _ProcessLogHandler(
             outgoing, asyncio.get_running_loop(), agent_id
@@ -190,18 +188,6 @@ RuntimeRequestHandler: TypeAlias = Callable[
 ]
 
 
-def _validate_agent_id(agent_id: str) -> None:
-    if not agent_id.strip():
-        raise ValueError("agent_id cannot be blank")
-
-
-def _validate_factory_reference(factory: AgentFactory | str) -> None:
-    if isinstance(factory, str) and ":" not in factory:
-        raise ValueError(
-            "string agent factories must use 'package.module:qualname'"
-        )
-
-
 class AgentStatus(StrEnum):
     REGISTERED = "registered"
     STARTING = "starting"
@@ -230,8 +216,12 @@ class AgentSpec:
     working_directory: Path | None = None
 
     def __post_init__(self) -> None:
-        _validate_agent_id(self.agent_id)
-        _validate_factory_reference(self.factory)
+        if not self.agent_id.strip():
+            raise ValueError("agent_id cannot be blank")
+        if isinstance(self.factory, str) and ":" not in self.factory:
+            raise ValueError(
+                "string agent factories must use 'package.module:qualname'"
+            )
         object.__setattr__(self, "config", dict(self.config or {}))
         if self.environment is not None:
             object.__setattr__(self, "environment", dict(self.environment))
@@ -493,32 +483,15 @@ class _RemoteCallbackHandler(AsyncCallbackHandler):
             kwargs["metadata"] = metadata
         await self._context.emit_event(self._request_id, method, args, kwargs)
 
-    async def on_custom_event(self, *args: Any, **kwargs: Any) -> None:
-        await self._send("on_custom_event", *args, **kwargs)
-
-    async def on_llm_start(self, *args: Any, **kwargs: Any) -> None:
-        await self._send("on_llm_start", *args, **kwargs)
-
-    async def on_chat_model_start(self, *args: Any, **kwargs: Any) -> None:
-        await self._send("on_chat_model_start", *args, **kwargs)
-
-    async def on_llm_new_token(self, *args: Any, **kwargs: Any) -> None:
-        await self._send("on_llm_new_token", *args, **kwargs)
-
-    async def on_llm_end(self, *args: Any, **kwargs: Any) -> None:
-        await self._send("on_llm_end", *args, **kwargs)
-
-    async def on_llm_error(self, *args: Any, **kwargs: Any) -> None:
-        await self._send("on_llm_error", *args, **kwargs)
-
-    async def on_tool_start(self, *args: Any, **kwargs: Any) -> None:
-        await self._send("on_tool_start", *args, **kwargs)
-
-    async def on_tool_end(self, *args: Any, **kwargs: Any) -> None:
-        await self._send("on_tool_end", *args, **kwargs)
-
-    async def on_tool_error(self, *args: Any, **kwargs: Any) -> None:
-        await self._send("on_tool_error", *args, **kwargs)
+    on_custom_event = partialmethod(_send, "on_custom_event")
+    on_llm_start = partialmethod(_send, "on_llm_start")
+    on_chat_model_start = partialmethod(_send, "on_chat_model_start")
+    on_llm_new_token = partialmethod(_send, "on_llm_new_token")
+    on_llm_end = partialmethod(_send, "on_llm_end")
+    on_llm_error = partialmethod(_send, "on_llm_error")
+    on_tool_start = partialmethod(_send, "on_tool_start")
+    on_tool_end = partialmethod(_send, "on_tool_end")
+    on_tool_error = partialmethod(_send, "on_tool_error")
 
 
 class AgentProcess:

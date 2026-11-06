@@ -82,37 +82,27 @@ def test_interpolate_env_replaces_existing_variable(monkeypatch):
     assert config_mod.interpolate_env("hello ${URSA_TEST_VAR}") == "hello world"
 
 
-def test_interpolate_env_uses_default_when_missing(
-    monkeypatch,
+@pytest.mark.parametrize(
+    "variable, template, expected",
+    [
+        (
+            "URSA_MISSING_VAR",
+            "value ${URSA_MISSING_VAR:fallback}",
+            "value fallback",
+        ),
+        (
+            "URSA_URL_VAR",
+            "url=${URSA_URL_VAR:mysql://localhost:5432/db}",
+            "url=mysql://localhost:5432/db",
+        ),
+        ("URSA_EMPTY_VAR", "start ${URSA_EMPTY_VAR} end", "start  end"),
+    ],
+)
+def test_interpolate_env_when_variable_is_missing(
+    monkeypatch, variable, template, expected
 ):
-    monkeypatch.delenv("URSA_MISSING_VAR", raising=False)
-
-    assert (
-        config_mod.interpolate_env("value ${URSA_MISSING_VAR:fallback}")
-        == "value fallback"
-    )
-
-
-def test_interpolate_env_allows_colon_in_default(monkeypatch):
-    monkeypatch.delenv("URSA_URL_VAR", raising=False)
-
-    assert (
-        config_mod.interpolate_env(
-            "url=${URSA_URL_VAR:mysql://localhost:5432/db}"
-        )
-        == "url=mysql://localhost:5432/db"
-    )
-
-
-def test_interpolate_env_missing_variable_without_default_is_empty(
-    monkeypatch,
-):
-    monkeypatch.delenv("URSA_EMPTY_VAR", raising=False)
-
-    assert (
-        config_mod.interpolate_env("start ${URSA_EMPTY_VAR} end")
-        == "start  end"
-    )
+    monkeypatch.delenv(variable, raising=False)
+    assert config_mod.interpolate_env(template) == expected
 
 
 def test_deep_interp_env_recurses_nested_dictionaries(

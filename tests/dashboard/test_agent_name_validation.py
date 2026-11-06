@@ -32,33 +32,34 @@ def _create_payload(tmp_path: Path, name: str) -> dict:
     }
 
 
-def test_create_session_rejects_spaced_name_with_400(client) -> None:
+@pytest.mark.parametrize(
+    "name, detail",
+    [
+        ("Swiss Roll", "letters, numbers"),
+        (".hidden", "must start with a letter or number"),
+    ],
+)
+def test_create_session_rejects_invalid_name_with_400(
+    client, name, detail
+) -> None:
     test_client, tmp_path = client
 
     response = test_client.post(
-        "/sessions", json=_create_payload(tmp_path, "Swiss Roll")
+        "/sessions", json=_create_payload(tmp_path, name)
     )
 
     assert response.status_code == 400
-    assert "letters, numbers" in response.json()["detail"]
+    assert detail in response.json()["detail"]
 
 
-def test_agent_save_rejects_spaced_name_with_400(client) -> None:
+@pytest.mark.parametrize("operation", ["save", "delete"])
+def test_agent_management_rejects_spaced_name_with_400(
+    client, operation
+) -> None:
     test_client, _ = client
 
     response = test_client.post(
-        "/agent-management/save", json={"agent_name": "Swiss Roll"}
-    )
-
-    assert response.status_code == 400
-    assert "letters, numbers" in response.json()["detail"]
-
-
-def test_agent_delete_rejects_spaced_name_with_400(client) -> None:
-    test_client, _ = client
-
-    response = test_client.post(
-        "/agent-management/delete", json={"agent_name": "Swiss Roll"}
+        f"/agent-management/{operation}", json={"agent_name": "Swiss Roll"}
     )
 
     assert response.status_code == 400
@@ -75,19 +76,6 @@ def test_agent_copy_rejects_spaced_new_name_with_400(client) -> None:
 
     assert response.status_code == 400
     assert "letters, numbers" in response.json()["detail"]
-
-
-def test_create_session_rejects_leading_dot_with_clear_message(client) -> None:
-    # The rule requires an alphanumeric first character; the message must
-    # say so rather than implying dot is always allowed.
-    test_client, tmp_path = client
-
-    response = test_client.post(
-        "/sessions", json=_create_payload(tmp_path, ".hidden")
-    )
-
-    assert response.status_code == 400
-    assert "must start with a letter or number" in response.json()["detail"]
 
 
 def test_create_session_accepts_valid_name(client) -> None:
