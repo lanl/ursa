@@ -96,32 +96,35 @@ def plan_job_retention(
     return plan_retention(root, config.policy, roots=roots, protected=protected)
 
 
-def apply_job_retention(root: Path, config: HarborRetentionConfig) -> dict:
+def apply_job_retention(
+    root: Path,
+    config: HarborRetentionConfig,
+    *,
+    job_result: JobResult | None = None,
+) -> dict:
     """Require completed job/trial metadata before applying or resuming cleanup."""
     if root.is_symlink():
         raise ValueError("Run directory must not be a symlink")
     try:
-        state = _apply_job_retention(root, config)
+        if job_result is not None and job_result.finished_at is None:
+            raise ValueError("Retention requires a finished Harbor job")
+        result = json.loads((root / "result.json").read_text())
+        if not result.get("finished_at"):
+            raise ValueError("Retention requires a finished Harbor job")
+        for trial in root.glob("*/result.json"):
+            if not json.loads(trial.read_text()).get("finished_at"):
+                raise ValueError(
+                    f"Retention requires a finished trial: {trial.parent}"
+                )
+        roots, protected = _scope(root, config)
+        state = retain_artifacts(
+            root, config.policy, roots=roots, protected=protected
+        )
         _write_status(root, "complete", duration_sec=state["duration_sec"])
         return state
     except Exception as exc:
         _write_status(root, "failed", error=f"{type(exc).__name__}: {exc}")
         raise
-
-
-def _apply_job_retention(root: Path, config: HarborRetentionConfig) -> dict:
-    result = json.loads((root / "result.json").read_text())
-    if not result.get("finished_at"):
-        raise ValueError("Retention requires a finished Harbor job")
-    for trial in root.glob("*/result.json"):
-        if not json.loads(trial.read_text()).get("finished_at"):
-            raise ValueError(
-                f"Retention requires a finished trial: {trial.parent}"
-            )
-    roots, protected = _scope(root, config)
-    return retain_artifacts(
-        root, config.policy, roots=roots, protected=protected
-    )
 
 
 def _write_status(root: Path, status: str, **details) -> None:
@@ -142,25 +145,13 @@ class RetentionPlugin(BaseJobPlugin):
         self.config = load_retention_config(Path(policy))
         self.root: Path | None = None
 
-    def _status(self, status: str, **details) -> None:
-        if self.root is None:
-            raise RuntimeError("Retention plugin has not started")
-        _write_status(self.root, status, **details)
-
     async def on_job_start(self, job: Job) -> None:
         self.root = job.job_dir
-        self._status("pending")
+        _write_status(self.root, "pending")
 
     async def on_job_end(self, job_result: JobResult) -> None:
         if self.root is None:
             raise RuntimeError("Retention plugin has not started")
-        try:
-            if job_result.finished_at is None:
-                raise ValueError("Retention requires a finished Harbor job")
-            state = await asyncio.to_thread(
-                apply_job_retention, self.root, self.config
-            )
-            self._status("complete", duration_sec=state["duration_sec"])
-        except Exception as exc:
-            self._status("failed", error=f"{type(exc).__name__}: {exc}")
-            raise
+        await asyncio.to_thread(
+            apply_job_retention, self.root, self.config, job_result=job_result
+        )

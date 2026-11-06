@@ -31,19 +31,14 @@ from pydantic import (
 from ursa.util.fileio import atomic_write_text
 
 Action = Literal["keep", "delete", "archive"]
+GlobPattern = Annotated[str, Field(min_length=1, pattern=r"^[^!#]")]
 MANIFEST = "retention.json"
 
 
 class RetentionRule(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    match: Annotated[list[str], Field(min_length=1)]
+    match: Annotated[list[GlobPattern], Field(min_length=1)]
     action: Action
-
-    @model_validator(mode="after")
-    def validate_patterns(self) -> Self:
-        if any(not p or p.startswith(("!", "#")) for p in self.match):
-            raise ValueError("Use positive, nonempty glob patterns")
-        return self
 
 
 class ArchiveConfig(BaseModel):
@@ -67,6 +62,11 @@ class RetentionPolicy(BaseModel):
     rules: list[RetentionRule] = Field(default_factory=list)
     default_action: Action = "keep"
     archive: ArchiveConfig | None = None
+
+    def removes(self, action: Action) -> bool:
+        return action == "delete" or (
+            action == "archive" and self.archive.remove_originals
+        )
 
     @model_validator(mode="after")
     def validate_archive(self) -> Self:
@@ -260,14 +260,12 @@ def _write(root: Path, state: dict) -> None:
 def _verify_archive(path: Path, entries: list[ArtifactEntry]) -> None:
     expected = {entry.path: entry for entry in entries}
     with tarfile.open(path, "r:xz") as archive:
-        seen = set()
         for member in archive:
-            if member.name not in expected or member.name in seen:
+            entry = expected.pop(member.name, None)
+            if entry is None:
                 raise ValueError(
                     "Archive inventory differs from retention plan"
                 )
-            entry = expected[member.name]
-            seen.add(member.name)
             if entry.link is not None:
                 if not member.issym() or member.linkname != entry.link:
                     raise ValueError(f"Archive link mismatch: {entry.path}")
@@ -281,7 +279,7 @@ def _verify_archive(path: Path, entries: list[ArtifactEntry]) -> None:
                     digest = hashlib.file_digest(stream, "sha256").hexdigest()
                 if digest != entry.sha256:
                     raise ValueError(f"Archive checksum mismatch: {entry.path}")
-        if seen != set(expected):
+        if expected:
             raise ValueError("Archive is missing planned artifacts")
 
 
@@ -292,12 +290,9 @@ def _check_inputs(plan: RetentionPlan, *, cleanup: bool) -> None:
     if set(current) - expected:
         raise ValueError("New artifacts appeared after retention was planned")
     for entry in plan.entries:
-        path = _path(root, entry.path)
-        removable = entry.action == "delete" or (
-            entry.action == "archive" and plan.policy.archive.remove_originals
-        )
-        if not path.exists() and not path.is_symlink():
-            if cleanup and removable:
+        path = current.get(entry.path)
+        if path is None:
+            if cleanup and plan.policy.removes(entry.action):
                 continue
             raise ValueError(f"Artifact disappeared: {entry.path}")
         if _identity(path) != entry.identity:
@@ -435,11 +430,7 @@ def apply_retention(plan: RetentionPlan) -> dict:
                 state["cleanup_started"] = True
                 _write(root, state)
             for entry in plan.entries:
-                remove = entry.action == "delete" or (
-                    entry.action == "archive"
-                    and plan.policy.archive.remove_originals
-                )
-                if not remove:
+                if not plan.policy.removes(entry.action):
                     continue
                 path = _path(root, entry.path)
                 if path.exists() or path.is_symlink():
