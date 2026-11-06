@@ -6,6 +6,9 @@ from typing import Any
 import httpx
 import truststore
 
+# Keep the stdlib implementation available for certificate enumeration after
+# our process-wide truststore injection (truststore cannot enumerate CAs).
+OpenSSLContext = ssl.SSLContext
 _truststore_injected = False
 
 

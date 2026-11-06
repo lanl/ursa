@@ -48,6 +48,8 @@ from harbor.models.trial.paths import EnvironmentPaths
 from harbor.utils.env import resolve_env_vars
 from pathspec import GitIgnoreSpec
 
+from ursa.util.http import OpenSSLContext
+
 _COMPOSE_SERVICE_FIELDS = frozenset({
     "build",
     "command",
@@ -78,7 +80,8 @@ _HARBOR_WRITABLE_IMAGE_TARGETS = (
 
 def _host_ca_certificates_pem() -> str:
     """Serialize the host OpenSSL trust anchors as one PEM bundle."""
-    context = ssl.create_default_context()
+    context = OpenSSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.load_default_certs()
     paths = ssl.get_default_verify_paths()
     if paths.cafile is not None:
         context.load_verify_locations(cafile=paths.cafile)
@@ -450,6 +453,24 @@ def _resolve_compose_value(key: str, value: Any) -> str:
     return resolved.replace(literal_marker, "$")
 
 
+def _resolve_compose_mapping(
+    values: dict[str, Any] | list[str],
+) -> dict[str, str]:
+    """Resolve Compose environment/build arguments in mapping or list form."""
+    if isinstance(values, dict):
+        return {
+            key: _resolve_compose_value(key, value)
+            for key, value in values.items()
+        }
+    resolved = {}
+    for entry in values:
+        key, separator, value = entry.partition("=")
+        resolved[key] = _resolve_compose_value(
+            key, value if separator else None
+        )
+    return resolved
+
+
 def _read_compose_env_file(path: Path) -> dict[str, str]:
     environment = {}
     for number, raw_line in enumerate(path.read_text().splitlines(), 1):
@@ -484,21 +505,28 @@ def _compose_environment(
     environment = {}
     for path in service.get("env_file", []):
         environment.update(_read_compose_env_file(Path(path)))
-    configured = service.get("environment", {})
-    if isinstance(configured, dict):
-        environment.update({
-            key: _resolve_compose_value(key, value)
-            for key, value in configured.items()
-        })
-    else:
-        for entry in configured:
-            key, separator, value = entry.partition("=")
-            environment[key] = _resolve_compose_value(
-                key, value if separator else None
-            )
+    environment.update(_resolve_compose_mapping(service.get("environment", {})))
     if service_name == "main":
         environment.update(main_environment)
     return environment
+
+
+def _shell_exports(environment: dict[str, str], *, context: str) -> str:
+    """Validate shell variable names and quote values without interpolation."""
+    invalid = [
+        key
+        for key in environment
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None
+    ]
+    if invalid:
+        raise ValueError(
+            f"Invalid {context} environment variable names: "
+            + ", ".join(sorted(invalid))
+        )
+    return "".join(
+        f"export {key}={shlex.quote(value)}\n"
+        for key, value in sorted(environment.items())
+    )
 
 
 def _write_compose_environment(
@@ -509,23 +537,9 @@ def _write_compose_environment(
 ) -> Path | None:
     if not environment:
         return None
-    invalid = [
-        key
-        for key in environment
-        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None
-    ]
-    if invalid:
-        raise ValueError(
-            "Invalid Compose environment variable names: "
-            + ", ".join(sorted(invalid))
-        )
+    contents = _shell_exports(environment, context="Compose")
     path = project_dir / f"{_compose_key(identity, service_name)}.env.sh"
-    path.write_text(
-        "".join(
-            f"export {key}={shlex.quote(value)}\n"
-            for key, value in sorted(environment.items())
-        )
-    )
+    path.write_text(contents)
     path.chmod(0o600)
     return path
 
@@ -1464,19 +1478,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             context = Path(build)
             return context / "Dockerfile", context, (), None
         context = Path(build.get("context", "."))
-        raw_args = build.get("args", {})
-        if isinstance(raw_args, dict):
-            resolved_args = {
-                str(key): _resolve_compose_value(str(key), value)
-                for key, value in raw_args.items()
-            }
-        else:
-            resolved_args = {}
-            for entry in raw_args:
-                key, separator, value = entry.partition("=")
-                resolved_args[key] = _resolve_compose_value(
-                    key, value if separator else None
-                )
+        resolved_args = _resolve_compose_mapping(build.get("args", {}))
         return (
             context / build.get("dockerfile", "Dockerfile"),
             context,
@@ -2018,33 +2020,22 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         return {instance["instance"] for instance in instances}
 
     async def _stop_instance(self, *, warn: bool) -> bool:
+        operation = "inspect"
         try:
-            exists = await self._instance_exists()
-        except RuntimeError as exc:
-            if warn:
-                self.logger.warning(
-                    "Failed to inspect Singularity instance %s: %s",
+            if await self._instance_exists():
+                operation = "stop"
+                await self._run(
+                    self._instance_runtime(),
+                    "instance",
+                    "stop",
+                    "--force",
                     self._instance_name,
-                    exc,
                 )
-                return False
-            raise
-        if not exists:
-            self._instance_started = False
-            self._instance_start_attempted = False
-            return True
-        try:
-            await self._run(
-                self._instance_runtime(),
-                "instance",
-                "stop",
-                "--force",
-                self._instance_name,
-            )
         except RuntimeError as exc:
             if warn:
                 self.logger.warning(
-                    "Failed to stop Singularity instance %s: %s",
+                    "Failed to %s Singularity instance %s: %s",
+                    operation,
                     self._instance_name,
                     exc,
                 )
@@ -2432,23 +2423,9 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         if not multiline:
             yield command, env, None
             return
-        invalid = [
-            key
-            for key in multiline
-            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None
-        ]
-        if invalid:
-            raise ValueError(
-                "Invalid multiline environment variable names: "
-                + ", ".join(sorted(invalid))
-            )
+        contents = _shell_exports(multiline, context="multiline")
         with self._staged_transfer("exec-env") as staged:
-            staged.write_text(
-                "".join(
-                    f"export {key}={shlex.quote(value)}\n"
-                    for key, value in sorted(multiline.items())
-                )
-            )
+            staged.write_text(contents)
             staged.chmod(0o600)
             yield (
                 command,
