@@ -171,11 +171,13 @@ def test_native_backend_smoke_when_binding_is_available():
             "        assert 'native' in await terminal.contents()\n"
             "    finally:\n"
             "        await terminal.terminate()\n"
-            "asyncio.run(main())\n",
+            "asyncio.run(asyncio.wait_for(main(), timeout=10))\n",
         ],
         capture_output=True,
         text=True,
-        timeout=10,
+        # Fresh interpreters import the tools and agent stack before the smoke
+        # starts. Allow cold CI imports without relaxing its execution timeout.
+        timeout=60,
     )
     if result.returncode == -signal.SIGILL:
         pytest.skip("pyghostty wheel requires unsupported CPU instructions")
