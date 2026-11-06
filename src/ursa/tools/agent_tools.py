@@ -26,6 +26,8 @@ def _routing_tool_error(error: BaseException) -> ToolException | None:
         phrase in message.casefold()
         for phrase in (
             "unknown agent path",
+            "unknown message target group",
+            "message target group",
             "agent path cannot be empty",
             "root agent has no parent",
             "path escapes hierarchy root",
@@ -186,13 +188,36 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
         recipient = resolve_local_recipient(target)
         return await post_local_agent(recipient, message)
 
+    async def post_local_messages(
+        targets: str | list[str], message: str
+    ) -> tuple[list[str], list[Any]]:
+        """Preflight all local paths and selector expansions before delivery."""
+        recipients = agent.resolve_message_targets(targets)
+        for recipient in recipients:
+            recipient._ensure_hierarchy_accepting_messages()
+        return (
+            [recipient.agent_path for recipient in recipients],
+            list(
+                await asyncio.gather(
+                    *(
+                        post_local_agent(recipient, message)
+                        for recipient in recipients
+                    )
+                )
+            ),
+        )
+
     @tool
     async def send_message(target: str | list[str], message: str) -> str:
         """Queue a one-way message to one agent or a list of agents.
 
         Each target may be a relative path, a sibling name, or a root-qualified
-        path such as ``root/reviewer``. URSA returns after queueing the message;
-        it does not wait for the receiving agent's response. For a target list,
+        path such as ``root/reviewer``. Message groups are ``@everyone`` for
+        every other hierarchy member, ``@supervisor`` for the immediate parent,
+        ``@peers`` for same-parent agents, and ``@reports`` for immediate
+        children. ``@parent``, ``@siblings``, and ``@children`` are aliases.
+        Empty groups are errors. URSA returns after queueing the message; it
+        does not wait for the receiving agent's response. For a target list,
         every address is validated before anything is delivered, and delivery
         acknowledgements retain input order.
 
@@ -202,36 +227,51 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
         Ask recipients to call send_message with an explicit reply target;
         their ordinary final responses are not routed back automatically.
         """
-        if isinstance(target, str):
-            return await send_one_message(target, message)
-        if not isinstance(target, list) or not target:
+        if not isinstance(target, str) and (
+            not isinstance(target, list) or not target
+        ):
             raise ToolException(
                 "target must be a non-empty path or list of paths"
             )
-        if not all(isinstance(item, str) and item.strip() for item in target):
+        routes = [target] if isinstance(target, str) else target
+        if not all(isinstance(item, str) and item.strip() for item in routes):
             raise ToolException("each target must be a non-empty agent path")
 
         runtime = getattr(agent, "_process_runtime", None)
         if runtime is not None:
             try:
+                if isinstance(target, str):
+                    return await send_one_message(target, message)
                 results = await runtime.send_messages(target, message)
             except RuntimeError as exc:
                 if tool_error := _routing_tool_error(exc):
                     raise tool_error from exc
                 raise
+            # The host expands selectors transactionally and returns one
+            # acknowledgement per concrete recipient. Do not zip that result
+            # with the caller's raw selector list: one selector can name many
+            # agents, and acknowledgements already include the concrete path.
+            acknowledgements = []
+            for result in results:
+                if isinstance(result, Mapping):
+                    if "error" in result:
+                        acknowledgements.append(f"Error: {result['error']}")
+                        continue
+                    result = result.get("result")
+                acknowledgements.append(_stringify_result(result))
+            return "\n\n".join(acknowledgements)
         else:
             # Complete preflight before calling any inbox. This is deliberately
             # separate from post_local_agent so an invalid sibling cannot
             # race with an otherwise valid recipient.
-            recipients = [resolve_local_recipient(item) for item in target]
-            results = await asyncio.gather(
-                *(
-                    post_local_agent(recipient, message)
-                    for recipient in recipients
-                )
-            )
+            try:
+                routes, results = await post_local_messages(target, message)
+            except (KeyError, TypeError, RuntimeError) as exc:
+                raise ToolException(str(exc)) from exc
+            if isinstance(target, str) and len(results) == 1:
+                return str(results[0])
         formatted = []
-        for item, result in zip(target, results, strict=True):
+        for item, result in zip(routes, results, strict=True):
             if isinstance(result, Mapping):
                 if "error" in result:
                     formatted.append(f"{item}: Error: {result['error']}")

@@ -1290,16 +1290,16 @@ class AgentRuntime:
             self._wake_runtime_waiters(sender_runtime_id)
             return None
         if action == "invoke":
-            target_id, target_path = self._validate_message_target(
-                sender_runtime_id, str(payload.get("target") or "")
+            resolved = self._resolve_message_targets(
+                sender_runtime_id, [str(payload.get("target") or "")]
             )
-            return await self._queue_message_target(
+            acknowledgements = await self._queue_message_targets(
                 sender_runtime_id,
-                target_id,
-                target_path,
+                resolved,
                 str(payload.get("message") or ""),
                 callbacks,
             )
+            return "\n\n".join(acknowledgements)
         if action == "invoke_many":
             targets = payload.get("targets")
             if not isinstance(targets, list) or not targets:
@@ -1311,49 +1311,134 @@ class AgentRuntime:
             ):
                 raise ValueError("each target must be a non-empty agent path")
 
-            # Validate the complete batch before one recipient is invoked. This
-            # keeps a bad address from partially delivering a user request.
-            resolved = [
-                self._validate_message_target(sender_runtime_id, target)
-                for target in targets
+            resolved = self._resolve_message_targets(sender_runtime_id, targets)
+            acknowledgements = await self._queue_message_targets(
+                sender_runtime_id,
+                resolved,
+                str(payload.get("message") or ""),
+                callbacks,
+            )
+            return [
+                {"result": acknowledgement}
+                for acknowledgement in acknowledgements
             ]
-            message = str(payload.get("message") or "")
+        raise ValueError(f"Unknown runtime request {action!r}")
+
+    def _resolve_message_targets(
+        self, sender_runtime_id: str, targets: Sequence[str]
+    ) -> list[tuple[str, str]]:
+        """Expand send-only selectors and preflight every concrete route.
+
+        The expansion happens before callbacks or delivery scheduling. It is
+        deliberately not part of ``_resolve_path``: wait, stop, and spawn keep
+        their exact path-only grammar.
+        """
+        seen: set[str] = set()
+        resolved = []
+        expands_groups = any(
+            target.strip().startswith("@") for target in targets
+        )
+        sender_path = self._runtime_paths[sender_runtime_id]
+        for target in targets:
+            paths = self._expand_message_target(sender_runtime_id, target)
+            if not paths:
+                raise ValueError(
+                    f"Message target group {target!r} has no recipients"
+                )
+            for path in paths:
+                target_id, target_path = self._validate_message_target(
+                    sender_runtime_id, path
+                )
+                if expands_groups and target_path == sender_path:
+                    continue
+                if target_path not in seen:
+                    seen.add(target_path)
+                    resolved.append((target_id, target_path))
+        return resolved
+
+    def _expand_message_target(
+        self, sender_runtime_id: str, target: str
+    ) -> list[str]:
+        """Expand a one-way message selector inside the caller's hierarchy."""
+        target = target.strip()
+        if not target.startswith("@"):
+            return [target]
+        aliases = {
+            "@everyone": "everyone",
+            "@supervisor": "supervisor",
+            "@parent": "supervisor",
+            "@peers": "peers",
+            "@siblings": "peers",
+            "@reports": "reports",
+            "@children": "reports",
+        }
+        relation = aliases.get(target.casefold())
+        if relation is None:
+            raise ValueError(f"Unknown message target group {target!r}")
+        sender_path = self._runtime_paths[sender_runtime_id]
+        hierarchy = self._hierarchies[self._runtime_roots[sender_runtime_id]]
+        if relation == "everyone":
+            return [path for path in hierarchy if path != sender_path]
+        if relation == "supervisor":
+            return [sender_path.rsplit("/", 1)[0]] if "/" in sender_path else []
+        if relation == "reports":
+            depth = sender_path.count("/") + 1
+            prefix = f"{sender_path}/"
+            return [
+                path
+                for path in hierarchy
+                if path.startswith(prefix) and path.count("/") == depth
+            ]
+        if "/" not in sender_path:
+            return []
+        supervisor = sender_path.rsplit("/", 1)[0]
+        depth = sender_path.count("/")
+        return [
+            path
+            for path in hierarchy
+            if path != sender_path
+            and path.rsplit("/", 1)[0] == supervisor
+            and path.count("/") == depth
+        ]
+
+    async def _queue_message_targets(
+        self,
+        sender_runtime_id: str,
+        resolved: Sequence[tuple[str, str]],
+        message: str,
+        callbacks: Sequence[Any],
+    ) -> list[str]:
+        """Log and accept an all-or-nothing set of concrete message routes."""
+        sender_path = self._runtime_paths[sender_runtime_id]
+        async with self._hierarchy_lock:
+            root_id = self._runtime_roots[sender_runtime_id]
+            for target_id, target_path in resolved:
+                if self._hierarchies[root_id].get(target_path) != target_id:
+                    raise KeyError(
+                        f"Unknown agent path {target_path!r} from {sender_path!r}"
+                    )
+                if self._is_stopping_path(root_id, target_path):
+                    raise ValueError(f"Agent {target_path!r} is stopping")
+            acknowledgements = [
+                self._accept_message_target(
+                    sender_path, target_id, target_path, message, callbacks
+                )
+                for target_id, target_path in resolved
+            ]
+        # Delivery is now accepted in the host queue. Log the aggregate only
+        # after the lock recheck succeeds, so rejected broadcasts never appear
+        # in `/messages` as if they were received.
+        try:
             await self._notify_callbacks(
                 callbacks,
                 "on_hierarchy_message",
-                self._runtime_paths[sender_runtime_id],
+                sender_path,
                 tuple(target_path for _target_id, target_path in resolved),
                 message,
             )
-            # Recheck the whole batch under the hierarchy lock and accept all
-            # targets without yielding. A concurrent stop therefore cannot
-            # partially deliver a prevalidated broadcast.
-            sender_path = self._runtime_paths[sender_runtime_id]
-            async with self._hierarchy_lock:
-                root_id = self._runtime_roots[sender_runtime_id]
-                for _target_id, target_path in resolved:
-                    if (
-                        self._hierarchies[root_id].get(target_path)
-                        != _target_id
-                    ):
-                        raise KeyError(
-                            f"Unknown agent path {target_path!r} from "
-                            f"{self._runtime_paths[sender_runtime_id]!r}"
-                        )
-                    if self._is_stopping_path(root_id, target_path):
-                        raise ValueError(f"Agent {target_path!r} is stopping")
-                results = [
-                    self._accept_message_target(
-                        sender_path,
-                        target_id,
-                        target_path,
-                        message,
-                        callbacks,
-                    )
-                    for target_id, target_path in resolved
-                ]
-            return [{"result": result} for result in results]
-        raise ValueError(f"Unknown runtime request {action!r}")
+        except Exception:
+            LOGGER.exception("Could not record a delivered hierarchy message")
+        return acknowledgements
 
     def _validate_message_target(
         self, sender_runtime_id: str, target: str

@@ -596,6 +596,159 @@ async def test_hierarchy_tool_broadcasts_valid_targets_in_input_order(
 
 
 @pytest.mark.asyncio
+async def test_send_message_group_targets_expand_locally_and_deduplicate(
+    chat_model, tmp_path
+):
+    root = make_agent(chat_model, tmp_path)
+    analyst = root.spawn_subagent("analyst", MailboxAgent, enable_metrics=False)
+    reviewer = root.spawn_subagent(
+        "reviewer", MailboxAgent, enable_metrics=False
+    )
+    specialist = analyst.spawn_subagent(
+        "specialist", MailboxAgent, enable_metrics=False
+    )
+    send_message = hierarchy_tool(analyst, "send_message")
+
+    assert [
+        item.agent_path for item in analyst.resolve_message_targets("@reports")
+    ] == [specialist.agent_path]
+    assert [
+        item.agent_path for item in analyst.resolve_message_targets("@peers")
+    ] == [reviewer.agent_path]
+    assert [
+        item.agent_path
+        for item in analyst.resolve_message_targets("@supervisor")
+    ] == [root.agent_path]
+    assert [
+        item.agent_path for item in analyst.resolve_message_targets("@REPORTS")
+    ] == [specialist.agent_path]
+    assert [
+        item.agent_path for item in analyst.resolve_message_targets("@everyone")
+    ] == [root.agent_path, specialist.agent_path, reviewer.agent_path]
+
+    response = await send_message.ainvoke({
+        "target": [
+            "@siblings",
+            "root/reviewer",
+            "@children",
+            "@parent",
+            "root/analyst",
+        ],
+        "message": "Share your progress.",
+    })
+    await asyncio.gather(
+        root.wait_for_messages(),
+        reviewer.wait_for_messages(),
+        specialist.wait_for_messages(),
+    )
+
+    assert response.count("root/reviewer:") == 1
+    assert response.index("root/reviewer:") < response.index(
+        "root/analyst/specialist:"
+    )
+    assert response.index("root/analyst/specialist:") < response.index("root:")
+    assert root.received[0].sender == analyst.agent_path
+    assert reviewer.received[0].content == "Share your progress."
+    assert specialist.received[0].recipient == specialist.agent_path
+    assert analyst.received == []
+    await root.stop_message_loop(descendants=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("target", "match"),
+    [
+        ("@supervisor", "has no recipients"),
+        ("@reports", "has no recipients"),
+        ("@peers", "has no recipients"),
+        ("@unknown", "Unknown message target group"),
+    ],
+)
+async def test_send_message_group_target_errors_are_atomic(
+    chat_model, tmp_path, target, match
+):
+    root = make_agent(chat_model, tmp_path)
+    reviewer = root.spawn_subagent(
+        "reviewer", MailboxAgent, enable_metrics=False
+    )
+    sender = reviewer if target == "@reports" else root
+    valid_target = "root" if sender is reviewer else "reviewer"
+    send_message = hierarchy_tool(sender, "send_message")
+
+    with pytest.raises(ToolException, match=match):
+        await send_message.ainvoke({
+            "target": [valid_target, target],
+            "message": "Do not partially deliver.",
+        })
+
+    assert reviewer.received == []
+    assert root.received == []
+    await root.stop_message_loop(descendants=True)
+
+
+@pytest.mark.asyncio
+async def test_send_message_everyone_errors_when_the_sender_is_alone(
+    chat_model, tmp_path
+):
+    root = make_agent(chat_model, tmp_path)
+
+    with pytest.raises(ToolException, match="@everyone.*has no recipients"):
+        await hierarchy_tool(root, "send_message").ainvoke({
+            "target": "@everyone",
+            "message": "Nobody is here.",
+        })
+
+
+@pytest.mark.asyncio
+async def test_managed_send_message_group_errors_are_recoverable_and_results_are_concrete(
+    chat_model, tmp_path
+):
+    class ManagedBridge:
+        async def send_message(self, target: str, message: str) -> str:
+            if target == "@reports":
+                raise RuntimeError(
+                    "Message target group '@reports' has no recipients"
+                )
+            return f"Message queued for {target}."
+
+        async def send_messages(
+            self, targets: list[str], message: str
+        ) -> list[dict[str, str]]:
+            assert targets == ["@everyone"]
+            return [
+                {"result": f"Message queued for root/p{index:03}."}
+                for index in range(80)
+            ]
+
+    root = make_agent(chat_model, tmp_path)
+    root._process_runtime = ManagedBridge()
+    send_message = hierarchy_tool(root, "send_message")
+
+    with pytest.raises(ToolException, match="has no recipients"):
+        await send_message.ainvoke({
+            "target": "@reports",
+            "message": "Nothing should receive this.",
+        })
+
+    assert (
+        await send_message.ainvoke({
+            "target": "root/reviewer",
+            "message": "Continue normally.",
+        })
+        == "Message queued for root/reviewer."
+    )
+    response = await send_message.ainvoke({
+        "target": ["@everyone"],
+        "message": "Coordinate.",
+    })
+    assert response.count("Message queued for root/") == 80
+    assert response.startswith("Message queued for root/p000.\n\n")
+    assert "{'result':" not in response
+    assert "root/p000" in response
+    assert "root/p079" in response
+
+
+@pytest.mark.asyncio
 async def test_stop_agent_removes_a_descendant_subtree(chat_model, tmp_path):
     root = make_agent(chat_model, tmp_path)
     reviewer = root.spawn_subagent(

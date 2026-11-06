@@ -68,15 +68,9 @@ class AgentToolCard(EventCard):
             agent_type = str(self.tool_input.get("agent_type") or "").strip()
             return f"{name} ({agent_type})" if agent_type else name
         if self.tool == "send_message":
-            targets = self.targets
-            if len(targets) == 1:
-                return targets[0]
-            return f"{len(targets)} agents"
+            return self._target_description()
         if self.tool == "wait_for":
-            targets = self.targets
-            if len(targets) == 1:
-                return targets[0]
-            return f"{len(targets)} agents"
+            return self._target_description()
         if self.tool == "stop_agent":
             return str(self.tool_input.get("target") or "another agent")
         return "agent hierarchy"
@@ -95,6 +89,25 @@ class AgentToolCard(EventCard):
     @property
     def task(self) -> str:
         return str(self.tool_input.get("message") or "").strip()
+
+    def _target_description(self) -> str:
+        """Describe selectors as expressions, never guessed agent counts."""
+        targets = self.targets
+        selectors = [target for target in targets if target.startswith("@")]
+        explicit_targets = [
+            target for target in targets if not target.startswith("@")
+        ]
+        if selectors:
+            description = ", ".join(selectors)
+            if explicit_targets:
+                description += (
+                    f" + {len(explicit_targets)} explicit target"
+                    f"{'s' if len(explicit_targets) != 1 else ''}"
+                )
+            return description
+        if len(targets) == 1:
+            return targets[0]
+        return f"{len(targets)} agents"
 
     @property
     def request(self) -> str:
@@ -206,7 +219,7 @@ class AgentToolCard(EventCard):
             return f"{self.target} started with its initial task"
         if self.tool == "send_message":
             if len(self.targets) > 1:
-                return f"Messages queued for {len(self.targets)} agents"
+                return f"Messages queued for {self.target}"
             return f"Message queued for {self.target}"
         if self.tool == "wait_for":
             return self.output or f"Stopped waiting for {self.target}"

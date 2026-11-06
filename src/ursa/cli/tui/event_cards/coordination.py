@@ -45,7 +45,16 @@ class CoordinationCard(EventCard):
     ) -> str:
         """Keep the two-line rollup scannable for broadcasts and waits."""
         if tool in {"send_message", "wait_for"}:
-            count = target_count or len(target.split(", "))
+            # Zero is intentionally distinct from a missing legacy count: a
+            # selector such as @everyone expands at delivery time, so its
+            # concrete recipient count is not available in this compact row.
+            if target_count == 0:
+                return target
+            count = (
+                target_count
+                if target_count is not None
+                else len(target.split(", "))
+            )
             if count > 1:
                 return f"{count} agents"
         return target

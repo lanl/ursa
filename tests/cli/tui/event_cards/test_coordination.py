@@ -226,6 +226,57 @@ async def test_compact_recipient_count_survives_long_target_preview(tmp_path):
         assert targets[-1] not in str(preview.content)
 
 
+async def test_group_target_expressions_are_never_presented_as_agent_counts(
+    tmp_path,
+):
+    app = UrsaTextualApp(make_runtime(tmp_path))
+    long_paths = [f"root/reviewer-{index:03}" for index in range(80)]
+    async with app.run_test(size=(100, 30)) as pilot:
+        turn = await app._mount_turn("broadcast")
+        for run_id, target in (
+            ("everyone", "@everyone"),
+            ("mixed", ["@peers", "root/reviewer"]),
+            ("long-mixed", [*long_paths, "@reports"]),
+        ):
+            await turn.event({
+                "tool": "send_message",
+                "phase": "start",
+                "_run_id": run_id,
+                "target": target,
+                "message": "Coordinate findings.",
+            })
+        group = turn.query_one(CoordinationCard)
+        recent = "\n".join(
+            str(row.content)
+            for row in group.query(".coordination-action-preview")
+        )
+        assert "@peers + 1 explicit target" in recent
+        assert "@reports + 80 explicit targets" in recent
+        assert "agents" not in recent
+
+        group.set_expanded(True)
+        assert await wait_for(
+            pilot, lambda: len(group.query(AgentToolCard)) == 3
+        )
+        cards = {card.key: card for card in group.query(AgentToolCard)}
+        assert cards["1"].target == "@everyone"
+        assert cards["2"].target == "@peers + 1 explicit target"
+        assert cards["3"].target == "@reports + 80 explicit targets"
+        for run_id in ("everyone", "mixed", "long-mixed"):
+            await turn.event({
+                "tool": "send_message",
+                "phase": "end",
+                "_run_id": run_id,
+                "result": "Message queued for root/reviewer.",
+            })
+        previews = [
+            str(card.query_one(".agent-tool-preview", Static).content)
+            for card in cards.values()
+        ]
+        assert all("agents" not in preview for preview in previews)
+        assert "@peers + 1 explicit target" in previews[1]
+
+
 @pytest.mark.parametrize("size", [(40, 20), (60, 20), (80, 24), (120, 40)])
 async def test_coordination_controls_and_recent_actions_fit_narrow_terminals(
     tmp_path, size

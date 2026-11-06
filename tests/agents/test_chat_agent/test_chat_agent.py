@@ -278,8 +278,8 @@ async def test_managed_hierarchy_tool_queues_broadcast_in_input_order(
         del agent._process_runtime
 
     assert response.split("\n\n") == [
-        "first: Message queued for first.",
-        "missing: Message queued for missing.",
-        "second: Message queued for second.",
+        "Message queued for first.",
+        "Message queued for missing.",
+        "Message queued for second.",
     ]
     await agent.stop_message_loop(descendants=True)

@@ -194,9 +194,29 @@ class MessageStore:
         failed: bool = False,
     ) -> None:
         target = tool_input.get("name" if tool == "spawn_agent" else "target")
-        target_count = len(target) if isinstance(target, list) else 1
-        if isinstance(target, list):
-            target = ", ".join(str(item) for item in target)
+        targets = target if isinstance(target, list) else [target]
+        target_names = [
+            str(item).strip()
+            for item in targets
+            if item is not None and str(item).strip()
+        ]
+        selectors = [name for name in target_names if name.startswith("@")]
+        explicit_targets = [
+            name for name in target_names if not name.startswith("@")
+        ]
+        # A selector can expand to any current hierarchy member. Keep the raw
+        # expression visible and encode its unknown concrete count as zero;
+        # callers must never infer recipients from a tool result string.
+        target_count = 0 if selectors else max(1, len(explicit_targets))
+        if selectors:
+            target = ", ".join(selectors)
+            if explicit_targets:
+                target += (
+                    f" + {len(explicit_targets)} explicit target"
+                    f"{'s' if len(explicit_targets) != 1 else ''}"
+                )
+        else:
+            target = ", ".join(explicit_targets)
         if tool == "spawn_agent" and tool_input.get("agent_type"):
             target = f"{target} ({tool_input['agent_type']})"
 

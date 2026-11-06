@@ -95,6 +95,22 @@ async def test_coordination_target_count_survives_preview_truncation(tmp_path):
     assert len(recent[0]["target"]) <= 241
 
 
+async def test_coordination_selector_targets_remain_visible_when_compacted(
+    tmp_path,
+):
+    store = MessageStore(tmp_path / "checkpointer.db", "thread")
+    long_paths = [f"root/reviewer-{index:03}" for index in range(80)]
+    await store.record_action(
+        "turn",
+        "mixed",
+        "send_message",
+        {"target": [*long_paths, "@reports"], "message": "go"},
+    )
+    _, recent = await store.action_summary("turn")
+    assert recent[0]["target_count"] == 0
+    assert recent[0]["target"] == "@reports + 80 explicit targets"
+
+
 async def test_coordination_store_migrates_target_count_for_existing_sessions(
     tmp_path,
 ):

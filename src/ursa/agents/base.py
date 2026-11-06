@@ -1110,6 +1110,76 @@ class AsyncMessageMixin:
                 ) from None
         return current
 
+    def resolve_message_targets(
+        self, target: str | Sequence[str]
+    ) -> list[BaseAgent]:
+        """Resolve message routes, expanding hierarchy group selectors.
+
+        ``@everyone`` addresses every other member of this hierarchy.
+        ``@supervisor``, ``@peers``, and ``@reports`` address the immediate
+        parent, same-parent peers, and immediate children respectively. The
+        ``@parent``, ``@siblings``, and ``@children`` spellings are retained as
+        aliases. Group selectors are only message routes; ordinary path
+        resolution remains unchanged for other hierarchy operations.
+        """
+        routes = [target] if isinstance(target, str) else list(target)
+        if not routes or not all(
+            isinstance(item, str) and item.strip() for item in routes
+        ):
+            raise TypeError(
+                "target must be a non-empty agent path or list of paths"
+            )
+
+        selectors = {
+            "@everyone": lambda: list(self.root_agent.walk_agents()),
+            "@supervisor": lambda: [self.parent_agent],
+            "@parent": lambda: [self.parent_agent],
+            "@peers": lambda: (
+                list(self.parent_agent.subagents.values())
+                if self.parent_agent is not None
+                else []
+            ),
+            "@siblings": lambda: (
+                list(self.parent_agent.subagents.values())
+                if self.parent_agent is not None
+                else []
+            ),
+            "@reports": lambda: list(self.subagents.values()),
+            "@children": lambda: list(self.subagents.values()),
+        }
+        recipients: list[BaseAgent] = []
+        seen: set[str] = set()
+        expands_groups = any(route.strip().startswith("@") for route in routes)
+        for route in routes:
+            name = route.strip()
+            if name.startswith("@"):
+                selector = name.casefold()
+                try:
+                    candidates = selectors[selector]()
+                except KeyError:
+                    raise KeyError(
+                        f"Unknown message target group {name!r}"
+                    ) from None
+                expanded = [
+                    candidate
+                    for candidate in candidates
+                    if candidate is not None and candidate is not self
+                ]
+                if not expanded:
+                    raise KeyError(
+                        f"Message target group {selector!r} has no recipients"
+                    )
+            else:
+                expanded = [self.resolve_agent(name)]
+            for recipient in expanded:
+                if expands_groups and recipient is self:
+                    continue
+                path = recipient.agent_path
+                if path not in seen:
+                    seen.add(path)
+                    recipients.append(recipient)
+        return recipients
+
 
 class UnregisteredAgentStateWarning(UserWarning):
     """A BaseAgent subclass declares a typed state it never registers."""

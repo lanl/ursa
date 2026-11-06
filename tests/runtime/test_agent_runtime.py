@@ -837,6 +837,121 @@ async def test_host_preflights_batched_agent_messages_before_any_delivery(
 
 
 @pytest.mark.asyncio
+async def test_host_expands_message_target_groups_atomically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Selectors expand only for sends, retain order, and never self-send."""
+    manager = AgentManager()
+    runtime = AgentRuntime(
+        UrsaConfig(workspace=tmp_path, llm_model={"model": "fake:chat"}),
+        manager=manager,
+    )
+    root_id = "root-id"
+    analyst_id = "analyst-id"
+    reviewer_id = "reviewer-id"
+    specialist_id = "specialist-id"
+    runtime._runtime_roots.update({
+        root_id: root_id,
+        analyst_id: root_id,
+        reviewer_id: root_id,
+        specialist_id: root_id,
+    })
+    runtime._runtime_paths.update({
+        root_id: "root",
+        analyst_id: "root/analyst",
+        reviewer_id: "root/reviewer",
+        specialist_id: "root/analyst/specialist",
+    })
+    runtime._hierarchies[root_id] = {
+        "root": root_id,
+        "root/analyst": analyst_id,
+        "root/reviewer": reviewer_id,
+        "root/analyst/specialist": specialist_id,
+    }
+    calls: list[str] = []
+    messages: list[tuple[str, tuple[str, ...], str]] = []
+
+    async def invoke(agent_id, *_args, **_kwargs):
+        calls.append(agent_id)
+        return f"reply from {agent_id}"
+
+    monkeypatch.setattr(manager, "invoke", invoke)
+
+    class Callback:
+        async def on_hierarchy_message(self, sender, targets, message) -> None:
+            messages.append((sender, tuple(targets), message))
+
+    callbacks = (Callback(),)
+    try:
+        assert runtime._expand_message_target(analyst_id, "@everyone") == [
+            "root",
+            "root/reviewer",
+            "root/analyst/specialist",
+        ]
+        results = await runtime._handle_runtime_request(
+            analyst_id,
+            "invoke_many",
+            {
+                "targets": [
+                    "@peers",
+                    "root/reviewer",
+                    "@reports",
+                    "@supervisor",
+                    "root/analyst",
+                ],
+                "message": "Compare findings.",
+            },
+            callbacks,
+        )
+        assert results == [
+            {"result": "Message queued for root/reviewer."},
+            {"result": "Message queued for root/analyst/specialist."},
+            {"result": "Message queued for root."},
+        ]
+        assert messages == [
+            (
+                "root/analyst",
+                ("root/reviewer", "root/analyst/specialist", "root"),
+                "Compare findings.",
+            )
+        ]
+        await _wait_for_background_agent_tasks(runtime)
+        assert calls == [reviewer_id, specialist_id, root_id]
+
+        # Any concrete recipient that is stopping rejects the entire selector
+        # expansion before a callback or a new delivery can occur.
+        runtime._stopping_subtrees.add((root_id, "root/reviewer"))
+        with pytest.raises(ValueError, match="is stopping"):
+            await runtime._handle_runtime_request(
+                analyst_id,
+                "invoke",
+                {"target": "@everyone", "message": "Status update."},
+                callbacks,
+            )
+        assert messages == [
+            (
+                "root/analyst",
+                ("root/reviewer", "root/analyst/specialist", "root"),
+                "Compare findings.",
+            )
+        ]
+        assert calls == [reviewer_id, specialist_id, root_id]
+
+        for selector in ("@supervisor", "@peers", "@reports", "@unknown"):
+            with pytest.raises(ValueError):
+                await runtime._handle_runtime_request(
+                    root_id,
+                    "invoke",
+                    {"target": selector, "message": "No recipients."},
+                    callbacks,
+                )
+        assert len(messages) == 1
+    finally:
+        await runtime.aclose()
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
 async def test_host_stops_only_a_descendant_subtree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

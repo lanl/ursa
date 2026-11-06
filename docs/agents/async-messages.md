@@ -60,9 +60,9 @@ Every `ChatAgent` also exposes five hierarchy tools to its model:
   `wait_for` when the caller needs to synchronize with the child's completion.
 - `send_message(target, message)` queues a one-way message and returns without
   waiting for the receiving agent to reply. Agents send replies explicitly
-  with their own `send_message` calls. `target` may also be a list of paths;
-  URSA validates the entire list before delivering anything, then returns
-  delivery acknowledgements in input order.
+  with their own `send_message` calls. `target` accepts paths, message groups,
+  or a list mixing both. URSA expands and validates the entire list before
+  delivering anything, then acknowledges each concrete recipient once.
 - `wait_for(target, timeout_seconds=120, wait_all=False)` waits for one
   agent, or a non-empty list of agents, for at most two minutes. A list returns
   when any target is ready by default; pass `wait_all=True` to wait for every
@@ -88,6 +88,31 @@ Every `ChatAgent` also exposes five hierarchy tools to its model:
   respond. New messages and spawns into a stopping subtree are rejected. An
   agent cannot stop itself, an ancestor, a sibling, or an unrelated agent.
 - `list_agents()` lists the current hierarchy and marks the calling agent.
+
+`send_message` supports these group targets, using supervisor/peer/report
+terminology for the delegation hierarchy:
+
+| Target | Recipients | Alias |
+|---|---|---|
+| `@everyone` | Every other agent in the caller's hierarchy | — |
+| `@supervisor` | The agent that directly launched the caller | `@parent` |
+| `@peers` | Other agents launched by the same supervisor | `@siblings` |
+| `@reports` | Agents directly launched by the caller, excluding deeper descendants | `@children` |
+
+For example, `send_message(target="@reports", message="Report your progress.")`
+sends to the caller's immediate reports. A mixed target list such as
+`["@peers", "root/reviewer"]` sends only once to each resolved agent, preserving
+first-occurrence order. Group names are case-insensitive; agent paths retain
+their normal case-sensitive spelling.
+
+Group expansions always exclude the sender, including an explicit sender path
+mixed into a group broadcast. Each group must resolve to at
+least one other agent: an empty group, unknown group, invalid path, or stopping
+recipient rejects the whole send before delivery. This also applies when an
+empty group is mixed with valid paths. These are recoverable tool errors, so
+the agent can revise the target and continue. The message log records the
+concrete recipients. Group targets are specific to `send_message`; `wait_for`
+and `stop_agent` continue to accept their existing path-based targets.
 
 Multiple `send_message` tool calls targeting different agents can be queued in
 one tool-calling round while the sending agent continues its own work. Chat
