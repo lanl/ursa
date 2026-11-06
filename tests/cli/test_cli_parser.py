@@ -46,11 +46,6 @@ def _stub_runtime(monkeypatch):
     return runtime_class
 
 
-def _stub_mcp_server(monkeypatch):
-    runtime = _stub_runtime(monkeypatch).return_value
-    return runtime, runtime.as_mcp_server.return_value
-
-
 def _stub_textual(monkeypatch):
     runtime_class = _stub_runtime(monkeypatch)
     run_textual = MagicMock()
@@ -58,16 +53,10 @@ def _stub_textual(monkeypatch):
     return runtime_class, run_textual
 
 
-def _parse_config_args(parser, args):
-    """Parse the runtime namespace and its sparse config overrides."""
-    return (
-        parser.parse_args(args),
-        parser.parse_args(args, defaults=False),
-    )
-
-
 def _resolve_args(parser, args):
-    cfg, env_overrides = _parse_config_args(parser, args)
+    """Parse the runtime namespace and its sparse config overrides."""
+    cfg = parser.parse_args(args)
+    env_overrides = parser.parse_args(args, defaults=False)
     return merge_ursa_config(cfg, env_overrides=env_overrides).resolve()
 
 
@@ -91,37 +80,33 @@ def test_cli_warns_about_legacy_unnamed_checkpoint(
     assert "--name <new agent name>" in warning
 
 
-def test_cli_does_not_warn_about_legacy_checkpoint_with_name(
-    monkeypatch, tmp_path, capsys
+@pytest.mark.parametrize(
+    "legacy_checkpoint, options",
+    [(True, ["--name", "continued-agent"]), (False, [])],
+)
+def test_cli_does_not_warn_when_checkpoint_migration_is_unneeded(
+    monkeypatch, tmp_path, capsys, legacy_checkpoint, options
 ):
     _stub_textual(monkeypatch)
-    checkpoint = tmp_path / "db" / "checkpointer.db"
-    checkpoint.parent.mkdir()
-    checkpoint.touch()
+    if legacy_checkpoint:
+        checkpoint = tmp_path / "db" / "checkpointer.db"
+        checkpoint.parent.mkdir()
+        checkpoint.touch()
 
-    main(["--workspace", str(tmp_path), "--name", "continued-agent"])
+    main(["--workspace", str(tmp_path), *options])
 
     assert capsys.readouterr().err == ""
 
 
-def test_cli_does_not_warn_without_legacy_checkpoint(
-    monkeypatch, tmp_path, capsys
-):
-    _stub_textual(monkeypatch)
-
-    main(["--workspace", str(tmp_path)])
-
-    assert capsys.readouterr().err == ""
-
-
-def test_exec_uses_textual_one_shot_renderer(monkeypatch):
+@pytest.mark.parametrize("prompt", ["#plan inspect this", "summarize this"])
+def test_exec_uses_textual_one_shot_renderer(monkeypatch, prompt):
     runtime = _stub_runtime(monkeypatch).return_value
     run_once = MagicMock()
     monkeypatch.setattr("ursa.cli.tui.app.prompt_agent_once", run_once)
 
-    main(["exec", "#plan inspect this"])
+    main(["exec", prompt])
 
-    run_once.assert_called_once_with(runtime, "#plan inspect this")
+    run_once.assert_called_once_with(runtime, prompt)
 
 
 @pytest.mark.parametrize("mode", ["interactive", "exec"])
@@ -161,17 +146,6 @@ def test_cli_reports_runtime_initialization_error_without_traceback(
     stderr = capsys.readouterr().err
     assert stderr == "Error: API credentials are invalid\n"
     assert "Traceback" not in stderr
-
-
-def test_exec_runs_prompt_with_textual_runtime(monkeypatch):
-    runtime_class = _stub_runtime(monkeypatch)
-    run_once = MagicMock()
-    monkeypatch.setattr("ursa.cli.tui.app.prompt_agent_once", run_once)
-
-    main(["exec", "summarize this"])
-
-    runtime = runtime_class.return_value
-    run_once.assert_called_once_with(runtime, "summarize this")
 
 
 @pytest.mark.parametrize(
@@ -258,13 +232,40 @@ def test_rag_model_commands_resolve_with_subcommand_group(
     assert policy_calls == [("https://models.example/v1", "rag-group")]
 
 
-def test_mcp_server_passes_only_stdio_run_options(monkeypatch):
-    runtime, mcp = _stub_mcp_server(monkeypatch)
+@pytest.mark.parametrize(
+    "options, expected",
+    [
+        ([], {"transport": "stdio", "log_level": "INFO"}),
+        (
+            [
+                "--transport",
+                "streamable-http",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "9001",
+                "--log_level",
+                "warning",
+            ],
+            dict(
+                transport="streamable-http",
+                log_level="WARNING",
+                host="127.0.0.1",
+                port=9001,
+            ),
+        ),
+    ],
+)
+def test_mcp_server_passes_transport_specific_run_options(
+    monkeypatch, options, expected
+):
+    runtime = _stub_runtime(monkeypatch).return_value
+    mcp = runtime.as_mcp_server.return_value
 
-    main(["mcp-server"])
+    main(["mcp-server", *options])
 
     runtime.as_mcp_server.assert_called_once_with()
-    mcp.run.assert_called_once_with(transport="stdio", log_level="INFO")
+    mcp.run.assert_called_once_with(**expected)
 
 
 def test_mcp_server_config_flag_sets_hosted_llm(monkeypatch, tmp_path):
@@ -325,30 +326,6 @@ def test_mcp_server_config_flag_parses_alongside_transport(
         transport="streamable-http",
         log_level="INFO",
         host="localhost",
-        port=9001,
-    )
-
-
-def test_mcp_server_passes_http_options_when_running(monkeypatch):
-    runtime, mcp = _stub_mcp_server(monkeypatch)
-
-    main([
-        "mcp-server",
-        "--transport",
-        "streamable-http",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        "9001",
-        "--log_level",
-        "warning",
-    ])
-
-    runtime.as_mcp_server.assert_called_once_with()
-    mcp.run.assert_called_once_with(
-        transport="streamable-http",
-        log_level="WARNING",
-        host="127.0.0.1",
         port=9001,
     )
 
@@ -887,19 +864,13 @@ def test_chat_model_config_kwargs_includes_max_completion_tokens():
 
 
 def test_chat_model_config_initializes_chat_model(monkeypatch):
-    captured_kwargs = {}
-
-    def fake_init_chat_model(**kwargs):
-        captured_kwargs.update(kwargs)
-        return "chat-model"
-
-    monkeypatch.setattr(
-        "ursa.cli.config.init_chat_model",
-        fake_init_chat_model,
-    )
+    initializer = MagicMock(return_value="chat-model")
+    monkeypatch.setattr("ursa.cli.config.init_chat_model", initializer)
     cfg = ChatModelConfig(model="openai:gpt-5", max_completion_tokens=1024)
 
     result = cfg.init_chat_model()
+    initializer.assert_called_once()
+    captured_kwargs = initializer.call_args.kwargs
 
     assert result == "chat-model"
     assert captured_kwargs["model"] == "gpt-5"
@@ -909,19 +880,13 @@ def test_chat_model_config_initializes_chat_model(monkeypatch):
 
 
 def test_emb_model_config_initializes_embedding_model(monkeypatch):
-    captured_kwargs = {}
-
-    def fake_init_embeddings(**kwargs):
-        captured_kwargs.update(kwargs)
-        return "embedding-model"
-
-    monkeypatch.setattr(
-        "ursa.cli.config.init_embeddings",
-        fake_init_embeddings,
-    )
+    initializer = MagicMock(return_value="embedding-model")
+    monkeypatch.setattr("ursa.cli.config.init_embeddings", initializer)
     cfg = EmbModelConfig(model="openai:text-embedding-3-large")
 
     result = cfg.init_embedding()
+    initializer.assert_called_once()
+    captured_kwargs = initializer.call_args.kwargs
 
     assert result == "embedding-model"
     assert captured_kwargs["model"] == "text-embedding-3-large"
