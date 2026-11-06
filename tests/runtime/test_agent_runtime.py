@@ -13,11 +13,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import SecretStr
 
 from tests.runtime.fixtures import runtime_request, set_hierarchy, spawn_managed
-from ursa.cli.config import UrsaConfig
 from ursa.runtime import (
     AgentContext,
     AgentInvocationError,
-    AgentManager,
     AgentProcessExitedError,
     AgentRuntime,
     AgentSpec,
@@ -89,53 +87,37 @@ async def test_process_runtime_bridge_forwards_list_wait_options() -> None:
     )
 
 
-class _BlockingManager:
-    """Minimal manager double that models an interruptible live invocation."""
+async def test_kill_interrupts_an_active_runtime_invocation(
+    runtime_factory, monkeypatch
+):
+    runtime, manager = runtime_factory()
+    started = asyncio.Event()
+    stopped = asyncio.Event()
 
-    def __init__(self) -> None:
-        self.invocation_started = asyncio.Event()
-        self.kill_started = asyncio.Event()
-        self._stopped = asyncio.Event()
-
-    async def start_agent(self, _agent_id: str) -> None:
-        pass
-
-    async def invoke(self, *_args, **_kwargs) -> str:
-        self.invocation_started.set()
-        await self._stopped.wait()
+    async def invoke(*_args, **_kwargs):
+        started.set()
+        await stopped.wait()
         raise AgentProcessExitedError("agent was stopped")
 
-    async def kill_agent(self, _agent_id: str) -> None:
-        self.kill_started.set()
-        self._stopped.set()
-
-
-@pytest.mark.asyncio
-async def test_kill_interrupts_an_active_runtime_invocation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manager = _BlockingManager()
-    runtime = AgentRuntime(
-        UrsaConfig(workspace=tmp_path, llm_model={"model": "fake:chat"}),
-        manager=cast(AgentManager, manager),
+    monkeypatch.setattr(runtime, "_ensure_registered", AsyncMock())
+    monkeypatch.setattr(manager, "start_agent", AsyncMock())
+    monkeypatch.setattr(manager, "invoke", invoke)
+    monkeypatch.setattr(
+        manager, "kill_agent", AsyncMock(side_effect=lambda _id: stopped.set())
     )
-
-    async def registered(_name: str) -> None:
-        return None
-
-    monkeypatch.setattr(runtime, "_ensure_registered", registered)
     invocation = asyncio.create_task(runtime.run_agent("chat", "wait"))
-    await asyncio.wait_for(manager.invocation_started.wait(), 1)
-
+    await asyncio.wait_for(started.wait(), 1)
     await asyncio.wait_for(runtime.kill_agent("chat"), 1)
-    assert manager.kill_started.is_set()
+    manager.kill_agent.assert_awaited_once_with(
+        runtime.agents["chat"].runtime_id
+    )
     with pytest.raises(AgentProcessExitedError, match="stopped"):
         await invocation
 
 
 @pytest.mark.asyncio
 async def test_agent_runtime_runs_cli_agent_outside_host_process(
-    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory,
 ) -> None:
     runtime, manager = runtime_factory(fork=True)
     assert await runtime.run_agent("chat", "hello") == "ok"
@@ -165,7 +147,7 @@ async def test_runtime_serializes_filtered_tool_schemas(
 
 @pytest.mark.asyncio
 async def test_subagents_are_launched_as_managed_processes(
-    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory,
 ) -> None:
     runtime, manager = runtime_factory(
         fork=True,
@@ -271,7 +253,7 @@ async def test_hierarchy_shares_checkpoint_file_with_distinct_threads(
 
 @pytest.mark.asyncio
 async def test_subagent_model_usage_callbacks_keep_recipient_metadata(
-    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory,
 ) -> None:
     """Token callbacks from a child remain attributable to that child."""
     recipients: list[str | None] = []
@@ -344,9 +326,7 @@ async def test_subagent_model_usage_callbacks_keep_recipient_metadata(
 
 
 @pytest.mark.asyncio
-async def test_host_selects_requested_subagent_type(
-    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_host_selects_requested_subagent_type(runtime_factory) -> None:
     runtime, manager = runtime_factory(
         fork=True, agent_config={"plan": {"max_reflection_steps": 7}}
     )
@@ -376,7 +356,7 @@ async def test_host_selects_requested_subagent_type(
 
 @pytest.mark.asyncio
 async def test_subagent_limit_is_a_recoverable_runtime_tool_error(
-    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory,
 ) -> None:
     runtime, manager = runtime_factory(fork=True, subagents={"max_agents": 1})
     root = await runtime.get_agent("chat")
@@ -399,7 +379,7 @@ async def test_subagent_limit_is_a_recoverable_runtime_tool_error(
 
 @pytest.mark.asyncio
 async def test_unknown_subagent_path_does_not_fail_managed_agent(
-    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory,
 ) -> None:
     runtime, manager = runtime_factory(fork=True)
     root = await runtime.get_agent("chat")
@@ -435,7 +415,7 @@ async def test_unknown_subagent_path_does_not_fail_managed_agent(
 
 @pytest.mark.asyncio
 async def test_host_spawn_returns_before_initial_task_finishes(
-    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime, manager = runtime_factory()
     root_id, worker_id = "root-id", "worker-id"
@@ -478,7 +458,7 @@ async def test_host_spawn_returns_before_initial_task_finishes(
 
 @pytest.mark.asyncio
 async def test_host_preflights_batched_agent_messages_before_any_delivery(
-    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime, manager = runtime_factory()
     root_id, analyst_id, reviewer_id = "root-id", "analyst-id", "reviewer-id"
@@ -556,7 +536,7 @@ async def test_host_preflights_batched_agent_messages_before_any_delivery(
 
 @pytest.mark.asyncio
 async def test_host_stops_only_a_descendant_subtree(
-    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime, manager = runtime_factory()
     root_id, reviewer_id, critic_id, analyst_id = (
@@ -689,7 +669,7 @@ async def test_message_reaches_managed_wait_without_duplicate_invocation(
 
 @pytest.mark.asyncio
 async def test_agent_message_emits_one_activity_lifecycle(
-    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory,
 ) -> None:
     """One routed message produces exactly one progress lifecycle."""
     runtime, manager = runtime_factory(fork=True)
@@ -780,7 +760,7 @@ async def test_runtime_resolves_selected_keyring_in_host_and_skips_unused(
 
 @pytest.mark.asyncio
 async def test_runner_config_contains_only_host_materialized_secrets(
-    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("MODEL_TOKEN", "model-secret")
     monkeypatch.setenv("MCP_TOKEN", "mcp-secret")

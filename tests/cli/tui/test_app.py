@@ -521,7 +521,8 @@ async def test_controls_during_active_work(app, monkeypatch, key):
         assert app._exit
 
 
-async def test_message_stays_dimmed_until_active_agent_accepts_it(app):
+@pytest.mark.parametrize("in_band", [False, True])
+async def test_active_message_promotes_only_on_acceptance(app, in_band):
     runtime = app.runtime
     _activate_hierarchy(runtime, "root")
     started = asyncio.Event()
@@ -531,74 +532,16 @@ async def test_message_stays_dimmed_until_active_agent_accepts_it(app):
     async def run_agent(_name, _prompt, callbacks=None):
         started.set()
         await release_root.wait()
-        return "Original finished"
-
-    async def run_active_agent(
-        path,
-        prompt,
-        *,
-        callbacks=None,
-        on_start=None,
-    ):
-        await accept_message.wait()
-        await on_start(None)
-        release_root.set()
-        return f"Processed {prompt}"
-
-    runtime.run_agent = run_agent
-    runtime.run_active_agent = run_active_agent
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        await pilot.press("s", "t", "a", "r", "t", "enter")
-        await started.wait()
-        await pilot.press("u", "p", "d", "a", "t", "e", "enter")
-
-        assert await wait_for(pilot, lambda: bool(app.query(QueuedMessage)))
-        queued = app.query_one(QueuedMessage)
-        prompt = app.query_one(PromptArea)
-        assert queued.region.y < prompt.region.y
-        assert all(card.content != "update" for card in app.query(MessageCard))
-
-        await pilot.press("escape")
-        assert queued.is_mounted
-        assert not release_root.is_set()
-        prompt.load_text("unsent draft")
-        await pilot.press("escape")
-        assert prompt.text == "unsent draft"
-        assert len(app.query(QueuedMessage)) == 1
-        assert not release_root.is_set()
-
-        accept_message.set()
-        assert await wait_for(pilot, lambda: not app.query(QueuedMessage))
-        assert any(card.content == "update" for card in app.query(MessageCard))
-        await app.workers.wait_for_complete()
-
-
-async def test_in_band_message_promotes_without_a_duplicate_empty_reply(
-    app,
-):
-    runtime = app.runtime
-    _activate_hierarchy(runtime, "root")
-    started = asyncio.Event()
-    release_root = asyncio.Event()
-
-    async def run_agent(_name, _prompt, callbacks=None):
-        started.set()
-        await release_root.wait()
         return "Original response"
 
-    async def run_active_agent(
-        _path,
-        _prompt,
-        *,
-        callbacks=None,
-        on_start=None,
-    ):
-        del callbacks
+    async def run_active_agent(path, prompt, *, callbacks=None, on_start=None):
+        if not in_band:
+            await accept_message.wait()
         await on_start(None)
         release_root.set()
-        # The message reached a wait_for tool result in the existing turn.
-        return None
+        # A delivery through wait_for belongs to the existing turn and has
+        # no separate reply. An inbox turn produces its own response.
+        return None if in_band else f"Processed {prompt}"
 
     runtime.run_agent = run_agent
     runtime.run_active_agent = run_active_agent
@@ -607,6 +550,24 @@ async def test_in_band_message_promotes_without_a_duplicate_empty_reply(
         await pilot.press("s", "t", "a", "r", "t", "enter")
         await started.wait()
         await pilot.press("u", "p", "d", "a", "t", "e", "enter")
+
+        if not in_band:
+            assert await wait_for(pilot, lambda: bool(app.query(QueuedMessage)))
+            queued = app.query_one(QueuedMessage)
+            prompt = app.query_one(PromptArea)
+            assert queued.region.y < prompt.region.y
+            assert all(
+                card.content != "update" for card in app.query(MessageCard)
+            )
+            await pilot.press("escape")
+            assert queued.is_mounted
+            assert not release_root.is_set()
+            prompt.load_text("unsent draft")
+            await pilot.press("escape")
+            assert prompt.text == "unsent draft"
+            assert len(app.query(QueuedMessage)) == 1
+            assert not release_root.is_set()
+            accept_message.set()
 
         assert await wait_for(pilot, lambda: not app.query(QueuedMessage))
         assert any(card.content == "update" for card in app.query(MessageCard))

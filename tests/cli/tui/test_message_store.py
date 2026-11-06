@@ -2,6 +2,8 @@ import asyncio
 import json
 import sqlite3
 
+import pytest
+
 from ursa.cli.tui.message_store import MessageStore
 
 
@@ -81,9 +83,14 @@ async def test_coordinated_actions_keep_input_on_completion_and_isolate_turns(
     assert len(await store.actions("turn-b")) == 1
 
 
-async def test_coordination_target_count_survives_preview_truncation(tmp_path):
+@pytest.mark.parametrize("selector", [False, True])
+async def test_coordination_targets_survive_preview_compaction(
+    tmp_path, selector
+):
     store = MessageStore(tmp_path / "checkpointer.db", "thread")
     targets = [f"root/reviewer-{index:03}" for index in range(80)]
+    if selector:
+        targets.append("@reports")
     await store.record_action(
         "turn",
         "broadcast",
@@ -91,24 +98,10 @@ async def test_coordination_target_count_survives_preview_truncation(tmp_path):
         {"target": targets, "message": "go"},
     )
     _, recent = await store.action_summary("turn")
-    assert recent[0]["target_count"] == len(targets)
+    assert recent[0]["target_count"] == (0 if selector else len(targets))
     assert len(recent[0]["target"]) <= 241
-
-
-async def test_coordination_selector_targets_remain_visible_when_compacted(
-    tmp_path,
-):
-    store = MessageStore(tmp_path / "checkpointer.db", "thread")
-    long_paths = [f"root/reviewer-{index:03}" for index in range(80)]
-    await store.record_action(
-        "turn",
-        "mixed",
-        "send_message",
-        {"target": [*long_paths, "@reports"], "message": "go"},
-    )
-    _, recent = await store.action_summary("turn")
-    assert recent[0]["target_count"] == 0
-    assert recent[0]["target"] == "@reports + 80 explicit targets"
+    if selector:
+        assert recent[0]["target"] == "@reports + 80 explicit targets"
 
 
 async def test_coordination_store_migrates_target_count_for_existing_sessions(
