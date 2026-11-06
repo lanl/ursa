@@ -3,6 +3,7 @@ import os
 import random
 import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -54,11 +55,21 @@ from ursa.cli.tui.widgets import (
 from ursa.util.inference_providers import ProviderModel
 
 
-async def open_model_screen(app, pilot):
-    await app._show_command("models")
-    await pilot.pause()
-    await app.workers.wait_for_complete()
-    assert isinstance(app.screen, ModelScreen)
+@pytest.fixture
+def model_dialog(app, model_discovery):
+    """Open the model dialog with a fake catalog and wait for discovery."""
+
+    @asynccontextmanager
+    async def open_dialog(discover=lambda _config: [], *, size=(80, 30)):
+        model_discovery(discover)
+        async with app.run_test(size=size) as pilot:
+            await app._show_command("models")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            assert isinstance(app.screen, ModelScreen)
+            yield pilot
+
+    return open_dialog
 
 
 async def wait_for_yaml_debounce(pilot) -> None:
@@ -802,7 +813,7 @@ async def test_exit_command_quits_the_app(app):
         assert app._exit
 
 
-async def test_model_command_switches_provider_and_model(app, model_discovery):
+async def test_model_command_switches_provider_and_model(app, model_dialog):
     runtime = app.runtime
     runtime.config.llm_model.max_completion_tokens = 4096
     runtime.inference_provider = "stale-provider"
@@ -818,10 +829,7 @@ async def test_model_command_switches_provider_and_model(app, model_discovery):
             ProviderModel("text-embedding-3-large", "openai", type="embedding"),
         ]
 
-    model_discovery(provider_models)
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog(provider_models, size=(80, 24)) as pilot:
         assert (
             app.screen.query_one("#chat-inference-provider", Select).value
             == "openai"
@@ -998,12 +1006,11 @@ async def test_invalid_model_selection_notifies_without_closing_modal(
 
 
 async def test_model_yaml_round_trips_extras_and_updates_controls(
-    app, model_discovery
+    app, model_dialog
 ):
-    model_discovery(lambda _config: [ProviderModel("yaml-model", "openai")])
-
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog(
+        lambda _config: [ProviderModel("yaml-model", "openai")]
+    ) as pilot:
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         assert type(editor.document).__name__ == "SyntaxAwareDocument"
         assert editor._highlight_query is not None
@@ -1045,14 +1052,12 @@ provider_options:
 
 
 async def test_valid_yaml_is_committed_only_when_apply_is_pressed(
-    app, model_discovery
+    app, model_dialog
 ):
-    model_discovery(lambda _config: [])
     runtime = app.runtime
     original = runtime.config.llm_model.model_copy(deep=True)
 
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog() as pilot:
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = """\
 model: applied-model
@@ -1079,14 +1084,11 @@ provider_options:
 
 
 async def test_yaml_validation_keeps_unavailable_model_as_not_found(
-    app, model_discovery
+    app, model_dialog
 ):
-    model_discovery(
+    async with model_dialog(
         lambda _config: [ProviderModel("available-model", "openai")]
-    )
-
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+    ) as pilot:
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = """\
 model: unavailable-model
@@ -1109,13 +1111,8 @@ inference_provider: openai
         )
 
 
-async def test_yaml_keeps_unavailable_model_provider_visible(
-    app, model_discovery
-):
-    model_discovery(lambda _config: [])
-
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+async def test_yaml_keeps_unavailable_model_provider_visible(app, model_dialog):
+    async with model_dialog() as pilot:
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = """\
 model: custom-model
@@ -1169,11 +1166,9 @@ inference_provider: openai
 
 @pytest.mark.parametrize("kind", ["chat", "embedding"])
 async def test_whitespace_model_yaml_is_rejected_before_apply(
-    app, model_discovery, kind
+    app, model_dialog, kind
 ):
-    model_discovery(lambda _config: [])
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog() as pilot:
         editor = app.screen.query_one(f"#{kind}-config-yaml", TextArea)
         editor.text = "model: '   '\nmodel_provider: openai\n"
         app.screen.action_apply()
@@ -1192,12 +1187,10 @@ async def test_whitespace_model_yaml_is_rejected_before_apply(
 
 @pytest.mark.parametrize("kind", ["chat", "embedding"])
 async def test_structured_none_updates_yaml_and_validates_model_kind(
-    app, model_discovery, kind
+    app, model_dialog, kind
 ):
-    model_discovery(lambda _config: [])
     original = app.runtime.config.llm_model.model_copy(deep=True)
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog() as pilot:
         app.screen.query_one(
             f"#{kind}-model-name", Select
         ).value = ModelScreen.NONE_VALUE
@@ -1219,12 +1212,9 @@ async def test_structured_none_updates_yaml_and_validates_model_kind(
 
 
 async def test_yaml_validation_names_unknown_inference_provider(
-    app, model_discovery
+    app, model_dialog
 ):
-    model_discovery(lambda _config: [])
-
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog():
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = "model: test-model\ninference_provider: missing\n"
 
@@ -1239,13 +1229,9 @@ async def test_yaml_validation_names_unknown_inference_provider(
 
 
 async def test_model_option_refresh_preserves_sync_guard_and_empty_choice(
-    app, model_discovery
+    app, model_dialog
 ):
-    model_discovery(lambda _config: [])
-
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
-
+    async with model_dialog():
         app.screen._syncing_controls = True
         app.screen._set_model_options("embedding", {}, "")
 
@@ -1255,7 +1241,7 @@ async def test_model_option_refresh_preserves_sync_guard_and_empty_choice(
 
 
 async def test_programmatic_control_sync_suppresses_queued_events(
-    app, model_discovery
+    app, model_dialog
 ):
     discoveries = []
 
@@ -1263,10 +1249,7 @@ async def test_programmatic_control_sync_suppresses_queued_events(
         discoveries.append(config)
         return []
 
-    model_discovery(provider_models)
-
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog(provider_models) as pilot:
         discoveries.clear()
         updated = app.screen.drafts["chat"].model_copy(
             update={"model": "programmatic-model"}
@@ -1285,8 +1268,7 @@ async def test_programmatic_control_sync_suppresses_queued_events(
         assert discoveries == []
 
 
-async def test_masked_yaml_api_key_preserves_secret_value(app, model_discovery):
-    model_discovery(lambda _: [])
+async def test_masked_yaml_api_key_preserves_secret_value(app, model_dialog):
     runtime = app.runtime
     runtime.config.llm_model = ChatModelConfig(
         model="secret-model",
@@ -1295,8 +1277,7 @@ async def test_masked_yaml_api_key_preserves_secret_value(app, model_discovery):
         api_key=SecretStr("actual-secret"),
     )
 
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog():
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         assert "actual-secret" not in editor.text
         assert "api_key: '**********'" in editor.text
@@ -1310,7 +1291,7 @@ async def test_masked_yaml_api_key_preserves_secret_value(app, model_discovery):
 
 
 async def test_direct_provider_selection_refreshes_model_catalog(
-    app, model_discovery
+    app, model_dialog
 ):
     calls = []
 
@@ -1320,11 +1301,7 @@ async def test_direct_provider_selection_refreshes_model_catalog(
             return [ProviderModel("direct-only", "openai")]
         return [ProviderModel("provider-only", "openai")]
 
-    model_discovery(provider_models)
-
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
-
+    async with model_dialog(provider_models) as pilot:
         app.screen.query_one(
             "#chat-inference-provider", Select
         ).value = ModelScreen.NONE_VALUE
@@ -1341,9 +1318,7 @@ async def test_direct_provider_selection_refreshes_model_catalog(
         )
 
 
-async def test_yaml_provider_change_refreshes_model_catalog(
-    app, model_discovery
-):
+async def test_yaml_provider_change_refreshes_model_catalog(app, model_dialog):
     runtime = app.runtime
     runtime.config.inference_providers["fast"] = InferenceProviderConfig(
         base_url="https://fast.example/v1"
@@ -1357,10 +1332,7 @@ async def test_yaml_provider_change_refreshes_model_catalog(
         )
         return [ProviderModel(name, "openai")]
 
-    model_discovery(provider_models)
-
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog(provider_models) as pilot:
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = """\
 model: test-model
@@ -1382,7 +1354,7 @@ inference_provider: fast
 
 
 async def test_provider_discovery_failure_clears_previous_catalog(
-    app, model_discovery
+    app, model_dialog
 ):
     runtime = app.runtime
     runtime.config.inference_providers["broken"] = InferenceProviderConfig(
@@ -1394,10 +1366,7 @@ async def test_provider_discovery_failure_clears_previous_catalog(
             raise RuntimeError("discovery failed")
         return [ProviderModel("old-only", "openai")]
 
-    model_discovery(provider_models)
-
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog(provider_models) as pilot:
         assert "old-only" in app.screen.model_catalogs["chat"]
 
         app.screen.query_one(
@@ -1413,12 +1382,9 @@ async def test_provider_discovery_failure_clears_previous_catalog(
 
 
 async def test_expanded_advanced_modal_is_scrollable_on_short_terminal(
-    app, model_discovery
+    app, model_dialog
 ):
-    model_discovery(lambda _config: [])
-
-    async with app.run_test(size=(80, 20)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog(size=(80, 20)) as pilot:
         app.screen.query_one("#chat-advanced", Collapsible).collapsed = False
         await pilot.pause()
 
@@ -1435,9 +1401,8 @@ async def test_expanded_advanced_modal_is_scrollable_on_short_terminal(
 
 
 async def test_advanced_yaml_seeded_fuzz_never_mutates_running_config(
-    app, model_discovery
+    app, model_dialog
 ):
-    model_discovery(lambda _config: [])
     runtime = app.runtime
     original = runtime.config.llm_model.model_copy(deep=True)
     cases = [
@@ -1461,8 +1426,7 @@ async def test_advanced_yaml_seeded_fuzz_never_mutates_running_config(
     ]
     random.Random(20260826).shuffle(cases)
 
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog() as pilot:
         advanced = app.screen.query_one("#chat-advanced", Collapsible)
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         assert advanced.collapsed
@@ -1510,15 +1474,13 @@ async def test_advanced_yaml_seeded_fuzz_never_mutates_running_config(
 
 
 async def test_cancel_discards_yaml_with_pending_validation(
-    app, model_discovery, monkeypatch
+    app, model_dialog, monkeypatch
 ):
     monkeypatch.setattr(ModelScreen, "YAML_VALIDATION_DELAY", 30.0)
-    model_discovery(lambda _config: [])
     runtime = app.runtime
     original = runtime.config.llm_model.model_copy(deep=True)
 
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog() as pilot:
         app.screen.query_one(
             "#chat-config-yaml", TextArea
         ).text = "model: changed-before-cancel\n"
@@ -1538,11 +1500,8 @@ async def test_cancel_discards_yaml_with_pending_validation(
         assert timer._task is None
 
 
-async def test_yaml_debounce_restarts_from_latest_edit(app, model_discovery):
-    model_discovery(lambda _config: [])
-
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+async def test_yaml_debounce_restarts_from_latest_edit(app, model_dialog):
+    async with model_dialog() as pilot:
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = "model: first-edit\n"
         await pilot.pause()
@@ -1561,10 +1520,7 @@ async def test_yaml_debounce_restarts_from_latest_edit(app, model_discovery):
         assert app.screen.drafts["chat"].model == "second-edit"
 
 
-async def test_invalid_yaml_blocks_model_accept(
-    app, model_discovery, monkeypatch
-):
-    model_discovery(lambda _config: [])
+async def test_invalid_yaml_blocks_model_accept(app, model_dialog, monkeypatch):
     notifications = []
     monkeypatch.setattr(
         app,
@@ -1572,8 +1528,7 @@ async def test_invalid_yaml_blocks_model_accept(
         lambda message, **kwargs: notifications.append((message, kwargs)),
     )
 
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog():
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = "model: [not valid"
 
@@ -1586,12 +1541,9 @@ async def test_invalid_yaml_blocks_model_accept(
 
 
 async def test_yaml_validation_error_with_rich_markup_is_plain_text(
-    app, model_discovery
+    app, model_dialog
 ):
-    model_discovery(lambda _config: [])
-
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog() as pilot:
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = """\
 model: gpt-5.4
@@ -1620,12 +1572,9 @@ api_key:
 
 
 async def test_yaml_validation_lists_all_errors_in_bounded_scroll_area(
-    app, model_discovery
+    app, model_dialog
 ):
-    model_discovery(lambda _config: [])
-
-    async with app.run_test(size=(80, 30)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog() as pilot:
         app.screen.query_one("#chat-advanced", Collapsible).collapsed = False
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = """\
@@ -1678,7 +1627,7 @@ async def test_model_change_only_reports_changed_embedding(app):
 
 
 async def test_model_modal_preserves_direct_embedding_endpoint(
-    app, model_discovery
+    app, model_dialog
 ):
     runtime = app.runtime
     runtime.config.emb_model = EmbModelConfig(
@@ -1687,10 +1636,7 @@ async def test_model_modal_preserves_direct_embedding_endpoint(
         base_url="https://embeddings.example/v1",
         check_embedding_ctx_length=False,
     )
-    model_discovery(lambda _config: [])
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog(size=(80, 24)):
         assert (
             app.screen.query_one("#embedding-inference-provider", Select).value
             == ModelScreen.NONE_VALUE
@@ -1712,7 +1658,7 @@ async def test_model_modal_preserves_direct_embedding_endpoint(
 
 
 async def test_switching_direct_endpoint_to_named_provider_stays_in_sync(
-    app, model_discovery
+    app, model_dialog
 ):
     runtime = app.runtime
     runtime.config.llm_model = ChatModelConfig(
@@ -1726,11 +1672,7 @@ async def test_switching_direct_endpoint_to_named_provider_stays_in_sync(
         discovered_with.append(config)
         return [ProviderModel("provider-model", "openai")]
 
-    model_discovery(provider_models)
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        await open_model_screen(app, pilot)
-
+    async with model_dialog(provider_models, size=(80, 24)) as pilot:
         provider = app.screen.query_one("#chat-inference-provider", Select)
         provider.value = "openai"
         await pilot.pause()
@@ -1757,17 +1699,14 @@ async def test_switching_direct_endpoint_to_named_provider_stays_in_sync(
 
 
 async def test_named_provider_control_removes_direct_url_in_one_sync(
-    app, model_discovery
+    app, model_dialog
 ):
     runtime = app.runtime
     runtime.config.llm_model = ChatModelConfig(
         model="direct-model",
         base_url="https://direct.example/v1",
     )
-    model_discovery(lambda _config: [])
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog(size=(80, 24)) as pilot:
         provider = app.screen.query_one("#chat-inference-provider", Select)
         initial_yaml = yaml.safe_load(
             app.screen.query_one("#chat-config-yaml", TextArea).text
@@ -1790,7 +1729,7 @@ async def test_named_provider_control_removes_direct_url_in_one_sync(
 
 
 async def test_immediate_apply_clears_direct_url_for_named_provider(
-    app, model_discovery
+    app, model_dialog
 ):
     runtime = app.runtime
     runtime.config.llm_model = ChatModelConfig(
@@ -1798,10 +1737,7 @@ async def test_immediate_apply_clears_direct_url_for_named_provider(
         base_url="https://direct.example/v1",
         temperature=0.2,
     )
-    model_discovery(lambda _config: [])
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog(size=(80, 24)) as pilot:
         app.screen.query_one(
             "#chat-inference-provider", Select
         ).value = "openai"
@@ -1821,7 +1757,7 @@ async def test_immediate_apply_clears_direct_url_for_named_provider(
 
 
 async def test_model_modal_preserves_only_explicit_overrides_when_switching_provider(
-    app, model_discovery
+    app, model_dialog
 ):
     runtime = app.runtime
     runtime.config.inference_providers["other"] = InferenceProviderConfig(
@@ -1844,10 +1780,9 @@ async def test_model_modal_preserves_only_explicit_overrides_when_switching_prov
     runtime.config.llm_model = configured.resolve_inference_provider(
         runtime.config.inference_providers
     )
-    model_discovery(lambda _config: [ProviderModel("gpt-test", "openai")])
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog(
+        lambda _config: [ProviderModel("gpt-test", "openai")], size=(80, 24)
+    ):
         app.screen.query_one("#chat-inference-provider", Select).value = "other"
 
         chat = app.screen._settings("chat", app.screen.chat)
@@ -1859,7 +1794,7 @@ async def test_model_modal_preserves_only_explicit_overrides_when_switching_prov
 
 
 async def test_model_modal_uses_default_provider_for_new_embedding(
-    app, model_discovery
+    app, model_dialog
 ):
     runtime = app.runtime
     runtime.config.emb_model = None
@@ -1869,10 +1804,7 @@ async def test_model_modal_uses_default_provider_for_new_embedding(
         discovered_with.append(config)
         return [ProviderModel("text-embedding-test", "openai", "embedding")]
 
-    model_discovery(provider_models)
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        await open_model_screen(app, pilot)
+    async with model_dialog(provider_models, size=(80, 24)):
         assert any(
             config.model_provider == "openai"
             and config.api_key
@@ -1960,7 +1892,7 @@ async def test_stale_model_discovery_cannot_replace_new_provider_catalog(
 
 
 async def test_model_modal_seeded_provider_fuzz_preserves_invariants(
-    app, model_discovery
+    app, model_dialog
 ):
     runtime = app.runtime
     for index in range(3):
@@ -1981,13 +1913,10 @@ async def test_model_modal_seeded_provider_fuzz_preserves_invariants(
             for model_index in range(3)
         ]
 
-    model_discovery(provider_models)
     choices = [f"provider-{index}" for index in range(3)]
     rng = random.Random(20260826)
 
-    async with app.run_test(size=(80, 24)) as pilot:
-        await open_model_screen(app, pilot)
-
+    async with model_dialog(provider_models, size=(80, 24)) as pilot:
         for iteration in range(30):
             provider_select = app.screen.query_one(
                 "#chat-inference-provider", Select
