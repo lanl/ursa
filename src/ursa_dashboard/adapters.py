@@ -41,77 +41,6 @@ class AgentAdapter(Protocol):
         """Async run variant used by the dashboard worker."""
 
 
-class BaseAgentInProcessAdapter:
-    """Adapter for URSA BaseAgent-derived classes executed in-process.
-
-    IMPORTANT: Runs in the dashboard are executed inside a *separate worker subprocess*.
-    The dashboard runner already captures that subprocess's stdout/stderr and persists
-    them to the run event log.
-
-    Therefore, this adapter intentionally does **not** redirect/capture stdout/stderr
-    in-process (doing so would hide logs from the runner). Instead it attaches the
-    shared CLI callback handler so structured progress is rendered directly into the
-    worker's stdout stream.
-
-    Exceptions are allowed to propagate so the worker can mark the run as failed.
-    """
-
-    def __init__(
-        self,
-        agent_factory: Callable[[Path, Any], Any],
-        *,
-        supports_streaming: bool,
-    ):
-        self._agent_factory = agent_factory
-        self._supports_streaming = supports_streaming
-        self._setup_hook: Callable[[Any, RunContext, Any], Any] | None = None
-
-    def set_setup_hook(
-        self, hook: Callable[[Any, RunContext, Any], Any] | None
-    ) -> None:
-        """Set an optional hook invoked after agent construction and before invoke().
-
-        The hook may be sync or async.
-        """
-
-        self._setup_hook = hook
-
-    def invoke(self, *, ctx: RunContext, inputs: Any, sink: EventSink) -> str:
-        """Synchronous compatibility wrapper."""
-        return asyncio.run(self.ainvoke(ctx=ctx, inputs=inputs, sink=sink))
-
-    async def ainvoke(
-        self, *, ctx: RunContext, inputs: Any, sink: EventSink
-    ) -> str:
-        del sink
-        agent = self._agent_factory(ctx.workspace_dir, inputs)
-        if not _supports_ainvoke(agent):
-            # Compatibility for tests/custom targets that are routed through
-            # this adapter but do not expose BaseAgent.ainvoke.
-            return await asyncio.to_thread(
-                _invoke_sync_target_with_setup,
-                agent,
-                self._setup_hook,
-                ctx,
-                inputs,
-                ctx.workspace_dir,
-            )
-
-        try:
-            if self._setup_hook is not None:
-                await _maybe_await(self._setup_hook(agent, ctx, inputs))
-            result = await _ainvoke_with_cli_handler(
-                agent,
-                inputs,
-                workspace_dir=ctx.workspace_dir,
-            )
-
-            # Prefer BaseAgent.format_result if available; else just string-ify.
-            return _format_agent_result(agent, result)
-        finally:
-            await _close_agent(agent)
-
-
 class DirectInvokeAdapter:
     """Adapter that invokes an agent in-process *without* redirecting stdout/stderr.
 
@@ -144,7 +73,7 @@ class DirectInvokeAdapter:
     ) -> str:
         del sink
         agent = self._agent_factory(ctx.workspace_dir, inputs)
-        if not _supports_ainvoke(agent):
+        if not callable(getattr(agent, "ainvoke", None)):
             # Some dashboard targets are synchronous workflows.  Run setup and
             # invocation in a worker thread so they do not execute inside this
             # event loop; that preserves their existing sync invoke semantics.
@@ -170,6 +99,31 @@ class DirectInvokeAdapter:
             await _close_agent(agent)
 
 
+class BaseAgentInProcessAdapter(DirectInvokeAdapter):
+    """Adapter for URSA BaseAgent-derived classes executed in-process.
+
+    IMPORTANT: Runs in the dashboard are executed inside a *separate worker subprocess*.
+    The dashboard runner already captures that subprocess's stdout/stderr and persists
+    them to the run event log.
+
+    Therefore, this adapter intentionally does **not** redirect/capture stdout/stderr
+    in-process (doing so would hide logs from the runner). Instead it attaches the
+    shared CLI callback handler so structured progress is rendered directly into the
+    worker's stdout stream.
+
+    Exceptions are allowed to propagate so the worker can mark the run as failed.
+    """
+
+    def __init__(
+        self,
+        agent_factory: Callable[[Path, Any], Any],
+        *,
+        supports_streaming: bool,
+    ):
+        super().__init__(agent_factory)
+        self._supports_streaming = supports_streaming
+
+
 def _dashboard_console() -> Console:
     """Create the plain-text console used for dashboard worker log streaming."""
     return Console(
@@ -181,33 +135,26 @@ def _dashboard_console() -> Console:
     )
 
 
-def _supports_invoke_config(agent: Any) -> bool:
-    """Return whether ``agent.invoke(...)`` accepts a runnable config."""
+def _callback_config(invoke: Callable, workspace_dir: Path) -> dict[str, Any]:
+    """Attach CLI progress only to targets that accept runnable configuration."""
     try:
-        params = inspect.signature(agent.invoke).parameters.values()
+        params = inspect.signature(invoke).parameters.values()
     except (AttributeError, TypeError, ValueError):
-        return False
-    return any(
+        return {}
+    if not any(
         param.name == "config" or param.kind is inspect.Parameter.VAR_KEYWORD
         for param in params
-    )
-
-
-def _supports_ainvoke(agent: Any) -> bool:
-    """Return whether the target exposes an async invocation entry point."""
-    return callable(getattr(agent, "ainvoke", None))
-
-
-def _supports_ainvoke_config(agent: Any) -> bool:
-    """Return whether ``agent.ainvoke(...)`` accepts a runnable config."""
-    try:
-        params = inspect.signature(agent.ainvoke).parameters.values()
-    except (AttributeError, TypeError, ValueError):
-        return False
-    return any(
-        param.name == "config" or param.kind is inspect.Parameter.VAR_KEYWORD
-        for param in params
-    )
+    ):
+        return {}
+    return {
+        "config": {
+            "callbacks": [
+                AgentLogEventHandler(
+                    console=_dashboard_console(), workspace=workspace_dir
+                )
+            ]
+        }
+    }
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -268,13 +215,7 @@ def _invoke_with_cli_handler(
     workspace_dir: Path,
 ) -> Any:
     """Invoke a dashboard target, attaching the shared CLI callback when supported."""
-    if not _supports_invoke_config(agent):
-        return agent.invoke(inputs)
-    handler = AgentLogEventHandler(
-        console=_dashboard_console(),
-        workspace=workspace_dir,
-    )
-    return agent.invoke(inputs, config={"callbacks": [handler]})
+    return agent.invoke(inputs, **_callback_config(agent.invoke, workspace_dir))
 
 
 async def _ainvoke_with_cli_handler(
@@ -284,12 +225,6 @@ async def _ainvoke_with_cli_handler(
     workspace_dir: Path,
 ) -> Any:
     """Async invoke a dashboard target with the shared CLI callback when supported."""
-    if not _supports_ainvoke_config(agent):
-        return await _maybe_await(agent.ainvoke(inputs))
-    handler = AgentLogEventHandler(
-        console=_dashboard_console(),
-        workspace=workspace_dir,
-    )
     return await _maybe_await(
-        agent.ainvoke(inputs, config={"callbacks": [handler]})
+        agent.ainvoke(inputs, **_callback_config(agent.ainvoke, workspace_dir))
     )

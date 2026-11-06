@@ -6,7 +6,7 @@ import logging
 import os
 import threading
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -147,7 +147,12 @@ async def test_process_loss_settles_pending_invocations(
         monkeypatch.setattr(
             manager, "_send", AsyncMock(side_effect=BrokenPipeError())
         )
+        process = manager._entry("agent").process
+        monkeypatch.setattr(process, "terminate", Mock())
+        monkeypatch.setattr(process, "kill", Mock(wraps=process.kill))
         await manager.kill_agent("agent", graceful_timeout=0.01)
+        process.terminate.assert_called_once_with()
+        process.kill.assert_called_once_with()
         expected = AgentStatus.STOPPED
     with pytest.raises(AgentProcessExitedError):
         await asyncio.wait_for(pending, 2)

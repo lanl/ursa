@@ -230,6 +230,14 @@ def test_worker_applies_fallback_and_agent_override(
         )
         return Adapter()
 
+    async def run_worker(config, inputs):
+        agent = await worker_main._dashboard_process_factory(config, None)
+        return await agent.ainvoke(inputs)
+
+    monkeypatch.setattr(
+        worker_main, "_run_with_shared_agent_manager", run_worker
+    )
+
     monkeypatch.setitem(
         REGISTRY,
         "test",

@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, TypedDict
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from langchain_core.callbacks import AsyncCallbackHandler
@@ -17,7 +18,12 @@ from langgraph.runtime import Runtime
 from langgraph.store.sqlite.aio import AsyncSqliteStore
 
 # Your project imports
-from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
+from ursa.agents.base import (
+    _INVOKE_DEPTH,
+    AgentContext,
+    AgentWithTools,
+    BaseAgent,
+)
 from ursa.agents.chat_agent import BasicChatAgent
 from ursa.util import Checkpointer
 from ursa.util.checkpoint_retention import CheckpointPruneResult
@@ -777,3 +783,42 @@ def test_explicit_thread_id_is_respected(tmp_path):
     )
 
     assert agent.thread_id == "ursa"
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("failure", [ValueError, asyncio.CancelledError])
+async def test_invocation_scope_preserves_inputs_controls_and_error_cleanup(
+    tmp_path, asynchronous, failure
+):
+    agent = Agent(llm=TinyCountingModel(), workspace=tmp_path)
+    agent.telemetry = Mock()
+    target = (
+        AsyncMock(return_value="done")
+        if asynchronous
+        else Mock(return_value="done")
+    )
+    engine = agent._ainvoke_engine if asynchronous else agent._invoke_engine
+    result = engine(
+        target, question="hello", recursion_limit=3, config={"tags": ["test"]}
+    )
+    assert (await result if asynchronous else result) == "done"
+    target.assert_called_once_with(
+        {"question": "hello"}, tags=["test"], recursion_limit=3
+    )
+    with pytest.raises(
+        TypeError, match="Unexpected keyword argument 'question'"
+    ):
+        result = engine(target, {"question": "hello"}, question="ambiguous")
+        if asynchronous:
+            await result
+    assert target.call_count == 1
+    target.side_effect = failure("invocation failed")
+    with pytest.raises(failure, match="invocation failed"):
+        result = engine(target, "hello")
+        if asynchronous:
+            await result
+    assert agent.telemetry.begin_run.call_count == 3
+    assert agent.telemetry.render.call_count == 3
+    assert _INVOKE_DEPTH.get() == 0
+    assert agent._async_invocation_owner is None
+    agent.close()

@@ -92,6 +92,33 @@ def _api_key_from_config(
     return env_val
 
 
+def _model_kwargs(
+    config: dict[str, Any],
+    model: str,
+    *,
+    label: str,
+    api_key_override: str | None | object,
+) -> dict[str, Any]:
+    """Build provider options shared by chat and embedding initialization."""
+    raw_base_url = config.get("base_url")
+    base_url = str(raw_base_url).strip() if raw_base_url is not None else None
+    api_key = _api_key_from_config(
+        config, label=label, override=api_key_override
+    )
+    model_kwargs = config.get("model_kwargs") or {}
+    if not isinstance(model_kwargs, dict):
+        raise ValueError(f"{label.lower()}.model_kwargs must be a JSON object")
+    kwargs = {
+        **model_kwargs,
+        "model": _normalize_model(model, model_kwargs.get("model_provider")),
+    }
+    if api_key is not None:
+        kwargs["api_key"] = api_key
+    if base_url:
+        kwargs["base_url"] = base_url
+    return kwargs
+
+
 def _init_llm(
     llm_cfg: dict[str, Any],
     *,
@@ -100,30 +127,17 @@ def _init_llm(
     # Avoid importing langchain unless actually executing.
     from langchain.chat_models import init_chat_model
 
-    raw_base_url = llm_cfg.get("base_url")
-    base_url = str(raw_base_url).strip() if raw_base_url is not None else None
+    from ursa.util.model_metadata import load_model_context
 
-    api_key = _api_key_from_config(
-        llm_cfg, label="LLM", override=api_key_override
-    )
-
-    model_kwargs = llm_cfg.get("model_kwargs") or {}
-    if not isinstance(model_kwargs, dict):
-        raise ValueError("llm.model_kwargs must be a JSON object")
-
-    model = _normalize_model(
+    kwargs = _model_kwargs(
+        llm_cfg,
         str(llm_cfg.get("model") or "openai:gpt-5.4-mini"),
-        model_kwargs.get("model_provider"),
+        label="LLM",
+        api_key_override=api_key_override,
     )
-
-    kwargs: dict[str, Any] = {**model_kwargs, "model": model}
-
-    if api_key is not None:
-        kwargs["api_key"] = api_key
-    if base_url:
-        kwargs["base_url"] = base_url
-
-    return init_chat_model(**kwargs)
+    llm = init_chat_model(**kwargs)
+    load_model_context(llm, explicit_profile="profile" in kwargs)
+    return llm
 
 
 def _init_embedding(
@@ -137,34 +151,20 @@ def _init_embedding(
     snapshotted into the run record; the run manager delivers stored or
     environment-backed secrets through the worker's one-time stdin channel.
     """
-
     model = str(embedding_cfg.get("model") or "").strip()
     if not model or model.lower() in {"none", "disabled"}:
         return None
 
     from langchain.embeddings import init_embeddings
 
-    raw_base_url = embedding_cfg.get("base_url")
-    base_url = str(raw_base_url).strip() if raw_base_url is not None else None
-
-    api_key = _api_key_from_config(
-        embedding_cfg, label="Embedding", override=api_key_override
+    return init_embeddings(
+        **_model_kwargs(
+            embedding_cfg,
+            model,
+            label="Embedding",
+            api_key_override=api_key_override,
+        )
     )
-
-    model_kwargs = embedding_cfg.get("model_kwargs") or {}
-    if not isinstance(model_kwargs, dict):
-        raise ValueError("embedding.model_kwargs must be a JSON object")
-
-    kwargs: dict[str, Any] = {
-        **model_kwargs,
-        "model": _normalize_model(model, model_kwargs.get("model_provider")),
-    }
-    if api_key is not None:
-        kwargs["api_key"] = api_key
-    if base_url:
-        kwargs["base_url"] = base_url
-
-    return init_embeddings(**kwargs)
 
 
 def _maybe_run_async(result):
@@ -273,6 +273,7 @@ async def _dashboard_process_factory(
     """
     from ursa_dashboard.adapters import RunContext
     from ursa_dashboard.registry import REGISTRY
+    from ursa_dashboard.settings import LLMSettings
 
     agent_id = str(config["agent_id"])
     try:
@@ -302,6 +303,10 @@ async def _dashboard_process_factory(
     )
 
     agent_init = dict(config.get("agent_init") or {})
+    agent_init.setdefault(
+        "tokens_before_summarize",
+        LLMSettings.model_validate(llm_cfg).tokens_before_summarize,
+    )
     agent_init["thread_id"] = "ursa"
     agent_init.setdefault("enable_metrics", True)
     if embedding is not None:

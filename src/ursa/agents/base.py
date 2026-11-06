@@ -24,6 +24,7 @@ import logging
 import re
 import sqlite3
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from contextvars import ContextVar, copy_context
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -1414,9 +1415,9 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
 
         return base
 
-    def _invoke_engine(
+    @contextmanager
+    def _invocation_context(
         self,
-        invoke_method,
         inputs: Optional[InputLike] = None,
         raw_debug: bool = False,
         save_json: Optional[bool] = None,
@@ -1469,9 +1470,7 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
             # Allow subclasses to normalize or transform the input format
             normalized = self._normalize_inputs(inputs)
 
-            # Delegate to the subclass implementation with the normalized inputs
-            # and any control parameters
-            return invoke_method(normalized, **invoke_config, **kwargs)
+            yield normalized, invoke_config, kwargs
 
         finally:
             _INVOKE_DEPTH.reset(depth_token)
@@ -1486,6 +1485,14 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
                     save_raw_snapshot=save_raw_snapshot,
                     save_raw_records=save_raw_records,
                 )
+
+    def _invoke_engine(self, invoke_method, *args: Any, **kwargs: Any):
+        with self._invocation_context(*args, **kwargs) as (
+            inputs,
+            config,
+            controls,
+        ):
+            return invoke_method(inputs, **config, **controls)
 
     async def _ainvoke_engine(self, *args: Any, **kwargs: Any) -> Any:
         """Serialize async invocations of one agent instance."""
@@ -1501,66 +1508,14 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
                 self._async_invocation_owner = None
 
     async def _ainvoke_engine_unlocked(
-        self,
-        invoke_method,
-        inputs: Optional[InputLike] = None,
-        raw_debug: bool = False,
-        save_json: Optional[bool] = None,
-        save_otel: Optional[bool] = None,
-        metrics_path: Optional[str] = None,
-        otel_endpoint: Optional[str] = None,
-        otel_headers: Optional[str] = None,
-        save_raw_snapshot: Optional[bool] = None,
-        save_raw_records: Optional[bool] = None,
-        config: Optional[dict] = None,
-        **kwargs: Any,
+        self, invoke_method, *args: Any, **kwargs: Any
     ):
-        depth = _INVOKE_DEPTH.get() + 1
-        depth_token = _INVOKE_DEPTH.set(depth)
-        invoke_config = dict(config or {})
-
-        try:
-            if depth == 1:
-                self.telemetry.begin_run(
-                    agent=self.name, thread_id=self.thread_id
-                )
-
-            if inputs is None:
-                kw_inputs: dict[str, Any] = {}
-                control_kwargs: dict[str, Any] = {}
-                for k, v in kwargs.items():
-                    if k in self._TELEMETRY_KW or k in self._CONTROL_KW:
-                        control_kwargs[k] = v
-                    else:
-                        kw_inputs[k] = v
-                inputs = kw_inputs
-                kwargs = control_kwargs
-            else:
-                for k in kwargs.keys():
-                    if not (k in self._TELEMETRY_KW or k in self._CONTROL_KW):
-                        raise TypeError(
-                            f"Unexpected keyword argument '{k}'. "
-                            "Pass inputs as a single mapping or omit the "
-                            "positional inputs and pass them as keyword "
-                            "arguments."
-                        )
-
-            normalized = self._normalize_inputs(inputs)
-            return await invoke_method(normalized, **invoke_config, **kwargs)
-
-        finally:
-            _INVOKE_DEPTH.reset(depth_token)
-            if depth == 1:
-                self.telemetry.render(
-                    raw=raw_debug,
-                    save_json=save_json,
-                    save_otel=save_otel,
-                    filepath=metrics_path,
-                    otel_endpoint=otel_endpoint,
-                    otel_headers=otel_headers,
-                    save_raw_snapshot=save_raw_snapshot,
-                    save_raw_records=save_raw_records,
-                )
+        with self._invocation_context(*args, **kwargs) as (
+            inputs,
+            config,
+            controls,
+        ):
+            return await invoke_method(inputs, **config, **controls)
 
     # NOTE: The `invoke` method uses the PEP 570 `/,*` notation to explicitly state which
     # arguments can and cannot be passed as positional or keyword arguments.
