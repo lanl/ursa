@@ -81,21 +81,6 @@ def _truncate_middle(text: str, width: int) -> str:
     return f"{prefix} _… truncated …_ {suffix}"
 
 
-def _inference_provider(value: str | None) -> str:
-    """Return a concise inference-provider label."""
-    return value or "default"
-
-
-def _embedding_name(runtime: AgentRuntime) -> str:
-    embedding = getattr(runtime, "embedding", None)
-    if embedding is None:
-        return "none"
-    for attribute in ("model_name", "model"):
-        if value := getattr(embedding, attribute, None):
-            return str(value)
-    return type(embedding).__name__
-
-
 def _route_prompt(runtime: AgentRuntime, prompt: str) -> tuple[str, str]:
     """Route a leading ``#agent`` macro, defaulting to chat."""
     match = re.match(

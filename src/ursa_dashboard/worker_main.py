@@ -167,12 +167,6 @@ def _init_embedding(
     )
 
 
-def _maybe_run_async(result):
-    if asyncio.iscoroutine(result):
-        return asyncio.run(result)
-    return result
-
-
 def _read_secrets_stdin(*, max_bytes: int = 65_536) -> dict[str, str | None]:
     payload = sys.stdin.buffer.read(max_bytes + 1)
     if len(payload) > max_bytes:

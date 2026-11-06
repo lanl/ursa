@@ -416,22 +416,31 @@ async def test_shared_async_store_serializes_first_use_migrations(
             agent.close()
 
 
-@pytest.mark.asyncio
-async def test_persistent_agent_ainvoke_uses_async_sqlite_resources(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+@pytest.fixture
+async def persistent_agent(tmp_path, monkeypatch):
     _use_temp_agent_groups(monkeypatch, tmp_path)
-    agent = Agent(
-        llm=TinyCountingModel(),
-        agent_name="persistent_async_agent",
-        enable_metrics=False,
-    )
+    agents = []
 
-    try:
-        result = await agent.ainvoke("hello persistent async")
-    finally:
+    def create(agent_class=Agent, **kwargs):
+        agent = agent_class(
+            llm=TinyCountingModel(), enable_metrics=False, **kwargs
+        )
+        agents.append(agent)
+        return agent
+
+    yield create
+    for agent in reversed(agents):
         await agent.aclose()
         agent.close()
+
+
+@pytest.mark.asyncio
+async def test_persistent_agent_ainvoke_uses_async_sqlite_resources(
+    persistent_agent,
+):
+    agent = persistent_agent(agent_name="persistent_async_agent")
+
+    result = await agent.ainvoke("hello persistent async")
 
     assert result["messages"][-1].text == "done"
     assert (agent.den / "db" / "checkpointer.db").is_file()
@@ -440,7 +449,7 @@ async def test_persistent_agent_ainvoke_uses_async_sqlite_resources(
 
 @pytest.mark.asyncio
 async def test_aclose_releases_and_joins_async_sqlite_resources(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    persistent_agent,
 ):
     """``aclose`` releases async SQLite resources and joins worker threads.
 
@@ -455,12 +464,7 @@ async def test_aclose_releases_and_joins_async_sqlite_resources(
 
     import aiosqlite
 
-    _use_temp_agent_groups(monkeypatch, tmp_path)
-    agent = Agent(
-        llm=TinyCountingModel(),
-        agent_name="aclose_join_agent",
-        enable_metrics=False,
-    )
+    agent = persistent_agent(agent_name="aclose_join_agent")
 
     baseline = {
         t for t in threading.enumerate() if isinstance(t, aiosqlite.Connection)
@@ -496,15 +500,11 @@ async def test_aclose_releases_and_joins_async_sqlite_resources(
 
 
 @pytest.mark.asyncio
-async def test_named_agent_restores_state_in_a_new_instance(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    _use_temp_agent_groups(monkeypatch, tmp_path)
-    first = BasicChatAgent(
-        llm=TinyCountingModel(),
+async def test_named_agent_restores_state_in_a_new_instance(persistent_agent):
+    first = persistent_agent(
+        agent_class=BasicChatAgent,
         agent_name="resumed-agent",
         thread_id="resumed-thread",
-        enable_metrics=False,
     )
     try:
         await first.ainvoke(first.format_query("first turn"))
@@ -512,17 +512,12 @@ async def test_named_agent_restores_state_in_a_new_instance(
         await first.aclose()
         first.close()
 
-    resumed = BasicChatAgent(
-        llm=TinyCountingModel(),
+    resumed = persistent_agent(
+        agent_class=BasicChatAgent,
         agent_name="resumed-agent",
         thread_id="resumed-thread",
-        enable_metrics=False,
     )
-    try:
-        result = await resumed.ainvoke(resumed.format_query("second turn"))
-    finally:
-        await resumed.aclose()
-        resumed.close()
+    result = await resumed.ainvoke(resumed.format_query("second turn"))
 
     human_messages = [
         message.content
@@ -534,102 +529,54 @@ async def test_named_agent_restores_state_in_a_new_instance(
 
 @pytest.mark.asyncio
 async def test_persistent_agent_supports_sync_and_async_invocation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    persistent_agent,
 ):
-    _use_temp_agent_groups(monkeypatch, tmp_path)
-    agent = Agent(
-        llm=TinyCountingModel(),
-        agent_name="persistent_sync_async_agent",
-        enable_metrics=False,
-    )
+    agent = persistent_agent(agent_name="persistent_sync_async_agent")
 
-    try:
-        sync_result = agent.invoke("hello sync")
-        async_result = await agent.ainvoke("hello async")
-    finally:
-        await agent.aclose()
-        agent.close()
+    sync_result = agent.invoke("hello sync")
+    async_result = await agent.ainvoke("hello async")
 
     assert sync_result["messages"][-1].text == "done"
     assert async_result["messages"][-1].text == "done"
 
 
 def test_persistent_async_only_agent_sync_invoke_uses_async_sqlite_resources(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    persistent_agent,
 ):
-    _use_temp_agent_groups(monkeypatch, tmp_path)
-    agent = AsyncOnlyFlagAgent(
-        llm=TinyCountingModel(),
-        agent_name="persistent_async_only_agent",
-        enable_metrics=False,
+    agent = persistent_agent(
+        agent_class=AsyncOnlyFlagAgent, agent_name="persistent_async_only_agent"
     )
 
-    try:
-        result = agent.invoke("hello async-only")
-    finally:
-        asyncio.run(agent.aclose())
-        agent.close()
+    result = agent.invoke("hello async-only")
 
     assert result["messages"][-1].text == "done"
 
 
-def test_persistent_agent_prunes_after_sync_terminal_success(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("custom_thread", [None, "custom-thread"])
+async def test_persistent_agent_prunes_after_terminal_success(
+    asynchronous, custom_thread, persistent_agent, monkeypatch
 ):
-    _use_temp_agent_groups(monkeypatch, tmp_path)
-    calls: list[str] = []
-
-    def record_prune(_saver, thread_id):
-        calls.append(thread_id)
-        return CheckpointPruneResult(pruned=False)
-
-    monkeypatch.setattr(
-        "ursa.agents.base.prune_sqlite_checkpoints", record_prune
+    prune = AsyncMock() if asynchronous else Mock()
+    prune.return_value = CheckpointPruneResult(pruned=False)
+    method = (
+        "aprune_sqlite_checkpoints"
+        if asynchronous
+        else "prune_sqlite_checkpoints"
     )
-    agent = Agent(
-        llm=TinyCountingModel(),
-        agent_name="persistent_sync_retention_agent",
-        enable_metrics=False,
+    monkeypatch.setattr(f"ursa.agents.base.{method}", prune)
+    agent = persistent_agent(agent_name="persistent_retention_agent")
+    config = (
+        {"configurable": {"thread_id": custom_thread}} if custom_thread else {}
     )
-
-    try:
-        agent.invoke(
-            "terminal sync run",
-            config={"configurable": {"thread_id": "custom-thread"}},
-        )
-    finally:
-        agent.close()
-
-    assert calls == ["custom-thread"]
-
-
-@pytest.mark.asyncio
-async def test_persistent_agent_prunes_after_async_terminal_success(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    _use_temp_agent_groups(monkeypatch, tmp_path)
-    calls: list[str] = []
-
-    async def record_prune(_saver, thread_id):
-        calls.append(thread_id)
-        return CheckpointPruneResult(pruned=False)
-
-    monkeypatch.setattr(
-        "ursa.agents.base.aprune_sqlite_checkpoints", record_prune
-    )
-    agent = Agent(
-        llm=TinyCountingModel(),
-        agent_name="persistent_async_retention_agent",
-        enable_metrics=False,
-    )
-
-    try:
-        await agent.ainvoke("terminal async run")
-    finally:
-        await agent.aclose()
-        agent.close()
-
-    assert calls == [agent.thread_id]
+    if asynchronous:
+        await agent.ainvoke("terminal run", config=config)
+    else:
+        agent.invoke("terminal run", config=config)
+    prune.assert_called_once()
+    assert prune.call_args.args[1] == (custom_thread or agent.thread_id)
+    if asynchronous:
+        prune.assert_awaited_once()
 
 
 def test_user_supplied_checkpointer_is_not_automatically_pruned(
@@ -817,8 +764,50 @@ async def test_invocation_scope_preserves_inputs_controls_and_error_cleanup(
         result = engine(target, "hello")
         if asynchronous:
             await result
+    with pytest.raises(TypeError):
+        result = engine(target, config=[42])
+        if asynchronous:
+            await result
     assert agent.telemetry.begin_run.call_count == 3
     assert agent.telemetry.render.call_count == 3
     assert _INVOKE_DEPTH.get() == 0
     assert agent._async_invocation_owner is None
+    agent.close()
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_stream_finalizes_telemetry_on_failure_or_early_close(tmp_path, fails):
+    agent = Agent(llm=TinyCountingModel(), workspace=tmp_path)
+    agent.telemetry = Mock()
+
+    def stream(inputs, **config):
+        assert inputs == {"query": "hello"}
+        assert config == {"tags": ["stream"], "stream_mode": "values"}
+        assert _INVOKE_DEPTH.get() == 1
+        yield "first"
+        raise ValueError("stream failed")
+
+    agent._stream = stream
+    result = agent.stream(
+        {"query": "hello"},
+        {"tags": ["stream"]},
+        stream_mode="values",
+        raw_debug=True,
+    )
+    assert next(result) == "first"
+    if fails:
+        with pytest.raises(ValueError, match="stream failed"):
+            next(result)
+    else:
+        result.close()
+    agent.telemetry.begin_run.assert_called_once()
+    agent.telemetry.render.assert_called_once_with(
+        raw=True,
+        save_json=None,
+        save_otel=None,
+        filepath=None,
+        save_raw_snapshot=None,
+        save_raw_records=None,
+    )
+    assert _INVOKE_DEPTH.get() == 0
     agent.close()

@@ -1416,6 +1416,22 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
         return base
 
     @contextmanager
+    def _telemetry_run(self, **render_options: Any):
+        """Track one outer invocation, including generators closed early."""
+        depth = _INVOKE_DEPTH.get() + 1
+        token = _INVOKE_DEPTH.set(depth)
+        try:
+            if depth == 1:
+                self.telemetry.begin_run(
+                    agent=self.name, thread_id=self.thread_id
+                )
+            yield
+        finally:
+            _INVOKE_DEPTH.reset(token)
+            if depth == 1:
+                self.telemetry.render(**render_options)
+
+    @contextmanager
     def _invocation_context(
         self,
         inputs: Optional[InputLike] = None,
@@ -1430,17 +1446,17 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
         config: Optional[dict] = None,
         **kwargs: Any,
     ):
-        depth = _INVOKE_DEPTH.get() + 1
-        depth_token = _INVOKE_DEPTH.set(depth)
         invoke_config = dict(config or {})
-
-        try:
-            # Start telemetry tracking for the top-level invocation
-            if depth == 1:
-                self.telemetry.begin_run(
-                    agent=self.name, thread_id=self.thread_id
-                )
-
+        with self._telemetry_run(
+            raw=raw_debug,
+            save_json=save_json,
+            save_otel=save_otel,
+            filepath=metrics_path,
+            otel_endpoint=otel_endpoint,
+            otel_headers=otel_headers,
+            save_raw_snapshot=save_raw_snapshot,
+            save_raw_records=save_raw_records,
+        ):
             # Handle the case where inputs are provided as keyword arguments
             if inputs is None:
                 # Separate kwargs into input parameters and control parameters
@@ -1471,20 +1487,6 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
             normalized = self._normalize_inputs(inputs)
 
             yield normalized, invoke_config, kwargs
-
-        finally:
-            _INVOKE_DEPTH.reset(depth_token)
-            if depth == 1:
-                self.telemetry.render(
-                    raw=raw_debug,
-                    save_json=save_json,
-                    save_otel=save_otel,
-                    filepath=metrics_path,
-                    otel_endpoint=otel_endpoint,
-                    otel_headers=otel_headers,
-                    save_raw_snapshot=save_raw_snapshot,
-                    save_raw_records=save_raw_records,
-                )
 
     def _invoke_engine(self, invoke_method, *args: Any, **kwargs: Any):
         with self._invocation_context(*args, **kwargs) as (
@@ -2445,32 +2447,17 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
             This method tracks invocation depth to properly handle nested agent calls
             and ensure telemetry is only rendered once at the top level.
         """
-        depth = _INVOKE_DEPTH.get() + 1
-        depth_token = _INVOKE_DEPTH.set(depth)
-
-        try:
-            # Start telemetry tracking for top-level invocations only
-            if depth == 1:
-                self.telemetry.begin_run(
-                    agent=self.name, thread_id=self.thread_id
-                )
-
-            # Normalize inputs and delegate to the actual streaming implementation
+        with self._telemetry_run(
+            raw=raw_debug,
+            save_json=save_json,
+            save_otel=save_otel,
+            filepath=metrics_path,
+            save_raw_snapshot=save_raw_snapshot,
+            save_raw_records=save_raw_records,
+        ):
             normalized = self._normalize_inputs(inputs)
             stream_config = dict(config or {})
             yield from self._stream(normalized, **stream_config, **kwargs)
-
-        finally:
-            _INVOKE_DEPTH.reset(depth_token)
-            if depth == 1:
-                self.telemetry.render(
-                    raw=raw_debug,
-                    save_json=save_json,
-                    save_otel=save_otel,
-                    filepath=metrics_path,
-                    save_raw_snapshot=save_raw_snapshot,
-                    save_raw_records=save_raw_records,
-                )
 
     def _default_node_tags(
         self, name: str, extra: Sequence[str] | None = None
@@ -2573,23 +2560,8 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
         Returns:
             A configured RunnableLambda with routing-specific metadata.
         """
-        # Use the first extra tag as namespace, or fall back to agent name in snake_case
-        ns = extra_tags[0] if extra_tags else _to_snake(self.name)
-
-        # Create and return a configured RunnableLambda for routing
         return RunnableLambda(fn).with_config(
-            run_name="node",
-            tags=[
-                self.name,
-                "graph",
-                f"route:{name}",
-                *extra_tags,
-            ],
-            metadata={
-                "langgraph_node": f"route:{name}",
-                "ursa_ns": ns,
-                "ursa_agent": self.name,
-            },
+            **self._node_cfg(f"route:{name}", *extra_tags)
         )
 
     def _named(self, runnable: Any, name: str, *extra_tags: str):
@@ -2605,19 +2577,9 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
         Returns:
             A configured runnable with the specified name and agent metadata.
         """
-        # Use the first extra tag as namespace, or fall back to agent name in snake_case
-        ns = extra_tags[0] if extra_tags else _to_snake(self.name)
-
-        # Apply configuration and return the configured runnable
-        return runnable.with_config(
-            run_name=name,
-            tags=[self.name, "graph", name, *extra_tags],
-            metadata={
-                "langgraph_node": name,
-                "ursa_ns": ns,
-                "ursa_agent": self.name,
-            },
-        )
+        config = self._node_cfg(name, *extra_tags)
+        config["run_name"] = name
+        return runnable.with_config(**config)
 
 
 def _default_tool_error_handler(e: Exception):

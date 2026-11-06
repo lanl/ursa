@@ -96,10 +96,6 @@ def test_model_select_type_search_is_fuzzy():
     assert overlay._find_search_match("g54") == 1
 
 
-class FakeMcpTool(FakeConfiguredTool):
-    name = "remote_read"
-
-
 async def test_agent_hotlist_routes_selected_agent(app):
     runtime = app.runtime
     calls = []
