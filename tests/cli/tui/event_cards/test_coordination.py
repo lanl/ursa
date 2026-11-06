@@ -1,7 +1,8 @@
 import asyncio
 
+import pytest
 from langchain_core.messages import ToolMessage
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.geometry import Region
 from textual.widgets import Button, Markdown, Static
 
@@ -14,6 +15,7 @@ from ursa.cli.tui.event_cards import (
 )
 from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.turn import Turn
+from ursa.cli.tui.widgets import PromptArea
 
 
 async def test_parallel_coordination_calls_share_one_card_across_entire_turn(
@@ -79,13 +81,14 @@ async def test_parallel_coordination_calls_share_one_card_across_entire_turn(
         assert len(turn.query(CoordinationCard)) == 1
         assert len(turn.query(ToolCallCard)) == 1
         summary = str(group.query_one(".coordination-summary", Static).content)
-        assert "5 actions" in summary and "1 need attention" in summary
+        assert "5 actions" in summary and "1 action needs attention" in summary
+        assert group.has_class("coordination-needs-attention")
         recent = "\n".join(
             str(row.content)
             for row in group.query(".coordination-action-preview")
         )
         assert len(recent.splitlines()) == 2
-        assert "Stop agent" in recent and "root/b" in recent
+        assert "Needs attention · Stop agent" in recent and "root/b" in recent
         assert "Spawn agent" not in recent
         assert len(recent) < 800
 
@@ -223,6 +226,98 @@ async def test_compact_recipient_count_survives_long_target_preview(tmp_path):
         assert targets[-1] not in str(preview.content)
 
 
+@pytest.mark.parametrize("size", [(40, 20), (60, 20), (80, 24), (120, 40)])
+async def test_coordination_controls_and_recent_actions_fit_narrow_terminals(
+    tmp_path, size
+):
+    app = UrsaTextualApp(make_runtime(tmp_path))
+    async with app.run_test(size=size) as pilot:
+        turn = await app._mount_turn("coordinate")
+        await turn.event({
+            "tool": "stop_agent",
+            "phase": "start",
+            "_run_id": "stop",
+            "target": "root/reviewer-with-a-descriptive-name",
+        })
+        await turn.event({
+            "tool": "stop_agent",
+            "phase": "error",
+            "_run_id": "stop",
+            "target": "root/reviewer-with-a-descriptive-name",
+            "error": "Agent is stopping",
+        })
+        await turn.event({
+            "tool": "send_message",
+            "phase": "start",
+            "_run_id": "message",
+            "target": "root/researcher-with-a-descriptive-name",
+            "message": "Please share your final result.",
+        })
+        await turn.event({
+            "tool": "send_message",
+            "phase": "end",
+            "_run_id": "message",
+            "result": "Message queued for root/researcher-with-a-descriptive-name.",
+        })
+        group = turn.query_one(CoordinationCard)
+        prompt = app.query_one(PromptArea)
+        conversation = app.query_one("#conversation", VerticalScroll)
+        # Simulate the ordinary live view, where the conversation follows the
+        # bottom until a user deliberately opens this card.
+        conversation.scroll_end(animate=False, immediate=True)
+        conversation.anchor()
+        assert conversation.is_anchored
+        prompt.focus()
+        await pilot.press("shift+tab")
+        assert app.focused is group
+        await pilot.press("enter")
+        assert await wait_for(pilot, lambda: bool(group.query(AgentToolCard)))
+        await pilot.pause()
+
+        navigation = group.query_one(".coordination-navigation", Horizontal)
+        page = group.query_one(".coordination-page", Static)
+        buttons = list(navigation.query(Button))
+        assert page.region.width > 0
+        assert page.region.y == navigation.region.y
+        assert all(button.region.height == 1 for button in buttons)
+        assert all(button.region.y == navigation.region.y for button in buttons)
+        assert all(
+            navigation.content_region.x <= button.region.x
+            and button.region.right <= navigation.content_region.right
+            for button in buttons
+        )
+        viewport = conversation.content_region
+        header = group.query_one(".coordination-summary", Static)
+        assert header.region.y >= viewport.y
+        assert navigation.region.y >= viewport.y
+        assert navigation.region.bottom <= viewport.bottom
+        previews = list(group.query(".coordination-action-preview"))
+        preview_text = "\n".join(str(preview.content) for preview in previews)
+        assert "Needs attention" in preview_text
+        assert "Send message" in preview_text
+        # Later activity must not re-anchor the reader at the bottom and hide
+        # the controls that were deliberately revealed above.
+        await turn.event({
+            "tool": "wait_for",
+            "phase": "start",
+            "_run_id": "background",
+            "target": "root/another-agent",
+        })
+        await pilot.pause()
+        assert header.region.y >= viewport.y
+        assert navigation.region.y >= viewport.y
+        assert navigation.region.bottom <= viewport.bottom
+        previews = list(group.query(".coordination-action-preview"))
+        assert all(
+            preview.region.width <= group.content_region.width
+            for preview in previews
+        )
+        assert group.has_class("coordination-needs-attention")
+        assert "1 action needs attention" in str(
+            group.query_one(".coordination-summary", Static).content
+        )
+
+
 async def test_expanded_coordination_pages_bound_widget_count(tmp_path):
     app = UrsaTextualApp(make_runtime(tmp_path))
     async with app.run_test(size=(110, 40)) as pilot:
@@ -320,5 +415,9 @@ async def test_coordination_errors_keep_exact_body_and_two_visible_rows(
         )
         card = group.query(AgentToolCard).first()
         assert card.failed and len(card.output) <= 241
+        assert card.has_class("agent-tool-failed")
+        assert "Failed: [Unknown target=../foo]" in str(
+            card.query_one(".agent-tool-preview", Static).content
+        )
         card.set_expanded(True)
         assert await wait_for(pilot, lambda: card.output == error)

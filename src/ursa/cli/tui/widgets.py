@@ -2048,16 +2048,19 @@ class MessagesScreen(ModalScreen[None]):
         self._ids: tuple[int, ...] = ()
         self._live = True
         self._resuming_live = False
+        self._resume_generation = 0
+        self._has_newer = False
         self._sync_lock = asyncio.Lock()
         self._refresh_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="messages-dialog"):
-            with Horizontal(id="messages-header"):
+            with Vertical(id="messages-header"):
                 yield Static("Messages", id="messages-title")
-                yield Button("← Older", id="messages-older")
-                yield Button("Newer →", id="messages-newer")
-                yield Button("Latest", id="messages-latest")
+                with Horizontal(id="messages-controls"):
+                    yield Button("← Older", id="messages-older")
+                    yield Button("Newer →", id="messages-newer")
+                    yield Button("Latest", id="messages-latest")
             yield VerticalScroll(id="messages-body")
             yield Static(
                 "Loading messages…",
@@ -2072,6 +2075,10 @@ class MessagesScreen(ModalScreen[None]):
         if self._refresh_timer is not None:
             self._refresh_timer.stop()
             self._refresh_timer = None
+
+    def on_resize(self) -> None:
+        if self.is_mounted:
+            self._refresh_navigation(has_newer=self._has_newer)
 
     async def _sync_messages(self) -> None:
         async with self._sync_lock:
@@ -2154,12 +2161,24 @@ class MessagesScreen(ModalScreen[None]):
 
     def _refresh_navigation(self, *, has_newer: bool) -> None:
         """State the current reading mode where it is useful, in the footer."""
-        if self._live:
-            text = "Live · click or Enter expands · ←/→ browse · Esc"
+        self._has_newer = has_newer
+        footer_width = self.query_one(
+            "#messages-footer", Static
+        ).content_region.width
+        if footer_width < 45:
+            text = (
+                "Live · Enter · End · Esc"
+                if self._live
+                else "History · Enter · End · Esc"
+                if has_newer
+                else "Paused · Enter · End · Esc"
+            )
+        elif self._live:
+            text = "Live · Enter expands · ←/→ · Esc"
         elif has_newer:
-            text = "History · newer available · → newer · End for latest · Esc"
+            text = "History · newer available · → newer · End latest · Esc"
         else:
-            text = "Paused · click or Enter expands · End resumes live · Esc"
+            text = "Paused · Enter expands · End live · Esc"
         state = "Live" if self._live else "History" if has_newer else "Paused"
         self.query_one("#messages-title", Static).update(
             f"Messages · {state} · {len(self._ids)} shown"
@@ -2171,14 +2190,21 @@ class MessagesScreen(ModalScreen[None]):
         if not self._live:
             return
         self._live = False
-        self._resuming_live = False
+        self._cancel_live_resume()
         self.query_one("#messages-latest", Button).disabled = False
         self._refresh_navigation(has_newer=False)
 
     def _schedule_live_bottom(self) -> None:
         """Avoid treating a just-mounted latest page as reader scrollback."""
         self._resuming_live = True
-        self.call_after_refresh(self._finish_resuming_live)
+        self._resume_generation += 1
+        generation = self._resume_generation
+        self.call_after_refresh(lambda: self._finish_resuming_live(generation))
+
+    def _cancel_live_resume(self) -> None:
+        """Invalidate a deferred scroll when the reader starts inspecting."""
+        self._resuming_live = False
+        self._resume_generation += 1
 
     @on(Button.Pressed, "#messages-older")
     async def action_older(self) -> None:
@@ -2190,6 +2216,7 @@ class MessagesScreen(ModalScreen[None]):
             )
             if page:
                 self._live = False
+                self._cancel_live_resume()
                 await self._show_page(page)
                 self.call_after_refresh(self._body().scroll_end, animate=False)
 
@@ -2210,6 +2237,7 @@ class MessagesScreen(ModalScreen[None]):
                 if self._live:
                     self._schedule_live_bottom()
                 else:
+                    self._cancel_live_resume()
                     self.call_after_refresh(
                         self._body().scroll_home, animate=False
                     )
@@ -2223,9 +2251,14 @@ class MessagesScreen(ModalScreen[None]):
             )
             self._schedule_live_bottom()
 
-    def _finish_resuming_live(self) -> None:
+    def _finish_resuming_live(self, generation: int) -> None:
         """Reach the lower edge before allowing the next live refresh."""
-        if not self.is_mounted:
+        if (
+            not self.is_mounted
+            or not self._live
+            or not self._resuming_live
+            or generation != self._resume_generation
+        ):
             return
         self._body().scroll_end(animate=False, immediate=True)
         self._resuming_live = False
@@ -2245,6 +2278,7 @@ class MessagesScreen(ModalScreen[None]):
     async def action_scroll_home(self) -> None:
         async with self._sync_lock:
             self._live = False
+            self._cancel_live_resume()
             await self._show_page(
                 await self._messages.messages(after=0, limit=self.PAGE_SIZE)
             )

@@ -111,7 +111,7 @@ async def test_messages_command_shows_live_collapsible_colored_log(tmp_path):
         assert str(preview.content) == " ".join(content.split())
         assert full.has_class("hidden")
         assert not card.query(".hierarchy-message-expand-hint")
-        assert "click or Enter" in str(
+        assert "Enter expands" in str(
             app.screen.query_one("#messages-footer", Static).content
         )
         assert len(set(app._agent_colors.values())) == 3

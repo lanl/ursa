@@ -1,4 +1,5 @@
 import pytest
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Markdown, Static
 
 from tests.cli._app_helpers import make_runtime, wait_for
@@ -171,3 +172,87 @@ async def test_message_log_pauses_on_scroll_or_expansion_and_keyboard_toggles(
             == "new traffic",
         )
         assert body.scroll_y == body.max_scroll_y
+
+
+async def test_message_log_header_and_footer_fit_across_terminal_widths(
+    tmp_path,
+):
+    app = UrsaTextualApp(make_runtime(tmp_path))
+    await app.record_hierarchy_message("root", ("root/a",), "one message")
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await app._show_command("messages")
+        screen = app.screen
+        assert isinstance(screen, MessagesScreen)
+        assert await wait_for(
+            pilot, lambda: len(screen.query(HierarchyMessageCard)) == 1
+        )
+        header = screen.query_one("#messages-header", Vertical)
+        controls = screen.query_one("#messages-controls", Horizontal)
+        title = screen.query_one("#messages-title", Static)
+        buttons = list(controls.query(Button))
+        assert len(buttons) == 3
+        assert title.region.y < controls.region.y
+        assert all(
+            button.region.right <= controls.content_region.right
+            for button in buttons
+        )
+        assert "Enter expands" in str(
+            screen.query_one("#messages-footer", Static).content
+        )
+
+        await pilot.resize_terminal(40, 20)
+        assert await wait_for(
+            pilot,
+            lambda: all(
+                button.region.right <= controls.content_region.right
+                for button in controls.query(Button)
+            ),
+        )
+        assert [str(button.label) for button in controls.query(Button)] == [
+            "← Older",
+            "Newer →",
+            "Latest",
+        ]
+        assert str(screen.query_one("#messages-footer", Static).content) == (
+            "Live · Enter · End · Esc"
+        )
+        assert header.region.height == 3
+
+        await pilot.resize_terminal(120, 40)
+        assert await wait_for(
+            pilot,
+            lambda: "Enter expands"
+            in str(screen.query_one("#messages-footer", Static).content),
+        )
+        assert [str(button.label) for button in controls.query(Button)] == [
+            "← Older",
+            "Newer →",
+            "Latest",
+        ]
+
+
+async def test_expanding_a_message_cancels_a_deferred_live_resume(tmp_path):
+    app = UrsaTextualApp(make_runtime(tmp_path))
+    for index in range(12):
+        await app.record_hierarchy_message(
+            "root", ("root/a",), f"message {index}\nfull detail"
+        )
+
+    async with app.run_test(size=(80, 14)) as pilot:
+        await app._show_command("messages")
+        screen = app.screen
+        assert isinstance(screen, MessagesScreen)
+        assert await wait_for(
+            pilot, lambda: len(screen.query(HierarchyMessageCard)) == 12
+        )
+        body = screen.query_one("#messages-body")
+        body.scroll_home(animate=False, immediate=True)
+        await screen.action_latest()
+        # The scheduled resume must not win after the reader opens a card.
+        card = screen.query(HierarchyMessageCard).first()
+        card.set_expanded(True)
+        await pilot.pause()
+        assert card.expanded
+        assert not screen._live
+        assert body.scroll_y == 0

@@ -198,7 +198,10 @@ class AgentToolCard(EventCard):
                 return f"Stopping {self.target} and its subagents"
             return "Reading the active hierarchy"
         if self.failed:
-            return f"Could not reach {self.target}"
+            detail = " ".join(self.output.split())
+            if detail:
+                return f"Failed: {detail[:160]}"
+            return f"Failed to reach {self.target}"
         if self.tool == "spawn_agent":
             return f"{self.target} started with its initial task"
         if self.tool == "send_message":
@@ -235,6 +238,7 @@ class AgentToolCard(EventCard):
         self._details_loaded = False
         self.completed = True
         self.failed = failed
+        self.set_class(failed, "agent-tool-failed")
         self.mark_done()
         if self._spinner_timer is not None:
             self._spinner_timer.pause()

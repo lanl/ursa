@@ -61,7 +61,8 @@ the allocated window may only become available after the first response.
 | `/messages` | Open the live, read-only message log for the full hierarchy. |
 | `#` | Choose an agent and route the message to it. |
 | `@` | Insert a workspace file or directory into the message. |
-| **Enter** | Submit the message. During active work, queue it for the selected agent. |
+| **Enter** in the editor | Submit the message. During active work, queue it for the selected agent. |
+| **Enter** or **Space** on a focused card | Expand or collapse its details. Use **Shift+Tab** from the editor to reach conversation cards. |
 | **Esc** | Close an open picker or dialog. Does not submit messages or cancel agent work. |
 | **Shift+Enter** or **Ctrl+J** | Insert a newline. Some terminals cannot distinguish Shift+Enter, so Ctrl+J is the portable option. |
 | **Ctrl+Q** or `/exit` | Exit gracefully, waiting for an active turn to finish. |
@@ -74,6 +75,10 @@ Each turn groups agent messaging, spawning, waiting, and stopping into one
 **Coordination** card with a summary and its two latest actions. Expand the
 card to inspect individual calls. `/messages` displays 50 previews at a time;
 use **Older** and **Newer** to browse, then **Latest** to follow live messages.
+Scrolling back or expanding a message pauses live following so incoming traffic
+does not move what you are reading. Press **End** or select **Latest** to resume.
+Use **Tab** and **Shift+Tab** to move between message cards and controls; the
+focused card has a visible outline. `/keymap` lists the card shortcuts.
 Message bodies and coordination details are stored in SQLite and loaded when
 expanded.
 

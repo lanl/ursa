@@ -15,7 +15,7 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Static
 
 from ursa.cli.tui.event_cards.base import EventCard
@@ -57,6 +57,7 @@ class CoordinationCard(EventCard):
         self.total = 0
         self._offset = 0
         self._details_lock = asyncio.Lock()
+        self._reveal_after_expand = False
 
     def compose(self) -> ComposeResult:
         yield Static("Coordination", classes="coordination-summary")
@@ -122,8 +123,13 @@ class CoordinationCard(EventCard):
         elif not counts["failed"]:
             parts.append("complete")
         if counts["failed"]:
-            parts.append(f"{counts['failed']} need attention")
+            count = counts["failed"]
+            parts.append(
+                f"{count} action{'s' if count != 1 else ''} need"
+                f"{'s' if count == 1 else ''} attention"
+            )
         self.done = not counts["running"]
+        self.set_class(bool(counts["failed"]), "coordination-needs-attention")
         self.query_one(".coordination-summary", Static).update(
             " · ".join(parts)
         )
@@ -135,7 +141,8 @@ class CoordinationCard(EventCard):
             target = self._recent_target(
                 row["tool"], row["target"], row.get("target_count")
             )
-            lines.append(f"{state} {action} → {target}{result}")
+            prefix = "Needs attention · " if row["failed"] else ""
+            lines.append(f"{state} {prefix}{action} → {target}{result}")
         for index, widget in enumerate(
             self.query(".coordination-action-preview")
         ):
@@ -161,6 +168,9 @@ class CoordinationCard(EventCard):
         )
 
     def set_expanded(self, expanded: bool) -> None:
+        self._reveal_after_expand = (
+            expanded and not self.expanded and self.is_mounted
+        )
         self.expanded = expanded
         self._offset = 0
         if self.is_mounted:
@@ -222,6 +232,17 @@ class CoordinationCard(EventCard):
             self.query_one(".coordination-page", Static).update(
                 f"{self.total - self._offset - len(rows) + 1}–{self.total - self._offset} of {self.total}"
             )
+            if self._reveal_after_expand:
+                self.call_after_refresh(self._reveal_expanded_card)
+
+    def _reveal_expanded_card(self) -> None:
+        """Reveal user-expanded controls without following later updates."""
+        if not self._reveal_after_expand or not self.expanded:
+            return
+        self._reveal_after_expand = False
+        conversation = self.app.query_one("#conversation", VerticalScroll)
+        conversation.release_anchor()
+        self.scroll_visible(animate=False, top=True, immediate=True)
 
     @on(Button.Pressed, ".coordination-older")
     async def older(self, event: Button.Pressed) -> None:

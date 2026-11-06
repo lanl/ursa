@@ -153,6 +153,10 @@ Collapsing the message releases that body. Use **Older**, **Newer**, or the
 left/right keys to page through history, **Home** for the beginning, and
 **Latest** or **End** to return to live traffic. Incoming traffic does not
 move the page while you are reading older messages.
+Scrolling back or expanding a message pauses live following; the header shows
+whether you are live, paused, or reading history with newer messages available.
+Press **End** or select **Latest** to resume. Message cards support **Tab** focus
+and **Enter** or **Space** expansion, with their full text released on collapse.
 
 Within each conversation turn, `send_message`, `wait_for`, `spawn_agent`, and
 `stop_agent` share one **Coordination** card. Its summary shows the action,
@@ -161,6 +165,10 @@ to inspect the individual tool cards, with 20 actions per page. Full tool
 inputs and results live in the `coordination_actions` table and are loaded
 only when an individual tool card is expanded. Collapsing that card or the
 group releases those details.
+The group and its action cards also support **Enter** or **Space** expansion;
+use **Shift+Tab** from the prompt editor to reach them. Failed actions have an
+explicit error state, and new actions do not displace a historical action page
+being read. All card shortcuts are included in `/keymap`.
 
 On delivery, the runtime gives the receiving model a trusted system envelope
 with the sender and recipient paths. The original payload remains the exact

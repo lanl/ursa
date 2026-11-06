@@ -197,13 +197,22 @@ ModelScreen SelectCurrent {
     height: 3;
 }
 
-#messages-header Button {
-    min-width: 10;
-    margin-left: 1;
+#messages-controls {
+    height: 1;
+    margin-top: 1;
+}
+
+#messages-controls Button {
+    width: 9;
+    min-width: 9;
+    height: 1;
+    padding: 0 1;
+    border: none;
+    margin-right: 1;
 }
 
 #messages-title {
-    width: 1fr;
+    width: 100%;
     height: 1;
     overflow: hidden hidden;
     text-overflow: ellipsis;
@@ -599,6 +608,8 @@ AgentToolCard > .event-expand-hint {
 .coordination-summary {
     height: 1;
     padding: 0 1;
+    overflow: hidden hidden;
+    text-overflow: ellipsis;
     text-style: bold;
     color: $accent;
 }
@@ -614,6 +625,13 @@ AgentToolCard > .event-expand-hint {
     text-overflow: ellipsis;
 }
 
+.coordination-needs-attention > .coordination-summary,
+.agent-tool-failed > .agent-tool-title,
+.agent-tool-failed .agent-tool-state {
+    color: $error;
+    text-style: bold;
+}
+
 .coordination-details,
 .coordination-actions {
     height: auto;
@@ -626,17 +644,24 @@ AgentToolCard > .event-expand-hint {
 }
 
 .coordination-navigation {
-    height: 3;
+    height: 1;
     padding: 0 1;
+    margin: 1 0;
 }
 
 .coordination-navigation Button {
-    min-width: 10;
+    width: 9;
+    min-width: 9;
+    height: 1;
+    padding: 0 1;
+    border: none;
 }
 
 .coordination-page {
     width: 1fr;
-    height: 3;
+    height: 1;
+    overflow: hidden hidden;
+    text-overflow: ellipsis;
     content-align: center middle;
     color: $text-muted;
 }
