@@ -60,7 +60,6 @@ def stub_mprester(monkeypatch):
     return search_calls, docs_metadata
 
 
-@pytest.mark.asyncio
 async def test_materials_project_agent_ainvoke_produces_summary(
     chat_model, tmpdir, stub_mprester
 ):

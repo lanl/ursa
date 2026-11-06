@@ -135,7 +135,6 @@ def test_run_with_visualization_records_team_delegation_and_forwards_config(
     assert metadata["agent_id"] == "visual_team.analyst"
 
 
-@pytest.mark.asyncio
 async def test_arun_with_visualization_records_symposium_events(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

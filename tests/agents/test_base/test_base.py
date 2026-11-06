@@ -353,7 +353,6 @@ def test_agent_with_tools_seeds_safe_codes_in_sync_store(tmp_path: Path):
     assert set(safe_codes) == {"python", "julia"}
 
 
-@pytest.mark.asyncio
 async def test_agent_with_tools_seeds_safe_codes_in_async_store(tmp_path: Path):
     agent = ToolAgent(
         llm=TinyCountingModel(),
@@ -377,7 +376,6 @@ async def test_agent_with_tools_seeds_safe_codes_in_async_store(tmp_path: Path):
     assert set(safe_codes) == {"python", "julia"}
 
 
-@pytest.mark.asyncio
 async def test_shared_async_store_serializes_first_use_migrations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -434,7 +432,6 @@ async def persistent_agent(tmp_path, monkeypatch):
         agent.close()
 
 
-@pytest.mark.asyncio
 async def test_persistent_agent_ainvoke_uses_async_sqlite_resources(
     persistent_agent,
 ):
@@ -447,7 +444,6 @@ async def test_persistent_agent_ainvoke_uses_async_sqlite_resources(
     assert (agent.den / "graph_store.sqlite").is_file()
 
 
-@pytest.mark.asyncio
 async def test_aclose_releases_and_joins_async_sqlite_resources(
     persistent_agent,
 ):
@@ -499,7 +495,6 @@ async def test_aclose_releases_and_joins_async_sqlite_resources(
     agent.close()
 
 
-@pytest.mark.asyncio
 async def test_named_agent_restores_state_in_a_new_instance(persistent_agent):
     first = persistent_agent(
         agent_class=BasicChatAgent,
@@ -527,7 +522,6 @@ async def test_named_agent_restores_state_in_a_new_instance(persistent_agent):
     assert human_messages == ["first turn", "second turn"]
 
 
-@pytest.mark.asyncio
 async def test_persistent_agent_supports_sync_and_async_invocation(
     persistent_agent,
 ):
@@ -606,7 +600,6 @@ def test_user_supplied_checkpointer_is_not_automatically_pruned(
     assert calls == []
 
 
-@pytest.mark.asyncio
 async def test_ainvoke_merges_callback_config(tmpdir: Path):
     agent = EventAgent(
         llm=TinyCountingModel(),
@@ -634,7 +627,6 @@ async def test_ainvoke_merges_callback_config(tmpdir: Path):
     ]
 
 
-@pytest.mark.asyncio
 async def test_ainvoke_logs_progress_event_by_default(
     tmpdir: Path,
     caplog: pytest.LogCaptureFixture,

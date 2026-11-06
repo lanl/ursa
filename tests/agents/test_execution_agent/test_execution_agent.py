@@ -214,7 +214,6 @@ def test_execution_agent_persistent_thread_reviews_latest_invoke_request(
     ]
 
 
-@pytest.mark.asyncio
 async def test_execution_agent_ainvoke_returns_ai_message(
     chat_model, tmpdir: Path
 ):
@@ -249,7 +248,6 @@ async def test_execution_agent_ainvoke_returns_ai_message(
     )
 
 
-@pytest.mark.asyncio
 async def test_execution_agent_invokes_extra_tool(chat_model, tmpdir: Path):
     @tool
     def do_magic(a: int, b: int) -> float:

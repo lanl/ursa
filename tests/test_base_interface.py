@@ -204,7 +204,6 @@ def test_handle_tool_errors_propagation(
     assert agent.tool_node._handle_tool_errors == handle_tool_errors
 
 
-@pytest.mark.asyncio
 async def test_agent_with_tools_add_mcp_tools_adds_all(chat_model, tmp_path):
     alpha = _make_tool("alpha")
     beta = _make_tool("beta")
@@ -218,7 +217,6 @@ async def test_agent_with_tools_add_mcp_tools_adds_all(chat_model, tmp_path):
     client.get_tools.assert_awaited_once()
 
 
-@pytest.mark.asyncio
 async def test_agent_with_tools_applies_mcp_tools_off_event_loop(
     chat_model, tmp_path, monkeypatch
 ):
@@ -242,7 +240,6 @@ async def test_agent_with_tools_applies_mcp_tools_off_event_loop(
     assert apply_threads[0] != event_loop_thread
 
 
-@pytest.mark.asyncio
 async def test_agent_with_tools_add_mcp_tools_filters_by_name(
     chat_model, tmp_path
 ):
@@ -257,7 +254,6 @@ async def test_agent_with_tools_add_mcp_tools_filters_by_name(
     assert agent.tools == {"beta": beta}
 
 
-@pytest.mark.asyncio
 async def test_agent_with_tools_returns_mcp_tool_provenance_without_mutation(
     chat_model, tmp_path
 ):

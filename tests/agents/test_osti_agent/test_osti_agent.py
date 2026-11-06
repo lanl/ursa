@@ -1,5 +1,3 @@
-import pytest
-
 from ursa.agents.acquisition_agents import OSTIAgent
 
 
@@ -29,7 +27,6 @@ class FakeSoup:
         return f"<html><body>{self._text}</body></html>"
 
 
-@pytest.mark.asyncio
 async def test_osti_agent_ainvoke_returns_summary(
     chat_model, tmpdir, monkeypatch
 ):

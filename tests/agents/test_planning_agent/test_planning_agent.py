@@ -1,6 +1,5 @@
 from collections.abc import Iterator
 
-import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -89,7 +88,6 @@ class EmptyReflectionFakeChatModel(GenericFakeChatModel):
         return StructuredOutput()
 
 
-@pytest.mark.asyncio
 async def test_planning_agent_treats_empty_reflection_as_approval(tmpdir):
     plan = Plan.model_validate({
         "steps": [
@@ -185,7 +183,6 @@ class RecordingPlanningChatModel(GenericFakeChatModel):
         )
 
 
-@pytest.mark.asyncio
 async def test_planner_requests_never_end_with_assistant_message(tmpdir):
     """Every planner request must be accepted by models without prefill."""
     llm = RecordingPlannerChatModel()
@@ -205,7 +202,6 @@ async def test_planner_requests_never_end_with_assistant_message(tmpdir):
         )
 
 
-@pytest.mark.asyncio
 async def test_planner_accumulates_messages_across_nodes(tmpdir):
     """Planner state must retain the original request and drafted plan."""
     llm = RecordingPlannerChatModel()
@@ -225,7 +221,6 @@ async def test_planner_accumulates_messages_across_nodes(tmpdir):
     )
 
 
-@pytest.mark.asyncio
 async def test_planning_agent_uses_fresh_user_requests_for_reflection(tmpdir):
     plan = Plan.model_validate({
         "steps": [

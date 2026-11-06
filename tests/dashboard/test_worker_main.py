@@ -155,7 +155,6 @@ def test_worker_error_redaction_removes_full_secret() -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_dashboard_worker_uses_shared_agent_manager(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
@@ -199,7 +198,6 @@ async def test_dashboard_worker_uses_shared_agent_manager(
     assert spec.config == config
 
 
-@pytest.mark.asyncio
 async def test_dashboard_worker_runs_demo_through_shared_agent_manager(
     tmp_path,
 ) -> None:

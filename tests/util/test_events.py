@@ -469,7 +469,6 @@ async def test_range_emits_start_and_terminal_payload(
         assert end["error"] == "boom"
 
 
-@pytest.mark.asyncio
 async def test_aemit_dispatches_and_async_range_works(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

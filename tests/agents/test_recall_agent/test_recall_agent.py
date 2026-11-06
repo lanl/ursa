@@ -1,5 +1,3 @@
-import pytest
-
 from ursa.agents.recall_agent import RecallAgent
 
 
@@ -13,7 +11,6 @@ class StubMemory:
         return list(self._memories)
 
 
-@pytest.mark.asyncio
 async def test_recall_agent_ainvoke_returns_memory(chat_model, tmpdir):
     memory_stub = StubMemory([
         "The lab stored baseline experiment logs in the west wing archive."

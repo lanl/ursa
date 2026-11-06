@@ -4,7 +4,6 @@ from types import SimpleNamespace
 from typing import Annotated, TypedDict
 
 import aiosqlite
-import pytest
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, START, StateGraph
@@ -136,7 +135,6 @@ def test_pruning_skips_delta_channel_history(tmp_path):
     conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_pruning_retains_latest_checkpoint_and_state(tmp_path):
     db_path = tmp_path / "async.db"
     conn = await aiosqlite.connect(db_path)

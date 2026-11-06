@@ -302,7 +302,6 @@ def test_settings_file_contains_only_credential_metadata(
     assert "secret-value" not in settings_path.read_text(encoding="utf-8")
 
 
-@pytest.mark.asyncio
 async def test_run_manager_delivers_key_only_through_stdin(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

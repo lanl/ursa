@@ -39,22 +39,22 @@ def _isolate_xdg_config(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_DIRS", str(tmp_path / "xdg-dirs"))
 
 
-def _stub_mcp_server(monkeypatch):
-    mcp = MagicMock()
-    runtime = MagicMock()
-    runtime.as_mcp_server.return_value = mcp
-    runtime_class = MagicMock(return_value=runtime)
+def _stub_runtime(monkeypatch):
+    runtime_class = MagicMock()
     monkeypatch.setattr("ursa.runtime.AgentRuntime", runtime_class)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
-    return runtime, mcp
+    return runtime_class
+
+
+def _stub_mcp_server(monkeypatch):
+    runtime = _stub_runtime(monkeypatch).return_value
+    return runtime, runtime.as_mcp_server.return_value
 
 
 def _stub_textual(monkeypatch):
-    runtime_class = MagicMock()
+    runtime_class = _stub_runtime(monkeypatch)
     run_textual = MagicMock()
-    monkeypatch.setattr("ursa.runtime.AgentRuntime", runtime_class)
     monkeypatch.setattr("ursa.cli.tui.app.run_textual", run_textual)
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
     return runtime_class, run_textual
 
 
@@ -115,13 +115,9 @@ def test_cli_does_not_warn_without_legacy_checkpoint(
 
 
 def test_exec_uses_textual_one_shot_renderer(monkeypatch):
-    runtime = MagicMock()
+    runtime = _stub_runtime(monkeypatch).return_value
     run_once = MagicMock()
-    monkeypatch.setattr(
-        "ursa.runtime.AgentRuntime", MagicMock(return_value=runtime)
-    )
     monkeypatch.setattr("ursa.cli.tui.app.prompt_agent_once", run_once)
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     main(["exec", "#plan inspect this"])
 
@@ -130,13 +126,9 @@ def test_exec_uses_textual_one_shot_renderer(monkeypatch):
 
 @pytest.mark.parametrize("mode", ["interactive", "exec"])
 def test_named_agent_reaches_textual_runtime(monkeypatch, mode):
-    runtime_class = MagicMock()
-    run_textual = MagicMock()
+    runtime_class, run_textual = _stub_textual(monkeypatch)
     run_once = MagicMock()
-    monkeypatch.setattr("ursa.runtime.AgentRuntime", runtime_class)
-    monkeypatch.setattr("ursa.cli.tui.app.run_textual", run_textual)
     monkeypatch.setattr("ursa.cli.tui.app.prompt_agent_once", run_once)
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
     args = ["--name", "lab-assistant"]
     if mode == "exec":
         args.extend(["exec", "#plan inspect this"])
@@ -172,11 +164,9 @@ def test_cli_reports_runtime_initialization_error_without_traceback(
 
 
 def test_exec_runs_prompt_with_textual_runtime(monkeypatch):
-    runtime_class = MagicMock()
+    runtime_class = _stub_runtime(monkeypatch)
     run_once = MagicMock()
-    monkeypatch.setattr("ursa.runtime.AgentRuntime", runtime_class)
     monkeypatch.setattr("ursa.cli.tui.app.prompt_agent_once", run_once)
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     main(["exec", "summarize this"])
 
@@ -285,11 +275,7 @@ def test_mcp_server_config_flag_sets_hosted_llm(monkeypatch, tmp_path):
     The subcommand-local --config should feed the LLM model/endpoint (and other
     UrsaConfig fields) into the AgentRuntime instance backing the MCP server.
     """
-    runtime_class = MagicMock()
-    runtime_class.return_value = MagicMock()
-    runtime_class.return_value.as_mcp_server.return_value = MagicMock()
-    monkeypatch.setattr("ursa.runtime.AgentRuntime", runtime_class)
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    runtime_class = _stub_runtime(monkeypatch)
 
     config_file = tmp_path / "mcp.yaml"
     config_file.write_text(
@@ -314,12 +300,8 @@ def test_mcp_server_config_flag_parses_alongside_transport(
     monkeypatch, tmp_path
 ):
     """--config coexists with MCP transport options on the subcommand."""
-    runtime_class = MagicMock()
-    runtime_class.return_value = MagicMock()
-    mcp = MagicMock()
-    runtime_class.return_value.as_mcp_server.return_value = mcp
-    monkeypatch.setattr("ursa.runtime.AgentRuntime", runtime_class)
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    runtime_class = _stub_runtime(monkeypatch)
+    mcp = runtime_class.return_value.as_mcp_server.return_value
 
     config_file = tmp_path / "mcp.yaml"
     config_file.write_text(

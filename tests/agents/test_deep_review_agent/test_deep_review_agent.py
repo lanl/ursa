@@ -72,7 +72,6 @@ def chat_model():
     return ToolReadyFakeChatModel(messages=_message_stream("ok"))
 
 
-@pytest.mark.asyncio
 async def test_deep_review_agent_ainvoke_without_hidden_web_search(
     chat_model,
     tmpdir: Path,
@@ -109,7 +108,6 @@ async def test_deep_review_agent_ainvoke_without_hidden_web_search(
     assert generated_logs, "Expected iteration history files to be written"
 
 
-@pytest.mark.asyncio
 async def test_deep_review_agent_can_autonomously_use_workspace_tools(
     tmpdir: Path,
 ) -> None:
@@ -203,7 +201,6 @@ _DD_QUESTION = {
 }
 
 
-@pytest.mark.asyncio
 async def test_phase_requests_keep_system_prompts_leading(tmpdir):
     # Issue 294: from the second debate phase onward, requests carried
     # mid-conversation system messages, which langchain-anthropic rejects.
@@ -221,7 +218,6 @@ async def test_phase_requests_keep_system_prompts_leading(tmpdir):
     assert not bad, f"requests with mid-conversation system messages: {bad}"
 
 
-@pytest.mark.asyncio
 async def test_phase_prompts_not_persisted_as_system_messages(tmpdir):
     log: list = []
     agent = DeepReviewAgent(llm=_recording_model(log), workspace=tmpdir)
@@ -238,7 +234,6 @@ async def test_phase_prompts_not_persisted_as_system_messages(tmpdir):
     )
 
 
-@pytest.mark.asyncio
 async def test_each_phase_request_leads_with_its_own_role_prompt(tmpdir):
     log: list = []
     agent = DeepReviewAgent(llm=_recording_model(log), workspace=tmpdir)
@@ -258,7 +253,6 @@ async def test_each_phase_request_leads_with_its_own_role_prompt(tmpdir):
     )
 
 
-@pytest.mark.asyncio
 async def test_phase_model_error_propagates_immediately(tmpdir):
     # Issue 294: phase errors were swallowed into AIMessage critiques
     # ("Deep-review phase error: ...") and fed to later phases, so a
@@ -292,7 +286,6 @@ async def test_output_lists_have_exactly_one_entry_per_iteration(tmpdir):
     assert result["agent3_perspectives"] == ["ok"]
 
 
-@pytest.mark.asyncio
 async def test_output_lists_scale_with_iterations(tmpdir):
     agent = DeepReviewAgent(
         llm=ToolReadyFakeChatModel(messages=_message_stream("ok")),
@@ -305,7 +298,6 @@ async def test_output_lists_scale_with_iterations(tmpdir):
         assert len(result[key]) == 2, f"{key}: {result[key]}"
 
 
-@pytest.mark.asyncio
 async def test_chained_runs_report_real_iterations_only(tmpdir):
     # Chaining a second run on the first run's returned state (the AgentRuntime
     # pattern) must report exactly the real iterations, with each report
@@ -334,7 +326,6 @@ async def test_chained_runs_report_real_iterations_only(tmpdir):
     assert "turn-06" in sections[2]
 
 
-@pytest.mark.asyncio
 async def test_seeded_visited_sites_survive(tmpdir):
     # Guard (green before and after the fix): visited sites provided in
     # the input state survive to the returned state.
@@ -351,7 +342,6 @@ async def test_seeded_visited_sites_survive(tmpdir):
     assert "https://seeded.example/x" in result["visited_sites"]
 
 
-@pytest.mark.asyncio
 async def test_details_file_has_one_section_per_iteration(tmpdir):
     # Guard (green before and after the fix): a single run's report has
     # exactly one section per real iteration, protecting the
