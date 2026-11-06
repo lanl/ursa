@@ -507,10 +507,8 @@ class UrsaTextualApp(App[None]):
             self.action_quit()
             return
         if command == "agents":
-            details = load_agent_details(self.hitl)
-            await self.push_screen(
-                AgentsScreen(details, self.hitl),
-                callback=lambda _: self.query_one(PromptArea).focus(),
+            self.run_worker(
+                self._show_agents(), group="agent-descriptions", exclusive=True
             )
             return
         if command == "models":
@@ -557,8 +555,27 @@ class UrsaTextualApp(App[None]):
             callback=lambda _: self.query_one(PromptArea).focus(),
         )
 
+    async def _show_agents(self) -> None:
+        try:
+            details = await asyncio.to_thread(load_agent_details, self.hitl)
+        except Exception as exc:
+            self.notify(
+                str(exc),
+                title="Unable to load agents",
+                severity="error",
+                markup=False,
+            )
+            return
+        if self._exit:
+            return
+        await self.push_screen(
+            AgentsScreen(details, self.hitl),
+            callback=lambda _: self.query_one(PromptArea).focus(),
+        )
+
     def _resolved_config_yaml(self) -> str:
         """Serialize the active, already-resolved runtime configuration."""
+        model = self.hitl.initialized_model
         values = config_file_value(self.hitl.config, include_defaults=True)
         fallbacks = [("global", values)]
         fallbacks.extend((values.get("agent_config") or {}).items())
@@ -567,7 +584,7 @@ class UrsaTextualApp(App[None]):
             if "tokens_before_summarize" in config:
                 fallback = config["tokens_before_summarize"]
                 config["tokens_before_summarize"] = summarization_threshold(
-                    self.hitl.model, fallback
+                    model, fallback
                 )
                 comments.append(
                     f"# Configured fallback ({name}): {fallback} tokens."
@@ -639,9 +656,10 @@ class UrsaTextualApp(App[None]):
 
     def _status_markdown(self) -> str:
         emb_model_cfg = self.hitl.config.emb_model
-        window = model_context_window(self.hitl.model)
+        model = self.hitl.initialized_model
+        window = model_context_window(model)
         threshold = summarization_threshold(
-            self.hitl.model, self.hitl.config.tokens_before_summarize
+            model, self.hitl.config.tokens_before_summarize
         )
         rows = [
             ("Input tokens", f"{self.input_tokens:,}"),
@@ -660,9 +678,9 @@ class UrsaTextualApp(App[None]):
             (
                 "Context source",
                 "Ollama num_ctx"
-                if getattr(self.hitl.model, "num_ctx", None) is not None
+                if getattr(model, "num_ctx", None) is not None
                 else getattr(
-                    self.hitl.model,
+                    model,
                     "_ursa_context_source",
                     "LangChain profile" if window is not None else "Unknown",
                 ),

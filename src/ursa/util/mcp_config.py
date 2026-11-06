@@ -44,26 +44,21 @@ def parse_server_parameters(config: Any):
     if isinstance(config, tuple(_PARAMETER_TYPES.values())):
         return config
     if isinstance(config, BaseModel):
-        # SDK instances can be supplied by Python callers. Preserve explicit
-        # fields and secret objects without importing the SDK on the file path.
-        kind = next(
-            (
-                key
-                for base in type(config).__mro__
-                for key, cls in _PARAMETER_TYPES.items()
-                if base.__module__.startswith("mcp.")
-                and base.__name__ == cls.__name__
-            ),
-            None,
-        )
-        if kind is not None:
-            config = {
-                "transport": kind,
-                **{
-                    name: getattr(config, name)
-                    for name in config.model_fields_set
-                },
-            }
+        # Python callers may supply SDK objects; file-based configuration
+        # never needs this import. Keep effective values and secret objects.
+        from mcp.client import session_group as sdk
+
+        for kind, cls in _PARAMETER_TYPES.items():
+            if isinstance(config, getattr(sdk, cls.__name__)):
+                parameters = parse_server_parameters({
+                    **dict(config),
+                    "transport": kind,
+                })
+                parameters.__pydantic_fields_set__ = (
+                    config.model_fields_set
+                    & type(parameters).model_fields.keys()
+                )
+                return parameters
     if not isinstance(config, dict):
         raise ValueError(
             "MCP server configuration must be a mapping or parameters"

@@ -161,66 +161,53 @@ async def test_named_session_agent_is_kept_on_close(tmp_path, monkeypatch):
     assert den.exists()  # only generated, prefixed agents are ever removed
 
 
-@pytest.mark.asyncio
-async def test_named_cli_agent_still_gets_async_checkpointer(
-    tmp_path, monkeypatch
-):
-    _stub_hitl_dependencies(monkeypatch)
-    workspace = tmp_path / "workspace"
-    hitl = HITL(UrsaConfig(workspace=workspace, agent_name="persistent-agent"))
-    persistent_den = tmp_path / "persistent-agent-den"
-    expected_checkpointer = object()
-    requested_paths = []
-
-    class DummyPersistentAgent:
-        def __init__(self, **_kwargs):
-            self.den = persistent_den
-            self.checkpointer = None
-
-    async def fake_get_checkpointer(checkpoint_path):
-        requested_paths.append(checkpoint_path)
-        return expected_checkpointer
-
-    hitl.agents["chat"] = AgentHITL(agent_class=DummyPersistentAgent)
-    monkeypatch.setattr(hitl, "_get_checkpointer", fake_get_checkpointer)
-
-    agent = await hitl.get_agent("chat")
-
-    assert agent._agent is not None
-    assert requested_paths == [persistent_den]
-    assert agent._agent.checkpointer is expected_checkpointer
-
-
+@pytest.mark.parametrize("cancel_waiters", [False, True])
 async def test_concurrent_get_agent_constructs_and_finalizes_once(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, cancel_waiters
 ):
     _stub_hitl_dependencies(monkeypatch)
     hitl = HITL(UrsaConfig(workspace=tmp_path, agent_name="persistent"))
     constructions = 0
     checkpointers = 0
+    started = threading.Event()
+    release = threading.Event()
+    checkpointer = object()
 
     class SlowPersistentAgent:
         def __init__(self, **_kwargs):
             nonlocal constructions
             constructions += 1
-            time.sleep(0.05)
             self.den = tmp_path
             self.checkpointer = None
+            started.set()
+            assert release.wait(timeout=5)
 
     async def fake_get_checkpointer(_path):
         nonlocal checkpointers
         checkpointers += 1
-        return object()
+        return checkpointer
 
     wrapper = AgentHITL(agent_class=SlowPersistentAgent)
     hitl.agents["chat"] = wrapper
     monkeypatch.setattr(hitl, "_get_checkpointer", fake_get_checkpointer)
 
-    first, second = await asyncio.gather(
-        hitl.get_agent("chat"), hitl.get_agent("chat")
-    )
-
-    assert first is second is wrapper
+    waiters = [asyncio.create_task(hitl.get_agent("chat")) for _ in range(2)]
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        if cancel_waiters:
+            for waiter in waiters:
+                waiter.cancel()
+            for waiter in waiters:
+                with pytest.raises(asyncio.CancelledError):
+                    await waiter
+    finally:
+        release.set()
+    if not cancel_waiters:
+        results = await asyncio.gather(*waiters)
+        assert all(result is wrapper for result in results)
+    await wrapper.wait_until_initialized()
+    assert await hitl.get_agent("chat") is wrapper
+    assert wrapper._agent.checkpointer is checkpointer
     assert constructions == 1
     assert checkpointers == 1
 
@@ -252,46 +239,6 @@ async def test_distinct_agents_initialize_concurrently(tmp_path, monkeypatch):
     finally:
         release.set()
     await asyncio.gather(first, second)
-
-
-async def test_cancelled_named_get_agent_still_finishes_finalization(
-    tmp_path, monkeypatch
-):
-    _stub_hitl_dependencies(monkeypatch)
-    hitl = HITL(UrsaConfig(workspace=tmp_path, agent_name="persistent"))
-    started = threading.Event()
-    release = threading.Event()
-    finalized_checkpointer = object()
-    finalizations = 0
-
-    class SlowPersistentAgent:
-        def __init__(self, **_kwargs):
-            self.den = tmp_path
-            self.checkpointer = None
-            started.set()
-            release.wait(timeout=5)
-
-    async def fake_get_checkpointer(_path):
-        nonlocal finalizations
-        finalizations += 1
-        return finalized_checkpointer
-
-    wrapper = AgentHITL(agent_class=SlowPersistentAgent)
-    hitl.agents["chat"] = wrapper
-    monkeypatch.setattr(hitl, "_get_checkpointer", fake_get_checkpointer)
-    waiter = asyncio.create_task(hitl.get_agent("chat"))
-    assert await asyncio.to_thread(started.wait, 2)
-    waiter.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await waiter
-
-    release.set()
-    await wrapper.wait_until_initialized()
-    loaded = await hitl.get_agent("chat")
-
-    assert loaded is wrapper
-    assert wrapper._agent.checkpointer is finalized_checkpointer
-    assert finalizations == 1
 
 
 async def test_named_finalizer_failure_cleans_and_allows_retry(
@@ -505,80 +452,13 @@ async def test_agent_loading_without_mcp_skips_tool_discovery():
     assert wrapper.tool_sources == {}
 
 
-async def test_concurrent_agent_loading_is_single_flight():
-    constructor_calls = 0
-
-    class SlowAgent:
-        def __init__(self, **_kwargs):
-            nonlocal constructor_calls
-            constructor_calls += 1
-            time.sleep(0.1)
-
-    wrapper = AgentHITL(agent_class=SlowAgent)
-    await asyncio.gather(
-        wrapper.instantiate(agent_name="persistent"),
-        wrapper.instantiate(agent_name="persistent"),
-    )
-
-    assert constructor_calls == 1
-    assert wrapper._agent is not None
-
-
-async def test_cancelled_waiter_does_not_cancel_agent_initialization():
-    started = threading.Event()
-    release = threading.Event()
-
-    class SlowAgent:
-        def __init__(self, **_kwargs):
-            started.set()
-            release.wait(timeout=5)
-
-    wrapper = AgentHITL(agent_class=SlowAgent)
-    waiter = asyncio.create_task(wrapper.instantiate())
-    await asyncio.to_thread(started.wait, 2)
-    waiter.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await waiter
-
-    release.set()
-    await wrapper.wait_until_initialized()
-
-    assert wrapper._agent is not None
-
-
-async def test_failed_mcp_initialization_closes_partial_agent():
-    instances = []
-
-    class BrokenMcpAgent(AgentWithTools):
-        def __init__(self, **_kwargs):
-            self.async_closed = False
-            self.closed = False
-            instances.append(self)
-
-        async def add_mcp_tools(self, _client):
-            raise RuntimeError("discovery failed")
-
-        async def aclose(self):
-            self.async_closed = True
-
-        def close(self):
-            self.closed = True
-
-    wrapper = AgentHITL(agent_class=BrokenMcpAgent)
-    with pytest.raises(RuntimeError, match="discovery failed"):
-        await wrapper.instantiate(mcp_client=object())
-
-    assert wrapper._agent is None
-    assert instances[0].async_closed
-    assert instances[0].closed
-
-
 async def test_concurrent_initialization_failure_cleans_once_and_can_retry():
     instances = []
 
     class FlakyMcpAgent(AgentWithTools):
         def __init__(self, **_kwargs):
             self.attempt = len(instances) + 1
+            self.async_close_count = 0
             self.close_count = 0
             instances.append(self)
 
@@ -589,7 +469,7 @@ async def test_concurrent_initialization_failure_cleans_once_and_can_retry():
             return {}
 
         async def aclose(self):
-            pass
+            self.async_close_count += 1
 
         def close(self):
             self.close_count += 1
@@ -603,7 +483,9 @@ async def test_concurrent_initialization_failure_cleans_once_and_can_retry():
 
     assert all(isinstance(error, RuntimeError) for error in failures)
     assert len(instances) == 1
+    assert instances[0].async_close_count == 1
     assert instances[0].close_count == 1
+    assert wrapper._agent is None
     assert wrapper._initialization_task is None
 
     await wrapper.instantiate(mcp_client=object())
@@ -641,6 +523,7 @@ async def test_named_cli_agent_resources_close_once(tmp_path, monkeypatch):
     agent = wrapper._agent
     checkpointer = agent.checkpointer
     assert isinstance(checkpointer, AsyncSqliteSaver)
+    assert (persistent_den / "db" / "checkpointer.db").is_file()
     assert checkpointer.conn.is_alive()
 
     await hitl.close()
@@ -673,40 +556,6 @@ async def test_closed_runtime_rejects_agent_loading_without_waiting(
         )
 
 
-async def test_cancelled_close_waiter_does_not_interrupt_cleanup(
-    tmp_path, monkeypatch
-):
-    _stub_hitl_dependencies(monkeypatch)
-    hitl = HITL(UrsaConfig(workspace=tmp_path))
-    close_started = threading.Event()
-    close_release = threading.Event()
-
-    class SlowCloseAgent:
-        async def aclose(self):
-            pass
-
-        def close(self):
-            close_started.set()
-            close_release.wait(timeout=5)
-
-    wrapper = AgentHITL(agent_class=SlowCloseAgent)
-    wrapper._agent = SlowCloseAgent()
-    hitl.agents["chat"] = wrapper
-    waiter = asyncio.create_task(hitl.aclose())
-    assert await asyncio.to_thread(close_started.wait, 2)
-    internal_close = hitl._close_task
-    assert internal_close is not None
-    waiter.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await waiter
-
-    close_release.set()
-    await internal_close
-
-    assert hitl._closed
-    assert wrapper._agent is None
-
-
 async def test_reconfigure_models_resets_agents_and_uses_selected_providers(
     tmp_path, monkeypatch
 ):
@@ -736,10 +585,11 @@ async def test_reconfigure_models_resets_agents_and_uses_selected_providers(
     await hitl.get_agent("chat")
     old_agent = wrapper._agent
     monkeypatch.setattr(
-        "ursa.cli.config.init_chat_model", lambda **_: replacement_model
+        "langchain.chat_models.init_chat_model", lambda **_: replacement_model
     )
     monkeypatch.setattr(
-        "ursa.cli.config.init_embeddings", lambda **_: replacement_embedding
+        "langchain.embeddings.init_embeddings",
+        lambda **_: replacement_embedding,
     )
 
     await hitl.reconfigure_models(
@@ -793,7 +643,7 @@ async def test_reconfigure_waits_for_loading_then_discards_old_model_agent(
     wrapper = AgentHITL(agent_class=SlowAgent)
     hitl.agents["chat"] = wrapper
     monkeypatch.setattr(
-        "ursa.cli.config.init_chat_model", lambda **_: replacement_model
+        "langchain.chat_models.init_chat_model", lambda **_: replacement_model
     )
 
     load_task = asyncio.create_task(hitl.get_agent("chat"))
@@ -817,7 +667,10 @@ async def test_reconfigure_waits_for_loading_then_discards_old_model_agent(
     assert instances[0].closed
 
 
-async def test_reconfigure_waits_for_active_agent_run(tmp_path, monkeypatch):
+@pytest.mark.parametrize("operation", ["close", "reconfigure"])
+async def test_transition_waits_for_active_agent_run(
+    tmp_path, monkeypatch, operation
+):
     _stub_hitl_dependencies(monkeypatch)
     replacement_model = MagicMock(name="replacement-llm")
     hitl = HITL(UrsaConfig(workspace=tmp_path))
@@ -851,12 +704,14 @@ async def test_reconfigure_waits_for_active_agent_run(tmp_path, monkeypatch):
 
     hitl.agents["chat"] = RunningWrapper(agent_class=RunningAgent)
     monkeypatch.setattr(
-        "ursa.cli.config.init_chat_model", lambda **_: replacement_model
+        "langchain.chat_models.init_chat_model", lambda **_: replacement_model
     )
     run_task = asyncio.create_task(hitl.run_agent("chat", "work"))
     await run_started.wait()
-    reconfigure_task = asyncio.create_task(
-        hitl.reconfigure_models(
+    transition = asyncio.create_task(
+        hitl.aclose()
+        if operation == "close"
+        else hitl.reconfigure_models(
             ChatModelConfig(
                 model="openai:gpt-5.4", inference_provider="openai"
             ),
@@ -865,19 +720,22 @@ async def test_reconfigure_waits_for_active_agent_run(tmp_path, monkeypatch):
     )
     await asyncio.sleep(0.05)
 
-    assert not reconfigure_task.done()
+    assert not transition.done()
     assert not instances[0].closed
     run_release.set()
-    result, _ = await asyncio.gather(run_task, reconfigure_task)
+    result, _ = await asyncio.gather(run_task, transition)
 
     assert result == "complete"
     assert instances[0].async_closed
     assert instances[0].closed
+    assert len(close_threads) == 1
     assert close_threads[0] != event_loop_thread
+    assert hitl._closed == (operation == "close")
 
 
-async def test_cancelled_reconfigure_waiter_does_not_interrupt_transition(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("operation", ["close", "reconfigure"])
+async def test_cancelled_waiter_does_not_interrupt_transition(
+    tmp_path, monkeypatch, operation
 ):
     initial_model, _ = _stub_hitl_dependencies(monkeypatch)
     replacement_model = MagicMock(name="replacement-llm")
@@ -900,10 +758,12 @@ async def test_cancelled_reconfigure_waiter_does_not_interrupt_transition(
     wrapper._agent = SlowCloseAgent()
     hitl.agents["chat"] = wrapper
     monkeypatch.setattr(
-        "ursa.cli.config.init_chat_model", lambda **_: replacement_model
+        "langchain.chat_models.init_chat_model", lambda **_: replacement_model
     )
     waiter = asyncio.create_task(
-        hitl.reconfigure_models(
+        hitl.aclose()
+        if operation == "close"
+        else hitl.reconfigure_models(
             ChatModelConfig(
                 model="openai:gpt-5.4", inference_provider="openai"
             ),
@@ -916,16 +776,23 @@ async def test_cancelled_reconfigure_waiter_does_not_interrupt_transition(
         await waiter
 
     close_release.set()
-    async with asyncio.timeout(2):
-        while hitl.model is not replacement_model:
-            await asyncio.sleep(0.01)
+    if operation == "close":
+        assert hitl._close_task is not None
+        await hitl._close_task
+        assert hitl._closed
+    else:
+        async with asyncio.timeout(2):
+            while hitl.model is not replacement_model:
+                await asyncio.sleep(0.01)
 
     assert wrapper._agent is None
     assert hitl._loads_allowed.is_set()
 
 
-async def test_reconfigure_waits_for_tool_schema_snapshot(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("operation", ["close", "reconfigure"])
+@pytest.mark.parametrize("cancel_snapshot", [False, True])
+async def test_transition_waits_for_tool_schema_snapshot(
+    tmp_path, monkeypatch, operation, cancel_snapshot
 ):
     _stub_hitl_dependencies(monkeypatch)
     replacement_model = MagicMock(name="replacement-llm")
@@ -964,13 +831,19 @@ async def test_reconfigure_waits_for_tool_schema_snapshot(
     wrapper._agent = initialized
     hitl.agents["chat"] = wrapper
     monkeypatch.setattr(
-        "ursa.cli.config.init_chat_model", lambda **_: replacement_model
+        "langchain.chat_models.init_chat_model", lambda **_: replacement_model
     )
 
     snapshot_task = asyncio.create_task(load_agent_tools(hitl, "chat"))
     assert await asyncio.to_thread(schema_started.wait, 2)
-    reconfigure_task = asyncio.create_task(
-        hitl.reconfigure_models(
+    if cancel_snapshot:
+        snapshot_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(snapshot_task, 0.5)
+    transition = asyncio.create_task(
+        hitl.aclose()
+        if operation == "close"
+        else hitl.reconfigure_models(
             ChatModelConfig(
                 model="openai:gpt-5.4", inference_provider="openai"
             ),
@@ -979,120 +852,25 @@ async def test_reconfigure_waits_for_tool_schema_snapshot(
     )
     await asyncio.sleep(0.05)
 
-    assert not reconfigure_task.done()
+    assert not transition.done()
     assert not initialized.closed
     schema_release.set()
-    tools, _ = await asyncio.gather(snapshot_task, reconfigure_task)
+    await transition
 
-    assert [tool.name for tool in tools] == ["slow_tool"]
+    if not cancel_snapshot:
+        assert [tool.name for tool in await snapshot_task] == ["slow_tool"]
     assert initialized.closed
-
-
-async def test_cancelled_schema_snapshot_holds_lease_until_thread_finishes(
-    tmp_path, monkeypatch
-):
-    _stub_hitl_dependencies(monkeypatch)
-    hitl = HITL(UrsaConfig(workspace=tmp_path))
-    schema_started = threading.Event()
-    schema_release = threading.Event()
-
-    class SlowSchema:
-        @classmethod
-        def model_json_schema(cls):
-            schema_started.set()
-            schema_release.wait(timeout=5)
-            return {"properties": {}}
-
-    class Tool:
-        name = "slow_tool"
-        description = "Slow schema tool"
-        args_schema = SlowSchema
-        return_direct = False
-
-    class InitializedAgent:
-        checkpointer = None
-
-        def __init__(self):
-            self.tools = {"slow_tool": Tool()}
-            self.closed = False
-
-        async def aclose(self):
-            pass
-
-        def close(self):
-            self.closed = True
-
-    initialized = InitializedAgent()
-    wrapper = AgentHITL(agent_class=InitializedAgent)
-    wrapper._agent = initialized
-    hitl.agents["chat"] = wrapper
-
-    snapshot_task = asyncio.create_task(load_agent_tools(hitl, "chat"))
-    assert await asyncio.to_thread(schema_started.wait, 2)
-    snapshot_task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(snapshot_task, 0.5)
-
-    close_task = asyncio.create_task(hitl.aclose())
-    await asyncio.sleep(0.05)
-
-    assert not close_task.done()
-    assert not initialized.closed
-
-    schema_release.set()
-    await close_task
-
-    assert initialized.closed
-
-
-async def test_close_waits_for_active_agent_run(tmp_path, monkeypatch):
-    _stub_hitl_dependencies(monkeypatch)
-    hitl = HITL(UrsaConfig(workspace=tmp_path))
-    run_started = asyncio.Event()
-    run_release = asyncio.Event()
-    close_count = 0
-
-    class RunningAgent:
-        checkpointer = None
-
-        def __init__(self, **_kwargs):
-            pass
-
-        async def aclose(self):
-            pass
-
-        def close(self):
-            nonlocal close_count
-            close_count += 1
-
-    class RunningWrapper(AgentHITL):
-        async def __call__(self, *_args, **_kwargs):
-            run_started.set()
-            await run_release.wait()
-            return "complete"
-
-    hitl.agents["chat"] = RunningWrapper(agent_class=RunningAgent)
-    run_task = asyncio.create_task(hitl.run_agent("chat", "work"))
-    await run_started.wait()
-    close_task = asyncio.create_task(hitl.aclose())
-    await asyncio.sleep(0.05)
-
-    assert not close_task.done()
-    assert close_count == 0
-    run_release.set()
-    result, _ = await asyncio.gather(run_task, close_task)
-
-    assert result == "complete"
-    assert close_count == 1
-    assert hitl._closed
+    assert hitl._closed == (operation == "close")
 
 
 def _stub_hitl_dependencies(monkeypatch):
     fake_llm = MagicMock(name="llm")
     fake_embedding = MagicMock(name="embedding")
-    monkeypatch.setattr("ursa.cli.config.init_chat_model", lambda **_: fake_llm)
     monkeypatch.setattr(
-        "ursa.cli.config.init_embeddings", lambda **_: fake_embedding
+        "langchain.chat_models.init_chat_model", lambda **_: fake_llm
+    )
+    monkeypatch.setattr(
+        "langchain.embeddings.init_embeddings", lambda **_: fake_embedding
     )
     monkeypatch.setattr("ursa.util.mcp.start_mcp_client", lambda servers: None)
     return fake_llm, fake_embedding

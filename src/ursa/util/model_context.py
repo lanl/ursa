@@ -11,6 +11,8 @@ def model_context_window(model: object) -> int | None:
     LangChain profiles supply ``max_input_tokens``. Ollama's configured
     ``num_ctx`` takes precedence because it controls the allocated window.
     """
+    if model is None:
+        return None
     from langchain_core.runnables.base import RunnableBindingBase
 
     kwargs = {}

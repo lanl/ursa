@@ -46,19 +46,6 @@ if TYPE_CHECKING:
     from langchain.embeddings import Embeddings
 
 
-def init_chat_model(**kwargs):
-    """Import the model factory only when a model is actually requested."""
-    from langchain.chat_models import init_chat_model as factory
-
-    return factory(**kwargs)
-
-
-def init_embeddings(**kwargs):
-    from langchain.embeddings import init_embeddings as factory
-
-    return factory(**kwargs)
-
-
 logger = logging.getLogger(__name__)
 
 LoggingLevel = Literal[
@@ -478,6 +465,8 @@ class ChatModelConfig(ModelConfig):
         return kwargs
 
     def init_chat_model(self) -> "BaseChatModel":
+        from langchain.chat_models import init_chat_model
+
         from ursa.util.model_metadata import load_model_context
         from ursa.util.openai_compat import with_responses_fallback
 
@@ -510,6 +499,8 @@ class EmbModelConfig(ModelConfig):
         return kwargs
 
     def init_embedding(self) -> "Embeddings":
+        from langchain.embeddings import init_embeddings
+
         emb = init_embeddings(**self.kwargs)
         self.check_instantiated_model(emb)
         return emb

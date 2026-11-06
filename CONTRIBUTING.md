@@ -103,9 +103,6 @@ uv sync --all-extras --group dev
 uv run pytest
 ```
 
-Run `just benchmark` for CLI latency measurements; see
-[benchmark/README.md](benchmark/README.md) for setup and measurement boundaries.
-
 ## Building Documentation
 
 Install the documentation dependency group and preview changes locally:

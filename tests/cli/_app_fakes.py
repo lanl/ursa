@@ -54,10 +54,9 @@ class FakeHITL:
     async def aclose(self):
         self.closed = True
 
-    async def reconfigure_model(self, model_name, inference_provider):
-        self.model_changes.append((model_name, inference_provider))
-        self.config.llm_model.model = model_name
-        self.inference_provider = inference_provider
+    @property
+    def initialized_model(self):
+        return self.model
 
     async def reconfigure_models(
         self,

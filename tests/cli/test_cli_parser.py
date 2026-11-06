@@ -887,7 +887,7 @@ def test_chat_model_config_initializes_chat_model(monkeypatch):
         return "chat-model"
 
     monkeypatch.setattr(
-        "ursa.cli.config.init_chat_model",
+        "langchain.chat_models.init_chat_model",
         fake_init_chat_model,
     )
     cfg = ChatModelConfig(model="openai:gpt-5", max_completion_tokens=1024)
@@ -909,7 +909,7 @@ def test_emb_model_config_initializes_embedding_model(monkeypatch):
         return "embedding-model"
 
     monkeypatch.setattr(
-        "ursa.cli.config.init_embeddings",
+        "langchain.embeddings.init_embeddings",
         fake_init_embeddings,
     )
     cfg = EmbModelConfig(model="openai:text-embedding-3-large")

@@ -1,5 +1,6 @@
 import asyncio
 import io
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -10,16 +11,84 @@ from textual.widgets import Markdown, Static
 import ursa.cli.tui.app as app_module
 import ursa.util.crossplatform as crossplatform
 from tests.cli._app_fakes import FakeHITL, emit_event
-from tests.tui.utils import eventually
+from tests.tui.utils import await_event, await_screen, await_workers, eventually
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import EventCard, ExceptionCard, RunCommandCard
 from ursa.cli.tui.turn import Turn
 from ursa.cli.tui.widgets import (
     ActivityIndicator,
+    AgentsScreen,
     MessageCard,
     PromptArea,
     WelcomeBanner,
 )
+
+
+async def test_agent_descriptions_load_without_blocking_input(tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+    ui_thread = threading.get_ident()
+    loader_threads = []
+
+    class SlowAgent:
+        @property
+        def description(self):
+            loader_threads.append(threading.get_ident())
+            started.set()
+            assert threading.get_ident() != ui_thread
+            assert release.wait(10), "Description loading was never released"
+            return "Description loaded in the background."
+
+    hitl = FakeHITL(tmp_path)
+    hitl.agents = {"chat": SlowAgent()}
+
+    async def get_agent(name):
+        return hitl.agents[name]
+
+    hitl.get_agent = get_agent
+    app = UrsaTextualApp(hitl)
+    async with app.run_test(size=(100, 36)) as pilot:
+        try:
+            await pilot.press("/", "a", "g", "e", "n", "t", "s", "enter")
+            await await_event(pilot, started)
+            assert loader_threads and ui_thread not in loader_threads
+            await pilot.press("x")
+            assert app.query_one(PromptArea).text == "x"
+        finally:
+            release.set()
+        screen = await await_screen(pilot, AgentsScreen)
+        assert screen.agents[0].description == (
+            "Description loaded in the background."
+        )
+        await await_workers(app, pilot)
+
+
+async def test_agent_description_failure_is_reported(tmp_path, monkeypatch):
+    class BrokenAgent:
+        @property
+        def description(self):
+            raise ImportError("Agent dependency unavailable")
+
+    hitl = FakeHITL(tmp_path)
+    hitl.agents = {"chat": BrokenAgent()}
+    app = UrsaTextualApp(hitl)
+    notices = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notices.append((message, kwargs)),
+    )
+    async with app.run_test() as pilot:
+        await app._show_command("agents")
+        await await_workers(app, pilot)
+        assert len(notices) == 1
+        message, options = notices[0]
+        assert message == "Agent dependency unavailable"
+        assert options["severity"] == "error"
+        assert options["title"] == "Unable to load agents"
+        assert not isinstance(app.screen, AgentsScreen)
+        await pilot.press("x")
+        assert app.query_one(PromptArea).text == "x"
 
 
 @pytest.mark.parametrize("cancel_unlock", [False, True])

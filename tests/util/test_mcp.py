@@ -19,50 +19,32 @@ from ursa.util.secrets import SecretTemplate
 DUMMY_SERVER = Path(__file__).parents[1] / "tools" / "dummy_mcp_server.py"
 
 
-def test_start_mcp_client_adds_httpx_factory_for_sse(monkeypatch):
-    captured = {}
-
-    class DummyClient:
-        def __init__(self, connections):
-            captured["connections"] = connections
-
-    monkeypatch.setattr(mcp_mod, "UrsaMCPClient", DummyClient)
-
-    mcp_mod.start_mcp_client({
-        "demo": SseServerParameters(url="https://example.com/sse")
+@pytest.mark.parametrize(
+    "parameters,transport",
+    [
+        (SseServerParameters, "sse"),
+        (StreamableHttpParameters, "streamable_http"),
+    ],
+)
+def test_start_mcp_client_adds_httpx_factory(
+    monkeypatch, parameters, transport
+):
+    monkeypatch.setattr(
+        mcp_mod, "UrsaMCPClient", lambda connections: connections
+    )
+    connections = mcp_mod.start_mcp_client({
+        "demo": parameters(url="https://example.com/mcp")
     })
 
-    conn = captured["connections"]["demo"]
-    assert conn["transport"] == "sse"
-    assert conn["httpx_client_factory"] is mcp_mod.build_mcp_httpx_async_client
-
-
-def test_start_mcp_client_adds_httpx_factory_for_streamable_http(monkeypatch):
-    captured = {}
-
-    class DummyClient:
-        def __init__(self, connections):
-            captured["connections"] = connections
-
-    monkeypatch.setattr(mcp_mod, "UrsaMCPClient", DummyClient)
-
-    mcp_mod.start_mcp_client({
-        "demo": StreamableHttpParameters(url="https://example.com/mcp")
-    })
-
-    conn = captured["connections"]["demo"]
-    assert conn["transport"] == "streamable_http"
+    conn = connections["demo"]
+    assert conn["transport"] == transport
     assert conn["httpx_client_factory"] is mcp_mod.build_mcp_httpx_async_client
 
 
 def test_mcp_header_resolves_keyring_secret_template(monkeypatch):
-    captured = {}
-
-    class DummyClient:
-        def __init__(self, connections):
-            captured["connections"] = connections
-
-    monkeypatch.setattr(mcp_mod, "UrsaMCPClient", DummyClient)
+    monkeypatch.setattr(
+        mcp_mod, "UrsaMCPClient", lambda connections: connections
+    )
     monkeypatch.setattr(
         "ursa.util.secrets.get_keyring",
         lambda: SimpleNamespace(
@@ -72,7 +54,7 @@ def test_mcp_header_resolves_keyring_secret_template(monkeypatch):
         ),
     )
 
-    mcp_mod.start_mcp_client({
+    connections = mcp_mod.start_mcp_client({
         "demo": StreamableHttpParameters(
             url="https://example.com/mcp",
             headers={
@@ -84,9 +66,7 @@ def test_mcp_header_resolves_keyring_secret_template(monkeypatch):
         )
     })
 
-    assert captured["connections"]["demo"]["headers"] == {
-        "Authorization": "Bearer token"
-    }
+    assert connections["demo"]["headers"] == {"Authorization": "Bearer token"}
 
 
 def test_mcp_config_loading_types_secret_headers():

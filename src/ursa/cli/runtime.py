@@ -153,13 +153,13 @@ class AgentHITL:
             try:
                 await async_close()
             except Exception:
-                logging.exception("Failed to close partially initialized agent")
+                logging.exception("Failed to close async agent resources")
         close = getattr(agent, "close", None)
         if callable(close):
             try:
                 await asyncio.to_thread(close)
             except Exception:
-                logging.exception("Failed to close partially initialized agent")
+                logging.exception("Failed to close sync agent resources")
 
     async def wait_until_initialized(self) -> None:
         """Wait for runtime-owned initialization, if one is in flight."""
@@ -224,14 +224,6 @@ class AgentHITL:
 
         # Return only the result message
         return msg
-
-
-def get_base_url(model: BaseChatModel) -> str | None:
-    for attr in ["base_url", "api_base", "openai_api_base"]:
-        if base_url := getattr(model, attr, None):
-            return base_url
-    logging.warning(f"Missing base_url for {model}")
-    return None
 
 
 class HITL:
@@ -314,6 +306,11 @@ class HITL:
         self._active_operations = 0
         self._close_task: asyncio.Task[None] | None = None
         self._closed = False
+
+    @property
+    def initialized_model(self) -> BaseChatModel | None:
+        """Return the cached chat model without triggering initialization."""
+        return self.__dict__.get("model")
 
     @cached_property
     def model(self):
@@ -603,14 +600,7 @@ class HITL:
             agent = wrapper._agent
             if agent is None:
                 continue
-            try:
-                await agent.aclose()
-            except Exception:
-                logging.exception("Failed to close async agent resources")
-            try:
-                await asyncio.to_thread(agent.close)
-            except Exception:
-                logging.exception("Failed to close sync agent resources")
+            await wrapper._close_agent(agent)
             wrapper._agent = None
             wrapper.state = None
 

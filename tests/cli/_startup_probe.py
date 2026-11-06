@@ -4,7 +4,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from time import perf_counter
 
 
 def fake_model(self):
@@ -35,28 +34,11 @@ def probe(scenario: str, result: Path) -> None:
     runtime.validate_model_provider = lambda *args: None
 
     def ready() -> None:
-        result.write_text(json.dumps([perf_counter(), sorted(sys.modules)]))
+        result.write_text(json.dumps(sorted(sys.modules)))
 
     if scenario == "exec":
-
-        class Output:
-            responded = False
-
-            def write(self, text):
-                self.responded |= "Hello!" in text
-                return sys.__stdout__.write(text)
-
-            def flush(self):
-                sys.__stdout__.flush()
-                if self.responded:
-                    ready()
-                    self.responded = False
-
-            def __getattr__(self, name):
-                return getattr(sys.__stdout__, name)
-
-        sys.stdout = Output()
         main(["exec", "say hello"])
+        ready()
         return
 
     from ursa.cli.tui.app import UrsaTextualApp
