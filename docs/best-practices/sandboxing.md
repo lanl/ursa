@@ -34,7 +34,7 @@ Use a virtual machine, container, dedicated user account, or isolated environmen
 
 ## Command sandbox
 
-See the [Command sandbox quickstart](../sandbox-quickstart.md) for setup,
+See the [Sandboxing](../sandbox.md) for setup,
 access controls, safety settings, and troubleshooting.
 
 ## File access outside the workspace

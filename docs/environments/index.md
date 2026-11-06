@@ -168,7 +168,7 @@ environment with its configured workspace behavior.
 
 Use dedicated workspaces and review generated code and commands. Members sharing
 a workspace can modify each other's files. See the
-[Command sandbox quickstart](../sandbox-quickstart.md) for execution controls.
+[Sandboxing](../sandbox.md) for execution controls.
 
 Next, read about [Agent Teams][agent-teams] or
 [Agent Symposia][agent-symposia].

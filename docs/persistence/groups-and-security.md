@@ -63,7 +63,7 @@ an error, not a way to disable the policy. Removing the default group's
 require this file and a non-empty allowlist.
 
 Group allowlists restrict model endpoints, not shell commands or other tool
-traffic. See the [Command sandbox quickstart](../sandbox-quickstart.md) for
+traffic. See the [Sandboxing](../sandbox.md) for
 command execution controls.
 
 ## How this relates to model configuration

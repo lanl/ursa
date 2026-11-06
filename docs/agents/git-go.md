@@ -86,7 +86,7 @@ workspace; repository-aware writes also enforce the specified repository boundar
 Set `URSA_ALLOW_UNSAFE_WRITES=1` only when you intend to bypass these checks.
 
 These file-tool checks are separate from the
-[command sandbox](../sandbox-quickstart.md).
+[command sandbox](../sandbox.md).
 
 ### Golangci-lint Integration
 
