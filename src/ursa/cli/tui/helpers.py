@@ -181,27 +181,22 @@ def _token_usage_breakdown(value: Any) -> TokenUsage:
             item if isinstance(item, int) and not isinstance(item, bool) else 0
         )
 
+    def maximum(item: Mapping[str, Any], *keys: str) -> int:
+        return max(count(item.get(key)) for key in keys)
+
     def mapping_usage(item: Mapping[str, Any]) -> TokenUsage:
-        input_tokens = max(
-            count(item.get(key))
-            for key in ("input_tokens", "prompt_tokens", "input_token_count")
+        input_tokens = maximum(
+            item, "input_tokens", "prompt_tokens", "input_token_count"
         )
-        output_tokens = max(
-            count(item.get(key))
-            for key in (
-                "output_tokens",
-                "completion_tokens",
-                "output_token_count",
-            )
+        output_tokens = maximum(
+            item, "output_tokens", "completion_tokens", "output_token_count"
         )
-        cached_tokens = max(
-            count(item.get(key))
-            for key in (
-                "cached_tokens",
-                "cached_input_tokens",
-                "cache_read_input_tokens",
-                "prompt_cache_hits",
-            )
+        cached_tokens = maximum(
+            item,
+            "cached_tokens",
+            "cached_input_tokens",
+            "cache_read_input_tokens",
+            "prompt_cache_hits",
         )
         for details_key in (
             "input_token_details",
@@ -212,12 +207,10 @@ def _token_usage_breakdown(value: Any) -> TokenUsage:
             if isinstance(details, Mapping):
                 cached_tokens = max(
                     cached_tokens,
-                    count(details.get("cached_tokens")),
-                    count(details.get("cache_read")),
+                    maximum(details, "cached_tokens", "cache_read"),
                 )
         total_tokens = max(
-            count(item.get("total_tokens")),
-            count(item.get("total_token_count")),
+            maximum(item, "total_tokens", "total_token_count"),
             input_tokens + output_tokens,
         )
         return TokenUsage(

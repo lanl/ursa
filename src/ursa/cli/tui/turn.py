@@ -237,23 +237,16 @@ class Turn(Static):
         label = str(payload.get("message") or stage or tool or "Event")
         source = str(agent or tool or "agent")
         summary_kind = f"progress:{source}"
-        card_type: type[EventCard] = (
-            AgentEventCard
-            if agent in AGENT_LABELS
-            else SearchEventCard
-            if tool in SEARCH_TOOLS
-            else EventCard
-        )
+        if agent in AGENT_LABELS:
+            card_type, card_label = AgentEventCard, agent
+        elif tool in SEARCH_TOOLS:
+            card_type, card_label = SearchEventCard, tool
+        else:
+            card_type, card_label = EventCard, f"◌ {source}"
         card = self._reusable_summary(summary_kind)
         if type(card) is not card_type:
             key = self._next_summary_key("progress")
-            card = (
-                AgentEventCard(key, agent)
-                if agent in AGENT_LABELS
-                else SearchEventCard(key, tool)
-                if tool in SEARCH_TOOLS
-                else EventCard(key, f"◌ {source}")
-            )
+            card = card_type(key, card_label)
             await self._replace_or_mount(key, card)
         self._mark_summary(summary_kind, card)
         if isinstance(card, (AgentEventCard, SearchEventCard)):
