@@ -356,7 +356,8 @@ def test_synchronous_manager_facade() -> None:
     with SyncAgentManager(
         heartbeat_interval=0.05, heartbeat_timeout=1
     ) as manager:
-        manager.register(AgentSpec("agent", FACTORY), start=True)
+        manager.register(AgentSpec("agent", FACTORY))
+        manager.start()
         assert manager.invoke("agent", {})["calls"] == 1
         manager.send_message("agent", "from host")
         assert manager.call("agent", "received") == [
@@ -370,6 +371,12 @@ def test_synchronous_manager_facade() -> None:
             "sender": "host",
             "payload": "from broadcast",
         }
+        manager.invoke("agent", {"send": "host", "payload": "reply"}, timeout=1)
+        assert manager.receive_message(timeout=1) == AgentMessage(
+            "agent", "host", "reply"
+        )
+        manager.restart_agent("agent")
+        assert manager.invoke("agent", {})["calls"] == 3
         assert manager.snapshot("agent").status is AgentStatus.READY
         manager.kill_agent("agent")
         assert manager.snapshot("agent").status is AgentStatus.STOPPED

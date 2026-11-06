@@ -185,7 +185,7 @@ class _ProcessRuntimeBridge:
     async def wait_for_agent(
         self,
         target: str | list[str],
-        timeout_seconds: float,
+        timeout_seconds: float = 120,
         *,
         wait_all: bool = False,
     ) -> str:
@@ -207,7 +207,7 @@ class _ProcessRuntimeBridge:
         await self.context.request_runtime("wake_waiters")
 
 
-class _UrsaProcessAgent:
+class _UrsaProcessAgent(_ProcessRuntimeBridge):
     """One fully constructed URSA agent living exclusively in its child."""
 
     def __init__(
@@ -217,9 +217,8 @@ class _UrsaProcessAgent:
         agent_path: str,
         tool_sources: Mapping[str, str] | None = None,
     ) -> None:
+        super().__init__(context, agent_path)
         self.agent = agent
-        self.context = context
-        self.agent_path = agent_path
         self.tool_sources = dict(tool_sources or {})
         self.state: Any = None
         self._inbox: asyncio.Queue[_RuntimePrompt | None] = asyncio.Queue()
@@ -508,41 +507,11 @@ class _UrsaProcessAgent:
             "tools": [detail for detail in details if detail.get("mcp_server")],
         }
 
-    async def spawn_subagent(
-        self,
-        name: str,
-        message: str,
-        agent_type: str | None = None,
-    ) -> tuple[str, Any]:
-        """Spawn through the bridge used by the model-facing tool."""
-        return await self.agent._process_runtime.spawn_subagent(
-            name, message, agent_type
-        )
-
-    async def send_subagent_message(self, target: str, message: str) -> Any:
-        """Send through the bridge used by the model-facing tool."""
-        return await self.agent._process_runtime.send_message(target, message)
-
-    async def send_subagent_messages(
-        self, targets: list[str], message: str
-    ) -> list[Any]:
-        """Send a prevalidated batch through the host-owned bridge."""
-        return await self.agent._process_runtime.send_messages(targets, message)
-
-    async def list_subagents(self) -> list[str]:
-        return await self.agent._process_runtime.list_agents()
-
-    async def wait_for_subagent(
-        self,
-        target: str | list[str],
-        timeout_seconds: float = 120,
-        *,
-        wait_all: bool = False,
-    ) -> str:
-        """Wait through the host bridge without blocking message routing."""
-        return await self.agent._process_runtime.wait_for_agent(
-            target, timeout_seconds, wait_all=wait_all
-        )
+    # Preserve the process RPC names while sharing the model-facing bridge.
+    send_subagent_message = _ProcessRuntimeBridge.send_message
+    send_subagent_messages = _ProcessRuntimeBridge.send_messages
+    list_subagents = _ProcessRuntimeBridge.list_agents
+    wait_for_subagent = _ProcessRuntimeBridge.wait_for_agent
 
     async def aclose(self) -> None:
         self._cancel_active()
@@ -845,40 +814,48 @@ class AgentRuntime:
         async with self._register_lock:
             if name in self._registered:
                 return
-            await self._manager.register(
-                AgentSpec(
-                    agent_id=self.agents[name].runtime_id,
-                    factory="ursa.runtime.agent_runtime:_ursa_agent_factory",
-                    config={
-                        "agent_name": name,
-                        "agent_path": "root",
-                        # multiprocessing serializes this independently for
-                        # every child. Avoid deep-copying TemporaryDirectory's
-                        # cleanup finalizer in the host.
-                        "ursa_config": _runner_config(
-                            self.config.model_copy(
-                                update={
-                                    "agent_config": {
-                                        name: dict(
-                                            self.config.agent_config.get(name)
-                                            or {}
-                                        )
-                                    }
-                                },
-                            )
-                        ),
-                    },
-                )
-            )
             runtime_id = self.agents[name].runtime_id
-            self._manager.set_runtime_request_handler(
-                runtime_id, self._handle_runtime_request
-            )
+            await self._register_process(runtime_id, name, "root", self.config)
             self._runtime_paths[runtime_id] = "root"
             self._runtime_roots[runtime_id] = runtime_id
             self._runtime_agent_names[runtime_id] = name
             self._hierarchies.setdefault(runtime_id, {"root": runtime_id})
             self._registered.add(name)
+
+    async def _register_process(
+        self,
+        runtime_id: str,
+        name: str,
+        path: str,
+        config: UrsaConfig,
+        mcp_tool_specs: list[dict[str, Any]] | None = None,
+    ) -> None:
+        # multiprocessing copies each configuration. A shallow host copy avoids
+        # copying TemporaryDirectory's cleanup finalizer while filtering options.
+        config = config.model_copy(
+            update={
+                "agent_config": {
+                    name: dict(config.agent_config.get(name) or {})
+                }
+            }
+        )
+        payload = {
+            "agent_name": name,
+            "agent_path": path,
+            "ursa_config": _runner_config(config),
+        }
+        if mcp_tool_specs is not None:
+            payload["mcp_tool_specs"] = mcp_tool_specs
+        await self._manager.register(
+            AgentSpec(
+                agent_id=runtime_id,
+                factory="ursa.runtime.agent_runtime:_ursa_agent_factory",
+                config=payload,
+            )
+        )
+        self._manager.set_runtime_request_handler(
+            runtime_id, self._handle_runtime_request
+        )
 
     async def get_agent(self, name: str) -> RuntimeAgent:
         async with self.use_agent(name) as agent:
@@ -1436,14 +1413,6 @@ class AgentRuntime:
                 exc_info=(type(exc), exc, exc.__traceback__),
             )
 
-    async def _cancel_background_teardown_tasks(self) -> None:
-        tasks = tuple(self._background_teardown_tasks)
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        self._background_teardown_tasks.clear()
-
     async def _wait_for_runtime_agent(
         self,
         sender_runtime_id: str,
@@ -1708,13 +1677,14 @@ class AgentRuntime:
                 exc_info=(type(exc), exc, exc.__traceback__),
             )
 
-    async def _cancel_background_agent_tasks(self) -> None:
-        tasks = tuple(self._background_agent_tasks)
-        for task in tasks:
+    @staticmethod
+    async def _cancel_background_tasks(tasks: set[asyncio.Task[Any]]) -> None:
+        pending = tuple(tasks)
+        for task in pending:
             task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        self._background_agent_tasks.clear()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        tasks.clear()
 
     async def _spawn_runtime_subagent(
         self,
@@ -1766,32 +1736,15 @@ class AgentRuntime:
                         # inside the shared checkpoint database.
                         "agent_name": self.config.agent_name,
                         "thread_id": f"{self.thread_id}:{child_path}",
-                        "agent_config": {
-                            agent_name: dict(
-                                self.config.agent_config.get(agent_name) or {}
-                            )
-                        },
                     }
                 )
             )
-            await self._manager.register(
-                AgentSpec(
-                    agent_id=runtime_id,
-                    factory="ursa.runtime.agent_runtime:_ursa_agent_factory",
-                    config={
-                        "agent_name": agent_name,
-                        "agent_path": child_path,
-                        "ursa_config": _runner_config(child_config),
-                        **(
-                            {"mcp_tool_specs": cached_mcp_tool_specs}
-                            if cached_mcp_tool_specs is not None
-                            else {}
-                        ),
-                    },
-                )
-            )
-            self._manager.set_runtime_request_handler(
-                runtime_id, self._handle_runtime_request
+            await self._register_process(
+                runtime_id,
+                agent_name,
+                child_path,
+                child_config,
+                cached_mcp_tool_specs,
             )
             # Reserve both the name and capacity before yielding. Process
             # initialization runs outside the shared lock, so independent
@@ -1985,14 +1938,9 @@ class AgentRuntime:
                 (root_id, "root") for root_id in self._hierarchies
             )
             await self._cancel_subagent_starts()
-            await self._cancel_background_agent_tasks()
-            await self._cancel_background_teardown_tasks()
-            for runtime_id in reversed(tuple(self._dynamic_runtime_ids)):
-                await self._manager.unregister(runtime_id)
-            self._dynamic_runtime_ids.clear()
-            for name in tuple(self._registered):
-                await self._manager.unregister(self.agents[name].runtime_id)
-                self._registered.discard(name)
+            await self._cancel_background_tasks(self._background_agent_tasks)
+            await self._cancel_background_tasks(self._background_teardown_tasks)
+            await self._unregister_owned_agents()
             self._runtime_paths.clear()
             self._runtime_roots.clear()
             self._runtime_agent_names.clear()
@@ -2002,7 +1950,6 @@ class AgentRuntime:
                 RuntimeError("Agent runtime was reconfigured")
             )
             self._wake_all_waiters()
-            self._wait_dependencies.clear()
             self._stopping_subtrees.clear()
             self._active_root_id = None
             self._active_agent_ready.clear()
@@ -2030,20 +1977,23 @@ class AgentRuntime:
             self._closed = True
             self._wake_all_waiters()
             await self._cancel_subagent_starts()
-            await self._cancel_background_agent_tasks()
+            await self._cancel_background_tasks(self._background_agent_tasks)
             self._fail_all_buffered_messages(
                 RuntimeError("Agent runtime closed")
             )
-            await self._cancel_background_teardown_tasks()
+            await self._cancel_background_tasks(self._background_teardown_tasks)
             if self._owns_manager:
                 await self._manager.aclose()
             else:
-                for runtime_id in reversed(tuple(self._dynamic_runtime_ids)):
-                    await self._manager.unregister(runtime_id)
-                self._dynamic_runtime_ids.clear()
-                for name in tuple(self._registered):
-                    await self._manager.unregister(self.agents[name].runtime_id)
-                    self._registered.discard(name)
+                await self._unregister_owned_agents()
+
+    async def _unregister_owned_agents(self) -> None:
+        for runtime_id in reversed(tuple(self._dynamic_runtime_ids)):
+            await self._manager.unregister(runtime_id)
+        self._dynamic_runtime_ids.clear()
+        for name in tuple(self._registered):
+            await self._manager.unregister(self.agents[name].runtime_id)
+            self._registered.discard(name)
 
     def _wake_all_waiters(self) -> None:
         """Release host waits before hierarchy ownership is discarded."""

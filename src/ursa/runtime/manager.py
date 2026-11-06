@@ -22,9 +22,10 @@ from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import wraps
 from pathlib import Path
 from time import monotonic
-from typing import Any, Protocol, TypeAlias
+from typing import Any, Concatenate, ParamSpec, Protocol, TypeAlias, TypeVar
 from uuid import uuid4
 
 from langchain_core.callbacks import AsyncCallbackHandler
@@ -1599,6 +1600,24 @@ class AgentManager:
             raise
 
 
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def _blocking(
+    method: Callable[Concatenate[AgentManager, P], Coroutine[Any, Any, R]],
+) -> Callable[Concatenate[SyncAgentManager, P], R]:
+    """Adapt one manager operation, retaining its signature and override dispatch."""
+
+    @wraps(method)
+    def call(self: SyncAgentManager, /, *args: P.args, **kwargs: P.kwargs) -> R:
+        return self._run(
+            getattr(self.manager, method.__name__)(*args, **kwargs)
+        )
+
+    return call
+
+
 class SyncAgentManager:
     """Optional blocking facade backed by one persistent asyncio loop."""
 
@@ -1624,77 +1643,21 @@ class SyncAgentManager:
         assert self._manager is not None
         return self._manager
 
-    def _run(self, coroutine: Coroutine[Any, Any, Any]) -> Any:
+    def _run(self, coroutine: Coroutine[Any, Any, R]) -> R:
         return asyncio.run_coroutine_threadsafe(coroutine, self._loop).result()
 
-    def register(self, spec: AgentSpec, *, start: bool = False) -> None:
-        self._run(self.manager.register(spec, start=start))
-
-    def invoke(
-        self,
-        agent_id: str,
-        inputs: Any,
-        *,
-        config: Mapping[str, Any] | None = None,
-        callbacks: Sequence[Any] | None = None,
-        timeout: float | None = None,
-    ) -> Any:
-        return self._run(
-            self.manager.invoke(
-                agent_id,
-                inputs,
-                config=config,
-                callbacks=callbacks,
-                timeout=timeout,
-            )
-        )
-
-    def start(self) -> None:
-        self._run(self.manager.start())
-
-    def start_agent(self, agent_id: str) -> None:
-        self._run(self.manager.start_agent(agent_id))
-
-    def call(
-        self,
-        agent_id: str,
-        method: str,
-        *args: Any,
-        timeout: float | None = None,
-        **kwargs: Any,
-    ) -> Any:
-        return self._run(
-            self.manager.call(
-                agent_id, method, *args, timeout=timeout, **kwargs
-            )
-        )
-
-    def send_message(
-        self, agent_id: str, payload: Any, *, sender: str = "host"
-    ) -> None:
-        self._run(self.manager.send_message(agent_id, payload, sender=sender))
-
-    def receive_message(self, *, timeout: float | None = None) -> AgentMessage:
-        return self._run(self.manager.receive_message(timeout=timeout))
-
-    def broadcast(self, payload: Any, *, sender: str = "host") -> None:
-        self._run(self.manager.broadcast(payload, sender=sender))
-
-    def kill_agent(
-        self, agent_id: str, *, graceful_timeout: float = 2.0
-    ) -> None:
-        self._run(
-            self.manager.kill_agent(agent_id, graceful_timeout=graceful_timeout)
-        )
-
-    def restart_agent(self, agent_id: str) -> None:
-        self._run(self.manager.restart_agent(agent_id))
-
-    def unregister(self, agent_id: str) -> None:
-        self._run(self.manager.unregister(agent_id))
-
-    def snapshot(self, agent_id: str) -> AgentSnapshot:
-        return self._run(self.manager.snapshot(agent_id))
+    register = _blocking(AgentManager.register)
+    invoke = _blocking(AgentManager.invoke)
+    start = _blocking(AgentManager.start)
+    start_agent = _blocking(AgentManager.start_agent)
+    call = _blocking(AgentManager.call)
+    send_message = _blocking(AgentManager.send_message)
+    receive_message = _blocking(AgentManager.receive_message)
+    broadcast = _blocking(AgentManager.broadcast)
+    kill_agent = _blocking(AgentManager.kill_agent)
+    restart_agent = _blocking(AgentManager.restart_agent)
+    unregister = _blocking(AgentManager.unregister)
+    snapshot = _blocking(AgentManager.snapshot)
 
     def close(self) -> None:
         self._run(self.manager.aclose())
