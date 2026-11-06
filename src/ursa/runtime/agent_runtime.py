@@ -1363,16 +1363,13 @@ class AgentRuntime:
         target = target.strip()
         if not target.startswith("@"):
             return [target]
-        aliases = {
+        selectors = {
             "@everyone": "everyone",
             "@supervisor": "supervisor",
-            "@parent": "supervisor",
             "@peers": "peers",
-            "@siblings": "peers",
             "@reports": "reports",
-            "@children": "reports",
         }
-        relation = aliases.get(target.casefold())
+        relation = selectors.get(target.casefold())
         if relation is None:
             raise ValueError(f"Unknown message target group {target!r}")
         sender_path = self._runtime_paths[sender_runtime_id]

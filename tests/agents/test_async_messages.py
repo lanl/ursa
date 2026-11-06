@@ -628,10 +628,10 @@ async def test_send_message_group_targets_expand_locally_and_deduplicate(
 
     response = await send_message.ainvoke({
         "target": [
-            "@siblings",
+            "@peers",
             "root/reviewer",
-            "@children",
-            "@parent",
+            "@reports",
+            "@supervisor",
             "root/analyst",
         ],
         "message": "Share your progress.",
@@ -662,6 +662,9 @@ async def test_send_message_group_targets_expand_locally_and_deduplicate(
         ("@reports", "has no recipients"),
         ("@peers", "has no recipients"),
         ("@unknown", "Unknown message target group"),
+        ("@parent", "Unknown message target group"),
+        ("@siblings", "Unknown message target group"),
+        ("@children", "Unknown message target group"),
     ],
 )
 async def test_send_message_group_target_errors_are_atomic(

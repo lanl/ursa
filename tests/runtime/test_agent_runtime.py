@@ -888,6 +888,21 @@ async def test_host_expands_message_target_groups_atomically(
             "root/reviewer",
             "root/analyst/specialist",
         ]
+        for selector in ("@parent", "@siblings", "@children"):
+            with pytest.raises(
+                ValueError, match="Unknown message target group"
+            ):
+                await runtime._handle_runtime_request(
+                    analyst_id,
+                    "invoke_many",
+                    {
+                        "targets": ["root/reviewer", selector],
+                        "message": "Do not partially deliver.",
+                    },
+                    callbacks,
+                )
+        assert calls == []
+        assert messages == []
         results = await runtime._handle_runtime_request(
             analyst_id,
             "invoke_many",

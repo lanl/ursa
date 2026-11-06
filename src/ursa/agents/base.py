@@ -1117,9 +1117,8 @@ class AsyncMessageMixin:
 
         ``@everyone`` addresses every other member of this hierarchy.
         ``@supervisor``, ``@peers``, and ``@reports`` address the immediate
-        parent, same-parent peers, and immediate children respectively. The
-        ``@parent``, ``@siblings``, and ``@children`` spellings are retained as
-        aliases. Group selectors are only message routes; ordinary path
+        supervisor, same-supervisor peers, and immediate reports respectively.
+        Group selectors are only message routes; ordinary path
         resolution remains unchanged for other hierarchy operations.
         """
         routes = [target] if isinstance(target, str) else list(target)
@@ -1133,19 +1132,12 @@ class AsyncMessageMixin:
         selectors = {
             "@everyone": lambda: list(self.root_agent.walk_agents()),
             "@supervisor": lambda: [self.parent_agent],
-            "@parent": lambda: [self.parent_agent],
             "@peers": lambda: (
                 list(self.parent_agent.subagents.values())
                 if self.parent_agent is not None
                 else []
             ),
-            "@siblings": lambda: (
-                list(self.parent_agent.subagents.values())
-                if self.parent_agent is not None
-                else []
-            ),
             "@reports": lambda: list(self.subagents.values()),
-            "@children": lambda: list(self.subagents.values()),
         }
         recipients: list[BaseAgent] = []
         seen: set[str] = set()

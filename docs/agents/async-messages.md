@@ -92,12 +92,12 @@ Every `ChatAgent` also exposes five hierarchy tools to its model:
 `send_message` supports these group targets, using supervisor/peer/report
 terminology for the delegation hierarchy:
 
-| Target | Recipients | Alias |
-|---|---|---|
-| `@everyone` | Every other agent in the caller's hierarchy | — |
-| `@supervisor` | The agent that directly launched the caller | `@parent` |
-| `@peers` | Other agents launched by the same supervisor | `@siblings` |
-| `@reports` | Agents directly launched by the caller, excluding deeper descendants | `@children` |
+| Target | Recipients |
+|---|---|
+| `@everyone` | Every other agent in the caller's hierarchy |
+| `@supervisor` | The agent that directly launched the caller |
+| `@peers` | Other agents launched by the same supervisor |
+| `@reports` | Agents directly launched by the caller, excluding deeper descendants |
 
 For example, `send_message(target="@reports", message="Report your progress.")`
 sends to the caller's immediate reports. A mixed target list such as

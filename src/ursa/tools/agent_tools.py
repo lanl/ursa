@@ -213,15 +213,15 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
 
         Each target may be a relative path, a sibling name, or a root-qualified
         path such as ``root/reviewer``. Message groups are ``@everyone`` for
-        every other hierarchy member, ``@supervisor`` for the immediate parent,
-        ``@peers`` for same-parent agents, and ``@reports`` for immediate
-        children. ``@parent``, ``@siblings``, and ``@children`` are aliases.
+        every other hierarchy member, ``@supervisor`` for the agent that
+        directly launched you, ``@peers`` for agents sharing your supervisor,
+        and ``@reports`` for agents you directly launched.
         Empty groups are errors. URSA returns after queueing the message; it
         does not wait for the receiving agent's response. For a target list,
         every address is validated before anything is delivered, and delivery
         acknowledgements retain input order.
 
-        Coordinate directly with peers as well as parents. Use a target list
+        Coordinate directly with peers as well as supervisors. Use a target list
         for the same message to a group (exclude yourself), or emit multiple
         send_message calls together for independent, different messages.
         Ask recipients to call send_message with an explicit reply target;
