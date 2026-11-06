@@ -211,6 +211,22 @@ class SecretReference(BaseModel):
     env: Annotated[str | None, AfterValidator(_non_blank)] = None
     keyring: bool | Annotated[str, AfterValidator(_non_blank)] | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_identity_template(cls, value: Any) -> Any:
+        # Older saved configs included the default template on API-key
+        # references. It does not alter the secret. Keep actual templates
+        # restricted to SecretTemplate (for example, MCP HTTP headers).
+        if (
+            "template" not in cls.model_fields
+            and isinstance(value, dict)
+            and value.get("template") == "%s"
+        ):
+            return {
+                key: item for key, item in value.items() if key != "template"
+            }
+        return value
+
     @classmethod
     def maybe_validate(cls, value: Any, **kwargs) -> Any:
         """Type a secret mapping while leaving unrelated values unchanged."""

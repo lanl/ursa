@@ -145,6 +145,29 @@ def test_secret_reference_maybe_validate():
     }
 
 
+@pytest.mark.parametrize("source", [{"keyring": True}, {"env": "MODEL_TOKEN"}])
+def test_saved_api_key_identity_template_loads_without_rewriting(source):
+    saved = {**source, "template": "%s"}
+    config = UrsaConfig.model_validate({
+        "inference_providers": {"hosted": {"api_key": saved}},
+        "llm_model": {"inference_provider": "hosted", "api_key": saved},
+    })
+    assert config.inference_providers["hosted"].api_key == SecretReference(
+        **source
+    )
+    assert config.llm_model.api_key == SecretReference(**source)
+    assert saved == {**source, "template": "%s"}
+
+
+def test_api_key_rejects_nonidentity_templates():
+    with pytest.raises(ValueError, match="template"):
+        ChatModelConfig(api_key={"env": "TOKEN", "template": "Bearer %s"})
+    assert (
+        SecretTemplate(env="TOKEN", template="Bearer %s").template
+        == "Bearer %s"
+    )
+
+
 def test_secret_reference_get_secret_value(monkeypatch):
     monkeypatch.setenv("MODEL_TOKEN", "secret")
 
