@@ -35,9 +35,9 @@ class MacSandbox(BaseSandbox):
     def __init__(
         self,
         cwd: Path,
+        extra_writable_paths: list[Path],
         access_network: bool = True,
         tmpdir: Path | None = None,
-        extra_writable_paths: list[Path] | None = None,
         timeout: int = 600000,
     ):
         self.cwd = cwd
@@ -62,7 +62,7 @@ class MacSandbox(BaseSandbox):
             ).strip(),
         ]
 
-    def register_extra_writable_paths(self, paths: list[Path] | None):
+    def register_extra_writable_paths(self, paths: list[Path]):
         self.extra_writable_paths = []
         if paths:
             for p in paths:

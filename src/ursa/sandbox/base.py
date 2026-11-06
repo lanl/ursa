@@ -19,18 +19,17 @@ URSA_SBX=0 to disable sandboxing.
 
 def parse_extra_writable_paths(
     env_var: str = "URSA_EXTRA_WRITABLE_PATHS",
-) -> list[Path] | None:
+) -> list[Path]:
     extra_writable_paths = os.getenv(env_var)
     if extra_writable_paths is None or extra_writable_paths.strip() == "":
-        return None
+        return []
     else:
         delim = ";" if os.name == "nt" else ":"
-        paths = [
+        return [
             r
             for p in extra_writable_paths.strip().split(delim)
             if (r := Path(p).expanduser().resolve()).exists()
         ]
-        return paths if paths else None
 
 
 class SandboxError(Exception):
