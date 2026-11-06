@@ -1499,9 +1499,6 @@ def _recording_models(monkeypatch):
     monkeypatch.setattr(
         "ursa.cli.runtime.enforce_model_group_policy", lambda *a, **k: None
     )
-    monkeypatch.setattr(
-        "ursa.cli.runtime.start_mcp_client", lambda servers: None
-    )
     return built
 
 
