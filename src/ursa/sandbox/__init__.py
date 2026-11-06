@@ -15,6 +15,35 @@ import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+# class UnixSandboxMixin:
+#     def parse_extra_writable_paths(
+#         paths: list[Path] | None = None,
+#     ) -> list[Path]:
+#         if paths is None:
+#             return []
+#         else:
+#             return [
+#                 r
+#                 for p in extra_writable_paths.strip().split(delim)
+#                 if (r := Path(p).expanduser().resolve()).exists()
+#             ]
+
+
+def parse_extra_writable_paths(
+    env_var: str = "URSA_EXTRA_WRITABLE_PATHS",
+) -> list[Path] | None:
+    extra_writable_paths = os.getenv(env_var)
+    if extra_writable_paths is None or extra_writable_paths.strip() == "":
+        return None
+    else:
+        delim = ";" if os.name == "nt" else ":"
+        paths = [
+            r
+            for p in extra_writable_paths.strip().split(delim)
+            if (r := Path(p).expanduser().resolve()).exists()
+        ]
+        return paths if paths else None
+
 
 class SandboxError(Exception):
     """Raised when sandbox run is unsuccessful."""
@@ -25,24 +54,30 @@ class BaseSandbox(ABC):
     readonly_paths: list[Path]
     extra_writable_paths: list[str]
     extra_args: list[str]
-    timeout: int = 600000
+    timeout: int
 
     @abstractmethod
     def execute(self, cmd: str): ...
+
+    @abstractmethod
+    def is_working(self) -> bool: ...
+
+    # @abstractmethod
+    # def extract_extra_writable_paths(self)
 
     @property
     def backend(self) -> str:
         return type(self).__name__
 
-    @abstractmethod
-    def is_working(self) -> bool: ...
+    @property
+    def workspace(self) -> str:
+        return str(self.cwd.resolve())
 
 
 class NoSandbox(BaseSandbox):
-    timeout: int = 600000
-
-    def __init__(self, cwd: Path):
-        self.cwd = cwd.resolve()
+    def __init__(self, cwd: Path, timeout: int = 600000):
+        self.cwd = cwd
+        self.timeout = timeout
 
     def execute(self, cmd: str):
         result = subprocess.run(
@@ -51,7 +86,7 @@ class NoSandbox(BaseSandbox):
             shell=True,
             capture_output=True,
             timeout=self.timeout,
-            cwd=self.cwd,
+            cwd=self.workspace,
             check=False,
         )
         return result
@@ -66,6 +101,7 @@ class WindowsSandbox(BaseSandbox): ...
 _sandbox_exec_args_template = """
 (version 1)
 (deny default)
+(allow sysctl-read)
 (allow process*)
 (allow file-read*)
 (allow file-write*
@@ -93,12 +129,13 @@ class MacSandbox(BaseSandbox):
         access_network: bool = True,
         tmpdir: Path | None = None,
         extra_writable_paths: list[Path] | None = None,
+        timeout: int = 600000,
     ):
-        self.cwd = cwd.resolve()
+        self.cwd = cwd
         self.shell = os.getenv("SHELL", "/bin/zsh")
         self.tmpdir = tmpdir or Path(tempfile.gettempdir()).resolve()
         self.access_network = access_network
-        self.workspace = str(self.cwd)
+        self.timeout = timeout
 
         self.extra_args = []
         self.extra_args.append(
@@ -140,7 +177,7 @@ class MacSandbox(BaseSandbox):
             text=True,
             shell=False,
             capture_output=True,
-            cwd=Path.home(),
+            cwd=self.workspace,
         )
 
         return (
@@ -153,12 +190,12 @@ class MacSandbox(BaseSandbox):
             raise SandboxError("sandbox-exec not on path.")
 
         result = subprocess.run(
-            [self.sbx_path, *self.args, "--", "/bin/bash", "-c", cmd],
+            [self.sbx_path, *self.args, "--", self.shell, "-c", cmd],
             text=True,
             shell=False,
             capture_output=True,
-            timeout=600000,
-            cwd=Path.cwd(),
+            timeout=self.timeout,
+            cwd=self.workspace,
             check=False,
         )
         return result
@@ -187,7 +224,7 @@ class LinuxBwrapSandbox(BaseSandbox):
             text=True,
             shell=False,
             capture_output=True,
-            cwd=Path.home(),
+            cwd=self.workspace,
         )
 
         return (
@@ -201,12 +238,13 @@ class LinuxBwrapSandbox(BaseSandbox):
         access_network: bool = True,
         tmpdir: Path | None = None,
         extra_writable_paths: list[Path] | None = None,
+        timeout: int = 600000,
     ):
-        self.cwd = cwd.resolve()
+        self.cwd = cwd
         self.shell = os.getenv("SHELL", "bash")
         self.tmpdir = tmpdir or Path(tempfile.gettempdir()).resolve()
         self.access_network = access_network
-        self.workspace = str(self.cwd)
+        self.timeout = timeout
         self.args = [
             "--new-session",
             "--die-with-parent",
@@ -252,8 +290,8 @@ class LinuxBwrapSandbox(BaseSandbox):
             text=True,
             shell=False,
             capture_output=True,
-            timeout=600000,
-            cwd=Path.cwd(),
+            timeout=self.timeout,
+            cwd=self.workspace,
             check=False,
         )
         return result

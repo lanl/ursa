@@ -553,6 +553,9 @@ class UrsaConfig(BaseModel):
     use_web: bool = False
     """Enable web-search tools for ChatAgent and ExecutionAgent."""
 
+    sbx: bool = True
+    """Enable sandboxing."""
+
     tokens_before_summarize: int = Field(
         default=DEFAULT_SUMMARIZATION_THRESHOLD, gt=0
     )

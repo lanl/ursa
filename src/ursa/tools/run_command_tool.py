@@ -15,6 +15,7 @@ from ursa.sandbox import (
     MacSandbox,
     NoSandbox,
     SandboxError,
+    parse_extra_writable_paths,
 )
 from ursa.util.events import ToolEvents
 from ursa.util.rendering import event_artifact
@@ -47,6 +48,8 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
         A formatted string with "STDOUT:" followed by the truncated stdout and
         "STDERR:" followed by the truncated stderr.
     """
+    (Path.home() / "ursa.log").write_text(str(list(runtime.context.__dict__)))
+
     try:
         query = validate_ascii(query)
     except AsciiValidationError as exc:
@@ -121,7 +124,8 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
         ) as span:
             access_network = os.getenv("URSA_ACCESS_NETWORK", "1") == "1"
             enable_sbx = os.getenv("URSA_SBX", "1") == "1"
-            match platform.system(), prompt_level.lower(), enable_sbx:
+            extra_writable_paths = parse_extra_writable_paths()
+            match (pf := platform.system()), prompt_level.lower(), enable_sbx:
                 # NOTE:
                 # * No sandbox if URSA_SAFETY_LEVEL=yolo or URSA_SBX=0
                 # * To use sandbox but disable safety checks,
@@ -131,36 +135,12 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
                 case _, _, 0:
                     sbx = NoSandbox(cwd=workspace_dir)
                 case "Linux", _, 1:
-                    extra_writable_paths = os.getenv(
-                        "URSA_EXTRA_WRITABLE_PATHS"
-                    )
-                    if extra_writable_paths is not None:
-                        extra_writable_paths = (
-                            extra_writable_paths.strip().split(":")
-                        )
-                        extra_writable_paths = [
-                            Path(p).expanduser().resolve()
-                            for p in extra_writable_paths
-                        ]
-
                     sbx = LinuxBwrapSandbox(
                         cwd=workspace_dir,
                         access_network=access_network,
                         extra_writable_paths=extra_writable_paths,
                     )
                 case "Darwin", _, 1:
-                    extra_writable_paths = os.getenv(
-                        "URSA_EXTRA_WRITABLE_PATHS"
-                    )
-                    if extra_writable_paths is not None:
-                        extra_writable_paths = (
-                            extra_writable_paths.strip().split(":")
-                        )
-                        extra_writable_paths = [
-                            Path(p).expanduser().resolve()
-                            for p in extra_writable_paths
-                        ]
-
                     sbx = MacSandbox(
                         cwd=workspace_dir,
                         access_network=access_network,
@@ -168,13 +148,23 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
                     )
                 case "Windows", _, 1:
                     # TODO: Implement WindowsSandbox
-                    sbx = NoSandbox(cwd=workspace_dir)
+                    raise SandboxError(
+                        f"Unsupported platform {pf} for sandboxing."
+                        "Consider setting the environment variable "
+                        "URSA_SBX=0 to disable sandboxing"
+                    )
+                case _, _, _:
+                    raise SandboxError(
+                        f"Unsupported platform {pf} for sandboxing."
+                        "Consider setting the environment variable "
+                        "URSA_SBX=0 to disable sandboxing"
+                    )
 
             if not sbx.is_working():
                 raise SandboxError(
                     f"Could not start sandbox: {sbx.backend}. "
-                    "Try setting the environment variable: "
-                    "URSA_SAFETY_LEVEL=yolo to disable the sandbox."
+                    "Consider setting the environment variable "
+                    "URSA_SBX=0 to disable sandboxing"
                 )
 
             result = sbx.execute(query)
