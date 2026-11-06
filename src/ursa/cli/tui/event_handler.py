@@ -114,10 +114,7 @@ class TextualEventHandler(AsyncCallbackHandler):
     ) -> None:
         await self._update_activity("Thinking…", metadata=metadata)
 
-    async def on_chat_model_start(
-        self, *_: Any, metadata: Any = None, **__: Any
-    ) -> None:
-        await self._update_activity("Thinking…", metadata=metadata)
+    on_chat_model_start = on_llm_start
 
     async def on_llm_new_token(
         self,

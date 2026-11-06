@@ -17,6 +17,11 @@ from ursa.cli.tui.turn import Turn
 from ursa.cli.tui.widgets import PromptArea
 
 
+async def emit_action(turn, tool, run_id, *, phase="start", **details):
+    """Feed a coordination action through the turn's real event handler."""
+    await turn.event(dict(tool=tool, phase=phase, _run_id=run_id, **details))
+
+
 async def test_parallel_coordination_calls_share_one_card_across_entire_turn(
     tmp_path,
     app,
@@ -120,12 +125,7 @@ async def test_parallel_coordination_calls_share_one_card_across_entire_turn(
 
         second_turn = Turn("next turn", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(second_turn)
-        await second_turn.event({
-            "tool": "wait_for",
-            "phase": "start",
-            "_run_id": "next",
-            "target": "root/a",
-        })
+        await emit_action(second_turn, "wait_for", "next", target="root/a")
         assert len(app.query(CoordinationCard)) == 2
 
 
@@ -202,13 +202,13 @@ async def test_compact_recipient_count_survives_long_target_preview(app):
     ]
     async with app.run_test(size=(100, 30)):
         turn = await app._mount_turn("broadcast")
-        await turn.event({
-            "tool": "send_message",
-            "phase": "start",
-            "_run_id": "broadcast",
-            "target": targets,
-            "message": "Coordinate findings.",
-        })
+        await emit_action(
+            turn,
+            "send_message",
+            "broadcast",
+            target=targets,
+            message="Coordinate findings.",
+        )
         preview = turn.query_one(".coordination-action-preview", Static)
         assert "80 agents" in str(preview.content)
         assert targets[-1] not in str(preview.content)
@@ -225,13 +225,13 @@ async def test_group_target_expressions_are_never_presented_as_agent_counts(
             ("mixed", ["@peers", "root/reviewer"]),
             ("long-mixed", [*long_paths, "@reports"]),
         ):
-            await turn.event({
-                "tool": "send_message",
-                "phase": "start",
-                "_run_id": run_id,
-                "target": target,
-                "message": "Coordinate findings.",
-            })
+            await emit_action(
+                turn,
+                "send_message",
+                run_id,
+                target=target,
+                message="Coordinate findings.",
+            )
         group = turn.query_one(CoordinationCard)
         recent = "\n".join(
             str(row.content)
@@ -250,12 +250,13 @@ async def test_group_target_expressions_are_never_presented_as_agent_counts(
         assert cards["2"].target == "@peers + 1 explicit target"
         assert cards["3"].target == "@reports + 80 explicit targets"
         for run_id in ("everyone", "mixed", "long-mixed"):
-            await turn.event({
-                "tool": "send_message",
-                "phase": "end",
-                "_run_id": run_id,
-                "result": "Message queued for root/reviewer.",
-            })
+            await emit_action(
+                turn,
+                "send_message",
+                run_id,
+                phase="end",
+                result="Message queued for root/reviewer.",
+            )
         previews = [
             static_text(card, ".agent-tool-preview") for card in cards.values()
         ]
@@ -269,32 +270,34 @@ async def test_coordination_controls_and_recent_actions_fit_narrow_terminals(
 ):
     async with app.run_test(size=size) as pilot:
         turn = await app._mount_turn("coordinate")
-        await turn.event({
-            "tool": "stop_agent",
-            "phase": "start",
-            "_run_id": "stop",
-            "target": "root/reviewer-with-a-descriptive-name",
-        })
-        await turn.event({
-            "tool": "stop_agent",
-            "phase": "error",
-            "_run_id": "stop",
-            "target": "root/reviewer-with-a-descriptive-name",
-            "error": "Agent is stopping",
-        })
-        await turn.event({
-            "tool": "send_message",
-            "phase": "start",
-            "_run_id": "message",
-            "target": "root/researcher-with-a-descriptive-name",
-            "message": "Please share your final result.",
-        })
-        await turn.event({
-            "tool": "send_message",
-            "phase": "end",
-            "_run_id": "message",
-            "result": "Message queued for root/researcher-with-a-descriptive-name.",
-        })
+        await emit_action(
+            turn,
+            "stop_agent",
+            "stop",
+            target="root/reviewer-with-a-descriptive-name",
+        )
+        await emit_action(
+            turn,
+            "stop_agent",
+            "stop",
+            phase="error",
+            target="root/reviewer-with-a-descriptive-name",
+            error="Agent is stopping",
+        )
+        await emit_action(
+            turn,
+            "send_message",
+            "message",
+            target="root/researcher-with-a-descriptive-name",
+            message="Please share your final result.",
+        )
+        await emit_action(
+            turn,
+            "send_message",
+            "message",
+            phase="end",
+            result="Message queued for root/researcher-with-a-descriptive-name.",
+        )
         group = turn.query_one(CoordinationCard)
         prompt = app.query_one(PromptArea)
         conversation = app.query_one("#conversation", VerticalScroll)
@@ -333,12 +336,9 @@ async def test_coordination_controls_and_recent_actions_fit_narrow_terminals(
         assert "Send message" in preview_text
         # Later activity must not re-anchor the reader at the bottom and hide
         # the controls that were deliberately revealed above.
-        await turn.event({
-            "tool": "wait_for",
-            "phase": "start",
-            "_run_id": "background",
-            "target": "root/another-agent",
-        })
+        await emit_action(
+            turn, "wait_for", "background", target="root/another-agent"
+        )
         await pilot.pause()
         assert header.region.y >= viewport.y
         assert navigation.region.y >= viewport.y
@@ -358,19 +358,16 @@ async def test_expanded_coordination_pages_bound_widget_count(app):
     async with app.run_test(size=(110, 40)) as pilot:
         turn = await app._mount_turn("many calls")
         for index in range(25):
-            await turn.event({
-                "tool": "send_message",
-                "phase": "start",
-                "_run_id": str(index),
-                "target": f"root/p{index}",
-                "message": f"task {index}",
-            })
-            await turn.event({
-                "tool": "send_message",
-                "phase": "end",
-                "_run_id": str(index),
-                "result": "queued",
-            })
+            await emit_action(
+                turn,
+                "send_message",
+                str(index),
+                target=f"root/p{index}",
+                message=f"task {index}",
+            )
+            await emit_action(
+                turn, "send_message", str(index), phase="end", result="queued"
+            )
         group = turn.query_one(CoordinationCard)
         assert not group.query(AgentToolCard)
         group.set_expanded(True)
@@ -384,19 +381,16 @@ async def test_expanded_coordination_pages_bound_widget_count(app):
         )
         assert group.query(AgentToolCard).first().target == "root/p0"
         # A new action must not displace a historical page being read.
-        await turn.event({
-            "tool": "send_message",
-            "phase": "start",
-            "_run_id": "newest",
-            "target": "root/p25",
-            "message": "new task",
-        })
-        await turn.event({
-            "tool": "send_message",
-            "phase": "end",
-            "_run_id": "newest",
-            "result": "queued",
-        })
+        await emit_action(
+            turn,
+            "send_message",
+            "newest",
+            target="root/p25",
+            message="new task",
+        )
+        await emit_action(
+            turn, "send_message", "newest", phase="end", result="queued"
+        )
         assert await wait_for(
             pilot,
             lambda: [card.target for card in group.query(AgentToolCard)]
