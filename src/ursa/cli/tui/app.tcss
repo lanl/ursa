@@ -80,7 +80,12 @@ ModelScreen .settings-dialog {
 }
 
 ModelScreen TabbedContent,
-ModelScreen TabPane {
+ModelScreen TabPane,
+.hierarchy-message-full,
+.agent-tools,
+.agent-tool,
+.coordination-details,
+.coordination-actions {
     height: auto;
 }
 
@@ -140,7 +145,8 @@ ModelScreen SelectCurrent {
 
 .model-field-label-text,
 .model-field-help-bracket,
-.model-field-help-mark {
+.model-field-help-mark,
+.edit-counts {
     width: auto;
     height: 1;
 }
@@ -151,7 +157,8 @@ ModelScreen SelectCurrent {
     margin-right: 1;
 }
 
-.model-field-help-mark {
+.model-field-help-mark,
+.agent-tool-title {
     color: $accent;
 }
 
@@ -278,7 +285,8 @@ ModelScreen SelectCurrent {
     background: $panel;
 }
 
-.hierarchy-message-header {
+.hierarchy-message-header,
+#welcome-workspace-label {
     height: 1;
 }
 
@@ -289,16 +297,9 @@ ModelScreen SelectCurrent {
     color: $text-muted;
 }
 
-.hierarchy-message-preview {
+.hierarchy-message-preview,
+.tool-json-title {
     color: $text-muted;
-}
-
-.hierarchy-message-full,
-.agent-tools,
-.agent-tool,
-.coordination-details,
-.coordination-actions {
-    height: auto;
 }
 
 #coordination-subagents-tree {
@@ -413,10 +414,6 @@ ModelScreen SelectCurrent {
     width: 100%;
 }
 
-#welcome-workspace-label {
-    height: 1;
-}
-
 #welcome-tip {
     padding: 0 2;
     border: round $border;
@@ -467,7 +464,8 @@ ModelScreen SelectCurrent {
     background: $panel;
 }
 
-.events.has-events {
+.events.has-events,
+.activity.activity-after-user {
     margin-top: 1;
 }
 
@@ -555,10 +553,6 @@ AgentToolCard > .event-expand-hint {
     color: $primary;
 }
 
-.agent-tool-title {
-    color: $accent;
-}
-
 .coordination-summary {
     padding: 0 1;
     text-style: bold;
@@ -615,21 +609,12 @@ AgentToolCard > .event-expand-hint {
     margin: 0 0 0 1;
 }
 
-.tool-json-title {
-    color: $text-muted;
-}
-
 .tool-json {
     background: $surface;
 }
 
 .tool-output-markdown {
     background: transparent;
-}
-
-.edit-counts {
-    width: auto;
-    height: 1;
 }
 
 .edit-diff {
@@ -718,10 +703,6 @@ RunCommandCard.command-expanded > .event-expand-hint {
     height: 1;
     margin: 1 2 0 2;
     color: $text-muted;
-}
-
-.activity.activity-after-user {
-    margin-top: 1;
 }
 
 .activity-done-mark {
