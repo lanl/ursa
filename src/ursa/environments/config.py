@@ -344,6 +344,16 @@ def symposium_cache_dir(group: str, name: str) -> Path:
     return group_environments_dir(group) / "agent_symposia" / name
 
 
+def _save_environment_config(config: Any, target: Path) -> Path:
+    """Persist an environment using the common YAML representation."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        yaml.safe_dump(_dataclass_to_plain(config), sort_keys=False),
+        encoding="utf-8",
+    )
+    return target
+
+
 def save_team_config(
     config: AgentTeamConfig, path: str | Path | None = None
 ) -> Path:
@@ -353,12 +363,7 @@ def save_team_config(
         if path
         else team_cache_dir(config.group, config.name) / "team.yaml"
     )
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        yaml.safe_dump(_dataclass_to_plain(config), sort_keys=False),
-        encoding="utf-8",
-    )
-    return target
+    return _save_environment_config(config, target)
 
 
 def save_symposium_config(
@@ -370,12 +375,7 @@ def save_symposium_config(
         if path
         else symposium_cache_dir(config.group, config.name) / "symposium.yaml"
     )
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        yaml.safe_dump(_dataclass_to_plain(config), sort_keys=False),
-        encoding="utf-8",
-    )
-    return target
+    return _save_environment_config(config, target)
 
 
 def _dataclass_to_plain(value: Any) -> Any:
@@ -458,17 +458,4 @@ def save_elo_config(
         / "elo.yaml"
     )
 
-    target.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    target.write_text(
-        yaml.safe_dump(
-            _dataclass_to_plain(config),
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
-
-    return target
+    return _save_environment_config(config, target)
