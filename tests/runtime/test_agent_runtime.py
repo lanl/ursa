@@ -375,21 +375,12 @@ async def test_unknown_subagent_path_does_not_fail_managed_agent(
     root = await runtime.get_agent("chat")
     reviewer_id = await spawn_managed(runtime, "root/reviewer", "Review this.")
 
-    with pytest.raises(AgentInvocationError, match="Unknown agent path"):
-        await manager.call(
-            reviewer_id,
-            "send_subagent_message",
-            "../foo",
-            "Please review this.",
-        )
-
-    with pytest.raises(AgentInvocationError, match="Unknown agent path"):
-        await manager.call(
-            reviewer_id,
-            "wait_for_subagent",
-            "../foo",
-            0,
-        )
+    for method, argument in (
+        ("send_subagent_message", "Please review this."),
+        ("wait_for_subagent", 0),
+    ):
+        with pytest.raises(AgentInvocationError, match="Unknown agent path"):
+            await manager.call(reviewer_id, method, "../foo", argument)
 
     assert (await manager.snapshot(reviewer_id)).status.value == "ready"
     assert (

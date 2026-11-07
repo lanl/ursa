@@ -187,14 +187,12 @@ async def test_wait_for_invalid_local_path_is_recoverable(mailbox):
     root = mailbox()
     child = root.spawn_subagent("child")
 
-    with pytest.raises(ToolException, match="Path escapes hierarchy root"):
-        await hierarchy_tool(root, "wait_for").ainvoke({
-            "target": "../missing",
-        })
-    with pytest.raises(ToolException, match="Unknown agent path"):
-        await hierarchy_tool(root, "wait_for").ainvoke({
-            "target": ["child", "missing"],
-        })
+    for target, error in (
+        ("../missing", "Path escapes hierarchy root"),
+        (["child", "missing"], "Unknown agent path"),
+    ):
+        with pytest.raises(ToolException, match=error):
+            await hierarchy_tool(root, "wait_for").ainvoke({"target": target})
     assert not root.is_waiting
 
     # Waiting on an ancestor is allowed: a waiting ancestor is ready, which
