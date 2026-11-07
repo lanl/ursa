@@ -91,12 +91,23 @@ def model_dialog(app, model_discovery):
         model_discovery(discover)
         async with app.run_test(size=size) as pilot:
             await app._show_command("models")
-            await pilot.pause()
-            await app.workers.wait_for_complete()
+            await settle_ui_workers(app, pilot)
             assert isinstance(app.screen, ModelScreen)
             yield pilot
 
     return open_dialog
+
+
+async def settle_ui_workers(app, pilot):
+    """Let queued UI events run before awaiting the workers they started."""
+    await pilot.pause()
+    await app.workers.wait_for_complete()
+
+
+async def open_hotlist(app, pilot, trigger):
+    """Open a picker through its keyboard trigger and assert it appears."""
+    await pilot.press(trigger)
+    assert await wait_for(pilot, lambda: isinstance(app.screen, HotlistScreen))
 
 
 async def wait_for_yaml_debounce(pilot, *, editor=None) -> None:
@@ -161,10 +172,7 @@ async def test_agent_hotlist_routes_selected_agent(app):
     runtime.run_agent = run_agent
 
     async with app.run_test(size=(100, 36)) as pilot:
-        await pilot.press("#")
-        assert await wait_for(
-            pilot, lambda: isinstance(app.screen, HotlistScreen)
-        )
+        await open_hotlist(app, pilot, "#")
 
         options = app.screen.query_one("#hotlist-options")
         assert options.highlighted == 0
@@ -208,10 +216,7 @@ async def test_macro_selectors_close_with_escape(app):
         prompt.load_text("Review docs carefully")
         prompt.move_cursor((0, 6))
 
-        await pilot.press("#")
-        assert await wait_for(
-            pilot, lambda: isinstance(app.screen, HotlistScreen)
-        )
+        await open_hotlist(app, pilot, "#")
         await pilot.press("escape")
         assert await wait_for(
             pilot, lambda: not isinstance(app.screen, HotlistScreen)
@@ -231,10 +236,7 @@ async def test_macro_selectors_close_with_escape(app):
         assert not isinstance(app.screen, HotlistScreen)
 
         prompt.load_text("")
-        await pilot.press("@")
-        assert await wait_for(
-            pilot, lambda: isinstance(app.screen, HotlistScreen)
-        )
+        await open_hotlist(app, pilot, "@")
         await pilot.press("escape")
         assert await wait_for(
             pilot, lambda: not isinstance(app.screen, HotlistScreen)
@@ -251,10 +253,7 @@ async def test_escaping_command_picker_preserves_multiline_draft_and_undo(
         prompt.load_text("alpha\nbeta")
         prompt.move_cursor((0, 0))
 
-        await pilot.press("/")
-        assert await wait_for(
-            pilot, lambda: isinstance(app.screen, HotlistScreen)
-        )
+        await open_hotlist(app, pilot, "/")
         await pilot.press("escape")
         await pilot.pause()
 
@@ -315,10 +314,7 @@ async def test_file_hotlist_uses_at_trigger(app, tmp_path):
     (tmp_path / "docs" / "guide.md").write_text("guide")
 
     async with app.run_test(size=(100, 36)) as pilot:
-        await pilot.press("@")
-        assert await wait_for(
-            pilot, lambda: isinstance(app.screen, HotlistScreen)
-        )
+        await open_hotlist(app, pilot, "@")
         assert app.screen.candidates == [
             f"{Path('docs')}{os.sep}",
             str(Path("docs/guide.md")),
@@ -640,10 +636,7 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
     app._agent_last_activity["root/researcher"] = "Checking references"
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.press("/")
-        assert await wait_for(
-            pilot, lambda: isinstance(app.screen, HotlistScreen)
-        )
+        await open_hotlist(app, pilot, "/")
         hotlist = app.screen.query_one("#hotlist")
         options = app.screen.query_one("#hotlist-options")
         assert hotlist.region.width == 80
@@ -1014,8 +1007,7 @@ async def test_model_command_switches_provider_and_model(
         await pilot.press("enter")
         assert model_select.value == "gpt-5.4"
         model_control("inference-provider").value = "stale-provider"
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await settle_ui_workers(app, pilot)
         assert model_control("model-name")._options == [
             ("None", ModelScreen.NONE_VALUE),
             ("claude-stale", "claude-stale"),
@@ -1035,8 +1027,7 @@ async def test_model_command_switches_provider_and_model(
             ModelScreen.NONE_VALUE,
         )
         model_control("inference-provider").value = "openai"
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await settle_ui_workers(app, pilot)
         model_control("model-name").value = "gpt-5.4"
         await pilot.pause()
         model_control(
@@ -1049,8 +1040,7 @@ async def test_model_command_switches_provider_and_model(
             "model-provider", "embedding"
         ).value = ModelScreen.NONE_VALUE
         await pilot.press("ctrl+enter")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await settle_ui_workers(app, pilot)
 
         messages = list(app.query(ToolMessage))
         assert [message.content for message in messages[-2:]] == [
@@ -1089,8 +1079,7 @@ async def test_invalid_model_selection_notifies_without_closing_modal(
 
     async with app.run_test(size=(80, 24)) as pilot:
         await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await settle_ui_workers(app, pilot)
         notifications.clear()
         assert isinstance(app.screen, ModelScreen)
         monkeypatch.setattr(
@@ -1262,8 +1251,7 @@ async def test_whitespace_model_yaml_is_rejected_before_apply(
         if kind == "embedding":
             editor.text = "model: ''\nmodel_provider: openai\n"
             app.screen.action_apply()
-            await pilot.pause()
-            await app.workers.wait_for_complete()
+            await settle_ui_workers(app, pilot)
             assert app.runtime.config.emb_model is None
 
 
@@ -1286,8 +1274,7 @@ async def test_structured_none_updates_yaml_and_validates_model_kind(
             assert editor.has_class("yaml-invalid")
             assert app.runtime.config.llm_model == original
         else:
-            await pilot.pause()
-            await app.workers.wait_for_complete()
+            await settle_ui_workers(app, pilot)
             assert app.runtime.config.emb_model is None
 
 
@@ -1386,8 +1373,7 @@ async def test_direct_provider_selection_refreshes_model_catalog(
 
     async with model_dialog(provider_models) as pilot:
         model_control("inference-provider").value = ModelScreen.NONE_VALUE
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await settle_ui_workers(app, pilot)
 
         options = model_control("model-name")._options
         assert ("direct-only", "direct-only") in options
@@ -1448,8 +1434,7 @@ async def test_provider_discovery_failure_clears_previous_catalog(
         assert "old-only" in app.screen.model_catalogs["chat"]
 
         model_control("inference-provider").value = "broken"
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await settle_ui_workers(app, pilot)
 
         select = model_control("model-name")
         assert app.screen.model_catalogs["chat"] == {}
@@ -1736,8 +1721,7 @@ async def test_switching_direct_endpoint_to_named_provider_stays_in_sync(
     async with model_dialog(provider_models, size=(80, 24)) as pilot:
         provider = model_control("inference-provider")
         provider.value = "openai"
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await settle_ui_workers(app, pilot)
 
         draft = app.screen.drafts["chat"]
         yaml_values = yaml.safe_load(model_control("config-yaml").text)
@@ -1990,8 +1974,7 @@ async def test_model_modal_seeded_provider_fuzz_preserves_invariants(
                     not in {ModelScreen.NONE_VALUE, ModelScreen.CUSTOM_VALUE}
                 ])
             provider_select.value = provider
-            await pilot.pause()
-            await app.workers.wait_for_complete()
+            await settle_ui_workers(app, pilot)
 
             selected = str(model_select.value)
             options = dict(
@@ -2115,8 +2098,7 @@ async def test_agents_command_uses_real_process_tool_details(tmp_path):
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("/", "a", "g", "e", "n", "t", "s", "enter")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await settle_ui_workers(app, pilot)
         await pilot.pause()
 
         await assert_eventually(
@@ -2271,8 +2253,7 @@ async def test_immediate_switch_preempts_large_tool_render(app, monkeypatch):
         assert not app.screen.query("#agent-tools-1 .agent-tool Markdown")
 
         await pilot.press("right")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await settle_ui_workers(app, pilot)
         await pilot.pause()
         await assert_eventually(
             pilot,
@@ -2309,8 +2290,7 @@ async def test_agent_tool_render_failure_is_displayed(app, monkeypatch):
         await app._show_command("agents")
         await app.workers.wait_for_complete()
         await pilot.press("right")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await settle_ui_workers(app, pilot)
 
         error = app.screen.query_one(
             "#agent-tools-1 .agent-tools-error", Static
@@ -2329,8 +2309,7 @@ async def test_agent_tool_render_failure_is_displayed(app, monkeypatch):
         )
 
         await pilot.press("right")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await settle_ui_workers(app, pilot)
         assert construction_attempts == 1
         assert "tool card could not be built" in str(error.render())
 
@@ -2392,8 +2371,7 @@ async def test_agents_display_tool_load_failure(app):
 
     async with app.run_test(size=(100, 36)) as pilot:
         await app._show_command("agents")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await settle_ui_workers(app, pilot)
         await pilot.pause()
 
         error = app.screen.query_one(".agent-tools-error", Static)
@@ -2438,8 +2416,7 @@ async def test_agents_lazily_render_execution_agent_tools(tmp_path):
 
     async with app.run_test(size=(100, 36)) as pilot:
         await app._show_command("agents")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await settle_ui_workers(app, pilot)
         await pilot.pause()
 
         rendered_tools = app.screen.query("#agent-tools-0 .agent-tool")
