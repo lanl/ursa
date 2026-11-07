@@ -439,15 +439,8 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
     @staticmethod
     def _dedupe_callbacks(callbacks: list[Any]) -> list[Any]:
         """Preserve callback order while removing duplicate handler instances."""
-        deduped: list[Any] = []
-        seen: set[int] = set()
-        for callback in callbacks:
-            marker = id(callback)
-            if marker in seen:
-                continue
-            deduped.append(callback)
-            seen.add(marker)
-        return deduped
+        by_identity = {id(callback): callback for callback in callbacks}
+        return list(by_identity.values())
 
     def events(self, config: RunnableConfig | None = None) -> AgentEvents:
         """Return a helper for emitting structured agent progress events."""
