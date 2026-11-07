@@ -100,9 +100,7 @@ class FakeChatModel(ToolReadyFakeChatModel):
     def model_name(self) -> str:
         return "fake-chat"
 
-    @property
-    def model(self) -> str:
-        return "fake-chat"
+    model = model_name
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         text = " ".join(
@@ -132,9 +130,7 @@ class FakeEmbeddingModel(FakeEmbeddings):
     def model_name(self) -> str:
         return "fake-embeddings"
 
-    @property
-    def model(self) -> str:
-        return "fake-embeddings"
+    model = model_name
 
 
 @pytest.fixture(autouse=True)
