@@ -913,25 +913,22 @@ class UrsaTextualApp(App[None]):
         if command == "exit":
             self.action_quit()
             return
+
+        def focus_prompt(_result: Any) -> None:
+            self.query_one(PromptArea).focus()
+
+        callback = focus_prompt
         if command == "agents":
             details = load_agent_details(self.runtime)
-            self.push_screen(
-                AgentsScreen(details, self.runtime),
-                callback=lambda _: self.query_one(PromptArea).focus(),
+            screen = AgentsScreen(details, self.runtime)
+        elif command == "coordination":
+            screen = MessagesScreen(
+                self.message_store,
+                self._agent_color,
+                self._subagent_status_rows,
+                self._select_subagent_path,
             )
-            return
-        if command == "coordination":
-            self.push_screen(
-                MessagesScreen(
-                    self.message_store,
-                    self._agent_color,
-                    self._subagent_status_rows,
-                    self._select_subagent_path,
-                ),
-                callback=lambda _: self.query_one(PromptArea).focus(),
-            )
-            return
-        if command == "subagents":
+        elif command == "subagents":
             paths = self.runtime.subagent_paths()
             if not paths:
                 self.notify(
@@ -946,22 +943,16 @@ class UrsaTextualApp(App[None]):
                 f"{path} — {'active' if path == active else 'available'}"
                 for path in paths
             ]
-            self.push_screen(
-                HotlistScreen("Subagents", choices),
-                callback=self._select_subagent,
+            screen = HotlistScreen("Subagents", choices)
+            callback = self._select_subagent
+        elif command == "models":
+            screen = ModelScreen(
+                self.runtime.config.inference_providers,
+                self.runtime.config.llm_model,
+                self.runtime.config.emb_model,
             )
-            return
-        if command == "models":
-            self.push_screen(
-                ModelScreen(
-                    self.runtime.config.inference_providers,
-                    self.runtime.config.llm_model,
-                    self.runtime.config.emb_model,
-                ),
-                callback=self._select_model,
-            )
-            return
-        if command == "theme":
+            callback = self._select_model
+        elif command == "theme":
             choices = [
                 self.theme,
                 *(
@@ -970,20 +961,17 @@ class UrsaTextualApp(App[None]):
                     if theme.name != self.theme
                 ),
             ]
-            self.push_screen(
-                ThemeScreen(choices, initial_theme=self.theme),
-                callback=self._select_theme,
-            )
-            return
-        content = {
-            "status": self._status_markdown,
-            "keymap": self._keymap_markdown,
-        }.get(command)
-        if content is None:
-            self.query_one(PromptArea).focus()
-            return
-        self.push_screen(
-            InformationScreen(
+            screen = ThemeScreen(choices, initial_theme=self.theme)
+            callback = self._select_theme
+        else:
+            content = {
+                "status": self._status_markdown,
+                "keymap": self._keymap_markdown,
+            }.get(command)
+            if content is None:
+                self.query_one(PromptArea).focus()
+                return
+            screen = InformationScreen(
                 command.capitalize(),
                 content(),
                 status_content=(
@@ -994,9 +982,8 @@ class UrsaTextualApp(App[None]):
                     if command == "status"
                     else None
                 ),
-            ),
-            callback=lambda _: self.query_one(PromptArea).focus(),
-        )
+            )
+        self.push_screen(screen, callback=callback)
 
     def _select_subagent(self, choice: str | None) -> None:
         if choice:
