@@ -24,10 +24,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _routing_tool_error(error: BaseException) -> ToolException | None:
-    """Translate invalid hierarchy addresses into recoverable tool failures."""
+def _runtime_tool_error(
+    error: BaseException, *, spawning: bool = False
+) -> ToolException:
+    """Wrap recoverable routing/policy failures; re-raise other runtime errors."""
     message = str(error)
-    if isinstance(error, (KeyError, TypeError)) or any(
+    recoverable = isinstance(error, (KeyError, TypeError)) or any(
         phrase in message.casefold()
         for phrase in (
             "unknown agent path",
@@ -45,9 +47,15 @@ def _routing_tool_error(error: BaseException) -> ToolException | None:
             "is stopping",
             "already stopping",
         )
-    ):
-        return ToolException(message)
-    return None
+    )
+    if not recoverable and spawning:
+        recoverable = any(
+            term in str(error).casefold()
+            for term in ("subagent", "agent_type", "did not become ready")
+        )
+    if not recoverable:
+        raise error
+    return ToolException(str(error) if spawning else message)
 
 
 async def _notify_callbacks(
@@ -167,12 +175,7 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
             # Runtime policy failures cross the process boundary as a generic
             # runtime error. They remain recoverable tool failures so the
             # invoking model can revise its delegation plan.
-            if _routing_tool_error(exc) is None and not any(
-                term in str(exc).casefold()
-                for term in ("subagent", "agent_type", "did not become ready")
-            ):
-                raise
-            raise ToolException(str(exc)) from exc
+            raise _runtime_tool_error(exc, spawning=True) from exc
         return f"Spawned agent {path}\n\n{_stringify_result(result)}"
 
     @tool
@@ -214,9 +217,7 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
                     )
                 results = await runtime.send_messages(target, message)
             except RuntimeError as exc:
-                if tool_error := _routing_tool_error(exc):
-                    raise tool_error from exc
-                raise
+                raise _runtime_tool_error(exc) from exc
             # The host expands selectors transactionally and returns one
             # acknowledgement per concrete recipient. Do not zip that result
             # with the caller's raw selector list: one selector can name many
@@ -288,9 +289,7 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
                     )
                 )
             except RuntimeError as exc:
-                if tool_error := _routing_tool_error(exc):
-                    raise tool_error from exc
-                raise
+                raise _runtime_tool_error(exc) from exc
 
         # Resolve every entry before registering the wait. That keeps a batch
         # invalid if any route is invalid, without partially changing state.
@@ -324,9 +323,7 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
             try:
                 return _stringify_result(await runtime.stop_subagent(target))
             except RuntimeError as exc:
-                if tool_error := _routing_tool_error(exc):
-                    raise tool_error from exc
-                raise
+                raise _runtime_tool_error(exc) from exc
 
         try:
             recipient = agent.resolve_agent(target)
