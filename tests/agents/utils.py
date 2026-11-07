@@ -11,7 +11,18 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import Field
 
 
-class RecordingChatModel(GenericFakeChatModel):
+def message_stream(content: str) -> Iterator[AIMessage]:
+    """Yield fresh messages indefinitely for a deterministic fake model."""
+    while True:
+        yield AIMessage(content=content)
+
+
+class ToolReadyFakeChatModel(GenericFakeChatModel):
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
+class RecordingChatModel(ToolReadyFakeChatModel):
     """Fake chat model that records every request an agent sends.
 
     ``calls`` collects the full message list of each LLM call in order,
@@ -35,9 +46,6 @@ class RecordingChatModel(GenericFakeChatModel):
                 ChatGeneration(message=AIMessage(content=self.response))
             ]
         )
-
-    def bind_tools(self, tools, **kwargs):
-        return self
 
     def model_copy(self, update=None):
         return self

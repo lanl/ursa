@@ -14,6 +14,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+from tests.agents.utils import ToolReadyFakeChatModel, message_stream
 from ursa.agents import ExecutionAgent
 from ursa.agents.execution_agent import ReviewAssessment
 from ursa.util import Checkpointer
@@ -72,26 +73,11 @@ def stub_execution_tools(monkeypatch):
     )
 
 
-class ToolReadyFakeChatModel(GenericFakeChatModel):
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-
 class SplitBehaviorFakeChatModel(GenericFakeChatModel):
     """Emit plain responses; bind_tools() returns a separate tool-calling fake model."""
 
     def bind_tools(self, tools, **kwargs):
-        return ToolCallingFakeChatModel(messages=_tool_call_message_stream())
-
-
-class ToolCallingFakeChatModel(GenericFakeChatModel):
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-
-def _message_stream(content: str) -> Iterator[AIMessage]:
-    while True:
-        yield AIMessage(content=content)
+        return ToolReadyFakeChatModel(messages=_tool_call_message_stream())
 
 
 def _tool_call_message_stream() -> Iterator[AIMessage]:
@@ -111,7 +97,7 @@ def _tool_call_message_stream() -> Iterator[AIMessage]:
 
 @pytest.fixture
 def chat_model():
-    return ToolReadyFakeChatModel(messages=_message_stream("ok"))
+    return ToolReadyFakeChatModel(messages=message_stream("ok"))
 
 
 def test_execution_agent_captures_current_invoke_request(
@@ -289,7 +275,7 @@ def test_execution_agent_keeps_tool_calls_out_of_summary_and_recap(
 ):
     execution_agent = ExecutionAgent(
         llm=SplitBehaviorFakeChatModel(
-            messages=_message_stream("base-response")
+            messages=message_stream("base-response")
         ),
         workspace=tmpdir,
         tokens_before_summarize=99999,

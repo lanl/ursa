@@ -1,10 +1,9 @@
 import shutil
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage
+
+from tests.agents.utils import ToolReadyFakeChatModel, message_stream
 
 if shutil.which("git") is None:
     pytest.skip(
@@ -24,19 +23,9 @@ except (ImportError, ModuleNotFoundError) as exc:
     )
 
 
-class ToolReadyFakeChatModel(GenericFakeChatModel):
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-
-def _message_stream(content: str) -> Iterator[AIMessage]:
-    while True:
-        yield AIMessage(content=content)
-
-
 @pytest.fixture
 def agent_factory(tmpdir):
-    chat_model = ToolReadyFakeChatModel(messages=_message_stream("ok"))
+    chat_model = ToolReadyFakeChatModel(messages=message_stream("ok"))
     workspace = Path(str(tmpdir))
 
     def create(factory, **kwargs):

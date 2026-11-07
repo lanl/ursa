@@ -153,7 +153,10 @@ async def test_process_loss_settles_pending_invocations(
     )
     await manager.receive_message(timeout=1)
     if shutdown == "unexpected":
-        manager._entry("agent").process.kill()
+        process = manager._entry("agent").process
+        process.kill()
+        await asyncio.to_thread(process.join, 2)
+        assert not process.is_alive()
         expected = AgentStatus.FAILED
     else:
         monkeypatch.setattr(

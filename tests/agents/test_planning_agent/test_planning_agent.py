@@ -5,6 +5,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import Field
 
+from tests.agents.utils import message_stream
 from ursa.agents.planning_agent import Plan, PlanningAgent
 
 
@@ -58,14 +59,9 @@ async def test_planning_agent_creates_structured_plan(tmpdir):
     assert getattr(result["messages"][-1], "content", None)
 
 
-def _message_stream(content: str) -> Iterator[AIMessage]:
-    while True:
-        yield AIMessage(content=content)
-
-
 class EmptyReflectionFakeChatModel(GenericFakeChatModel):
     def __init__(self, plan: Plan):
-        super().__init__(messages=_message_stream(""))
+        super().__init__(messages=message_stream(""))
         object.__setattr__(self, "plan", plan)
         object.__setattr__(self, "structured_invocations", 0)
 

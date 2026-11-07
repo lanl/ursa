@@ -11,12 +11,10 @@ import uuid
 from collections.abc import Iterator
 from types import SimpleNamespace
 
-from langchain_core.language_models.fake_chat_models import (
-    GenericFakeChatModel,
-)
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 
+from tests.agents.utils import ToolReadyFakeChatModel
 from ursa.agents.chat_agent import ChatAgent
 from ursa.observability.metrics_charts import extract_llm_token_stats
 from ursa.observability.timing import PerLLMTimer
@@ -168,18 +166,13 @@ def _standardized_stream() -> Iterator[AIMessage]:
         yield AIMessage("ok", usage_metadata=dict(_STANDARDIZED))
 
 
-class _ToolReadyFakeChatModel(GenericFakeChatModel):
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-
 def test_end_to_end_chart_surface_nonzero(tmp_path):
     # The exact aggregation surface from the issue's screenshot must see
     # the counts once extraction captures them. The workspace is a
     # tmp_path because the agent's sqlite checkpointer keeps its file
     # open past the test, and Windows cannot delete open files.
     agent = ChatAgent(
-        llm=_ToolReadyFakeChatModel(messages=_standardized_stream()),
+        llm=ToolReadyFakeChatModel(messages=_standardized_stream()),
         workspace=tmp_path,
     )
     agent.invoke({"messages": [], "query": "hello"})

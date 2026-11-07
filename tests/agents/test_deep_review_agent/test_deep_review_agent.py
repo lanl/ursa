@@ -2,15 +2,10 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import pytest
-from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
+from tests.agents.utils import ToolReadyFakeChatModel
 from ursa.agents.deep_review_agent import DeepReviewAgent
-
-
-class ToolReadyFakeChatModel(GenericFakeChatModel):
-    def bind_tools(self, tools, **kwargs):
-        return self
 
 
 class WorkspaceToolCallingFakeChatModel(ToolReadyFakeChatModel):
