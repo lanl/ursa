@@ -161,102 +161,31 @@ def test_model_config_model_parsing_for_known_provider_prefix(
 
 
 @pytest.mark.parametrize(
-    (
-        "cls",
-        "model",
-        "model_provider",
-        "expected_model",
-        "expected_provider",
-        "raises_match",
-    ),
+    ("cls", "model", "provider"),
     [
-        (
-            config_mod.ChatModelConfig,
-            "claude-4.8:0",
-            "anthropic",
-            "claude-4.8:0",
-            "anthropic",
-            None,
-        ),
-        (
-            config_mod.EmbModelConfig,
-            "gemma4:latest",
-            "ollama",
-            "gemma4:latest",
-            "ollama",
-            None,
-        ),
-        (
-            config_mod.ChatModelConfig,
-            "claude-4.8:0",
-            None,
-            "claude-4.8:0",
-            "openai",
-            None,
-        ),
-        (
-            config_mod.EmbModelConfig,
-            "gemma4:latest",
-            None,
-            None,
-            None,
-            "Unable to infer model provider",
-        ),
-        (
-            config_mod.ChatModelConfig,
-            "anthropic:claude-4.8:0",
-            None,
-            "claude-4.8:0",
-            "anthropic",
-            None,
-        ),
-        (
-            config_mod.EmbModelConfig,
-            "ollama:gemma4:latest",
-            None,
-            "gemma4:latest",
-            "ollama",
-            None,
-        ),
-        (
-            config_mod.ChatModelConfig,
-            "anthropic:claude-4.8:0",
-            "anthropic",
-            "claude-4.8:0",
-            "anthropic",
-            None,
-        ),
-        (
-            config_mod.EmbModelConfig,
-            "ollama:gemma4:latest",
-            "ollama",
-            "gemma4:latest",
-            "ollama",
-            None,
-        ),
+        (config_mod.ChatModelConfig, "claude-4.8:0", "anthropic"),
+        (config_mod.EmbModelConfig, "gemma4:latest", "ollama"),
     ],
 )
+@pytest.mark.parametrize("prefixed", [False, True])
+@pytest.mark.parametrize("explicit_provider", [False, True])
 def test_model_config_colon_model_name_handling(
-    cls,
-    model,
-    model_provider,
-    expected_model,
-    expected_provider,
-    raises_match,
+    cls, model, provider, prefixed, explicit_provider
 ):
-    kwargs = {"model": model}
-    if model_provider is not None:
-        kwargs["model_provider"] = model_provider
+    kwargs = {"model": f"{provider}:{model}" if prefixed else model}
+    if explicit_provider:
+        kwargs["model_provider"] = provider
 
-    if raises_match is not None:
-        with pytest.raises(ValueError, match=raises_match):
+    has_provider = prefixed or explicit_provider
+    if cls is config_mod.EmbModelConfig and not has_provider:
+        with pytest.raises(ValueError, match="Unable to infer model provider"):
             cls(**kwargs)
         return
 
     cfg = cls(**kwargs)
 
-    assert cfg.model == expected_model
-    assert cfg.model_provider == expected_provider
+    assert cfg.model == model
+    assert cfg.model_provider == (provider if has_provider else "openai")
 
 
 def test_embedding_model_provider_error_lists_supported_providers():
