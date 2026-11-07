@@ -533,15 +533,9 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
         if model_name:
             base["metadata"]["model"] = model_name
 
-        # Handle configurable dictionary overrides by merging with base configurable
-        if "configurable" in overrides and isinstance(
-            overrides["configurable"], dict
-        ):
-            base["configurable"].update(overrides.pop("configurable"))
-
-        # Handle metadata dictionary overrides by merging with base metadata
-        if "metadata" in overrides and isinstance(overrides["metadata"], dict):
-            base["metadata"].update(overrides.pop("metadata"))
+        for name in ("configurable", "metadata"):
+            if name in overrides and isinstance(overrides[name], dict):
+                base[name].update(overrides.pop(name))
 
         # Merge tags from caller-provided overrides, avoid duplicates
         if "tags" in overrides and isinstance(overrides["tags"], list):
@@ -605,36 +599,24 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
             save_raw_snapshot=save_raw_snapshot,
             save_raw_records=save_raw_records,
         ):
-            # Handle the case where inputs are provided as keyword arguments
-            if inputs is None:
-                # Separate kwargs into input parameters and control parameters
-                kw_inputs: dict[str, Any] = {}
-                control_kwargs: dict[str, Any] = {}
-                for k, v in kwargs.items():
-                    if k in self._TELEMETRY_KW or k in self._CONTROL_KW:
-                        control_kwargs[k] = v
-                    else:
-                        kw_inputs[k] = v
-                inputs = kw_inputs
-
-                # Only control kwargs remain for further processing
-                kwargs = control_kwargs
-
-            # Handle the case where inputs are provided as a positional argument
-            else:
-                # Ensure no ambiguous keyword arguments are present
-                for k in kwargs.keys():
-                    if not (k in self._TELEMETRY_KW or k in self._CONTROL_KW):
-                        raise TypeError(
-                            f"Unexpected keyword argument '{k}'. "
-                            "Pass inputs as a single mapping or omit the positional "
-                            "inputs and pass them as keyword arguments."
-                        )
-
-            # Allow subclasses to normalize or transform the input format
-            normalized = self._normalize_inputs(inputs)
-
-            yield normalized, invoke_config, kwargs
+            # Input keywords are allowed only when no positional input exists.
+            kw_inputs: dict[str, Any] = {}
+            control_kwargs: dict[str, Any] = {}
+            for key, value in kwargs.items():
+                if key in self._TELEMETRY_KW or key in self._CONTROL_KW:
+                    control_kwargs[key] = value
+                elif inputs is None:
+                    kw_inputs[key] = value
+                else:
+                    raise TypeError(
+                        f"Unexpected keyword argument '{key}'. "
+                        "Pass inputs as a single mapping or omit the positional "
+                        "inputs and pass them as keyword arguments."
+                    )
+            normalized = self._normalize_inputs(
+                kw_inputs if inputs is None else inputs
+            )
+            yield normalized, invoke_config, control_kwargs
 
     def _invoke_engine(self, invoke_method, *args: Any, **kwargs: Any):
         with self._invocation_context(*args, **kwargs) as (
