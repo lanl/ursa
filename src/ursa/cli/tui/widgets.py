@@ -1398,48 +1398,38 @@ def _markdown_cell(value: object) -> str:
 
 def _tool_markdown(tool: ToolDetails) -> str:
     """Render expanded tool metadata inspired by the legacy Rich report."""
-    return "\n\n".join(
-        filter(
-            None,
-            (
-                tool.description,
-                "\n".join([
-                    "| Setting | Value |",
-                    "|---|---|",
-                    *(
-                        [
-                            "| Source | "
-                            f"`MCP: {_markdown_cell(tool.mcp_server)}` |"
-                        ]
-                        if tool.mcp_server
-                        else []
-                    ),
-                    f"| Class | `{_markdown_cell(tool.class_name)}` |",
-                    f"| Args schema | `{_markdown_cell(tool.schema_name)}` |",
-                    "| Return directly | "
-                    f"`{_markdown_cell(tool.return_direct)}` |",
-                ]),
-                (
-                    "\n".join([
-                        "### Arguments",
-                        "",
-                        "| Name | Type | Required | Description |",
-                        "|---|---|---|---|",
-                        *(
-                            "| "
-                            f"`{_markdown_cell(argument.name)}` | "
-                            f"`{_markdown_cell(argument.type_name)}` | "
-                            f"{'yes' if argument.required else 'no'} | "
-                            f"{_markdown_cell(argument.description)} |"
-                            for argument in tool.arguments
-                        ),
-                    ])
-                    if tool.arguments
-                    else ""
-                ),
+    sections = [
+        tool.description,
+        "\n".join([
+            "| Setting | Value |",
+            "|---|---|",
+            *(
+                [f"| Source | `MCP: {_markdown_cell(tool.mcp_server)}` |"]
+                if tool.mcp_server
+                else []
             ),
+            f"| Class | `{_markdown_cell(tool.class_name)}` |",
+            f"| Args schema | `{_markdown_cell(tool.schema_name)}` |",
+            f"| Return directly | `{_markdown_cell(tool.return_direct)}` |",
+        ]),
+    ]
+    if tool.arguments:
+        sections.append(
+            "\n".join([
+                "### Arguments",
+                "",
+                "| Name | Type | Required | Description |",
+                "|---|---|---|---|",
+                *(
+                    f"| `{_markdown_cell(argument.name)}` | "
+                    f"`{_markdown_cell(argument.type_name)}` | "
+                    f"{'yes' if argument.required else 'no'} | "
+                    f"{_markdown_cell(argument.description)} |"
+                    for argument in tool.arguments
+                ),
+            ])
         )
-    )
+    return "\n\n".join(filter(None, sections))
 
 
 class AgentToolDetails(Collapsible):
