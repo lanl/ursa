@@ -151,6 +151,12 @@ def fake_llm():
     return ToolCapableFakeChatModel(responses=["unused"])
 
 
+def make_team(*, persist_members=False, **kwargs):
+    return AgentTeamEnvironment(
+        llm=fake_llm(), persist_members=persist_members, **kwargs
+    )
+
+
 def member_config(name, role, agent=RecordingMember, **options):
     """Configure a test worker through the same import path used in YAML."""
     return {
@@ -170,8 +176,7 @@ def test_environment_default_workspace_uses_group_cache(monkeypatch, tmp_path):
     cache_root = tmp_path / "ursa"
     monkeypatch.setattr(security, "URSA_CACHE_DIR", cache_root)
 
-    team = AgentTeamEnvironment(
-        llm=fake_llm(),
+    team = make_team(
         name="workspace_team",
         group="science",
         pi={
@@ -210,9 +215,7 @@ def test_team_pi_receives_member_delegation_tool_and_invokes_member(
         "members": [member_config("analyst", "analysis")],
         "workspace": str(tmp_path),
     }
-    team = AgentTeamEnvironment(
-        llm=fake_llm(), config=config, persist_members=True
-    )
+    team = make_team(config=config, persist_members=True)
 
     result = team.invoke("solve the user problem")
 
@@ -235,12 +238,7 @@ def test_team_pi_receives_member_delegation_tool_and_invokes_member(
 
 
 def test_team_default_pi_is_execution_agent():
-    team = AgentTeamEnvironment(
-        llm=fake_llm(),
-        name="default_pi_team",
-        members=[],
-        persist_members=False,
-    )
+    team = make_team(name="default_pi_team", members=[])
     assert team.config.pi.agent == "ExecutionAgent"
 
 
@@ -251,9 +249,7 @@ async def test_team_ainvoke_uses_async_pi_and_async_delegation_tool(tmp_path):
         "members": [member_config("analyst", "analysis", AsyncRecordingMember)],
         "workspace": str(tmp_path),
     }
-    team = AgentTeamEnvironment(
-        llm=fake_llm(), config=config, persist_members=False
-    )
+    team = make_team(config=config)
 
     result = await team.ainvoke("solve asynchronously")
 
@@ -273,9 +269,7 @@ def test_team_invoke_preserves_sync_api_via_async_implementation(tmp_path):
         "members": [member_config("analyst", "analysis", AsyncRecordingMember)],
         "workspace": str(tmp_path),
     }
-    team = AgentTeamEnvironment(
-        llm=fake_llm(), config=config, persist_members=False
-    )
+    team = make_team(config=config)
 
     result = team.invoke("sync caller using async internals")
 
@@ -284,12 +278,8 @@ def test_team_invoke_preserves_sync_api_via_async_implementation(tmp_path):
 
 
 async def test_team_invoke_from_running_loop_raises_clear_error(tmp_path):
-    team = AgentTeamEnvironment(
-        llm=fake_llm(),
-        name="running_loop_team_test",
-        members=[],
-        persist_members=False,
-        workspace=tmp_path,
+    team = make_team(
+        name="running_loop_team_test", members=[], workspace=tmp_path
     )
 
     with pytest.raises(RuntimeError) as exc:
