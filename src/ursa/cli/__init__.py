@@ -219,59 +219,38 @@ def main(args=None):
         case "list-groups":
             list_groups()
             return
-        case "create-group":
-            cmd_config = cfg.get(subcommand, None)
-            create_group(cmd_config.group_name, cmd_config.config_file)
-            return
-        case "delete-group":
-            cmd_config = cfg.get(subcommand, None)
-            delete_group(cmd_config.group_name)
-            return
-        case "show-group":
-            cmd_config = cfg.get(subcommand, None)
-            show_group(cmd_config.group_name)
-            return
-        case "update-group":
-            cmd_config = cfg.get(subcommand, None)
-            update_group(cmd_config.group_name, cmd_config.config_file)
-            return
-        case "list-agents":
-            cmd_config = cfg.get(subcommand, None)
-            list_agents(cmd_config.group)
-            return
-        case "show-agent":
-            cmd_config = cfg.get(subcommand, None)
-            show_agent(cmd_config.name, cmd_config.group)
-            return
-        case "delete-agent":
-            cmd_config = cfg.get(subcommand, None)
-            delete_agent(cmd_config.name, cmd_config.group)
-            return
-        case "save-agent":
-            cmd_config = cfg.get(subcommand, None)
-            save_agent(cmd_config.name, cmd_config.group)
-            return
-        case "copy-agent":
-            cmd_config = cfg.get(subcommand, None)
-            copy_agent(
-                cmd_config.name,
-                cmd_config.source_agent,
-                cmd_config.group,
-                cmd_config.from_group,
-            )
-            return
-        case "share-agent":
-            cmd_config = cfg.get(subcommand, None)
-            share_agent(
-                cmd_config.name, cmd_config.group, cmd_config.no_checkpoint
-            )
-            return
-        case "import-agent":
-            cmd_config = cfg.get(subcommand, None)
-            import_agent(
-                cmd_config.archive_file, cmd_config.group, cmd_config.name
-            )
-            return
+
+    management_commands = {
+        "create-group": lambda command: create_group(
+            command.group_name, command.config_file
+        ),
+        "delete-group": lambda command: delete_group(command.group_name),
+        "show-group": lambda command: show_group(command.group_name),
+        "update-group": lambda command: update_group(
+            command.group_name, command.config_file
+        ),
+        "list-agents": lambda command: list_agents(command.group),
+        "show-agent": lambda command: show_agent(command.name, command.group),
+        "delete-agent": lambda command: delete_agent(
+            command.name, command.group
+        ),
+        "save-agent": lambda command: save_agent(command.name, command.group),
+        "copy-agent": lambda command: copy_agent(
+            command.name,
+            command.source_agent,
+            command.group,
+            command.from_group,
+        ),
+        "share-agent": lambda command: share_agent(
+            command.name, command.group, command.no_checkpoint
+        ),
+        "import-agent": lambda command: import_agent(
+            command.archive_file, command.group, command.name
+        ),
+    }
+    if handler := management_commands.get(subcommand):
+        handler(cfg.get(subcommand, None))
+        return
 
     if subcommand in RAG_METADATA_COMMANDS:
         if handle_rag_command(cfg):
