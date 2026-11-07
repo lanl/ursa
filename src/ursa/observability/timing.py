@@ -938,48 +938,6 @@ def _mk_table(
     return t
 
 
-def _truncate_pad(s: str, width: int) -> str:
-    s = str(s)
-    if len(s) <= width:
-        return s.ljust(width)
-    if width <= 3:
-        return s[:width]
-    return s[: width - 3] + "..."
-
-
-def _plain_table(rows):
-    header = (
-        f"{'Name':<{NAME_W}} | "
-        f"{'Count':>{COUNT_W}} | "
-        f"{'Total(s)':>{TOTAL_W}} | "
-        f"{'Avg(ms)':>{AVG_W}} | "
-        f"{'Max(ms)':>{MAX_W}}"
-    )
-    lines = [header]
-
-    if not rows:
-        lines.append(
-            f"{'—':<{NAME_W}} | "
-            f"{0:>{COUNT_W}d} | "
-            f"{0.00:>{TOTAL_W},.2f} | "
-            f"{0:>{AVG_W},.0f} | "
-            f"{0:>{MAX_W},.0f}"
-        )
-        return "\n".join(lines)
-
-    for n, c, ts, am, mm in rows:
-        name = _truncate_pad(n, NAME_W)
-        lines.append(
-            f"{name} | "
-            f"{c:>{COUNT_W}d} | "
-            f"{ts:>{TOTAL_W},.2f} | "
-            f"{am:>{AVG_W},.0f} | "
-            f"{mm:>{MAX_W},.0f}"
-        )
-
-    return "\n".join(lines)
-
-
 @dataclass
 class Telemetry:
     enable: bool = True
@@ -1035,27 +993,16 @@ class Telemetry:
                 return repr(d)
 
         return {
-            "runnable": {
+            name: {
                 "_starts": _stringify_keys(
-                    getattr(self.runnable, "_starts", {})
+                    getattr(getattr(self, name), "_starts", {})
                 ),
-                "agg": _as_dict(getattr(self.runnable, "agg", {})),
+                "agg": _as_dict(getattr(getattr(self, name), "agg", {})),
                 "buckets": list(
-                    getattr(self.runnable.agg, "buckets", lambda: [])()
+                    getattr(getattr(self, name).agg, "buckets", lambda: [])()
                 ),
-            },
-            "tool": {
-                "_starts": _stringify_keys(getattr(self.tool, "_starts", {})),
-                "agg": _as_dict(getattr(self.tool, "agg", {})),
-                "buckets": list(
-                    getattr(self.tool.agg, "buckets", lambda: [])()
-                ),
-            },
-            "llm": {
-                "_starts": _stringify_keys(getattr(self.llm, "_starts", {})),
-                "agg": _as_dict(getattr(self.llm, "agg", {})),
-                "buckets": list(getattr(self.llm.agg, "buckets", lambda: [])()),
-            },
+            }
+            for name in ("runnable", "tool", "llm")
         }
 
     def _records_struct(self) -> dict:
