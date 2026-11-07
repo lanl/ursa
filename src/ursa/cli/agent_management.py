@@ -25,14 +25,15 @@ def _group_agents_dir(group_name: str) -> Path:
     return _group_root_dir(group_name) / "agents"
 
 
+def _add_group_argument(
+    parser: ArgumentParser, help_text: str, option: str = "--group"
+) -> None:
+    parser.add_argument(option, default="default", type=str, help=help_text)
+
+
 def add_agent_management_subcommands(subparsers) -> None:
     list_agents_parser = ArgumentParser()
-    list_agents_parser.add_argument(
-        "--group",
-        default="default",
-        type=str,
-        help="Group to list agents from",
-    )
+    _add_group_argument(list_agents_parser, "Group to list agents from")
     subparsers.add_subcommand(
         "list-agents",
         list_agents_parser,
@@ -40,56 +41,19 @@ def add_agent_management_subcommands(subparsers) -> None:
         dest="subcommand",
     )
 
-    show_agent_parser = ArgumentParser()
-    show_agent_parser.add_argument(
-        "--name", required=True, type=str, help="Agent name"
-    )
-    show_agent_parser.add_argument(
-        "--group",
-        default="default",
-        type=str,
-        help="Group containing the agent",
-    )
-    subparsers.add_subcommand(
-        "show-agent",
-        show_agent_parser,
-        help="Show details about an agent",
-        dest="subcommand",
-    )
-
-    delete_agent_parser = ArgumentParser()
-    delete_agent_parser.add_argument(
-        "--name", required=True, type=str, help="Agent name"
-    )
-    delete_agent_parser.add_argument(
-        "--group",
-        default="default",
-        type=str,
-        help="Group containing the agent",
-    )
-    subparsers.add_subcommand(
-        "delete-agent",
-        delete_agent_parser,
-        help="Delete an agent from a group",
-        dest="subcommand",
-    )
-
-    save_agent_parser = ArgumentParser()
-    save_agent_parser.add_argument(
-        "--name", required=True, type=str, help="Agent name"
-    )
-    save_agent_parser.add_argument(
-        "--group",
-        default="default",
-        type=str,
-        help="Group containing the agent",
-    )
-    subparsers.add_subcommand(
-        "save-agent",
-        save_agent_parser,
-        help="Create a timestamped checkpoint copy of an agent",
-        dest="subcommand",
-    )
+    for command, help_text in (
+        ("show-agent", "Show details about an agent"),
+        ("delete-agent", "Delete an agent from a group"),
+        ("save-agent", "Create a timestamped checkpoint copy of an agent"),
+    ):
+        parser = ArgumentParser()
+        parser.add_argument(
+            "--name", required=True, type=str, help="Agent name"
+        )
+        _add_group_argument(parser, "Group containing the agent")
+        subparsers.add_subcommand(
+            command, parser, help=help_text, dest="subcommand"
+        )
 
     copy_agent_parser = ArgumentParser()
     copy_agent_parser.add_argument(
@@ -102,17 +66,13 @@ def add_agent_management_subcommands(subparsers) -> None:
         type=str,
         help="Source agent name to copy from",
     )
-    copy_agent_parser.add_argument(
-        "--group",
-        default="default",
-        type=str,
-        help="Destination group for the copied agent",
+    _add_group_argument(
+        copy_agent_parser, "Destination group for the copied agent"
     )
-    copy_agent_parser.add_argument(
+    _add_group_argument(
+        copy_agent_parser,
+        "Source group containing the source agent",
         "--from-group",
-        default="default",
-        type=str,
-        help="Source group containing the source agent",
     )
     subparsers.add_subcommand(
         "copy-agent",
@@ -125,12 +85,7 @@ def add_agent_management_subcommands(subparsers) -> None:
     share_agent_parser.add_argument(
         "--name", required=True, type=str, help="Agent name"
     )
-    share_agent_parser.add_argument(
-        "--group",
-        default="default",
-        type=str,
-        help="Group containing the agent",
-    )
+    _add_group_argument(share_agent_parser, "Group containing the agent")
     share_agent_parser.add_argument(
         "--no-checkpoint",
         action="store_true",
@@ -155,11 +110,8 @@ def add_agent_management_subcommands(subparsers) -> None:
         type=str,
         help="Name to assign the imported agent; defaults to the shared name",
     )
-    import_agent_parser.add_argument(
-        "--group",
-        default="default",
-        type=str,
-        help="Destination group for the imported agent",
+    _add_group_argument(
+        import_agent_parser, "Destination group for the imported agent"
     )
     subparsers.add_subcommand(
         "import-agent",
