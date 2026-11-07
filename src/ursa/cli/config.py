@@ -258,42 +258,26 @@ class ModelConfig(BaseModel):
     def _parse_model_and_provider(
         self, known_providers: dict[str, tuple]
     ) -> Self:
-        """Internal helper to parse `model` and `model_provider` into coherent entries.
+        """Infer known provider prefixes unless a provider is explicitly set.
 
-        Parse `model` and `model_provider` into coherent entries.
-        - Splits model = `model_provider:model` -> `model_provider`, `model`
-        - Drops model_provider prefix from model iff matching model_provider is set
-        - Leaves unrecognized model_providers alone -> May error at runtime
-
-        Matches the langchain.chat_models._parse_model implementation
-        - Dropped model_provider normalization, as unclear how that would trigger
+        Strip a prefix matching the selected provider; retain unknown prefixes
+        in the model name. Unlike LangChain, preserve provider spelling.
         """
         model = self.model
         model_provider = self.model_provider
         model_provider_is_explicit = "model_provider" in self.model_fields_set
         inferred_model_provider = False
+        prefix, separator, name = model.partition(":")
 
-        # Model specified as `model_provider:model`
         if (
             not model_provider_is_explicit
-            and ":" in model
-            and model.split(":", maxsplit=1)[0] in known_providers
+            and separator
+            and prefix in known_providers
         ):
-            # model = `known_model_provider:model` to:
-            # model = `model` and model_provider = known_model_provider
-            model_provider, model = model.split(":", maxsplit=1)
+            model_provider, model = prefix, name
             inferred_model_provider = True
-
-        # Model provider specified and model is `model_provider:model`
-        elif (
-            model_provider
-            and ":" in model
-            and model.split(":", maxsplit=1)[0] == model_provider
-        ):
-            # model = `model_provider:model` and matches explicit
-            # model_provider. Remove `model_provider` prefix from
-            # model
-            model = model.split(":", maxsplit=1)[1]
+        elif model_provider and separator and prefix == model_provider:
+            model = name
 
         if not model_provider and not self.inference_provider:
             # Enhanced error message with suggestions
@@ -340,12 +324,7 @@ class ModelConfig(BaseModel):
             for name in provider_config.model_fields_set
         }
         provider_values.update(deepcopy(provider_config.model_extra or {}))
-        model_values = {
-            name: deepcopy(getattr(self, name))
-            for name in self.model_fields_set
-            if name in type(self).model_fields
-        }
-        model_values.update(deepcopy(self.model_extra or {}))
+        model_values = _sparse_model_values(self)
 
         values = {
             **provider_values,
