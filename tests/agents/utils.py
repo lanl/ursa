@@ -99,27 +99,25 @@ class RecordingChatModel(ToolReadyFakeChatModel):
         return self
 
     def with_structured_output(self, schema, **kwargs):
-        model = self
         include_raw = kwargs.get("include_raw", False)
 
-        class StructuredOutput:
-            def invoke(self, messages, config=None):
-                model.calls.append(list(messages))
-                if model.structured_factory is None:
-                    raise NotImplementedError(
-                        "RecordingChatModel needs a structured_factory to "
-                        f"answer with_structured_output({schema!r})"
-                    )
-                parsed = model.structured_factory(schema)
-                if include_raw:
-                    return {
-                        "raw": AIMessage(content=""),
-                        "parsed": parsed,
-                        "parsing_error": None,
-                    }
-                return parsed
+        def invoke(messages, config=None):
+            self.calls.append(list(messages))
+            if self.structured_factory is None:
+                raise NotImplementedError(
+                    "RecordingChatModel needs a structured_factory to "
+                    f"answer with_structured_output({schema!r})"
+                )
+            parsed = self.structured_factory(schema)
+            if include_raw:
+                return {
+                    "raw": AIMessage(content=""),
+                    "parsed": parsed,
+                    "parsing_error": None,
+                }
+            return parsed
 
-        return StructuredOutput()
+        return SimpleNamespace(invoke=invoke)
 
 
 def assert_requests_provider_valid(calls: list[list[BaseMessage]]) -> None:

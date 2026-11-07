@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
@@ -18,11 +19,7 @@ class FakePlanningChatModel(GenericFakeChatModel):
         return self
 
     def with_structured_output(self, schema, **kwargs):
-        class _Runner:
-            def invoke(self, messages):
-                return simple_plan(schema)
-
-        return _Runner()
+        return SimpleNamespace(invoke=lambda messages: simple_plan(schema))
 
 
 async def test_planning_agent_creates_structured_plan(tmpdir):
@@ -87,14 +84,11 @@ class RecordingPlanningChatModel(GenericFakeChatModel):
         object.__setattr__(self, "reflection_messages", [])
 
     def with_structured_output(self, schema, **kwargs):
-        model = self
+        def invoke(messages):
+            self.generation_messages.append(list(messages))
+            return self.plan
 
-        class StructuredOutput:
-            def invoke(self, messages):
-                model.generation_messages.append(list(messages))
-                return model.plan
-
-        return StructuredOutput()
+        return SimpleNamespace(invoke=invoke)
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         self.reflection_messages.append(list(messages))

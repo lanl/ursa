@@ -1,4 +1,5 @@
 from importlib import metadata
+from types import SimpleNamespace
 
 import pytest
 from dotenv import load_dotenv
@@ -120,14 +121,10 @@ class FakeChatModel(ToolReadyFakeChatModel):
     def with_structured_output(self, schema, **kwargs):
         output = _fake_structured(schema)
 
-        class _Runner:
-            def invoke(self, messages):
-                return output
+        async def ainvoke(messages):
+            return output
 
-            async def ainvoke(self, messages):
-                return output
-
-        return _Runner()
+        return SimpleNamespace(invoke=lambda messages: output, ainvoke=ainvoke)
 
 
 class FakeEmbeddingModel(FakeEmbeddings):
