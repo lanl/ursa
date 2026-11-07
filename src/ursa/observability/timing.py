@@ -700,14 +700,10 @@ class PerLLMTimer(BaseCallbackHandler):
                 # The selected source can now carry these counts too, so
                 # take the strongest signal overall instead of adding the
                 # side-channel copy on top of it.
-                roll["reasoning_tokens"] = max(
-                    roll["reasoning_tokens"],
-                    max(e["reasoning_tokens"] for e in extras_candidates),
-                )
-                roll["cached_tokens"] = max(
-                    roll["cached_tokens"],
-                    max(e["cached_tokens"] for e in extras_candidates),
-                )
+                for field in ("reasoning_tokens", "cached_tokens"):
+                    roll[field] = max(
+                        roll[field], max(e[field] for e in extras_candidates)
+                    )
 
             # Final consistency guards
             if roll["prompt_tokens"] == 0 and roll["input_tokens"] > 0:
@@ -1485,17 +1481,15 @@ class Telemetry:
             saved_otel = self._save_otel(payload, otel_endpoint, otel_headers)
 
         # --- Build header & attribution lines (markup-aware) ---
-        header_lines = []
-        header_lines.append(
+        header_lines = [
             f"[bold magenta]{agent_label}[/] [dim]•[/] thread [bold]{thread_id}[/] [dim]•[/] run [bold]{run_id}[/]"
-        )
+        ]
         if start_dt and end_dt:
             header_lines.append(
                 f"[dim]{started_at} → {ended_at}[/dim]   [bold]wall[/]: {wall_secs:,.2f}s"
             )
 
-        attrib_lines = []
-        attrib_lines.append("[bold]Attribution[/]")
+        attrib_lines = ["[bold]Attribution[/]"]
         if wall_secs is not None:
             attrib_lines.append(
                 f"  Total run (wall): [bold]{wall_secs:,.2f}s[/]"
