@@ -561,8 +561,6 @@ class RunManager:
                 if rec.get("status") == "cancelled":
                     continue
                 await self._execute_run(run_id)
-            except asyncio.CancelledError:
-                raise
             except Exception:
                 # Best-effort: mark failed.
                 try:

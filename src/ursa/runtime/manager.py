@@ -1219,8 +1219,6 @@ class AgentManager:
                 )
         except (EOFError, BrokenPipeError, OSError):
             pass
-        except asyncio.CancelledError:
-            raise
         finally:
             if generation == entry.generation:
                 await self._process_exited(entry, generation, process)

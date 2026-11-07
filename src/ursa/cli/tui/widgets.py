@@ -1666,8 +1666,6 @@ class AgentsScreen(InformationScreen):
     ) -> bool:
         try:
             return await self._render_agent_tools(index, agent)
-        except asyncio.CancelledError:
-            raise
         except Exception as exc:
             failed = replace(
                 agent,

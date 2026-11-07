@@ -619,8 +619,6 @@ class EnvironmentRunManager:
                 if manifest.get("status") == "cancelled":
                     continue
                 await self._execute(run_id)
-            except asyncio.CancelledError:
-                raise
             except Exception as exc:
                 with contextlib.suppress(Exception):
                     self._update_manifest(
