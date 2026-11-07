@@ -94,21 +94,11 @@ class DeepReviewAgent(AgentWithTools, BaseAgent[DeepReviewState]):
 
     def _normalize_inputs(self, inputs) -> DeepReviewState:
         if isinstance(inputs, str):
-            return DeepReviewState(
-                question=inputs,
-                question_search_query=self._normalize_search_query(inputs),
-                max_iterations=self.max_iterations,
-                current_iteration=0,
-                agent1_solution=[],
-                agent2_critiques=[],
-                agent3_perspectives=[],
-                visited_sites=set(),
-                messages=[],
-                active_phase="",
-            )
-
-        state = dict(cast(Mapping[str, Any], inputs))
-        question = str(state.get("question") or state.get("query") or "")
+            state = {"question": inputs}
+            question = inputs
+        else:
+            state = dict(cast(Mapping[str, Any], inputs))
+            question = str(state.get("question") or state.get("query") or "")
         state.setdefault("question", question)
         state.setdefault(
             "question_search_query", self._normalize_search_query(question)
@@ -593,27 +583,18 @@ This report summarizes the deep-review process for the following question:
 
         self.graph.set_entry_point("agent1")
 
-        self.graph.add_conditional_edges(
-            "agent1",
-            self._wrap_cond(
-                phase_should_continue, "agent1_continue", "deep_review"
-            ),
-            {"tools": "tool_node", "done": "agent2"},
-        )
-        self.graph.add_conditional_edges(
-            "agent2",
-            self._wrap_cond(
-                phase_should_continue, "agent2_continue", "deep_review"
-            ),
-            {"tools": "tool_node", "done": "agent3"},
-        )
-        self.graph.add_conditional_edges(
-            "agent3",
-            self._wrap_cond(
-                phase_should_continue, "agent3_continue", "deep_review"
-            ),
-            {"tools": "tool_node", "done": "increment_iteration"},
-        )
+        for phase, next_phase in (
+            ("agent1", "agent2"),
+            ("agent2", "agent3"),
+            ("agent3", "increment_iteration"),
+        ):
+            self.graph.add_conditional_edges(
+                phase,
+                self._wrap_cond(
+                    phase_should_continue, f"{phase}_continue", "deep_review"
+                ),
+                {"tools": "tool_node", "done": next_phase},
+            )
         self.graph.add_conditional_edges(
             "tool_node",
             self._wrap_cond(

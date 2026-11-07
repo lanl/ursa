@@ -51,6 +51,8 @@ async def test_deep_review_agent_ainvoke_without_hidden_web_search(
     tmpdir: Path,
 ) -> None:
     agent = DeepReviewAgent(llm=chat_model, workspace=tmpdir)
+    prompt = "  exact user input\n"
+    assert agent._normalize_inputs(prompt)["question"] == prompt
 
     assert "list_workspace_files" in agent.tools
     assert "read_file" in agent.tools
