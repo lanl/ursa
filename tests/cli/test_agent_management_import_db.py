@@ -2,6 +2,7 @@ import sqlite3
 from contextlib import closing
 
 import pytest
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from ursa.cli import agent_management
 from ursa.cli.agent_management import import_agent
@@ -9,35 +10,9 @@ from ursa.cli.agent_management import import_agent
 
 def _write_checkpoint_db(path):
     with closing(sqlite3.connect(path)) as conn, conn:
-        conn.execute(
-            """
-            CREATE TABLE checkpoints (
-                thread_id TEXT NOT NULL,
-                checkpoint_ns TEXT NOT NULL DEFAULT '',
-                checkpoint_id TEXT NOT NULL,
-                parent_checkpoint_id TEXT,
-                type TEXT,
-                checkpoint BLOB,
-                metadata BLOB,
-                PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE writes (
-                thread_id TEXT NOT NULL,
-                checkpoint_ns TEXT NOT NULL DEFAULT '',
-                checkpoint_id TEXT NOT NULL,
-                task_id TEXT NOT NULL,
-                idx INTEGER NOT NULL,
-                channel TEXT NOT NULL,
-                type TEXT,
-                value BLOB,
-                PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id, task_id, idx)
-            )
-            """
-        )
+        SqliteSaver(conn).setup()
+        # Keep the original rollback-journal fixture used by the import tests.
+        conn.execute("PRAGMA journal_mode=DELETE")
         conn.execute(
             """
             INSERT INTO checkpoints (
