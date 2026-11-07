@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime
+from functools import partialmethod
 from itertools import islice
 from math import ceil
 from pathlib import Path
@@ -1294,6 +1295,11 @@ class LiveHierarchyTree(Tree[HierarchyTreeRow]):
         return details
 
 
+def _scroll_action(self, action: str) -> None:
+    """Forward a modal's scroll action to its currently selected widget."""
+    getattr(self._scroll_view(), action)()
+
+
 class InformationScreen(ModalScreen[None]):
     """Scrollable command output displayed without leaving the application."""
 
@@ -1372,23 +1378,12 @@ class InformationScreen(ModalScreen[None]):
     def _scroll_view(self):
         return self.query_one("#information-body", VerticalScroll)
 
-    def action_scroll_up(self) -> None:
-        self._scroll_view().action_scroll_up()
-
-    def action_scroll_down(self) -> None:
-        self._scroll_view().action_scroll_down()
-
-    def action_scroll_home(self) -> None:
-        self._scroll_view().action_scroll_home()
-
-    def action_scroll_end(self) -> None:
-        self._scroll_view().action_scroll_end()
-
-    def action_page_up(self) -> None:
-        self._scroll_view().action_page_up()
-
-    def action_page_down(self) -> None:
-        self._scroll_view().action_page_down()
+    action_scroll_up = partialmethod(_scroll_action, "action_scroll_up")
+    action_scroll_down = partialmethod(_scroll_action, "action_scroll_down")
+    action_scroll_home = partialmethod(_scroll_action, "action_scroll_home")
+    action_scroll_end = partialmethod(_scroll_action, "action_scroll_end")
+    action_page_up = partialmethod(_scroll_action, "action_page_up")
+    action_page_down = partialmethod(_scroll_action, "action_page_down")
 
 
 def _markdown_cell(value: object) -> str:
@@ -2296,11 +2291,8 @@ class MessagesScreen(ModalScreen[None]):
             return
         await self.action_latest()
 
-    def action_page_up(self) -> None:
-        self._scroll_view().action_page_up()
-
-    def action_page_down(self) -> None:
-        self._scroll_view().action_page_down()
+    action_page_up = partialmethod(_scroll_action, "action_page_up")
+    action_page_down = partialmethod(_scroll_action, "action_page_down")
 
 
 class QueuedMessage(Static):
