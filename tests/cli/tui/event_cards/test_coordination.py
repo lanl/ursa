@@ -22,6 +22,14 @@ async def emit_action(turn, tool, run_id, *, phase="start", **details):
     await turn.event(dict(tool=tool, phase=phase, _run_id=run_id, **details))
 
 
+async def expand_actions(pilot, group, count):
+    """Expand coordination and wait for its expected number of action cards."""
+    group.set_expanded(True)
+    assert await wait_for(
+        pilot, lambda: len(group.query(AgentToolCard)) == count
+    )
+
+
 async def test_parallel_coordination_calls_share_one_card_across_entire_turn(
     tmp_path,
     app,
@@ -89,10 +97,7 @@ async def test_parallel_coordination_calls_share_one_card_across_entire_turn(
         assert "Spawn agent" not in recent
         assert len(recent) < 800
 
-        group.set_expanded(True)
-        assert await wait_for(
-            pilot, lambda: len(group.query(AgentToolCard)) == 5
-        )
+        await expand_actions(pilot, group, 5)
         assert not body_reads
         assert all(
             "message" not in card.tool_input
@@ -241,10 +246,7 @@ async def test_group_target_expressions_are_never_presented_as_agent_counts(
         assert "@reports + 80 explicit targets" in recent
         assert "agents" not in recent
 
-        group.set_expanded(True)
-        assert await wait_for(
-            pilot, lambda: len(group.query(AgentToolCard)) == 3
-        )
+        await expand_actions(pilot, group, 3)
         cards = {card.key: card for card in group.query(AgentToolCard)}
         assert cards["1"].target == "@everyone"
         assert cards["2"].target == "@peers + 1 explicit target"
@@ -370,10 +372,7 @@ async def test_expanded_coordination_pages_bound_widget_count(app):
             )
         group = turn.query_one(CoordinationCard)
         assert not group.query(AgentToolCard)
-        group.set_expanded(True)
-        assert await wait_for(
-            pilot, lambda: len(group.query(AgentToolCard)) == group.PAGE_SIZE
-        )
+        await expand_actions(pilot, group, group.PAGE_SIZE)
         assert group.query(AgentToolCard).first().target == "root/p5"
         group.query_one(".coordination-older", Button).press()
         assert await wait_for(
@@ -432,10 +431,7 @@ async def test_coordination_errors_keep_exact_body_and_two_visible_rows(
         assert "Send message" in rendered[0].text
         assert "Wait for" in rendered[1].text
         assert rows[1].region.y == rows[0].region.y + 1
-        group.set_expanded(True)
-        assert await wait_for(
-            pilot, lambda: len(group.query(AgentToolCard)) == 2
-        )
+        await expand_actions(pilot, group, 2)
         card = group.query(AgentToolCard).first()
         assert card.failed and len(card.output) <= 241
         assert card.has_class("agent-tool-failed")

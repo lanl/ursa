@@ -33,6 +33,22 @@ async def manager():
         yield instance
 
 
+def pause_shutdown(manager, monkeypatch):
+    """Hold the shutdown send until the test releases its cleanup phase."""
+    shutdown_started = asyncio.Event()
+    release_shutdown = asyncio.Event()
+    send = manager._send
+
+    async def controlled_send(entry, message, *, connection=None):
+        if message.get("type") == "shutdown":
+            shutdown_started.set()
+            await release_shutdown.wait()
+        await send(entry, message, connection=connection)
+
+    monkeypatch.setattr(manager, "_send", controlled_send)
+    return shutdown_started, release_shutdown
+
+
 async def test_agent_process_isolated_config_and_heartbeat(
     manager,
 ) -> None:
@@ -281,17 +297,7 @@ async def test_start_waits_for_concurrent_kill_before_new_generation(
 ) -> None:
     await manager.register(AgentSpec("agent", FACTORY), start=True)
     original = await manager.snapshot("agent")
-    shutdown_started = asyncio.Event()
-    release_shutdown = asyncio.Event()
-    send = manager._send
-
-    async def controlled_send(entry, message, *, connection=None):
-        if message.get("type") == "shutdown":
-            shutdown_started.set()
-            await release_shutdown.wait()
-        await send(entry, message, connection=connection)
-
-    monkeypatch.setattr(manager, "_send", controlled_send)
+    shutdown_started, release_shutdown = pause_shutdown(manager, monkeypatch)
     killing = asyncio.create_task(manager.kill_agent("agent"))
     await asyncio.wait_for(shutdown_started.wait(), 1)
     starting = asyncio.create_task(manager.start_agent("agent"))
@@ -310,17 +316,7 @@ async def test_cancelled_close_waiter_does_not_cancel_process_cleanup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     await manager.register(AgentSpec("agent", FACTORY), start=True)
-    shutdown_started = asyncio.Event()
-    release_shutdown = asyncio.Event()
-    send = manager._send
-
-    async def controlled_send(entry, message, *, connection=None):
-        if message.get("type") == "shutdown":
-            shutdown_started.set()
-            await release_shutdown.wait()
-        await send(entry, message, connection=connection)
-
-    monkeypatch.setattr(manager, "_send", controlled_send)
+    shutdown_started, release_shutdown = pause_shutdown(manager, monkeypatch)
     waiter = asyncio.create_task(manager.aclose())
     await asyncio.wait_for(shutdown_started.wait(), 1)
     waiter.cancel()

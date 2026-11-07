@@ -79,8 +79,11 @@ def model_dialog(app, model_discovery):
     return open_dialog
 
 
-async def wait_for_yaml_debounce(pilot) -> None:
-    """Let the YAML validation timer fire, then flush resulting messages."""
+async def wait_for_yaml_debounce(pilot, *, editor=None) -> None:
+    """Check a pending edit if supplied, then wait for debounced validation."""
+    if editor is not None:
+        await pilot.pause()
+        assert not editor.has_class("yaml-valid", "yaml-invalid")
     await asyncio.sleep(ModelScreen.YAML_VALIDATION_DELAY + 0.1)
     await pilot.pause()
 
@@ -1161,9 +1164,7 @@ inference_provider: openai
 provider_options:
   reasoning: high
 """
-        await pilot.pause()
-        assert not editor.has_class("yaml-valid", "yaml-invalid")
-        await wait_for_yaml_debounce(pilot)
+        await wait_for_yaml_debounce(pilot, editor=editor)
 
         assert editor.has_class("yaml-valid")
         assert (
@@ -1235,9 +1236,7 @@ model_provider: openai
 inference_provider: openai
 """
 
-        await pilot.pause()
-        assert not editor.has_class("yaml-valid", "yaml-invalid")
-        await wait_for_yaml_debounce(pilot)
+        await wait_for_yaml_debounce(pilot, editor=editor)
 
         model_select = app.screen.query_one("#chat-model-name", Select)
         assert model_select.value == "unavailable-model"
@@ -1259,9 +1258,7 @@ model_provider: future_provider
 inference_provider: openai
 """
 
-        await pilot.pause()
-        assert not editor.has_class("yaml-valid", "yaml-invalid")
-        await wait_for_yaml_debounce(pilot)
+        await wait_for_yaml_debounce(pilot, editor=editor)
 
         provider = app.screen.query_one("#chat-model-provider", Select)
         assert provider.value == "future_provider"
@@ -1479,9 +1476,7 @@ model_provider: openai
 inference_provider: fast
 """
 
-        await pilot.pause()
-        assert not editor.has_class("yaml-valid", "yaml-invalid")
-        await wait_for_yaml_debounce(pilot)
+        await wait_for_yaml_debounce(pilot, editor=editor)
         await app.workers.wait_for_complete()
 
         assert (
@@ -1692,9 +1687,7 @@ api_key:
   env:
 """
 
-        await pilot.pause()
-        assert not editor.has_class("yaml-valid", "yaml-invalid")
-        await wait_for_yaml_debounce(pilot)
+        await wait_for_yaml_debounce(pilot, editor=editor)
 
         assert isinstance(app.screen, ModelScreen)
         app.screen.query_one("#chat-advanced", Collapsible).collapsed = False
@@ -1726,9 +1719,7 @@ api_key:
   env:
 """
 
-        await pilot.pause()
-        assert not editor.has_class("yaml-valid", "yaml-invalid")
-        await wait_for_yaml_debounce(pilot)
+        await wait_for_yaml_debounce(pilot, editor=editor)
 
         error = app.screen.query_one("#chat-yaml-error", Static)
         message = str(error.content)
