@@ -355,35 +355,32 @@ class CallbackRenderingMixin:
     def _tool_path(self, data: dict[str, Any]) -> str | None:
         return self._display_path(data.get("path") or data.get("filename"))
 
+    def _print_status_line(
+        self, message: str, detail: str | None, style: str = "success"
+    ) -> None:
+        self.console.print(
+            f"[{style}]{message}:[/] {detail}"
+            if detail
+            else f"[{style}]{message}[/]"
+        )
+
     def _print_read_file_start(self, path: str | None) -> None:
         detail = self._display_path(path)
-        self.console.print(
-            f"[success]📖 Reading file:[/] {detail}"
-            if detail
-            else "[success]📖 Reading file[/]"
-        )
+        self._print_status_line("📖 Reading file", detail)
         self.emitted_any = True
 
     def _print_read_file_end(
         self, payload: Any, *, path: str | None = None
     ) -> None:
         detail = self._display_path(path)
-        self.console.print(
-            f"[success]📖 File read:[/] {detail}"
-            if detail
-            else "[success]📖 File read[/]"
-        )
+        self._print_status_line("📖 File read", detail)
         self.emitted_any = True
 
     def _print_write_code_start(
         self, filename: str | None, path: str | None, code: Any = None
     ) -> None:
         detail = self._display_path(path or filename)
-        self.console.print(
-            f"[success]✏️ Writing file:[/] {detail}"
-            if detail
-            else "[success]✏️ Writing file[/]"
-        )
+        self._print_status_line("✏️ Writing file", detail)
         self.emitted_any = True
 
     def _print_write_code_end(
@@ -398,17 +395,9 @@ class CallbackRenderingMixin:
         message = self._clean(payload)
         lower_message = message.lower()
         if success and "written successfully" in lower_message:
-            self.console.print(
-                f"[success]✅ File written:[/] {detail}"
-                if detail
-                else "[success]✅ File written[/]"
-            )
+            self._print_status_line("✅ File written", detail)
         else:
-            self.console.print(
-                f"[error]✖ Failed to write file:[/] {detail}"
-                if detail
-                else "[error]✖ Failed to write file[/]"
-            )
+            self._print_status_line("✖ Failed to write file", detail, "error")
             for line in self._display_lines(message):
                 self.console.print(f"[dim]  {line}[/]")
         self.emitted_any = True
@@ -439,11 +428,7 @@ class CallbackRenderingMixin:
         new_code: Any = None,
     ) -> None:
         detail = self._display_path(path or filename)
-        self.console.print(
-            f"[success]✏️ Editing file:[/] {detail}"
-            if detail
-            else "[success]✏️ Editing file[/]"
-        )
+        self._print_status_line("✏️ Editing file", detail)
         self.emitted_any = True
 
     def _print_event_artifact(self, data: Mapping[str, Any]) -> bool:
@@ -468,27 +453,15 @@ class CallbackRenderingMixin:
         no_change = lower_message.startswith("no changes made")
         failed = not success or lower_message.startswith("failed")
         if failed:
-            self.console.print(
-                f"[error]✖ Failed to edit file:[/] {detail}"
-                if detail
-                else "[error]✖ Failed to edit file[/]"
-            )
+            self._print_status_line("✖ Failed to edit file", detail, "error")
             for line in self._display_lines(message):
                 self.console.print(f"[dim]  {line}[/]")
         elif no_change:
-            self.console.print(
-                f"[warn]⚠ No changes made:[/] {detail}"
-                if detail
-                else "[warn]⚠ No changes made[/]"
-            )
+            self._print_status_line("⚠ No changes made", detail, "warn")
             for line in self._display_lines(message):
                 self.console.print(f"[dim]  {line}[/]")
         else:
-            self.console.print(
-                f"[success]✅ File edited:[/] {detail}"
-                if detail
-                else "[success]✅ File edited[/]"
-            )
+            self._print_status_line("✅ File edited", detail)
         self.emitted_any = True
 
     def _print_tool_event(self, data: dict[str, Any]) -> None:
@@ -526,11 +499,7 @@ class CallbackRenderingMixin:
         elif phase == "error":
             icon = "✖"
 
-        self.console.print(
-            f"[{style}]{icon} {message}:[/] {detail}"
-            if detail
-            else f"[{style}]{icon} {message}[/]"
-        )
+        self._print_status_line(f"{icon} {message}", detail, style)
         self.emitted_any = True
 
         if phase == "error":
@@ -578,11 +547,7 @@ class CallbackRenderingMixin:
 
     def _print_run_command_start(self, query: str | None) -> None:
         query_text = self._clean(query)
-        self.console.print(
-            f"[blue]▶ Running command:[/] {query_text}"
-            if query_text
-            else "[blue]▶ Running command[/]"
-        )
+        self._print_status_line("▶ Running command", query_text, "blue")
         self.emitted_any = True
 
     def _print_run_command_end(
@@ -596,28 +561,16 @@ class CallbackRenderingMixin:
         result = self._coerce_run_command_payload(payload)
         raw_result = self._clean(result.get("result"))
         if raw_result.startswith("[UNSAFE]"):
-            self.console.print(
-                f"[warn]⚠ Command blocked:[/] {query_text}"
-                if query_text
-                else "[warn]⚠ Command blocked[/]"
-            )
+            self._print_status_line("⚠ Command blocked", query_text, "warn")
             for line in self._display_lines(raw_result):
                 self.console.print(f"[dim]  {line}[/]")
             self.emitted_any = True
             return
 
         if success:
-            self.console.print(
-                f"[success]✔ Command finished:[/] {query_text}"
-                if query_text
-                else "[success]✔ Command finished[/]"
-            )
+            self._print_status_line("✔ Command finished", query_text)
         else:
-            self.console.print(
-                f"[error]✖ Command failed:[/] {query_text}"
-                if query_text
-                else "[error]✖ Command failed[/]"
-            )
+            self._print_status_line("✖ Command failed", query_text, "error")
         self.emitted_any = True
 
 
