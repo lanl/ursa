@@ -794,35 +794,30 @@ def _coerce_usage(obj) -> dict:
 
         # Common nested details
         try:
-            ctd = getattr(obj, "completion_tokens_details", None)
-            if ctd is not None:
-                dd = {}
-                for k in (
+            for name, keys in {
+                "completion_tokens_details": (
                     "reasoning_tokens",
                     "accepted_prediction_tokens",
                     "rejected_prediction_tokens",
                     "audio_tokens",
                     "text_tokens",
-                ):
-                    val = getattr(ctd, k, None)
-                    if isinstance(val, (int, float)):
-                        dd[k] = int(val)
-                if dd:
-                    d["completion_tokens_details"] = dd
-            ptd = getattr(obj, "prompt_tokens_details", None)
-            if ptd is not None:
-                dd = {}
-                for k in (
+                ),
+                "prompt_tokens_details": (
                     "cached_tokens",
                     "audio_tokens",
                     "image_tokens",
                     "text_tokens",
-                ):
-                    val = getattr(ptd, k, None)
-                    if isinstance(val, (int, float)):
-                        dd[k] = int(val)
-                if dd:
-                    d["prompt_tokens_details"] = dd
+                ),
+            }.items():
+                details = getattr(obj, name, None)
+                if details is not None:
+                    dd = {}
+                    for key in keys:
+                        val = getattr(details, key, None)
+                        if isinstance(val, (int, float)):
+                            dd[key] = int(val)
+                    if dd:
+                        d[name] = dd
         except Exception:
             pass
 
