@@ -53,25 +53,6 @@ EnvironmentType = Literal[
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
 _ENV_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _ENV_VAR_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_ALLOWED_SHORT_CLASSES = {
-    "ArxivAgent",
-    "ChatAgent",
-    "DeepReviewAgent",
-    "DSIAgent",
-    "ExecutionAgent",
-    "GitAgent",
-    "GitGoAgent",
-    "HypothesizerAgent",
-    "LammpsAgent",
-    "MaterialsProjectAgent",
-    "OSTIAgent",
-    "PlanningAgent",
-    "PromptingAgent",
-    "RAGAgent",
-    "RecallAgent",
-    "WebSearchAgent",
-    "AgentTeamEnvironment",
-}
 _ALLOWED_CLASS_PATHS = {
     "ursa.agents.acquisition_agents.ArxivAgent",
     "ursa.agents.acquisition_agents.OSTIAgent",
@@ -90,6 +71,9 @@ _ALLOWED_CLASS_PATHS = {
     "ursa.agents.rag_agent.RAGAgent",
     "ursa.agents.recall_agent.RecallAgent",
     "ursa.environments.agent_team.AgentTeamEnvironment",
+}
+_ALLOWED_SHORT_CLASSES = {
+    path.rsplit(".", 1)[-1] for path in _ALLOWED_CLASS_PATHS
 }
 
 
