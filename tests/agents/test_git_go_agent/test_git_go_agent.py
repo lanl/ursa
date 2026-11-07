@@ -34,13 +34,22 @@ def _message_stream(content: str) -> Iterator[AIMessage]:
         yield AIMessage(content=content)
 
 
-def test_git_go_agent_tools(tmpdir):
+@pytest.fixture
+def agent_factory(tmpdir):
     chat_model = ToolReadyFakeChatModel(messages=_message_stream("ok"))
     workspace = Path(str(tmpdir))
-    agent = GitGoAgent(llm=chat_model, workspace=workspace)
 
+    def create(factory, **kwargs):
+        return factory(llm=chat_model, **kwargs, workspace=workspace)
+
+    return create
+
+
+@pytest.mark.parametrize("go", [True, False])
+def test_git_agent_language_tools(agent_factory, go):
+    """Both agents keep Git tools; only the Go agent adds its language tools."""
+    agent = agent_factory(GitGoAgent if go else GitAgent)
     tool_names = set(agent.tools.keys())
-    # Git tools
     assert "git_status" in tool_names
     assert "git_diff" in tool_names
     assert "git_commit" in tool_names
@@ -49,102 +58,51 @@ def test_git_go_agent_tools(tmpdir):
     assert "git_create_branch" in tool_names
     assert "git_log" in tool_names
     assert "git_ls_files" in tool_names
-    # Go tools
-    assert "go_build" in tool_names
-    assert "go_test" in tool_names
-    assert "go_vet" in tool_names
-    assert "go_mod_tidy" in tool_names
-    assert "golangci_lint" in tool_names
-    # Code formatting
-    assert "gofmt_files" in tool_names
-    # Removed tools
+    if go:
+        assert "go_build" in tool_names
+        assert "go_test" in tool_names
+        assert "go_vet" in tool_names
+        assert "go_mod_tidy" in tool_names
+        assert "golangci_lint" in tool_names
+        assert "gofmt_files" in tool_names
+    else:
+        assert "go_build" not in tool_names
+        assert "go_test" not in tool_names
+        assert "gofmt_files" not in tool_names
+        assert "golangci_lint" not in tool_names
     assert "run_command" not in tool_names
     assert "run_web_search" not in tool_names
-    assert "run_osti_search" not in tool_names
-    assert "run_arxiv_search" not in tool_names
-    # Configuration
-    assert "go" in agent.safe_codes
+    if go:
+        assert "run_osti_search" not in tool_names
+        assert "run_arxiv_search" not in tool_names
+        assert "go" in agent.safe_codes
 
 
-def test_git_agent_generic_has_only_git_tools(tmpdir):
-    """GitAgent with no language tools should only have git tools."""
-    chat_model = ToolReadyFakeChatModel(messages=_message_stream("ok"))
-    workspace = Path(str(tmpdir))
-    agent = GitAgent(llm=chat_model, workspace=workspace)
-
-    tool_names = set(agent.tools.keys())
-    # Git tools present
-    assert "git_status" in tool_names
-    assert "git_diff" in tool_names
-    assert "git_commit" in tool_names
-    assert "git_add" in tool_names
-    assert "git_switch" in tool_names
-    assert "git_create_branch" in tool_names
-    assert "git_log" in tool_names
-    assert "git_ls_files" in tool_names
-    # No Go tools
-    assert "go_build" not in tool_names
-    assert "go_test" not in tool_names
-    assert "gofmt_files" not in tool_names
-    assert "golangci_lint" not in tool_names
-    # Removed tools
-    assert "run_command" not in tool_names
-    assert "run_web_search" not in tool_names
-
-
-def test_make_git_agent_go_matches_git_go_agent(tmpdir):
+def test_make_git_agent_go_matches_git_go_agent(agent_factory):
     """make_git_agent(language='go') should produce the same tool set as GitGoAgent."""
-    chat_model = ToolReadyFakeChatModel(messages=_message_stream("ok"))
-    workspace = Path(str(tmpdir))
-
-    go_agent = GitGoAgent(llm=chat_model, workspace=workspace)
-    factory_agent = make_git_agent(
-        llm=chat_model, language="go", workspace=workspace
-    )
+    go_agent = agent_factory(GitGoAgent)
+    factory_agent = agent_factory(make_git_agent, language="go")
 
     assert set(go_agent.tools.keys()) == set(factory_agent.tools.keys())
     assert go_agent.safe_codes == factory_agent.safe_codes
 
 
-def test_make_git_agent_generic(tmpdir):
-    """make_git_agent(language='generic') should produce a git-only agent."""
-    chat_model = ToolReadyFakeChatModel(messages=_message_stream("ok"))
-    workspace = Path(str(tmpdir))
-
-    agent = make_git_agent(
-        llm=chat_model, language="generic", workspace=workspace
-    )
+@pytest.mark.parametrize("language", ["generic", "rust"])
+def test_make_git_agent_language_fallback(agent_factory, language):
+    """Generic and unknown languages both produce a Git-only agent."""
+    agent = agent_factory(make_git_agent, language=language)
 
     tool_names = set(agent.tools.keys())
     assert "git_status" in tool_names
     assert "go_build" not in tool_names
 
 
-def test_make_git_agent_unknown_language_defaults_to_git_only(tmpdir):
-    """make_git_agent with an unknown language should fall back to git-only."""
-    chat_model = ToolReadyFakeChatModel(messages=_message_stream("ok"))
-    workspace = Path(str(tmpdir))
-
-    agent = make_git_agent(llm=chat_model, language="rust", workspace=workspace)
-
-    tool_names = set(agent.tools.keys())
-    # Should have git tools
-    assert "git_status" in tool_names
-    # Should not have language-specific tools
-    assert "go_build" not in tool_names
-
-
-def test_make_git_agent_explicit_tools_bypass_registry(tmpdir):
+def test_make_git_agent_explicit_tools_bypass_registry(agent_factory):
     """make_git_agent accepts explicit tools/prompt/safe_codes, bypassing registry."""
-    chat_model = ToolReadyFakeChatModel(messages=_message_stream("ok"))
-    workspace = Path(str(tmpdir))
-
-    # Create agent with explicit safe codes for a hypothetical "adoc" language
-    agent = make_git_agent(
-        llm=chat_model,
+    agent = agent_factory(
+        make_git_agent,
         language="adoc",  # Not in registry
         safe_codes=["asciidoc", "podman"],  # Explicit safe codes
-        workspace=workspace,
     )
 
     # Should be git-only (adoc not in registry), but with custom safe codes
