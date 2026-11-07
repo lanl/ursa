@@ -699,7 +699,7 @@ async def test_runtimes_share_manager_without_agent_id_or_ownership_collision(
 
 
 async def test_runtime_resolves_selected_keyring_in_host_and_skips_unused(
-    runtime_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runtime_factory, tmp_path: Path, fake_keyring
 ) -> None:
     resolution_pid = tmp_path / "secret-resolution.pid"
 
@@ -708,10 +708,7 @@ async def test_runtime_resolves_selected_keyring_in_host_and_skips_unused(
         resolution_pid.write_text(str(os.getpid()))
         return "selected-secret"
 
-    monkeypatch.setattr(
-        "ursa.util.secrets.get_keyring",
-        lambda: SimpleNamespace(get_password=get_password),
-    )
+    fake_keyring(get_password)
     runtime, manager = runtime_factory(
         fork=True,
         inference_providers={

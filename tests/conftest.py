@@ -70,6 +70,19 @@ def _load_dotenv():
     load_dotenv()
 
 
+@pytest.fixture
+def fake_keyring(monkeypatch):
+    """Install a password lookup without accessing the system keyring."""
+
+    def install(get_password):
+        monkeypatch.setattr(
+            "ursa.util.secrets.get_keyring",
+            lambda: SimpleNamespace(get_password=get_password),
+        )
+
+    return install
+
+
 def _fake_structured(schema):
     if isinstance(schema, type) and issubclass(schema, BaseModel):
         if "steps" in schema.model_fields:

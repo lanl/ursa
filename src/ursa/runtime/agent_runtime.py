@@ -1117,9 +1117,7 @@ class AgentRuntime:
         self, path: str
     ) -> tuple[_BufferedAgentMessage, ...]:
         """Drain arrivals together so one busy turn cannot hide newer input."""
-        buffered = self._buffered_agent_messages.pop(path, None)
-        if not buffered:
-            return ()
+        buffered = self._buffered_agent_messages.pop(path, None) or ()
         for item in buffered:
             self._complete_in_band_delivery(item)
         return tuple(buffered)

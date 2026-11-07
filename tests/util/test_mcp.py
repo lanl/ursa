@@ -51,15 +51,12 @@ def test_start_mcp_client_adds_httpx_factory(
 
 
 def test_mcp_header_resolves_keyring_secret_template(
-    monkeypatch, captured_connections
+    fake_keyring, captured_connections
 ):
-    monkeypatch.setattr(
-        "ursa.util.secrets.get_keyring",
-        lambda: SimpleNamespace(
-            get_password=lambda service, username: (
-                "token" if (service, username) == ("ursa", "demo") else None
-            )
-        ),
+    fake_keyring(
+        lambda service, username: (
+            "token" if (service, username) == ("ursa", "demo") else None
+        )
     )
 
     mcp_mod.start_mcp_client({
