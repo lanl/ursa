@@ -60,6 +60,23 @@ def _resolve_args(parser, args):
     return merge_ursa_config(cfg, env_overrides=env_overrides).resolve()
 
 
+def _resolve_model_overrides(parser, config, workspace, model):
+    """Apply the same explicit CLI model/workspace overrides to a config file."""
+    return _resolve_args(
+        parser,
+        [
+            "--config",
+            str(config),
+            "--emb_model.model",
+            "openai:text-embedding-3-large",
+            "--workspace",
+            str(workspace),
+            "--llm_model.model",
+            model,
+        ],
+    )
+
+
 def test_cli_warns_about_legacy_unnamed_checkpoint(
     monkeypatch, tmp_path, capsys
 ):
@@ -398,27 +415,21 @@ def test_file_config_resolution_preserves_tmp_workspace_owner(tmp_path):
     assert config._temp_workspace.name == str(config.workspace)
 
 
-def test_cli_applies_chat_only_openai_defaults_to_llm_model():
-    parser = build_parser()
-    config = _resolve_args(parser, [])
-
-    assert isinstance(config.llm_model, ChatModelConfig)
-    assert config.llm_model.kwargs["use_responses_api"] is True
-
-
-def test_cli_does_not_apply_chat_only_openai_defaults_to_emb_model():
-    parser = build_parser()
-    config = _resolve_args(
-        parser,
-        [
-            "--emb_model.model",
-            "openai:text-embedding-3-large",
-        ],
+@pytest.mark.parametrize("embedding", [False, True])
+def test_cli_reserves_chat_only_openai_defaults_for_chat_models(embedding):
+    args = (
+        ["--emb_model.model", "openai:text-embedding-3-large"]
+        if embedding
+        else []
     )
-
-    assert isinstance(config.emb_model, EmbModelConfig)
-    assert not isinstance(config.emb_model, ChatModelConfig)
-    assert "use_responses_api" not in config.emb_model.kwargs
+    config = _resolve_args(build_parser(), args)
+    if embedding:
+        assert isinstance(config.emb_model, EmbModelConfig)
+        assert not isinstance(config.emb_model, ChatModelConfig)
+        assert "use_responses_api" not in config.emb_model.kwargs
+    else:
+        assert isinstance(config.llm_model, ChatModelConfig)
+        assert config.llm_model.kwargs["use_responses_api"] is True
 
 
 def test_print_config_yaml_round_trip(tmp_path):
@@ -491,18 +502,8 @@ def test_config_env_cli_precedence(tmp_path, monkeypatch):
 
     cli_workspace = tmp_path / "cli-workspace"
     cli_workspace.mkdir()
-    config_cli = _resolve_args(
-        parser,
-        [
-            "--config",
-            str(cfg_path),
-            "--emb_model.model",
-            "openai:text-embedding-3-large",
-            "--workspace",
-            str(cli_workspace),
-            "--llm_model.model",
-            "cli-model",
-        ],
+    config_cli = _resolve_model_overrides(
+        parser, cfg_path, cli_workspace, "cli-model"
     )
     assert config_cli.workspace == cli_workspace
     assert config_cli.llm_model.model == "cli-model"
@@ -601,18 +602,8 @@ def test_config_file_and_cli_are_merged(tmp_path):
 
     cli_workspace = tmp_path / "cli-workspace"
     parser = build_parser()
-    config = _resolve_args(
-        parser,
-        [
-            "--config",
-            str(cfg_path),
-            "--emb_model.model",
-            "openai:text-embedding-3-large",
-            "--workspace",
-            str(cli_workspace),
-            "--llm_model.model",
-            "openai:gpt-5-nano",
-        ],
+    config = _resolve_model_overrides(
+        parser, cfg_path, cli_workspace, "openai:gpt-5-nano"
     )
 
     assert config.workspace == cli_workspace
