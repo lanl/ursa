@@ -40,59 +40,26 @@ def add_group_subcommands(subparsers) -> None:
         dest="subcommand",
     )
 
-    create_group_parser = ArgumentParser()
-    create_group_parser.add_argument(
-        "group_name", type=str, help="Name of the group"
-    )
-    create_group_parser.add_argument(
-        "config_file",
-        type=Path,
-        help="Path to a YAML config file containing allowed_base_urls",
-    )
-    subparsers.add_subcommand(
-        "create-group",
-        create_group_parser,
-        help="Create a new URSA agent group from a YAML config file",
-        dest="subcommand",
-    )
-
-    delete_group_parser = ArgumentParser()
-    delete_group_parser.add_argument(
-        "group_name", type=str, help="Name of the group"
-    )
-    subparsers.add_subcommand(
-        "delete-group",
-        delete_group_parser,
-        help="Delete an existing URSA agent group",
-        dest="subcommand",
-    )
-
-    show_group_parser = ArgumentParser()
-    show_group_parser.add_argument(
-        "group_name", type=str, help="Name of the group"
-    )
-    subparsers.add_subcommand(
-        "show-group",
-        show_group_parser,
-        help="Show details about a URSA agent group",
-        dest="subcommand",
-    )
-
-    update_group_parser = ArgumentParser()
-    update_group_parser.add_argument(
-        "group_name", type=str, help="Name of the group"
-    )
-    update_group_parser.add_argument(
-        "config_file",
-        type=Path,
-        help="Path to a YAML config file containing allowed_base_urls",
-    )
-    subparsers.add_subcommand(
-        "update-group",
-        update_group_parser,
-        help="Update an existing URSA agent group config",
-        dest="subcommand",
-    )
+    for command, help_text in (
+        (
+            "create-group",
+            "Create a new URSA agent group from a YAML config file",
+        ),
+        ("delete-group", "Delete an existing URSA agent group"),
+        ("show-group", "Show details about a URSA agent group"),
+        ("update-group", "Update an existing URSA agent group config"),
+    ):
+        parser = ArgumentParser()
+        parser.add_argument("group_name", type=str, help="Name of the group")
+        if command in {"create-group", "update-group"}:
+            parser.add_argument(
+                "config_file",
+                type=Path,
+                help="Path to a YAML config file containing allowed_base_urls",
+            )
+        subparsers.add_subcommand(
+            command, parser, help=help_text, dest="subcommand"
+        )
 
 
 def validate_group_config(config_file: Path) -> dict:

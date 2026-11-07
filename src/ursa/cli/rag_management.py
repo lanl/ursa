@@ -31,22 +31,27 @@ RAG_METADATA_COMMANDS = {
 RAG_COMMANDS = {"rag-ingest", "rag-query", *RAG_METADATA_COMMANDS}
 
 
-def add_rag_subcommands(subparsers) -> None:
-    from jsonargparse import ArgumentParser
-
-    ingest = ArgumentParser()
-    ingest.add_argument("source", help="File or directory to ingest")
-    ingest.add_argument(
+def _add_rag_run_options(parser) -> None:
+    """Arguments shared by RAG ingestion and query commands."""
+    parser.add_argument(
         "--config",
         default=None,
         type=Path,
         help="Path to a YAML/JSON file with URSA model and embedding configuration.",
     )
-    ingest.add_argument(
+    parser.add_argument(
         "--name", required=True, help="Persistent RAG agent name"
     )
-    ingest.add_argument("--group", default="default", help="RAG group name")
-    ingest.add_argument("--return-k", type=int, default=10)
+    parser.add_argument("--group", default="default", help="RAG group name")
+    parser.add_argument("--return-k", type=int, default=10)
+
+
+def add_rag_subcommands(subparsers) -> None:
+    from jsonargparse import ArgumentParser
+
+    ingest = ArgumentParser()
+    ingest.add_argument("source", help="File or directory to ingest")
+    _add_rag_run_options(ingest)
     ingest.add_argument("--chunk-size", type=int, default=1000)
     ingest.add_argument("--chunk-overlap", type=int, default=200)
     subparsers.add_subcommand(
@@ -60,17 +65,7 @@ def add_rag_subcommands(subparsers) -> None:
     query.add_argument(
         "query", nargs="*", help="Query text. Omit for REPL mode."
     )
-    query.add_argument(
-        "--config",
-        default=None,
-        type=Path,
-        help="Path to a YAML/JSON file with URSA model and embedding configuration.",
-    )
-    query.add_argument(
-        "--name", required=True, help="Persistent RAG agent name"
-    )
-    query.add_argument("--group", default="default", help="RAG group name")
-    query.add_argument("--return-k", type=int, default=10)
+    _add_rag_run_options(query)
     subparsers.add_subcommand(
         "rag-query",
         query,
@@ -78,44 +73,22 @@ def add_rag_subcommands(subparsers) -> None:
         dest="subcommand",
     )
 
-    list_cmd = ArgumentParser()
-    list_cmd.add_argument("--group", default="default", help="RAG group name")
-    subparsers.add_subcommand(
-        "list-rag-agents",
-        list_cmd,
-        help="List persistent RAG agents in a group.",
-        dest="subcommand",
-    )
-
-    show = ArgumentParser()
-    show.add_argument("name", help="Persistent RAG agent name")
-    show.add_argument("--group", default="default", help="RAG group name")
-    subparsers.add_subcommand(
-        "show-rag-agent",
-        show,
-        help="Show details for a persistent RAG agent.",
-        dest="subcommand",
-    )
-
-    delete = ArgumentParser()
-    delete.add_argument("name", help="Persistent RAG agent name")
-    delete.add_argument("--group", default="default", help="RAG group name")
-    subparsers.add_subcommand(
-        "delete-rag-agent",
-        delete,
-        help="Delete a persistent RAG agent.",
-        dest="subcommand",
-    )
-
-    save = ArgumentParser()
-    save.add_argument("name", help="Persistent RAG agent name")
-    save.add_argument("--group", default="default", help="RAG group name")
-    subparsers.add_subcommand(
-        "save-rag-agent",
-        save,
-        help="Save a timestamped copy of a persistent RAG agent.",
-        dest="subcommand",
-    )
+    for command, help_text in (
+        ("list-rag-agents", "List persistent RAG agents in a group."),
+        ("show-rag-agent", "Show details for a persistent RAG agent."),
+        ("delete-rag-agent", "Delete a persistent RAG agent."),
+        (
+            "save-rag-agent",
+            "Save a timestamped copy of a persistent RAG agent.",
+        ),
+    ):
+        parser = ArgumentParser()
+        if command != "list-rag-agents":
+            parser.add_argument("name", help="Persistent RAG agent name")
+        parser.add_argument("--group", default="default", help="RAG group name")
+        subparsers.add_subcommand(
+            command, parser, help=help_text, dest="subcommand"
+        )
 
 
 def _model_config_from_namespace(
