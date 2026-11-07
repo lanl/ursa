@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -84,25 +85,19 @@ def _has_delta_channel_history(
     )
 
 
-def _prune_rows(conn: sqlite3.Connection, thread_id: str) -> tuple[int, int]:
-    before_checkpoints = conn.execute(
-        "SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?", (thread_id,)
-    ).fetchone()[0]
-    before_writes = conn.execute(
-        "SELECT COUNT(*) FROM writes WHERE thread_id = ?", (thread_id,)
-    ).fetchone()[0]
-
-    conn.execute(
+def _prune_statements(thread_id: str) -> Iterator[tuple[Any, ...]]:
+    """Yield the shared retention SQL lazily, in execution order."""
+    yield (
         f"""
         CREATE TEMP TABLE IF NOT EXISTS {_KEEP_TABLE} (
             checkpoint_ns TEXT NOT NULL,
             checkpoint_id TEXT NOT NULL,
             PRIMARY KEY (checkpoint_ns, checkpoint_id)
         )
-        """
+        """,
     )
-    conn.execute(f"DELETE FROM {_KEEP_TABLE}")
-    conn.execute(
+    yield (f"DELETE FROM {_KEEP_TABLE}",)
+    yield (
         f"""
         INSERT INTO {_KEEP_TABLE} (checkpoint_ns, checkpoint_id)
         SELECT checkpoint_ns, MAX(checkpoint_id)
@@ -112,7 +107,7 @@ def _prune_rows(conn: sqlite3.Connection, thread_id: str) -> tuple[int, int]:
         """,
         (thread_id,),
     )
-    conn.execute(
+    yield (
         f"""
         DELETE FROM writes
         WHERE thread_id = ?
@@ -125,7 +120,7 @@ def _prune_rows(conn: sqlite3.Connection, thread_id: str) -> tuple[int, int]:
         """,
         (thread_id,),
     )
-    conn.execute(
+    yield (
         f"""
         DELETE FROM checkpoints
         WHERE thread_id = ?
@@ -138,7 +133,7 @@ def _prune_rows(conn: sqlite3.Connection, thread_id: str) -> tuple[int, int]:
         """,
         (thread_id,),
     )
-    conn.execute(
+    yield (
         """
         UPDATE checkpoints
         SET parent_checkpoint_id = NULL
@@ -146,7 +141,19 @@ def _prune_rows(conn: sqlite3.Connection, thread_id: str) -> tuple[int, int]:
         """,
         (thread_id,),
     )
-    conn.execute(f"DROP TABLE {_KEEP_TABLE}")
+    yield (f"DROP TABLE {_KEEP_TABLE}",)
+
+
+def _prune_rows(conn: sqlite3.Connection, thread_id: str) -> tuple[int, int]:
+    before_checkpoints = conn.execute(
+        "SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?", (thread_id,)
+    ).fetchone()[0]
+    before_writes = conn.execute(
+        "SELECT COUNT(*) FROM writes WHERE thread_id = ?", (thread_id,)
+    ).fetchone()[0]
+
+    for statement in _prune_statements(thread_id):
+        conn.execute(*statement)
 
     after_checkpoints = conn.execute(
         "SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?", (thread_id,)
@@ -258,61 +265,8 @@ async def _aprune_rows(
     before_checkpoints = await _acount(saver, "checkpoints", thread_id)
     before_writes = await _acount(saver, "writes", thread_id)
 
-    await saver.conn.execute(
-        f"""
-        CREATE TEMP TABLE IF NOT EXISTS {_KEEP_TABLE} (
-            checkpoint_ns TEXT NOT NULL,
-            checkpoint_id TEXT NOT NULL,
-            PRIMARY KEY (checkpoint_ns, checkpoint_id)
-        )
-        """
-    )
-    await saver.conn.execute(f"DELETE FROM {_KEEP_TABLE}")
-    await saver.conn.execute(
-        f"""
-        INSERT INTO {_KEEP_TABLE} (checkpoint_ns, checkpoint_id)
-        SELECT checkpoint_ns, MAX(checkpoint_id)
-        FROM checkpoints
-        WHERE thread_id = ?
-        GROUP BY checkpoint_ns
-        """,
-        (thread_id,),
-    )
-    await saver.conn.execute(
-        f"""
-        DELETE FROM writes
-        WHERE thread_id = ?
-          AND NOT EXISTS (
-              SELECT 1
-              FROM {_KEEP_TABLE} AS keep
-              WHERE keep.checkpoint_ns = writes.checkpoint_ns
-                AND keep.checkpoint_id = writes.checkpoint_id
-          )
-        """,
-        (thread_id,),
-    )
-    await saver.conn.execute(
-        f"""
-        DELETE FROM checkpoints
-        WHERE thread_id = ?
-          AND NOT EXISTS (
-              SELECT 1
-              FROM {_KEEP_TABLE} AS keep
-              WHERE keep.checkpoint_ns = checkpoints.checkpoint_ns
-                AND keep.checkpoint_id = checkpoints.checkpoint_id
-          )
-        """,
-        (thread_id,),
-    )
-    await saver.conn.execute(
-        """
-        UPDATE checkpoints
-        SET parent_checkpoint_id = NULL
-        WHERE thread_id = ?
-        """,
-        (thread_id,),
-    )
-    await saver.conn.execute(f"DROP TABLE {_KEEP_TABLE}")
+    for statement in _prune_statements(thread_id):
+        await saver.conn.execute(*statement)
 
     after_checkpoints = await _acount(saver, "checkpoints", thread_id)
     after_writes = await _acount(saver, "writes", thread_id)
