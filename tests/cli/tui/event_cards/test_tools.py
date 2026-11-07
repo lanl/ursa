@@ -2,24 +2,20 @@ import json
 
 import pytest
 from langchain_core.messages import ToolMessage
-from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
 from tests.cli._app_helpers import (
     assert_eventually,
     emit_tool_start,
-    make_runtime,
     static_text,
     wait_for,
 )
-from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import (
     AgentToolCard,
     CoordinationCard,
     ToolCallCard,
 )
 from ursa.cli.tui.event_handler import TextualEventHandler
-from ursa.cli.tui.turn import Turn
 
 
 async def test_default_tool_card_switches_from_input_to_output(app, event_turn):
@@ -181,9 +177,10 @@ async def test_agent_message_card_summarizes_broadcast_results(app, event_turn):
         )
 
 
-async def test_wait_card_renders_batched_agent_messages_as_plain_text(tmp_path):
+async def test_wait_card_renders_batched_agent_messages_as_plain_text(
+    app, event_turn
+):
     """Bracketed delivery JSON is content, never Textual markup."""
-    app = UrsaTextualApp(make_runtime(tmp_path))
     output = (
         "Received 2 messages while waiting. Each entry retains its sender, "
         "recipient, and exact content:\n"
@@ -193,9 +190,7 @@ async def test_wait_card_renders_batched_agent_messages_as_plain_text(tmp_path):
         '"content": "SETUP ACK: identity p20"}]'
     )
 
-    async with app.run_test(size=(125, 24)) as pilot:
-        turn = Turn("coordinate", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+    async with event_turn("coordinate", size=(125, 24)) as (pilot, turn):
         handler = TextualEventHandler(app, turn)
         await emit_tool_start(
             handler, "wait_for", "batched-wait", target=["root/p08", "root/p20"]

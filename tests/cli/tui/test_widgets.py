@@ -337,7 +337,7 @@ async def test_newline_shortcuts_add_a_prompt_newline(app, key):
     ("kitty_keyboard", "expected"),
     [(True, "shift+enter"), (False, "ctrl+j")],
 )
-def test_newline_key_matches_keyboard_protocol(
+def test_keyboard_protocol_selects_newline_key_and_keymap_hint(
     tmp_path, monkeypatch, kitty_keyboard, expected
 ):
     monkeypatch.setattr(
@@ -346,6 +346,10 @@ def test_newline_key_matches_keyboard_protocol(
     app = UrsaTextualApp(make_runtime(tmp_path))
 
     assert app.preferred_newline_key == expected
+    if kitty_keyboard:
+        keymap = app._keymap_markdown()
+        assert "Kitty keyboard support expected" in keymap
+        assert "may not work" not in keymap
 
 
 async def test_prompt_has_markdown_highlighting_paste_undo_and_redo(app):
@@ -2550,18 +2554,6 @@ def test_command_details_and_keymap_come_from_live_bindings(
         "Open diagnostics",
     ):
         assert expected in keymap
-
-
-def test_keymap_omits_compatibility_warning_when_kitty_is_expected(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setattr(crossplatform, "expects_kitty_keyboard", lambda: True)
-    app = UrsaTextualApp(make_runtime(tmp_path))
-
-    keymap = app._keymap_markdown()
-
-    assert "Kitty keyboard support expected" in keymap
-    assert "may not work" not in keymap
 
 
 def test_hotlist_mount_survives_absent_children():
