@@ -220,30 +220,16 @@ def test_d1_unavailable_extra_warns_instead_of_silence():
 
 def test_d2_two_endpoints_route_independently():
     body = textwrap.dedent("""
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-            OTLPSpanExporter,
+        from tests.observability.test_otel_export import (
+            RecordingExporter, _EXPORTERS,
         )
-        from opentelemetry.sdk.trace.export import SpanExportResult
-
-        exporters = []
-
-        class Rec(OTLPSpanExporter):
-            def __init__(self, *a, **k):
-                super().__init__(*a, **k)
-                self.captured = []
-                exporters.append(self)
-
-            def export(self, spans):
-                self.captured.extend(spans)
-                return SpanExportResult.SUCCESS
-
-        timing.OTLPSpanExporter = Rec
+        timing.OTLPSpanExporter = RecordingExporter
         t = timing.Telemetry(enable=True, output_dir="/tmp/unused")
         t._save_otel(payload, "http://127.0.0.1:11111/v1/traces", None)
         t._save_otel(payload, "http://127.0.0.1:22222/v1/traces", None)
         import time
         time.sleep(0.2)
-        print(json.dumps([len(e.captured) for e in exporters]))
+        print(json.dumps([len(e.captured) for e in _EXPORTERS]))
     """)
     proc = _run_subprocess("", body)
     assert proc.returncode == 0, proc.stderr
@@ -330,33 +316,32 @@ def test_root_export_is_flushed_with_run_timestamps_and_no_extra_spans():
     )
 
 
-def test_t2_child_span_per_llm_event_within_root():
+@pytest.mark.parametrize("offsets", [[(1.0, 2.0)], [(1.0, 2.0), (2.5, 4.0)]])
+def test_t2_child_spans_preserve_timing_attributes_and_parentage(offsets):
     base = _epoch(_T2_START)
     events = [
-        _event(t_start=base + 1.0, t_end=base + 2.0),
-        _event(t_start=base + 2.5, t_end=base + 4.0),
+        _event(t_start=base + start, t_end=base + end) for start, end in offsets
     ]
     telemetry = _telemetry()
     result = _export(telemetry, _payload_with_events(events))
 
     captured = _EXPORTERS[-1].captured
-    assert len(captured) == 3, (
-        f"expected 1 root + 2 children, got {len(captured)}"
+    assert len(captured) == 1 + len(events), (
+        f"expected 1 root + {len(events)} children, got {len(captured)}"
     )
     roots = [s for s in captured if s.parent is None]
     assert len(roots) == 1, "expected exactly one root span"
     root = roots[0]
     children = [s for s in captured if s.parent is not None]
+    assert len(children) == len(events)
     assert all(c.parent.span_id == root.context.span_id for c in children), (
         "children are not parented to the run root span"
     )
     assert sorted(c.start_time for c in children) == [
-        int((base + 1.0) * 1_000_000_000),
-        int((base + 2.5) * 1_000_000_000),
+        int((base + start) * 1_000_000_000) for start, _ in offsets
     ]
     assert sorted(c.end_time for c in children) == [
-        int((base + 2.0) * 1_000_000_000),
-        int((base + 4.0) * 1_000_000_000),
+        int((base + end) * 1_000_000_000) for _, end in offsets
     ]
     for child in children:
         assert (
@@ -365,29 +350,16 @@ def test_t2_child_span_per_llm_event_within_root():
             <= child.end_time
             <= root.end_time
         ), "child span falls outside the root span interval"
-    assert result["span_count"] == 3
-
-
-def test_t2_child_attributes_and_kind_follow_genai_semconv():
-    base = _epoch(_T2_START)
-    telemetry = _telemetry()
-    _export(
-        telemetry,
-        _payload_with_events([_event(t_start=base + 1.0, t_end=base + 2.0)]),
-    )
-
-    children = [s for s in _EXPORTERS[-1].captured if s.parent is not None]
-    assert len(children) == 1
-    child = children[0]
-    assert child.kind is SpanKind.CLIENT
-    assert child.name == "chat test-model"
-    attrs = dict(child.attributes)
-    assert attrs["gen_ai.operation.name"] == "chat"
-    assert attrs["gen_ai.request.model"] == "test-model"
-    assert attrs["gen_ai.usage.input_tokens"] == 11
-    assert attrs["gen_ai.usage.output_tokens"] == 7
-    assert attrs["ursa.langgraph.node"] == "agent_node"
-    assert attrs["ursa.langgraph.step"] == 3
+        assert child.kind is SpanKind.CLIENT
+        assert child.name == "chat test-model"
+        attrs = dict(child.attributes)
+        assert attrs["gen_ai.operation.name"] == "chat"
+        assert attrs["gen_ai.request.model"] == "test-model"
+        assert attrs["gen_ai.usage.input_tokens"] == 11
+        assert attrs["gen_ai.usage.output_tokens"] == 7
+        assert attrs["ursa.langgraph.node"] == "agent_node"
+        assert attrs["ursa.langgraph.step"] == 3
+    assert result["span_count"] == 1 + len(events)
 
 
 def test_t2_error_event_child_has_error_status():
