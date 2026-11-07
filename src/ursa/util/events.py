@@ -184,26 +184,18 @@ class EventLoggingHandler(BaseCallbackHandler):
 
     def _format_message(self, name: str, data: dict[str, Any]) -> str:
         parts = [f"event={json.dumps(name)}"]
-        for key in ("agent", "tool", "name", "stage", "phase", "message"):
+        summary_keys = ("agent", "tool", "name", "stage", "phase", "message")
+        for key in summary_keys:
             value = data.get(key)
             if value in (None, ""):
                 continue
             parts.append(f"{key}={json.dumps(str(value), ensure_ascii=False)}")
 
+        excluded_keys = {*summary_keys, "artifact", "artifacts"}
         extras = {
             key: value
             for key, value in data.items()
-            if key
-            not in {
-                "agent",
-                "artifact",
-                "artifacts",
-                "tool",
-                "name",
-                "stage",
-                "phase",
-                "message",
-            }
+            if key not in excluded_keys
         }
         artifacts = event_artifacts(data)
         if artifacts:
