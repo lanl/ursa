@@ -89,6 +89,31 @@ def make_agent(chat_model, tmpdir):
     return create
 
 
+@pytest.fixture
+def review_capture(monkeypatch):
+    """Capture review prompts and model inputs with a successful assessment."""
+    captured = SimpleNamespace(requests=[], messages=[])
+
+    def fake_get_review_prompt(user_request: str) -> str:
+        captured.requests.append(user_request)
+        return f"REVIEW::{user_request}"
+
+    def fake_invoke_structured(*args, **kwargs):
+        captured.messages.append(args[2])
+        return ReviewAssessment(is_complete=True, reason="done")
+
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.get_review_prompt",
+        fake_get_review_prompt,
+    )
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.invoke_structured",
+        fake_invoke_structured,
+    )
+
+    return captured
+
+
 def test_execution_agent_captures_current_invoke_request(make_agent):
     execution_agent = make_agent()
 
@@ -110,27 +135,8 @@ def test_execution_agent_captures_current_invoke_request(make_agent):
 
 
 def test_execution_agent_review_uses_current_invoke_request(
-    make_agent, monkeypatch
+    make_agent, review_capture
 ):
-    captured = {}
-
-    def fake_get_review_prompt(user_request: str) -> str:
-        captured["user_request"] = user_request
-        return f"REVIEW::{user_request}"
-
-    def fake_invoke_structured(*args, **kwargs):
-        captured["review_messages"] = args[2]
-        return ReviewAssessment(is_complete=True, reason="done")
-
-    monkeypatch.setattr(
-        "ursa.agents.execution_agent.get_review_prompt",
-        fake_get_review_prompt,
-    )
-    monkeypatch.setattr(
-        "ursa.agents.execution_agent.invoke_structured",
-        fake_invoke_structured,
-    )
-
     execution_agent = make_agent()
     result = execution_agent.review_work({
         "messages": [
@@ -143,34 +149,16 @@ def test_execution_agent_review_uses_current_invoke_request(
         "symlinkdir": {},
     })
 
-    assert captured["user_request"] == "new invocation request"
-    assert captured["review_messages"][-1].content == (
+    assert review_capture.requests[-1] == "new invocation request"
+    assert review_capture.messages[-1][-1].content == (
         "REVIEW::new invocation request"
     )
     assert result["review"].is_complete is True
 
 
 def test_execution_agent_persistent_thread_reviews_latest_invoke_request(
-    make_agent, monkeypatch, tmpdir: Path
+    make_agent, review_capture, tmpdir: Path
 ):
-    reviewed_requests = []
-
-    def fake_get_review_prompt(user_request: str) -> str:
-        reviewed_requests.append(user_request)
-        return f"REVIEW::{user_request}"
-
-    def fake_invoke_structured(*args, **kwargs):
-        return ReviewAssessment(is_complete=True, reason="done")
-
-    monkeypatch.setattr(
-        "ursa.agents.execution_agent.get_review_prompt",
-        fake_get_review_prompt,
-    )
-    monkeypatch.setattr(
-        "ursa.agents.execution_agent.invoke_structured",
-        fake_invoke_structured,
-    )
-
     execution_agent = make_agent(
         checkpointer=Checkpointer.from_workspace(Path(tmpdir) / "checkpoints")
     )
@@ -178,7 +166,7 @@ def test_execution_agent_persistent_thread_reviews_latest_invoke_request(
         execution_agent.invoke("first persisted request")
         execution_agent.invoke("second persisted request")
 
-    assert reviewed_requests == [
+    assert review_capture.requests == [
         "first persisted request",
         "second persisted request",
     ]
