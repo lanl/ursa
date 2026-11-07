@@ -111,16 +111,73 @@ def compute_attribution(payload: dict[str, Any]) -> dict[str, float]:
     }
 
 
-def _extract_context(payload: dict[str, Any]) -> dict[str, str]:
-    """Return a normalized context dict with agent/thread/run_id/started/ended."""
-    ctx = payload.get("context") or {}
-    return {
-        "agent": str(ctx.get("agent") or ""),
-        "thread_id": str(ctx.get("thread_id") or ""),
-        "run_id": str(ctx.get("run_id") or ""),
-        "started_at": str(ctx.get("started_at") or ""),
-        "ended_at": str(ctx.get("ended_at") or ""),
-    }
+def _chart_context(context):
+    """Normalize chart labels while retaining the original context read order."""
+    ctx = context or {}
+    agent = str(ctx.get("agent") or "")
+    thread = str(ctx.get("thread_id") or "")
+    run_id = str(ctx.get("run_id") or "")
+    started = _fmt_iso_pretty(str(ctx.get("started_at") or ""))
+    ended = _fmt_iso_pretty(str(ctx.get("ended_at") or ""))
+
+    header = " : ".join([p for p in [agent, thread] if p]) or ""
+    return header, run_id, started, ended
+
+
+def _compact_chart_heading(fig, header, subtitle):
+    """Place a compact chart's heading without changing its axes."""
+    if header:
+        fig.text(0.5, _LAYOUT["header_y"], header, ha="center", va="top")
+        fig.text(
+            0.5,
+            _LAYOUT["subtitle_y"],
+            subtitle,
+            ha="center",
+            va="top",
+            fontsize="small",
+        )
+    else:
+        fig.text(
+            0.5, (_LAYOUT["header_y"] - 0.02), subtitle, ha="center", va="top"
+        )
+
+
+def _chart_footer(fig, run_id, started, ended, *, compact=True):
+    """Draw the run and timestamp rows using the chart's existing spacing."""
+    if run_id:
+        fig.text(
+            0.5,
+            _LAYOUT["footer1_y"] if compact else 0.10,
+            f"run_id: {run_id}",
+            ha="center",
+            va="center",
+            fontsize="x-small",
+        )
+    if started or ended:
+        fig.text(
+            0.5,
+            _LAYOUT["footer2_y"] if compact else 0.06,
+            f"{started} → {ended}",
+            ha="center",
+            va="center",
+            fontsize="x-small",
+        )
+
+
+def _agent_chart_captions(fig, title, footer_lines):
+    """Retain the shared title and stacked footer layout for agent charts."""
+    fig.suptitle(title, y=0.97)
+    y0 = 0.08
+    if footer_lines:
+        for i, line in enumerate(footer_lines):
+            fig.text(
+                0.5,
+                y0 + i * 0.035,
+                line,
+                ha="center",
+                va="center",
+                fontsize="x-small",
+            )
 
 
 def _fmt_iso_pretty(ts: str) -> str:
@@ -230,13 +287,7 @@ def plot_time_breakdown(
     overall = sum(values) or 1.0
 
     # ----- build header/footer text from context -----
-    ctx = context or {}
-    agent = str(ctx.get("agent") or "")
-    thread_id = str(ctx.get("thread_id") or "")
-    run_id = str(ctx.get("run_id") or "")
-    started = _fmt_iso_pretty(str(ctx.get("started_at") or ""))
-    ended = _fmt_iso_pretty(str(ctx.get("ended_at") or ""))
-    header = " : ".join([p for p in [agent, thread_id] if p]) or ""
+    header, run_id, started, ended = _chart_context(context)
     subtitle = title or f"Time Breakdown (total = {total:.3f}s)"
 
     if chart == "bar":
@@ -270,24 +321,7 @@ def plot_time_breakdown(
         else:
             fig.text(0.5, 0.945, subtitle, ha="center", va="top")
 
-        if run_id:
-            fig.text(
-                0.5,
-                0.10,
-                f"run_id: {run_id}",
-                ha="center",
-                va="center",
-                fontsize="x-small",
-            )
-        if started or ended:
-            fig.text(
-                0.5,
-                0.06,
-                f"{started} → {ended}",
-                ha="center",
-                va="center",
-                fontsize="x-small",
-            )
+        _chart_footer(fig, run_id, started, ended, compact=False)
 
         fig.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.02)
         plt.close(fig)
@@ -323,24 +357,7 @@ def plot_time_breakdown(
             va="top",
         )
 
-    if run_id:
-        fig.text(
-            0.5,
-            0.10,
-            f"run_id: {run_id}",
-            ha="center",
-            va="center",
-            fontsize="x-small",
-        )
-    if started or ended:
-        fig.text(
-            0.5,
-            0.06,
-            f"{started} → {ended}",
-            ha="center",
-            va="center",
-            fontsize="x-small",
-        )
+    _chart_footer(fig, run_id, started, ended, compact=False)
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
@@ -367,13 +384,7 @@ def plot_lollipop_time(
     values = [v for _, v in data]
 
     # ----- context header/footer -----
-    ctx = context or {}
-    agent = str(ctx.get("agent") or "")
-    thread_id = str(ctx.get("thread_id") or "")
-    run_id = str(ctx.get("run_id") or "")
-    started = _fmt_iso_pretty(str(ctx.get("started_at") or ""))
-    ended = _fmt_iso_pretty(str(ctx.get("ended_at") or ""))
-    header = " : ".join([p for p in [agent, thread_id] if p]) or ""
+    header, run_id, started, ended = _chart_context(context)
     subtitle = title or f"Time (seconds) by component (total = {total:.3f}s)"
 
     # --- explicit layout: one Axes, exact placement ---
@@ -404,20 +415,7 @@ def plot_lollipop_time(
     ax.tick_params(labelsize="small")
 
     # header/subtitle (figure text so they don't push the axes)
-    if header:
-        fig.text(0.5, _LAYOUT["header_y"], header, ha="center", va="top")
-        fig.text(
-            0.5,
-            _LAYOUT["subtitle_y"],
-            subtitle,
-            ha="center",
-            va="top",
-            fontsize="small",
-        )
-    else:
-        fig.text(
-            0.5, (_LAYOUT["header_y"] - 0.02), subtitle, ha="center", va="top"
-        )
+    _compact_chart_heading(fig, header, subtitle)
 
     # annotate dots
     for yi, val in zip(y, values):
@@ -438,24 +436,7 @@ def plot_lollipop_time(
             )
 
     # compact footers
-    if run_id:
-        fig.text(
-            0.5,
-            _LAYOUT["footer1_y"],
-            f"run_id: {run_id}",
-            ha="center",
-            va="center",
-            fontsize="x-small",
-        )
-    if started or ended:
-        fig.text(
-            0.5,
-            _LAYOUT["footer2_y"],
-            f"{started} → {ended}",
-            ha="center",
-            va="center",
-            fontsize="x-small",
-        )
+    _chart_footer(fig, run_id, started, ended)
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
@@ -543,14 +524,7 @@ def plot_token_totals_bar(
     labels = [lbl.replace("_", " ") for lbl in order]
     values = [int(totals.get(k, 0)) for k in order]
 
-    ctx = context or {}
-    agent = str(ctx.get("agent") or "")
-    thread = str(ctx.get("thread_id") or "")
-    run_id = str(ctx.get("run_id") or "")
-    started = _fmt_iso_pretty(str(ctx.get("started_at") or ""))
-    ended = _fmt_iso_pretty(str(ctx.get("ended_at") or ""))
-
-    header = " : ".join([p for p in [agent, thread] if p]) or ""
+    header, run_id, started, ended = _chart_context(context)
     subtitle = title or "LLM Token Totals by Category"
 
     fig_h = max(2.2, 0.35 * len(labels))
@@ -569,39 +543,9 @@ def plot_token_totals_bar(
     for yi, val in zip(y, values):
         ax.text(val, yi, f"  {val:,}", va="center", ha="left", fontsize="small")
 
-    if header:
-        fig.text(0.5, _LAYOUT["header_y"], header, ha="center", va="top")
-        fig.text(
-            0.5,
-            _LAYOUT["subtitle_y"],
-            subtitle,
-            ha="center",
-            va="top",
-            fontsize="small",
-        )
-    else:
-        fig.text(
-            0.5, (_LAYOUT["header_y"] - 0.02), subtitle, ha="center", va="top"
-        )
+    _compact_chart_heading(fig, header, subtitle)
 
-    if run_id:
-        fig.text(
-            0.5,
-            _LAYOUT["footer1_y"],
-            f"run_id: {run_id}",
-            ha="center",
-            va="center",
-            fontsize="x-small",
-        )
-    if started or ended:
-        fig.text(
-            0.5,
-            _LAYOUT["footer2_y"],
-            f"{started} → {ended}",
-            ha="center",
-            va="center",
-            fontsize="x-small",
-        )
+    _chart_footer(fig, run_id, started, ended)
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
@@ -654,14 +598,7 @@ def plot_token_kde(
         return out_path
 
     # Context
-    ctx = context or {}
-    agent = str(ctx.get("agent") or "")
-    thread = str(ctx.get("thread_id") or "")
-    run_id = str(ctx.get("run_id") or "")
-    started = _fmt_iso_pretty(str(ctx.get("started_at") or ""))
-    ended = _fmt_iso_pretty(str(ctx.get("ended_at") or ""))
-
-    header = " : ".join([p for p in [agent, thread] if p]) or ""
+    header, run_id, started, ended = _chart_context(context)
     subtitle = title or "LLM Token Usage — KDE"
 
     # Build x-grid across all series
@@ -708,39 +645,9 @@ def plot_token_kde(
     ax.tick_params(labelsize="small")
     ax.legend(loc="upper right", fontsize="x-small", frameon=False)
 
-    if header:
-        fig.text(0.5, _LAYOUT["header_y"], header, ha="center", va="top")
-        fig.text(
-            0.5,
-            _LAYOUT["subtitle_y"],
-            subtitle,
-            ha="center",
-            va="top",
-            fontsize="small",
-        )
-    else:
-        fig.text(
-            0.5, (_LAYOUT["header_y"] - 0.02), subtitle, ha="center", va="top"
-        )
+    _compact_chart_heading(fig, header, subtitle)
 
-    if run_id:
-        fig.text(
-            0.5,
-            _LAYOUT["footer1_y"],
-            f"run_id: {run_id}",
-            ha="center",
-            va="center",
-            fontsize="x-small",
-        )
-    if started or ended:
-        fig.text(
-            0.5,
-            _LAYOUT["footer2_y"],
-            f"{started} → {ended}",
-            ha="center",
-            va="center",
-            fontsize="x-small",
-        )
+    _chart_footer(fig, run_id, started, ended)
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
@@ -1187,18 +1094,7 @@ def plot_tokens_by_agent_stacked(
     )
 
     # Title / footer
-    fig.suptitle(title, y=0.97)
-    y0 = 0.08
-    if footer_lines:
-        for i, line in enumerate(footer_lines):
-            fig.text(
-                0.5,
-                y0 + i * 0.035,
-                line,
-                ha="center",
-                va="center",
-                fontsize="x-small",
-            )
+    _agent_chart_captions(fig, title, footer_lines)
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -1310,18 +1206,7 @@ def plot_tps_by_agent_grouped(
         fontsize="small",
     )
 
-    fig.suptitle(title, y=0.97)
-    y0 = 0.08
-    if footer_lines:
-        for i, line in enumerate(footer_lines):
-            fig.text(
-                0.5,
-                y0 + i * 0.035,
-                line,
-                ha="center",
-                va="center",
-                fontsize="x-small",
-            )
+    _agent_chart_captions(fig, title, footer_lines)
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
