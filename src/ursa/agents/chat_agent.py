@@ -75,14 +75,8 @@ def should_continue(state: ChatState) -> Literal["finish", "continue"]:
         A literal "finish" if the last message has no tool calls,
         otherwise "continue".
     """
-    messages = state["messages"]
-    last_message = messages[-1]
-    # If there is no tool call, then we finish
-    if not last_message.tool_calls:
-        return "finish"
-    # Otherwise if there is, we continue
-    else:
-        return "continue"
+    last_message = state["messages"][-1]
+    return "continue" if last_message.tool_calls else "finish"
 
 
 class ChatAgent(AgentWithTools, BasicChatAgent):

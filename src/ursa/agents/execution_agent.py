@@ -114,14 +114,8 @@ def should_continue(state: ExecutionState) -> Literal["review", "continue"]:
         A literal "review" if the last message has no tool calls,
         otherwise "continue".
     """
-    messages = state["messages"]
-    last_message = messages[-1]
-    # If there is no tool call, then review the work before finishing.
-    if not last_message.tool_calls:
-        return "review"
-    # Otherwise if there is, we continue.
-    else:
-        return "continue"
+    last_message = state["messages"][-1]
+    return "continue" if last_message.tool_calls else "review"
 
 
 def review_complete(state: ExecutionState) -> Literal["recap", "continue"]:
