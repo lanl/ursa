@@ -277,7 +277,7 @@ register(
     AgentEntry(
         spec=AgentSpec(
             agent_id="execution_agent",
-            display_name="Execution",
+            display_name="Execute",
             description="Tool-using agent that can write/edit files and run shell commands. Uses an internal review to push it to fully complete the users request. Best for complex tasks where a quick agentic run may miss details or stop early. Web/arXiv/OSTI search tools available when the dashboard is started with --use-web or agent_init.use_web=true.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
@@ -348,7 +348,7 @@ register(
     AgentEntry(
         spec=AgentSpec(
             agent_id="planning_executor_workflow",
-            display_name="Planning + Execution",
+            display_name="Plan - Execute",
             description="Runs a PlanningAgent to break the task into steps, then an ExecutionAgent to execute each step sequentially. Best for longer, complex tasks, especially with smaller or cheaper LLMs. Executor web/arXiv/OSTI search tools are opt-in via --use-web or agent_init.use_web=true.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
@@ -426,93 +426,93 @@ register(
     )
 )
 
-register(
-    AgentEntry(
-        spec=AgentSpec(
-            agent_id="hypothesize-plan-execute",
-            display_name="Hypothesize -> Plan -> Execute",
-            description="Uses one persistent building a hypothesis space and then doing planning/execution with native planner and executor subgraphs. Best for longer, complex tasks. Web/arXiv/OSTI tools are opt-in via --use-web or agent_init.use_web=true.",
-            capabilities=AgentCapabilities(
-                supports_streaming=False,
-                supports_cancellation=False,
-                produces_artifacts=True,
-            ),
-            parameters=[
-                _prompt_param(title="Task"),
-                # Planner and executor settings belong to the same agent runtime.
-                AgentParam(
-                    name="max_reflection_steps",
-                    title="Max reflection steps",
-                    description="Number of reflection passes for the planner.",
-                    type="integer",
-                    required=False,
-                    default=1,
-                    advanced=True,
-                    source=ParamSource.agent_init,
-                    target="max_reflection_steps",
-                    constraints=ParamConstraint(minimum=0, maximum=10),
-                ),
-                AgentParam(
-                    name="tokens_before_summarize",
-                    title="Tokens before summarize",
-                    description="Conversation token budget before context is summarized (executor).",
-                    type="integer",
-                    required=False,
-                    default=50000,
-                    advanced=True,
-                    source=ParamSource.agent_init,
-                    target="tokens_before_summarize",
-                    constraints=ParamConstraint(minimum=1000),
-                ),
-                AgentParam(
-                    name="messages_to_keep",
-                    title="Messages to keep",
-                    description="How many recent messages to keep verbatim when summarizing (executor).",
-                    type="integer",
-                    required=False,
-                    default=20,
-                    advanced=True,
-                    source=ParamSource.agent_init,
-                    target="messages_to_keep",
-                    constraints=ParamConstraint(minimum=0, maximum=200),
-                ),
-                AgentParam(
-                    name="safe_codes",
-                    title="Safe code types",
-                    description="Code languages that can be executed by the shell tool (executor).",
-                    type="array",
-                    required=False,
-                    default=["python", "julia"],
-                    advanced=True,
-                    source=ParamSource.agent_init,
-                    target="safe_codes",
-                ),
-                AgentParam(
-                    name="log_state",
-                    title="Log state",
-                    description="Emit extra internal state logs to stdout (executor).",
-                    type="boolean",
-                    required=False,
-                    default=False,
-                    advanced=True,
-                    source=ParamSource.agent_init,
-                    target="log_state",
-                ),
-            ]
-            + _common_llm_params()
-            + _runner_params(),
-            tags=["workflow", "planning", "tools"],
-        ),
-        build_adapter=_think_plan_execute_workflow_builder(),
-        build_inputs=lambda p: p["prompt"],
-    )
-)
+# register(
+#     AgentEntry(
+#         spec=AgentSpec(
+#             agent_id="hypothesize-plan-execute",
+#             display_name="Hypothesize - Plan - Execute",
+#             description="Uses one persistent building a hypothesis space and then doing planning/execution with native planner and executor subgraphs. Best for longer, complex tasks. Web/arXiv/OSTI tools are opt-in via --use-web or agent_init.use_web=true.",
+#             capabilities=AgentCapabilities(
+#                 supports_streaming=False,
+#                 supports_cancellation=False,
+#                 produces_artifacts=True,
+#             ),
+#             parameters=[
+#                 _prompt_param(title="Task"),
+#                 # Planner and executor settings belong to the same agent runtime.
+#                 AgentParam(
+#                     name="max_reflection_steps",
+#                     title="Max reflection steps",
+#                     description="Number of reflection passes for the planner.",
+#                     type="integer",
+#                     required=False,
+#                     default=1,
+#                     advanced=True,
+#                     source=ParamSource.agent_init,
+#                     target="max_reflection_steps",
+#                     constraints=ParamConstraint(minimum=0, maximum=10),
+#                 ),
+#                 AgentParam(
+#                     name="tokens_before_summarize",
+#                     title="Tokens before summarize",
+#                     description="Conversation token budget before context is summarized (executor).",
+#                     type="integer",
+#                     required=False,
+#                     default=50000,
+#                     advanced=True,
+#                     source=ParamSource.agent_init,
+#                     target="tokens_before_summarize",
+#                     constraints=ParamConstraint(minimum=1000),
+#                 ),
+#                 AgentParam(
+#                     name="messages_to_keep",
+#                     title="Messages to keep",
+#                     description="How many recent messages to keep verbatim when summarizing (executor).",
+#                     type="integer",
+#                     required=False,
+#                     default=20,
+#                     advanced=True,
+#                     source=ParamSource.agent_init,
+#                     target="messages_to_keep",
+#                     constraints=ParamConstraint(minimum=0, maximum=200),
+#                 ),
+#                 AgentParam(
+#                     name="safe_codes",
+#                     title="Safe code types",
+#                     description="Code languages that can be executed by the shell tool (executor).",
+#                     type="array",
+#                     required=False,
+#                     default=["python", "julia"],
+#                     advanced=True,
+#                     source=ParamSource.agent_init,
+#                     target="safe_codes",
+#                 ),
+#                 AgentParam(
+#                     name="log_state",
+#                     title="Log state",
+#                     description="Emit extra internal state logs to stdout (executor).",
+#                     type="boolean",
+#                     required=False,
+#                     default=False,
+#                     advanced=True,
+#                     source=ParamSource.agent_init,
+#                     target="log_state",
+#                 ),
+#             ]
+#             + _common_llm_params()
+#             + _runner_params(),
+#             tags=["workflow", "planning", "tools"],
+#         ),
+#         build_adapter=_think_plan_execute_workflow_builder(),
+#         build_inputs=lambda p: p["prompt"],
+#     )
+# )
 
 register(
     AgentEntry(
         spec=AgentSpec(
             agent_id="hypothesis_symposium_agent",
-            display_name="Hypothesize -> Investigate -> Symposium",
+            display_name="Hypothesize - Symposium",
             description="Generates competing hypotheses, investigates each in a parallel fan-out, then runs a multi-round cross-review symposium (individual member failures are contained, never fatal) before synthesizing findings and folding all new information back into a persistent hypothesis space. A single member failing an investigation branch or a symposium phase does not abort the run.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
@@ -570,7 +570,7 @@ register(
     AgentEntry(
         spec=AgentSpec(
             agent_id="hypothesis_orchestrator_agent",
-            display_name="Hypothesize -> Spawn Investigators -> Cross-Review",
+            display_name="Hypothesize - Spawn Investigators ",
             description="Generates competing hypotheses, then an orchestrator agent spawns one persistent, timestamped investigator sub-agent per hypothesis to gather evidence for/against it, then reuses those same agents to cross-review each other's findings before synthesizing a final verdict. A dynamic-topology alternative to the hypothesis symposium workflow (adaptive orchestration in exchange for weaker observability).",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
@@ -612,53 +612,53 @@ register(
     )
 )
 
-register(
-    AgentEntry(
-        spec=AgentSpec(
-            agent_id="deep_review_agent",
-            display_name="Propose -> Critique -> Adversarial Review",
-            description="Iteratively drafts, critiques, and refines a solution with adversarial review. Workspace file tools are available by default; web/arXiv/OSTI search tools are opt-in via use_web.",
-            capabilities=AgentCapabilities(
-                supports_streaming=False,
-                supports_cancellation=False,
-                produces_artifacts=True,
-            ),
-            parameters=[
-                _prompt_param(title="Research question"),
-                AgentParam(
-                    name="max_iterations",
-                    title="Max iterations",
-                    description="Number of draft/critique/refinement loops.",
-                    type="integer",
-                    required=False,
-                    default=3,
-                    advanced=True,
-                    source=ParamSource.agent_init,
-                    target="max_iterations",
-                    constraints=ParamConstraint(minimum=1, maximum=20),
-                ),
-                AgentParam(
-                    name="use_web",
-                    title="Enable web search tools",
-                    description="Expose web/arXiv/OSTI search tools to the autonomous reviewer. When false, Deep Review cannot perform web searches.",
-                    type="boolean",
-                    required=False,
-                    default=False,
-                    advanced=True,
-                    source=ParamSource.agent_init,
-                    target="use_web",
-                ),
-            ]
-            + _common_llm_params()
-            + _runner_params(),
-            tags=["research", "review"],
-        ),
-        build_adapter=_baseagent_adapter_builder(
-            "ursa.agents.deep_review_agent.DeepReviewAgent"
-        ),
-        build_inputs=lambda p: p["prompt"],
-    )
-)
+# register(
+#     AgentEntry(
+#         spec=AgentSpec(
+#             agent_id="deep_review_agent",
+#             display_name="Propose - Critique - Adversarial Review",
+#             description="Iteratively drafts, critiques, and refines a solution with adversarial review. Workspace file tools are available by default; web/arXiv/OSTI search tools are opt-in via use_web.",
+#             capabilities=AgentCapabilities(
+#                 supports_streaming=False,
+#                 supports_cancellation=False,
+#                 produces_artifacts=True,
+#             ),
+#             parameters=[
+#                 _prompt_param(title="Research question"),
+#                 AgentParam(
+#                     name="max_iterations",
+#                     title="Max iterations",
+#                     description="Number of draft/critique/refinement loops.",
+#                     type="integer",
+#                     required=False,
+#                     default=3,
+#                     advanced=True,
+#                     source=ParamSource.agent_init,
+#                     target="max_iterations",
+#                     constraints=ParamConstraint(minimum=1, maximum=20),
+#                 ),
+#                 AgentParam(
+#                     name="use_web",
+#                     title="Enable web search tools",
+#                     description="Expose web/arXiv/OSTI search tools to the autonomous reviewer. When false, Deep Review cannot perform web searches.",
+#                     type="boolean",
+#                     required=False,
+#                     default=False,
+#                     advanced=True,
+#                     source=ParamSource.agent_init,
+#                     target="use_web",
+#                 ),
+#             ]
+#             + _common_llm_params()
+#             + _runner_params(),
+#             tags=["research", "review"],
+#         ),
+#         build_adapter=_baseagent_adapter_builder(
+#             "ursa.agents.deep_review_agent.DeepReviewAgent"
+#         ),
+#         build_inputs=lambda p: p["prompt"],
+#     )
+# )
 
 register(
     AgentEntry(

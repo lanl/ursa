@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 from ursa.security import GroupBaseURLPolicyError
@@ -436,3 +437,115 @@ def test_apply_dashboard_config_validates_group_before_persisting(
     assert persisted["llm"]["model"] == "openai:gpt-updated"
     assert persisted["llm"]["base_url"] == "https://safe.example.org/v1"
     assert persisted["updated_at"] != original.updated_at
+
+
+def test_global_model_settings_update_user_config_and_preserve_other_keys(
+    tmp_path, monkeypatch
+):
+    """The LLM/Embedding tabs edit the shared TUI/dashboard defaults.
+
+    Previously PATCH saved a lower-precedence settings.json value, then returned
+    the unchanged user-config value, making every model control appear to jump
+    back while unrelated dashboard-only settings worked.
+    """
+    root = tmp_path / "dashboard"
+    user = tmp_path / "config.yaml"
+    user.write_text(
+        "\n".join([
+            "inference_providers:",
+            "  portal:",
+            "    base_url: https://models.example.org/v1",
+            "    api_key:",
+            "      env: PORTAL_KEY",
+            "llm_model:",
+            "  model: openai:old-chat",
+            "  inference_provider: portal",
+            "  reasoning:",
+            "    effort: medium",
+            "emb_model:",
+            "  model: openai:old-embedding",
+            "  inference_provider: portal",
+            "  check_embedding_ctx_length: false",
+            "agent_config:",
+            "  chat:",
+            "    use_web: true",
+            "group: science",
+        ]),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("URSA_DASHBOARD_WORKSPACE_ROOT", str(root.resolve()))
+    monkeypatch.setenv("PORTAL_KEY", "test-key")
+    monkeypatch.setattr("ursa.security.URSA_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(
+        "ursa_dashboard.settings.system_config_paths", lambda: []
+    )
+    monkeypatch.setattr(
+        "ursa_dashboard.settings.user_config_paths", lambda: [user]
+    )
+    monkeypatch.setattr(
+        "ursa_dashboard.user_config.user_config_paths", lambda: [user]
+    )
+    monkeypatch.setattr(
+        "ursa_dashboard.settings.dashboard_environment_config_layer",
+        lambda: {},
+    )
+
+    with TestClient(
+        create_app(credential_store=MemoryCredentialStore())
+    ) as client:
+        response = client.patch(
+            "/settings",
+            json={
+                "patch": {
+                    "llm": {
+                        "model": "openai:new-chat",
+                        "inference_provider": "portal",
+                        "model_kwargs": {"reasoning": {"effort": "high"}},
+                        "tokens_before_summarize": 12345,
+                    },
+                    "embedding": {
+                        "model": "openai:new-embedding",
+                        "inference_provider": "portal",
+                        "model_kwargs": {"check_embedding_ctx_length": False},
+                    },
+                }
+            },
+        )
+        assert response.status_code == 200, response.text
+        updated = response.json()["settings"]
+        assert updated["llm"]["model"] == "openai:new-chat"
+        assert updated["llm"]["model_kwargs"] == {
+            "reasoning": {"effort": "high"}
+        }
+        assert updated["embedding"]["model"] == ("openai:new-embedding")
+        assert updated["llm"]["tokens_before_summarize"] == 12345
+
+        refreshed = client.get("/settings").json()["settings"]
+        assert refreshed["llm"]["model"] == "openai:new-chat"
+        assert refreshed["embedding"]["model"] == "openai:new-embedding"
+
+        config_after_models = user.read_bytes()
+        fallback_only = client.patch(
+            "/settings",
+            json={"patch": {"llm": {"tokens_before_summarize": 54321}}},
+        )
+        assert fallback_only.status_code == 200
+        assert user.read_bytes() == config_after_models
+
+    saved = yaml.safe_load(user.read_text(encoding="utf-8"))
+    assert saved["llm_model"] == {
+        "reasoning": {"effort": "high"},
+        "model": "openai:new-chat",
+        "inference_provider": "portal",
+    }
+    assert saved["emb_model"] == {
+        "check_embedding_ctx_length": False,
+        "model": "openai:new-embedding",
+        "inference_provider": "portal",
+    }
+    # Everything outside the two model sections is untouched.
+    assert saved["agent_config"] == {"chat": {"use_web": True}}
+    assert saved["group"] == "science"
+    assert saved["inference_providers"]["portal"]["api_key"] == {
+        "env": "PORTAL_KEY"
+    }
