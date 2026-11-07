@@ -3,6 +3,7 @@
 """Command execution and safety-check event cards."""
 
 from collections.abc import Mapping
+from functools import partial
 from typing import Any
 
 from rich.syntax import Syntax
@@ -13,6 +14,19 @@ from textual.widgets import Static
 
 from ursa.cli.tui.event_cards.base import EventCard
 from ursa.cli.tui.widgets import ActivityIndicator
+
+
+def _preview_lines(limit: int, edge_lines: int, text: str) -> str:
+    """Keep both ends of long content and report the omitted middle."""
+    lines = text.splitlines()
+    if len(lines) <= limit:
+        return text
+    omitted = len(lines) - 2 * edge_lines
+    return "\n".join([
+        *lines[:edge_lines],
+        f"… {omitted} lines omitted …",
+        *lines[-edge_lines:],
+    ])
 
 
 class CommandSafetyIndicator(ActivityIndicator):
@@ -101,29 +115,8 @@ class RunCommandCard(EventCard):
         )
         self._compact_frame = (self._compact_frame + 1) % len(self.FRAMES)
 
-    @staticmethod
-    def _preview_command(text: str) -> str:
-        lines = text.splitlines()
-        if len(lines) <= 20:
-            return text
-        omitted = len(lines) - 16
-        return "\n".join([
-            *lines[:8],
-            f"… {omitted} lines omitted …",
-            *lines[-8:],
-        ])
-
-    @staticmethod
-    def _preview_output(text: str) -> str:
-        lines = text.splitlines()
-        if len(lines) <= 10:
-            return text
-        omitted = len(lines) - 8
-        return "\n".join([
-            *lines[:4],
-            f"… {omitted} lines omitted …",
-            *lines[-4:],
-        ])
+    _preview_command = staticmethod(partial(_preview_lines, 20, 8))
+    _preview_output = staticmethod(partial(_preview_lines, 10, 4))
 
     def _collapsed_command(self) -> str:
         lines = self.command.splitlines() or [self.command]
