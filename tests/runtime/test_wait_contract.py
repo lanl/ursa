@@ -88,6 +88,7 @@ async def team(request, runtime_factory, chat_model, tmp_path):
         begin=begin,
         wake=wake,
         send=send,
+        route_error=KeyError if managed else ToolException,
     )
     for task in tasks:
         task.cancel()
@@ -186,9 +187,10 @@ async def test_wake_and_message_delivery_end_the_wait_without_replay(team):
 
 
 async def test_invalid_list_rejects_wait_before_registering_dependencies(team):
-    with pytest.raises((ToolException, KeyError), match="Unknown agent path"):
+    with pytest.raises(team.route_error, match="Unknown agent path"):
         await team.wait("root", ["first", "missing"])
     assert not team.waiting()
+    # A ready ancestor is a valid target after the rejected batch.
     assert await team.wait("root/first", "root") == (
         "Agent root has already finished its work."
     )

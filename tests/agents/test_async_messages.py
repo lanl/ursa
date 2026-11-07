@@ -183,23 +183,12 @@ async def test_wait_for_local_agent_completion_timeout_and_message_wake(
     await work
 
 
-async def test_wait_for_invalid_local_path_is_recoverable(mailbox):
+async def test_wait_for_local_path_cannot_escape_root(mailbox):
     root = mailbox()
-    child = root.spawn_subagent("child")
 
-    for target, error in (
-        ("../missing", "Path escapes hierarchy root"),
-        (["child", "missing"], "Unknown agent path"),
-    ):
-        with pytest.raises(ToolException, match=error):
-            await hierarchy_tool(root, "wait_for").ainvoke({"target": target})
+    with pytest.raises(ToolException, match="Path escapes hierarchy root"):
+        await hierarchy_tool(root, "wait_for").ainvoke({"target": "../missing"})
     assert not root.is_waiting
-
-    # Waiting on an ancestor is allowed: a waiting ancestor is ready, which
-    # prevents reciprocal waits from deadlocking.
-    assert await hierarchy_tool(child, "wait_for").ainvoke({
-        "target": "root"
-    }) == ("Agent root has already finished its work.")
 
 
 def test_subagent_count_limit_is_hierarchy_wide(mailbox):
