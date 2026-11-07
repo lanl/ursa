@@ -5,22 +5,18 @@ import pytest
 from langchain.chat_models import BaseChatModel
 from langgraph.store.memory import InMemoryStore
 
+from tests.event_fixtures import (
+    FIXED_MONOTONIC_TIMESTAMP_NS,
+)
+from tests.event_fixtures import (
+    fixed_monotonic_timestamp as fixed_monotonic_timestamp,
+)
 from tests.tools.utils import (
     invoke_with_event_recorder,
     invoke_with_parent_run,
     make_runtime,
 )
 from ursa.tools.run_command_tool import SafetyAssessment, run_command
-
-FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
-
-
-@pytest.fixture(autouse=True)
-def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "ursa.util.events.monotonic_ns",
-        lambda: FIXED_MONOTONIC_TIMESTAMP_NS,
-    )
 
 
 def _patch_safety_result(

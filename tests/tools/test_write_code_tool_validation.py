@@ -5,6 +5,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.event_fixtures import (
+    stub_event_dispatch as stub_event_dispatch,
+)
 from ursa.agents.base import AgentContext
 from ursa.tools.write_code_tool import (
     _allow_unsafe_writes_enabled,
@@ -13,14 +16,6 @@ from ursa.tools.write_code_tool import (
     write_code,
     write_code_with_repo,
 )
-
-
-@pytest.fixture(autouse=True)
-def stub_event_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "ursa.util.events.dispatch_custom_event",
-        lambda *args, **kwargs: None,
-    )
 
 
 @pytest.fixture

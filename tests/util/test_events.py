@@ -8,6 +8,12 @@ from uuid import uuid4
 import pytest
 from langchain.tools import ToolRuntime
 
+from tests.event_fixtures import (
+    FIXED_MONOTONIC_TIMESTAMP_NS,
+)
+from tests.event_fixtures import (
+    fixed_monotonic_timestamp as fixed_monotonic_timestamp,
+)
 from ursa.agents.base import AgentContext
 from ursa.util.events import (
     AgentEvents,
@@ -21,16 +27,6 @@ from ursa.util.rendering import (
     event_artifact,
     file_artifact,
 )
-
-FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
-
-
-@pytest.fixture(autouse=True)
-def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "ursa.util.events.monotonic_ns",
-        lambda: FIXED_MONOTONIC_TIMESTAMP_NS,
-    )
 
 
 @pytest.fixture

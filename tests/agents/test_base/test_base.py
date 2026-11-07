@@ -19,6 +19,12 @@ from langgraph.runtime import Runtime
 from langgraph.store.sqlite.aio import AsyncSqliteStore
 
 # Your project imports
+from tests.event_fixtures import (
+    FIXED_MONOTONIC_TIMESTAMP_NS,
+)
+from tests.event_fixtures import (
+    fixed_monotonic_timestamp as fixed_monotonic_timestamp,
+)
 from ursa.agents.base import (
     _INVOKE_DEPTH,
     AgentContext,
@@ -29,8 +35,6 @@ from ursa.agents.chat_agent import BasicChatAgent
 from ursa.util import Checkpointer
 from ursa.util.checkpoint_retention import CheckpointPruneResult
 from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER
-
-FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
 
 
 # --- Tiny offline model that triggers LLM callbacks and returns usage ---
@@ -106,14 +110,6 @@ class ToolAgent(AgentWithTools, Agent):
 
 def _make_agent(agent_class=Agent, **kwargs):
     return agent_class(llm=TinyCountingModel(), **kwargs)
-
-
-@pytest.fixture(autouse=True)
-def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "ursa.util.events.monotonic_ns",
-        lambda: FIXED_MONOTONIC_TIMESTAMP_NS,
-    )
 
 
 @pytest.fixture
