@@ -723,35 +723,23 @@ class EventRange:
         return payload
 
     def _emit_terminal(self, exc: BaseException | None) -> None:
-        payload = self._terminal_payload()
-        if exc is None:
-            self.events.emit(
-                self.done_message or self.start_message,
-                stage=self.stage,
-                phase="end",
-                **payload,
-            )
-            return
-        self.events.emit(
-            self.error_message or self.start_message,
-            stage=self.stage,
-            phase="error",
-            error_type=type(exc).__name__,
-            error=str(exc),
-            **payload,
-        )
+        self._dispatch_terminal("emit", exc)
 
     async def _aemit_terminal(self, exc: BaseException | None) -> None:
+        await self._dispatch_terminal("aemit", exc)
+
+    def _dispatch_terminal(self, method: str, exc: BaseException | None) -> Any:
+        """Dispatch the same terminal fields to a sync or async event sink."""
         payload = self._terminal_payload()
+        emit = getattr(self.events, method)
         if exc is None:
-            await self.events.aemit(
+            return emit(
                 self.done_message or self.start_message,
                 stage=self.stage,
                 phase="end",
                 **payload,
             )
-            return
-        await self.events.aemit(
+        return emit(
             self.error_message or self.start_message,
             stage=self.stage,
             phase="error",
