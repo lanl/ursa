@@ -16,6 +16,15 @@ from ursa.cli.tui.widgets import ActivityIndicator, MessageCard
 from ursa.util.events import DEFAULT_EVENT_NAME
 
 
+def _file_activity(path, *, tool="read_file", message="Reading", **details):
+    """Build independent file events with the common activity fields."""
+    return {"tool": tool, "path": path, "message": message, **details}
+
+
+async def _emit_file_activity(handler, path, **details):
+    await emit_event(handler, _file_activity(path, **details))
+
+
 async def test_turn_spacing_is_one_row_with_or_without_events(tmp_path, app):
     async with app.run_test(size=(100, 40)) as pilot:
         conversation = app.query_one("#conversation", VerticalScroll)
@@ -69,34 +78,26 @@ async def test_files_are_grouped_by_read_write_and_edit_operations(
     async with app.run_test(size=(100, 36)) as pilot:
         async with running_turn(app, pilot) as handler:
             events = [
-                {
-                    "tool": "read_file",
-                    "path": "src/read.py",
-                    "message": "Reading",
-                },
-                {
-                    "tool": "read_file",
-                    "path": "src/other.py",
-                    "message": "Reading",
-                },
-                {
-                    "tool": "write_code",
-                    "path": "src/new.py",
-                    "code": "new file\n",
-                    "message": "Writing",
-                },
-                {
-                    "tool": "edit_code",
-                    "path": "src/edit.py",
-                    "old_code": "old\n",
-                    "new_code": "new\nmore\n",
-                    "message": "Editing",
-                },
-                {
-                    "tool": "edit_code",
-                    "path": str(tmp_path / "src" / "edit.py"),
-                    "message": "Editing",
-                },
+                _file_activity("src/read.py"),
+                _file_activity("src/other.py"),
+                _file_activity(
+                    "src/new.py",
+                    tool="write_code",
+                    code="new file\n",
+                    message="Writing",
+                ),
+                _file_activity(
+                    "src/edit.py",
+                    tool="edit_code",
+                    old_code="old\n",
+                    new_code="new\nmore\n",
+                    message="Editing",
+                ),
+                _file_activity(
+                    str(tmp_path / "src" / "edit.py"),
+                    tool="edit_code",
+                    message="Editing",
+                ),
             ]
             for event in events:
                 await handler.on_custom_event(DEFAULT_EVENT_NAME, event)
@@ -130,28 +131,20 @@ async def test_event_summary_groups_follow_activity_order(app):
     async with app.run_test(size=(100, 36)) as pilot:
         async with running_turn(app, pilot) as handler:
             for path in ("fileA", "fileB", "fileC"):
-                await emit_event(
-                    handler,
-                    {"tool": "read_file", "path": path, "message": "Reading"},
-                )
-            await emit_event(
+                await _emit_file_activity(handler, path)
+            await _emit_file_activity(
                 handler,
-                {
-                    "tool": "edit_code",
-                    "path": "fileB",
-                    "message": "Editing",
-                    "additions": 2,
-                    "deletions": 1,
-                },
+                "fileB",
+                tool="edit_code",
+                message="Editing",
+                additions=2,
+                deletions=1,
             )
             await emit_tool_start(
                 handler, "run_command", "ordered-command", query="pwd"
             )
             await handler.on_tool_end("", run_id="ordered-command")
-            await emit_event(
-                handler,
-                {"tool": "read_file", "path": "fileA", "message": "Reading"},
-            )
+            await _emit_file_activity(handler, "fileA")
         events = list(app.query_one(Turn).query_one(".events").children)
         assert [type(event) for event in events] == [
             FileActivityCard,
@@ -227,21 +220,16 @@ async def test_activity_kinds_keep_independent_cards_open(
     monkeypatch.setattr(turn_module, "SUMMARY_GROUP_GRACE_SECONDS", 1.0)
     async with app.run_test(size=(100, 36)) as pilot:
         async with running_turn(app, pilot) as handler:
-            await emit_event(
-                handler,
-                {"tool": "read_file", "path": "fileA", "message": "Reading"},
-            )
+            await _emit_file_activity(handler, "fileA")
             await pilot.pause()
             reading = app.query_one(FileActivityCard)
-            await emit_event(
+            await _emit_file_activity(
                 handler,
-                {
-                    "tool": "edit_code",
-                    "path": "fileB",
-                    "message": "Editing",
-                    "additions": 2,
-                    "deletions": 1,
-                },
+                "fileB",
+                tool="edit_code",
+                message="Editing",
+                additions=2,
+                deletions=1,
             )
             await pilot.pause()
             groups = list(app.query(FileActivityCard))
@@ -250,10 +238,7 @@ async def test_activity_kinds_keep_independent_cards_open(
             assert not reading.done
             assert not editing.done
 
-            await emit_event(
-                handler,
-                {"tool": "read_file", "path": "fileC", "message": "Reading"},
-            )
+            await _emit_file_activity(handler, "fileC")
             await pilot.pause()
             assert list(reading.files["Reading"]) == ["fileA", "fileC"]
             assert len(app.query(FileActivityCard)) == 2
@@ -286,10 +271,7 @@ async def test_event_group_grace_period_resets_after_each_update(
                 ("fileD", 3.001),
             ):
                 event_clock[0] += elapsed
-                await emit_event(
-                    handler,
-                    {"tool": "read_file", "path": path, "message": "Reading"},
-                )
+                await _emit_file_activity(handler, path)
         groups = list(app.query(FileActivityCard))
         assert len(groups) == 2
         assert list(groups[0].files["Reading"]) == ["fileA", "fileB", "fileC"]
@@ -303,10 +285,7 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
     async with app.run_test(size=(100, 36)) as pilot:
         async with running_turn(app, pilot) as handler:
             for path in ("fileA", "fileB"):
-                await emit_event(
-                    handler,
-                    {"tool": "read_file", "path": path, "message": "Reading"},
-                )
+                await _emit_file_activity(handler, path)
                 await pilot.pause()
                 groups = list(app.query(FileActivityCard))
                 assert len(groups) == 1
@@ -324,10 +303,7 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
             await pilot.pause()
             assert first.done
 
-            await emit_event(
-                handler,
-                {"tool": "read_file", "path": "fileC", "message": "Reading"},
-            )
+            await _emit_file_activity(handler, "fileC")
             await pilot.pause()
             groups = list(app.query(FileActivityCard))
             assert len(groups) == 2
@@ -359,14 +335,8 @@ async def test_parallel_read_callbacks_render_as_one_group(app):
                 await emit_tool_start(
                     handler, "read_file", run_id, filename=path
                 )
-                await emit_event(
-                    handler,
-                    {
-                        "tool": "read_file",
-                        "phase": "start",
-                        "path": path,
-                        "message": "Reading file",
-                    },
+                await _emit_file_activity(
+                    handler, path, phase="start", message="Reading file"
                 )
 
             await asyncio.gather(
@@ -385,14 +355,8 @@ async def test_parallel_read_callbacks_render_as_one_group(app):
                 "tests/cli/test_config.py",
                 "pyproject.toml",
             ):
-                await emit_event(
-                    handler,
-                    {
-                        "tool": "read_file",
-                        "phase": "end",
-                        "path": path,
-                        "message": "File read",
-                    },
+                await _emit_file_activity(
+                    handler, path, phase="end", message="File read"
                 )
             await asyncio.gather(
                 handler.on_tool_end("a", run_id="read-a"),
