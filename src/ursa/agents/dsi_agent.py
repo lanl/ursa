@@ -333,11 +333,8 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
             system_parts.append("Dataset description: " + self.db_description)
 
         # Combine
-        if system_parts:
-            system_message = SystemMessage(content="\n\n".join(system_parts))
-            messages = [system_message, HumanMessage(content=human_msg)]
-        else:
-            messages = [HumanMessage(content=human_msg)]
+        system_message = SystemMessage(content="\n\n".join(system_parts))
+        messages = [system_message, HumanMessage(content=human_msg)]
 
         # clear
         self.db_schema = ""
@@ -371,10 +368,7 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
         Arg:
            result (DSIState): The state output from the DSI agent
         """
-        response_text = result["response"]
-        cleaned_output = response_text.strip()
-
-        return cleaned_output
+        return result["response"].strip()
 
     def ask(self, user_query) -> None:
         """Ask a question to the DSI Explorer agent.
