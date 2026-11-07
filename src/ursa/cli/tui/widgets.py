@@ -69,69 +69,28 @@ class PromptArea(TextArea):
     """A multiline editor whose bare Enter submits the current prompt."""
 
     BINDINGS = [
-        Binding(
-            "enter", "submit_prompt", "Submit prompt", show=False, priority=True
-        ),
-        Binding(
-            "shift+enter",
-            "insert_newline",
-            "Insert newline",
-            show=False,
-            priority=True,
-        ),
-        Binding(
-            "ctrl+j",
-            "insert_newline",
-            "Insert newline",
-            show=False,
-            priority=True,
-        ),
-        Binding(
-            "ctrl+c", "clear_prompt", "Clear prompt", show=False, priority=True
-        ),
-        Binding(
-            "up",
-            "history_up",
-            "Cursor or prompt history up",
-            show=False,
-            priority=True,
-        ),
-        Binding(
-            "down",
-            "history_down",
-            "Cursor or prompt history down",
-            show=False,
-            priority=True,
-        ),
-        Binding(
-            "alt+left,meta+left,alt+b",
-            "cursor_word_left",
-            "Cursor word left",
-            show=False,
-            priority=True,
-        ),
-        Binding(
-            "alt+right,meta+right,alt+f",
-            "cursor_word_right",
-            "Cursor word right",
-            show=False,
-            priority=True,
-        ),
-        Binding(
-            "@",
-            "file_macro",
-            "Choose workspace path",
-            show=False,
-            priority=True,
-        ),
-        Binding("#", "agent_macro", "Choose agent", show=False, priority=True),
-        Binding(
-            "/",
-            "command_macro",
-            "Open command picker",
-            show=False,
-            priority=True,
-        ),
+        Binding(key, action, description, show=False, priority=True)
+        for key, action, description in (
+            ("enter", "submit_prompt", "Submit prompt"),
+            ("shift+enter", "insert_newline", "Insert newline"),
+            ("ctrl+j", "insert_newline", "Insert newline"),
+            ("ctrl+c", "clear_prompt", "Clear prompt"),
+            ("up", "history_up", "Cursor or prompt history up"),
+            ("down", "history_down", "Cursor or prompt history down"),
+            (
+                "alt+left,meta+left,alt+b",
+                "cursor_word_left",
+                "Cursor word left",
+            ),
+            (
+                "alt+right,meta+right,alt+f",
+                "cursor_word_right",
+                "Cursor word right",
+            ),
+            ("@", "file_macro", "Choose workspace path"),
+            ("#", "agent_macro", "Choose agent"),
+            ("/", "command_macro", "Open command picker"),
+        )
     ]
 
     class Submitted(Message):
