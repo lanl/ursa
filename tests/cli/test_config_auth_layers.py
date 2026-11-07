@@ -221,29 +221,20 @@ def test_api_key_keyring_reference(monkeypatch, setting, username):
         llm_model={"model": "provider:model", "inference_provider": "acme"},
     )
 
-    resolved = config.resolve().llm_model
+    resolved_config = config.resolve()
+    resolved = resolved_config.llm_model
 
     assert isinstance(resolved.api_key, SecretReference)
     assert resolved.api_key.keyring == username
+    assert resolved_config.inference_providers[
+        "acme"
+    ].api_key == SecretReference(keyring=username)
+    assert config.inference_providers["acme"].api_key == SecretReference(
+        keyring=setting
+    )
     assert calls == []
     assert resolved.kwargs["api_key"] == "secret"
     assert calls == [("ursa", username)]
-
-
-def test_resolution_populates_provider_keyring_username():
-    config = UrsaConfig(
-        inference_providers={"acme": {"api_key": {"keyring": True}}},
-        llm_model={"model": "provider:model", "inference_provider": "acme"},
-    )
-
-    resolved = config.resolve()
-
-    assert resolved.inference_providers["acme"].api_key == SecretReference(
-        keyring="acme"
-    )
-    assert config.inference_providers["acme"].api_key == SecretReference(
-        keyring=True
-    )
 
 
 def test_resolution_populates_direct_model_keyring_username():
