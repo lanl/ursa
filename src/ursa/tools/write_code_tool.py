@@ -68,7 +68,8 @@ def _write_code_file(
     events = ToolEvents.from_runtime("write_code", runtime)
 
     code_file, error = _validate_file_path(filename, workspace_dir, repo)
-    if error:
+    if error or code_file is None:
+        error = error or "Invalid file path."
         events.emit(
             "Failed to write file",
             stage="write",
@@ -77,15 +78,6 @@ def _write_code_file(
             error=error,
         )
         return f"Failed to write {filename}: {error}"
-    if code_file is None:
-        events.emit(
-            "Failed to write file",
-            stage="write",
-            phase="error",
-            filename=filename,
-            error="Invalid file path.",
-        )
-        return f"Failed to write {filename}: Invalid file path."
 
     try:
         with events.range(
@@ -276,7 +268,8 @@ def edit_code(
         workspace_dir,
         repo,
     )
-    if error:
+    if error or code_file is None:
+        error = error or "Invalid file path."
         events.emit(
             "Failed to edit file",
             stage="edit",
@@ -285,48 +278,23 @@ def edit_code(
             error=error,
         )
         return f"Failed to edit {filename}: {error}"
-    if code_file is None:
-        events.emit(
-            "Failed to edit file",
-            stage="edit",
-            phase="error",
-            filename=filename,
-            error="Invalid file path.",
-        )
-        return f"Failed to edit {filename}: Invalid file path."
 
     try:
         content = read_text_file(code_file)
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        missing = isinstance(exc, FileNotFoundError)
         events.emit(
             "Failed to edit file",
             stage="edit",
             phase="error",
             filename=filename,
             path=str(code_file),
-            error="File not found.",
+            error="File not found." if missing else str(exc),
         )
-        return f"Failed: {filename} not found."
-    except ValueError as exc:
-        events.emit(
-            "Failed to edit file",
-            stage="edit",
-            phase="error",
-            filename=filename,
-            path=str(code_file),
-            error=str(exc),
-        )
-        return f"Failed to edit {filename}: {exc}"
-    except OSError as exc:
-        events.emit(
-            "Failed to edit file",
-            stage="edit",
-            phase="error",
-            filename=filename,
-            path=str(code_file),
-            error=str(exc),
-        )
-        return f"Failed to edit {filename}: Could not read file: {exc}"
+        if missing:
+            return f"Failed: {filename} not found."
+        prefix = "" if isinstance(exc, ValueError) else "Could not read file: "
+        return f"Failed to edit {filename}: {prefix}{exc}"
 
     # Clean up markdown fences
     old_code_clean = old_code
