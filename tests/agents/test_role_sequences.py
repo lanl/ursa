@@ -51,29 +51,21 @@ def _plan_factory(schema):
     )
 
 
-async def test_basic_chat_agent_role_sequences(tmpdir):
+@pytest.mark.parametrize(
+    ("agent_class", "prompt"),
+    [
+        (BasicChatAgent, "What is URSA?"),
+        (ChatAgent, "What is URSA?"),
+        (PromptingAgent, "Refine this prompt: hello"),
+    ],
+)
+async def test_chat_and_prompting_agent_role_sequences(
+    tmpdir, agent_class, prompt
+):
     llm = RecordingChatModel()
-    agent = BasicChatAgent(llm=llm, workspace=tmpdir)
+    agent = agent_class(llm=llm, workspace=tmpdir)
 
-    await agent.ainvoke(agent.format_query("What is URSA?"))
-
-    assert_requests_provider_valid(llm.calls)
-
-
-async def test_chat_agent_role_sequences(tmpdir):
-    llm = RecordingChatModel()
-    agent = ChatAgent(llm=llm, workspace=tmpdir)
-
-    await agent.ainvoke(agent.format_query("What is URSA?"))
-
-    assert_requests_provider_valid(llm.calls)
-
-
-async def test_prompting_agent_role_sequences(tmpdir):
-    llm = RecordingChatModel()
-    agent = PromptingAgent(llm=llm, workspace=tmpdir)
-
-    await agent.ainvoke(agent.format_query("Refine this prompt: hello"))
+    await agent.ainvoke(agent.format_query(prompt))
 
     assert_requests_provider_valid(llm.calls)
 
