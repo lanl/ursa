@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import Literal, Protocol
 from urllib.parse import urlsplit
 
@@ -15,6 +15,30 @@ CredentialSource = Literal["environment", "stored", "llm", "none"]
 
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _STORED_CREDENTIAL_VERSION = 1
+
+
+def _remove_worker_secrets(
+    env: dict[str, str], sensitive_names: Collection[str] = ()
+) -> None:
+    """Remove credential variables from a worker environment snapshot in place."""
+    secret_markers = (
+        "api_key",
+        "apikey",
+        "access_token",
+        "refresh_token",
+        "secret",
+        "password",
+        "credential",
+        "bearer",
+    )
+    for name in list(env):
+        lowered = name.lower()
+        if (
+            name in sensitive_names
+            or any(marker in lowered for marker in secret_markers)
+            or lowered.endswith("_token")
+        ):
+            env.pop(name, None)
 
 
 class CredentialStoreError(RuntimeError):

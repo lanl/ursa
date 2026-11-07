@@ -14,6 +14,7 @@ from .credentials import (
     CredentialConfigurationError,
     CredentialStore,
     KeyringCredentialStore,
+    _remove_worker_secrets,
     assert_no_raw_api_key,
     resolve_api_key,
 )
@@ -443,24 +444,7 @@ class RunManager:
             env_name = str(config.get("api_key_env") or "").strip()
             if env_name:
                 sensitive_names.add(env_name)
-        secret_markers = (
-            "api_key",
-            "apikey",
-            "access_token",
-            "refresh_token",
-            "secret",
-            "password",
-            "credential",
-            "bearer",
-        )
-        for name in list(env):
-            lowered = name.lower()
-            if (
-                name in sensitive_names
-                or any(marker in lowered for marker in secret_markers)
-                or lowered.endswith("_token")
-            ):
-                env.pop(name, None)
+        _remove_worker_secrets(env, sensitive_names)
 
         env["PYTHONUNBUFFERED"] = "1"
         existing_pp = env.get("PYTHONPATH")

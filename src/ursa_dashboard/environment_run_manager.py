@@ -38,6 +38,7 @@ from .credentials import (
     CredentialConfigurationError,
     CredentialStore,
     _config_api_key_env,
+    _remove_worker_secrets,
     assert_no_credential_metadata,
     assert_no_raw_api_key,
     resolve_api_key,
@@ -764,22 +765,7 @@ class EnvironmentRunManager:
     @staticmethod
     def _worker_environment(launch: Mapping[str, Any]) -> dict[str, str]:
         env = dict(os.environ)
-        secret_markers = (
-            "api_key",
-            "apikey",
-            "access_token",
-            "refresh_token",
-            "secret",
-            "password",
-            "credential",
-            "bearer",
-        )
-        for name in list(env):
-            lowered = name.lower()
-            if any(
-                marker in lowered for marker in secret_markers
-            ) or lowered.endswith("_token"):
-                env.pop(name, None)
+        _remove_worker_secrets(env)
         env["PYTHONUNBUFFERED"] = "1"
         project_root = str(Path(__file__).resolve().parent.parent)
         existing = env.get("PYTHONPATH")
