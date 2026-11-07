@@ -413,6 +413,20 @@ class AsyncMessageMixin:
             ),
         )
 
+    async def _notify_message_callback(
+        self, item: _QueuedAgentMessage, phase: str, *args: Any
+    ) -> None:
+        callback = getattr(item, f"on_{phase}")
+        if callback is not None:
+            try:
+                await maybe_await(callback(item.message, *args))
+            except Exception:
+                logger.exception(
+                    f"Agent %s message-{phase} callback failed for %s",
+                    self.agent_path,
+                    item.message.message_id,
+                )
+
     async def _run_message_loop(self) -> None:
         inbox = self._message_inbox
         if inbox is None:  # pragma: no cover
@@ -424,15 +438,7 @@ class AsyncMessageMixin:
                     inbox.task_done()
                     break
                 self._current_agent_message = item.message
-                if item.on_start is not None:
-                    try:
-                        await maybe_await(item.on_start(item.message))
-                    except Exception:
-                        logger.exception(
-                            "Agent %s message-start callback failed for %s",
-                            self.agent_path,
-                            item.message.message_id,
-                        )
+                await self._notify_message_callback(item, "start")
                 handler = asyncio.create_task(
                     self.ahandle_message(item.message)
                 )
@@ -458,17 +464,7 @@ class AsyncMessageMixin:
                     if item.response is not None and not item.response.done():
                         item.response.set_result(result)
                 finally:
-                    if item.on_end is not None:
-                        try:
-                            await maybe_await(
-                                item.on_end(item.message, succeeded)
-                            )
-                        except Exception:
-                            logger.exception(
-                                "Agent %s message-end callback failed for %s",
-                                self.agent_path,
-                                item.message.message_id,
-                            )
+                    await self._notify_message_callback(item, "end", succeeded)
                     self._current_agent_message = None
                     inbox.task_done()
         finally:
