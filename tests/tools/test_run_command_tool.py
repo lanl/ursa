@@ -31,12 +31,11 @@ def _patch_safety_result(
     def fake_with_structured_output(self, schema):
         captured["schema"] = schema
 
-        class Invoker:
-            def invoke(self_inner, prompt):
-                captured["prompt"] = prompt
-                return {"is_safe": is_safe, "reason": reason}
+        def invoke(prompt):
+            captured["prompt"] = prompt
+            return {"is_safe": is_safe, "reason": reason}
 
-        return Invoker()
+        return SimpleNamespace(invoke=invoke)
 
     monkeypatch.setattr(
         chat_model.__class__,

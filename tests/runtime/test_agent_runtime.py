@@ -464,11 +464,10 @@ async def test_host_preflights_batched_agent_messages_before_any_delivery(
 
     monkeypatch.setattr(manager, "invoke", invoke)
 
-    class Callback:
-        async def on_hierarchy_message(self, sender, targets, message) -> None:
-            messages.append((sender, tuple(targets), message))
+    async def on_hierarchy_message(sender, targets, message) -> None:
+        messages.append((sender, tuple(targets), message))
 
-    callbacks = (Callback(),)
+    callbacks = (SimpleNamespace(on_hierarchy_message=on_hierarchy_message),)
     try:
         with pytest.raises(KeyError, match="Unknown agent path"):
             await runtime_request(

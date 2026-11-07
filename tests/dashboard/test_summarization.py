@@ -220,15 +220,14 @@ def test_worker_applies_fallback_and_agent_override(
     monkeypatch.setattr(worker_main, "inject_truststore_into_ssl", lambda: None)
     seen = {}
 
-    class Adapter:
-        async def ainvoke(self, **kwargs):
-            return "done"
+    async def ainvoke(**kwargs):
+        return "done"
 
     def build_adapter(llm, config):
         seen["threshold"] = summarization_threshold(
             llm, config["tokens_before_summarize"]
         )
-        return Adapter()
+        return SimpleNamespace(ainvoke=ainvoke)
 
     async def run_worker(config, inputs):
         agent = await worker_main._dashboard_process_factory(config, None)

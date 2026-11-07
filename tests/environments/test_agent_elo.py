@@ -894,14 +894,13 @@ def test_judge_graph_inspects_files_then_requests_structured_output(
         ):
             raise NotImplementedError("Structured method unsupported")
 
-        class Structured:
-            def invoke(self, messages, **kwargs):
-                structured_messages.extend(messages)
-                if structured_mode == "invalid":
-                    return {"winner": "INVALID", "reasoning": "bad winner"}
-                return {"winner": "A", "reasoning": "Lower verified error"}
+        def invoke(messages, **kwargs):
+            structured_messages.extend(messages)
+            if structured_mode == "invalid":
+                return {"winner": "INVALID", "reasoning": "bad winner"}
+            return {"winner": "A", "reasoning": "Lower verified error"}
 
-        return Structured()
+        return SimpleNamespace(invoke=invoke)
 
     async def raw_invoke(model, messages, **kwargs):
         raw_prompts.extend(messages)

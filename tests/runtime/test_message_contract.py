@@ -35,11 +35,10 @@ async def routing(request, runtime_factory, chat_model, tmp_path, monkeypatch):
 
     monkeypatch.setattr(manager, "invoke", invoke)
 
-    class Callback:
-        async def on_hierarchy_message(self, sender, targets, message):
-            logged.extend((sender, target, message) for target in targets)
+    async def on_hierarchy_message(sender, targets, message):
+        logged.extend((sender, target, message) for target in targets)
 
-    callback = Callback()
+    callback = SimpleNamespace(on_hierarchy_message=on_hierarchy_message)
 
     async def send(
         sender, target, message="Share your progress.", *, configured=True
