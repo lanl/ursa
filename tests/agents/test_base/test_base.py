@@ -78,22 +78,8 @@ class SpecState(TypedDict, total=False):
 
 # --- Minimal agent under test (subclasses BaseAgent and makes one LLM call) ---
 class Agent(BaseAgent):
-    def __init__(
-        self,
-        llm,
-        checkpointer=None,
-        enable_metrics=False,
-        metrics_dir="ursa_metrics",
-        autosave_metrics=True,
-        **kwargs,
-    ):
-        super().__init__(
-            llm,
-            checkpointer=checkpointer,
-            enable_metrics=enable_metrics,
-            metrics_dir=metrics_dir,
-            **kwargs,
-        )
+    def __init__(self, llm, enable_metrics=False, **kwargs):
+        super().__init__(llm, enable_metrics=enable_metrics, **kwargs)
 
     def _run_impl(self, state: SpecState):
         # Make one LLM call with callbacks + metadata wired in via build_config()
