@@ -684,35 +684,6 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         self._yaml_timers: dict[str, Timer] = {}
         self._syncing_controls = False
 
-    @classmethod
-    def _editable_choice(
-        cls,
-        prefix: str,
-        field: str,
-        values: Sequence[str],
-        current: str,
-    ) -> tuple[ModelSelect, Input]:
-        choices = tuple(dict.fromkeys(value for value in values if value))
-        listed = current in choices
-        selected = (
-            current
-            if listed
-            else (cls.CUSTOM_VALUE if current else cls.NONE_VALUE)
-        )
-        select = ModelSelect(
-            ModelSelect.options(choices),
-            value=selected,
-            allow_blank=False,
-            id=f"{prefix}-{field}",
-            classes="model-editable-choice",
-        )
-        custom = Input(
-            value="" if listed else current,
-            id=f"{prefix}-{field}-custom",
-            classes=f"model-custom-choice{' hidden' if listed else ''}",
-        )
-        return select, custom
-
     def _model_fields(self, prefix: str, config: ModelConfig) -> ComposeResult:
         options = [
             ("None (direct model config)", self.NONE_VALUE),
@@ -733,11 +704,19 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
             selected_provider = next(iter(self.providers), None)
         selected_provider = selected_provider or self.NONE_VALUE
         yield self._field_label("Model", "model", prefix)
-        model_select, custom_model = self._editable_choice(
-            prefix, "model-name", (config.model,), config.model
+        model = config.model
+        yield ModelSelect(
+            ModelSelect.options((model,) if model else ()),
+            value=model or self.NONE_VALUE,
+            allow_blank=False,
+            id=f"{prefix}-model-name",
+            classes="model-editable-choice",
         )
-        yield model_select
-        yield custom_model
+        yield Input(
+            value="",
+            id=f"{prefix}-model-name-custom",
+            classes=f"model-custom-choice{' hidden' if model else ''}",
+        )
         yield self._field_label("Model provider", "model-provider", prefix)
         provider_options, selected_model_provider = model_provider_options(
             prefix, config.model_provider, retain_unknown=False
