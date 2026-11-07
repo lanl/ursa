@@ -191,26 +191,15 @@ async def test_wait_for_local_path_cannot_escape_root(mailbox):
     assert not root.is_waiting
 
 
-def test_subagent_count_limit_is_hierarchy_wide(mailbox):
-    root = mailbox(
-        subagent_max_agents=2,
-    )
-    first = root.spawn_subagent("first")
-    first.spawn_subagent("nested")
-
-    with pytest.raises(RuntimeError, match="max_agents=2"):
-        root.spawn_subagent("one-too-many")
-
-
-def test_subagent_depth_limit_is_hierarchy_wide(mailbox):
-    root = mailbox(
-        subagent_max_depth=2,
-    )
+@pytest.mark.parametrize("limit", ["max_agents", "max_depth"])
+def test_subagent_limit_is_hierarchy_wide(mailbox, limit):
+    root = mailbox(**{f"subagent_{limit}": 2})
     child = root.spawn_subagent("child")
     grandchild = child.spawn_subagent("grandchild")
+    parent = root if limit == "max_agents" else grandchild
 
-    with pytest.raises(RuntimeError, match="max_depth=2"):
-        grandchild.spawn_subagent("too-deep")
+    with pytest.raises(RuntimeError, match=f"{limit}=2"):
+        parent.spawn_subagent("overflow")
 
 
 @pytest.mark.parametrize(

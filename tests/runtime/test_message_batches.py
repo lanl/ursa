@@ -11,6 +11,17 @@ from tests.runtime.fixtures import runtime_request
 from ursa.runtime.agent_runtime import _BufferedAgentMessage
 
 
+class LifecycleCallback:
+    def __init__(self, events):
+        self.events = events
+
+    async def on_agent_message_start(self, path):
+        self.events.append(("start", path))
+
+    async def on_agent_message_end(self, path, *, succeeded):
+        self.events.append(("end", path, succeeded))
+
+
 @pytest.mark.parametrize("reset_query", [False, True])
 async def test_process_delivers_batch_in_one_turn_with_separate_envelopes(
     reset_query,
@@ -111,16 +122,11 @@ async def test_busy_recipient_runs_one_batch_with_one_activity(
         invocations.append((agent_id, prompt, config))
         return "done"
 
-    class Callback:
-        async def on_agent_message_start(self, path):
-            lifecycle.append(("start", path))
-
-        async def on_agent_message_end(self, path, *, succeeded):
-            lifecycle.append(("end", path, succeeded))
-
     monkeypatch.setattr(runtime._manager, "invoke", invoke)
     runtime._mark_working("root", 1)
-    expected = await queue_peer_messages(runtime, root, (Callback(),))
+    expected = await queue_peer_messages(
+        runtime, root, (LifecycleCallback(lifecycle),)
+    )
     assert len(runtime._buffered_agent_messages["root"]) == 3
     assert not invocations
     runtime._mark_working("root", -1)
@@ -208,20 +214,13 @@ async def test_mixed_user_batch_promotes_every_turn_without_delegated_spinner(
         invocations.append((agent_id, prompt, config, callbacks))
         return "one combined reply"
 
-    class Callback:
-        async def on_agent_message_start(self, path):
-            lifecycle.append(("start", path))
-
-        async def on_agent_message_end(self, path, *, succeeded):
-            lifecycle.append(("end", path, succeeded))
-
     monkeypatch.setattr(runtime._manager, "invoke", invoke)
     runtime._mark_working("root", 1)
     first = asyncio.create_task(
         runtime.run_active_agent(
             "root",
             "first user",
-            callbacks=[Callback()],
+            callbacks=[LifecycleCallback(lifecycle)],
             on_start=lambda _message: starts.append("first"),
         )
     )
@@ -230,7 +229,7 @@ async def test_mixed_user_batch_promotes_every_turn_without_delegated_spinner(
         runtime.run_active_agent(
             "root",
             "second user",
-            callbacks=[Callback()],
+            callbacks=[LifecycleCallback(lifecycle)],
             on_start=lambda _message: starts.append("second"),
         )
     )
