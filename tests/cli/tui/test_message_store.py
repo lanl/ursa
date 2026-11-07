@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -108,8 +109,7 @@ async def test_coordination_store_migrates_target_count_for_existing_sessions(
     tmp_path,
 ):
     path = tmp_path / "checkpointer.db"
-    db = sqlite3.connect(path)
-    try:
+    with closing(sqlite3.connect(path)) as db:
         db.execute("""
             CREATE TABLE coordination_actions (
                 id INTEGER PRIMARY KEY, turn_id TEXT NOT NULL, run_id TEXT NOT NULL,
@@ -125,8 +125,6 @@ async def test_coordination_store_migrates_target_count_for_existing_sessions(
             "VALUES ('turn', 'old', 'send_message', 'root/a', '{}', '{}')"
         )
         db.commit()
-    finally:
-        db.close()
     store = MessageStore(path, "thread")
     _, recent = await store.action_summary("turn")
     assert recent[0]["target_count"] == 1
@@ -135,8 +133,7 @@ async def test_coordination_store_migrates_target_count_for_existing_sessions(
 async def test_checkpoint_writer_lock_does_not_block_event_loop(tmp_path):
     store = MessageStore(tmp_path / "checkpointer.db", "thread")
     await store.append("root", ("root/a",), "first")
-    db = sqlite3.connect(store.path)
-    try:
+    with closing(sqlite3.connect(store.path)) as db:
         db.execute("BEGIN IMMEDIATE")
         write = asyncio.create_task(store.append("root", ("root/a",), "second"))
         await asyncio.sleep(0.05)
@@ -145,6 +142,4 @@ async def test_checkpoint_writer_lock_does_not_block_event_loop(tmp_path):
         # writer finish. A synchronous UI write would block this coroutine.
         db.rollback()
         await asyncio.wait_for(write, timeout=2)
-    finally:
-        db.close()
     assert len(await store.messages()) == 2

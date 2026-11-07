@@ -49,8 +49,6 @@ class CoordinationCard(EventCard):
             # Zero is intentionally distinct from a missing legacy count: a
             # selector such as @everyone expands at delivery time, so its
             # concrete recipient count is not available in this compact row.
-            if target_count == 0:
-                return target
             count = (
                 target_count
                 if target_count is not None
