@@ -879,16 +879,7 @@ class AgentRuntime:
             )
         finally:
             self._mark_working("root", -1)
-        if not isinstance(result, str):
-            raise TypeError(f"Agent {name!r} returned a non-string result")
-        await self._notify_callbacks(
-            configured,
-            "on_hierarchy_message",
-            "root",
-            ("user",),
-            result,
-        )
-        return result
+        return await self._record_user_reply(name, "root", result, configured)
 
     async def _capture_mcp_tool_specs(self, runtime_id: str) -> None:
         """Reuse root MCP schemas when starting equivalent child agents."""
@@ -1044,16 +1035,18 @@ class AgentRuntime:
             if message_start is not None:
                 await message_start.on_agent_message_start()
             return None
+        return await self._record_user_reply(
+            resolved_path, resolved_path, result, configured
+        )
+
+    async def _record_user_reply(
+        self, name: str, path: str, result: Any, callbacks: Sequence[Any]
+    ) -> str:
+        """Validate and record a completed reply to the user."""
         if not isinstance(result, str):
-            raise TypeError(
-                f"Agent {resolved_path!r} returned a non-string result"
-            )
+            raise TypeError(f"Agent {name!r} returned a non-string result")
         await self._notify_callbacks(
-            configured,
-            "on_hierarchy_message",
-            resolved_path,
-            ("user",),
-            result,
+            callbacks, "on_hierarchy_message", path, ("user",), result
         )
         return result
 
