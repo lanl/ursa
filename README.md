@@ -13,9 +13,10 @@ The original ArXiv paper is [here](https://arxiv.org/abs/2506.22653).
 ## Documentation
 
 Detailed documentation including:
-- Installation
-- Getting Started Guides
-- Configuration
+- [Installation](https://lanl.github.io/ursa/latest/getting-started/#install-ursa)
+- [Getting Started Guide](https://lanl.github.io/ursa/latest/getting-started/)
+- [Configuration](https://lanl.github.io/ursa/latest/configuration/)
+- [Examples](https://lanl.github.io/ursa/latest/examples/)
 - ... and more
 
 are located at: [URSA Documentation](https://lanl.github.io/ursa)
@@ -33,18 +34,15 @@ The MkDocs documentation in `docs/` is organized around installation, getting st
 
 ## Command Line Usage
 
-You can install `ursa` as a command line app with `pip install`; or with [`uv`](https://docs.astral.sh/uv/) via
-
-```bash
-uv tool install --python 3.13 'ursa-ai[dashboard]'
-```
-
+Once installed, use the `ursa` command line interface to interact with ursa.
 A standard OpenAI setup needs no configuration file:
 
 ```bash
 export OPENAI_API_KEY="..."
 ursa
 ```
+
+> To quickly configure URSA use the setup wizard: `ursa self setup`
 
 This starts the full-screen terminal app. Type `/` to browse commands,
 `#` to choose an agent behavior, or `@` to insert a workspace path.
@@ -91,6 +89,16 @@ ursa-dashboard --host 127.0.0.1 --port 8080
 ```
 
 This requires installing with the optional `[dashboard]` dependencies.
+
+## Contributing and support
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and the pull-request
+process. Report bugs or ask usage questions through
+[GitHub Issues](https://github.com/lanl/ursa/issues).
+
+URSA can execute code and modify files on your system. Read
+[SECURITY.md](SECURITY.md) for execution risks and isolation guidance before
+running agent workflows.
 
 ## Development Team
 

@@ -1,7 +1,6 @@
 from pathlib import Path
 
-from langchain.chat_models import init_chat_model
-
+from ursa.cli.config import UrsaConfig
 from ursa.environments import AgentEloEnvironment
 
 TASK = """
@@ -66,11 +65,8 @@ def print_generation(result):
 
 
 def main():
-    llm = init_chat_model(
-        model="openai:gpt-5",
-        timeout=None,
-        max_retries=2,
-    )
+    config = UrsaConfig.user_config()
+    llm = config.llm_model.init_chat_model()
 
     env = AgentEloEnvironment.from_yaml(
         "agent_elo.yaml",

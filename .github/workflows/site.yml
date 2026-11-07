@@ -6,20 +6,50 @@ on:
     tags:
       - v*
       - latest
-    paths:
-      - docs/**
-      - mkdocs.yml
-      - pyproject.toml
-      - src/**
+  pull_request:
   workflow_dispatch: # allow manual trigger
 permissions:
-  contents: write
-concurrency:
-  group: docs-deployment
-  cancel-in-progress: false
+  contents: read
 jobs:
+  check-links:
+    name: links
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+      - name: Install documentation dependencies
+        run: uv sync --group docs --no-dev --frozen
+      - name: Build documentation
+        env:
+          URSA_DOCS_SOURCE_REF: ${{ github.sha }}
+        run: |
+          uv run --no-sync mkdocs build --site-dir "$RUNNER_TEMP/ursa"
+          cp "$RUNNER_TEMP/ursa/index.html" "$RUNNER_TEMP/index.html"
+      - name: Check links
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          args: >-
+            --no-progress
+            --max-retries 5
+            --retry-wait-time 2
+            --timeout 30
+            --host-concurrency 4
+            --include-fragments
+            --index-files index.html
+            --root-dir "${{ runner.temp }}"
+            --exclude '^https://lanl\.github\.io/ursa/'
+            --exclude-path '/overrides/'
+            "${{ runner.temp }}/ursa/**/*.html"
+
   build-site:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: docs-deployment
+      cancel-in-progress: false
     # Publish main continuously and stable version tags as releases.
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/tags/latest' || (startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-'))
     steps:

@@ -7,9 +7,25 @@ different endpoint.
 
 ## Install URSA
 
-URSA requires Python 3.11 or newer. The `uv` tool installation is recommended:
+=== "Installer (Recommended)"
 
-=== "uv tool (recommended)"
+    The installer script will install URSA using [`uv`](https://docs.astral.sh/uv/) and then launch the URSA setup wizard.
+
+    === "Linux/MacOS"
+
+        ```bash
+        curl -LsSf https://lanl.github.io/ursa/latest/install.sh | sh
+        ```
+
+    === "Windows"
+
+        ```powershell
+        powershell -ExecutionPolicy Bypass -c "irm https://lanl.github.io/ursa/latest/install.ps1 | iex"
+        ```
+
+    You can relaunch the setup wizard with `ursa self setup`; to update URSA use `ursa self update`.
+
+=== "uv tool"
 
     Install [`uv`](https://docs.astral.sh/uv/getting-started/installation/) if
     needed, then install URSA and the dashboard in an isolated tool environment:
@@ -50,12 +66,32 @@ URSA requires Python 3.11 or newer. The `uv` tool installation is recommended:
     python -m pip install 'ursa-ai[dashboard]'
     ```
 
-Verify both applications:
 
-```bash
-ursa --help
-ursa-dashboard --help
-```
+## Optional dependencies
+
+Install optional features using extras on the `ursa-ai` package. Multiple extras
+can be combined, for example, `python -m pip install 'ursa-ai[dashboard,lammps]'`
+in your activated environment, or
+`uv tool install --python 3.13 'ursa-ai[dashboard,lammps]'` for a new tool installation.
+
+| Extra | Purpose | Additional requirements |
+| --- | --- | --- |
+| `dashboard` | Browser dashboard (FastAPI and Uvicorn) | A web browser. |
+| `fm` | Expose PyTorch models as MCP tools | Model weights and any model-specific dependencies; compatible accelerator drivers if using a GPU. CPU execution is also supported. |
+| `lammps` | Potential discovery and LAMMPS workflow support | Separately installed LAMMPS and MPI executables; network access for remote potential discovery. See [LAMMPS dependencies](../agents/lammps.md#dependencies). |
+| `office_readers` | Read Word and PowerPoint documents | No additional external executable for these readers. |
+| `opt` | Google's [OR (Operations Research)-Tools](https://developers.google.com/optimization) optimization support | Other solvers used by the Optimization Agent may require separate installation and licenses. |
+| `otel` | Export OpenTelemetry data over OTLP/HTTP | A configured, reachable OTLP collector or compatible service. |
+| `dsi` | Data Science Infrastructure integration | Data sources and backend-specific dependencies required by the DSI workflow. |
+| `image` | Image handling with Pillow | A model with image support when sending images to an LLM. |
+| `mp` | Materials Project API access | A Materials Project API key and network access. |
+| `metric_plots` | Plot and analyze collected metrics such as execution times, LLM token usage, and tokens per second | No additional external executable. |
+
+Extras install Python dependencies; they do not install external simulation codes,
+MPI, or model weights. The LAMMPS Agent defaults to `lmp_mpi` and `mpirun`;
+configure its `lammps_cmd` and `mpirun_cmd` arguments if your executables have
+different names or paths. Your LAMMPS build must include the packages required by
+the selected potential and simulation.
 
 ## Start with the built-in OpenAI configuration
 

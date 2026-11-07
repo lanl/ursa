@@ -11,7 +11,7 @@ from ursa.security import normalize_base_url, validate_group_name
 from ursa.util.secrets import SecretReference
 
 CredentialKind = Literal["llm", "embedding"]
-CredentialSource = Literal["environment", "stored", "llm", "none"]
+CredentialSource = Literal["environment", "stored", "keyring", "llm", "none"]
 
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _STORED_CREDENTIAL_VERSION = 1
@@ -34,22 +34,16 @@ class CredentialStore(Protocol):
 
 
 class KeyringCredentialStore:
-    """Store dashboard credentials in the operating system credential store."""
+    """Store dashboard credentials in the keyring."""
 
     def __init__(self, *, service_name: str = "ursa-ai") -> None:
         self.service_name = service_name
 
     @staticmethod
     def _keyring():
-        try:
-            import keyring
-        except ImportError as e:  # pragma: no cover - installation failure
-            raise CredentialStoreError(
-                "Secure credential storage is unavailable. Install the "
-                "dashboard credential-store dependency or use an environment "
-                "variable."
-            ) from e
-        return keyring
+        from ursa.util import get_keyring
+
+        return get_keyring()
 
     def set_secret(self, credential_id: str, value: str) -> None:
         try:
@@ -58,7 +52,7 @@ class KeyringCredentialStore:
             )
         except Exception as e:
             raise CredentialStoreError(
-                "The operating system credential store could not save the key."
+                "The keyring could not save the key."
             ) from e
 
     def get_secret(self, credential_id: str) -> str | None:
@@ -68,7 +62,7 @@ class KeyringCredentialStore:
             )
         except Exception as e:
             raise CredentialStoreError(
-                "The operating system credential store could not read the key."
+                "The keyring could not read the key."
             ) from e
 
     def delete_secret(self, credential_id: str) -> None:
@@ -79,12 +73,12 @@ class KeyringCredentialStore:
             keyring.delete_password(self.service_name, credential_id)
         except Exception as e:
             raise CredentialStoreError(
-                "The operating system credential store could not remove the key."
+                "The keyring could not remove the key."
             ) from e
 
 
 class MemoryCredentialStore:
-    """In-memory credential store for tests and embedded integrations."""
+    """In-memory keyring for tests and embedded integrations."""
 
     def __init__(self) -> None:
         self._values: dict[str, str] = {}
@@ -102,6 +96,19 @@ class MemoryCredentialStore:
 def credential_id(group: str, kind: CredentialKind) -> str:
     """Return the only keyring identifier allowed for a dashboard slot."""
     return f"dashboard:{validate_group_name(group)}:{kind}"
+
+
+def session_credential_id(
+    group: str, session_id: str, kind: CredentialKind
+) -> str:
+    """Return the isolated keyring identifier for one dashboard session."""
+    normalized_session_id = str(session_id or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", normalized_session_id):
+        raise CredentialConfigurationError("Invalid dashboard session ID.")
+    return (
+        f"dashboard:{validate_group_name(group)}:session:"
+        f"{normalized_session_id}:{kind}"
+    )
 
 
 def credential_target(config: Mapping[str, object]) -> str:
@@ -141,7 +148,7 @@ def store_api_key(
 def read_api_key(
     store: CredentialStore, *, credential_id: str
 ) -> tuple[str, str] | None:
-    """Read and validate a bound key from the secure credential store."""
+    """Read and validate a bound key from the keyring."""
     raw = store.get_secret(credential_id)
     if raw is None:
         return None
@@ -171,7 +178,7 @@ def effective_credential_source(
     if not value:
         # Backward compatibility for settings created before credential_source.
         return "environment" if _config_api_key_env(config) else "none"
-    if value not in {"environment", "stored", "llm", "none"}:
+    if value not in {"environment", "stored", "keyring", "llm", "none"}:
         raise CredentialConfigurationError(
             f"Unknown credential source: {value}"
         )
@@ -235,7 +242,9 @@ def assert_no_credential_metadata(
     config: Mapping[str, object], *, context: str
 ) -> None:
     """Keep secure-store references under server control."""
-    if {"credential_id", "credential_target"}.intersection(config):
+    if {"credential_id", "credential_target", "api_key_keyring"}.intersection(
+        config
+    ):
         raise CredentialConfigurationError(
             f"{context} contains server-managed credential metadata."
         )
@@ -248,12 +257,33 @@ def resolve_api_key(
     kind: CredentialKind,
     store: CredentialStore,
     environ: Mapping[str, str] | None = None,
+    stored_credential_id: str | None = None,
+    llm_stored_credential_id: str | None = None,
 ) -> str | None:
     """Resolve a key without adding it to persistent configuration."""
     assert_no_raw_api_key(config, context=kind)
     source = effective_credential_source(config)
     if source == "none":
         return None
+
+    if source == "keyring":
+        reference = config.get("api_key_keyring")
+        if not isinstance(reference, str) or not reference:
+            raise CredentialConfigurationError(
+                "No URSA config key reference is configured."
+            )
+        if config.get("credential_target") != credential_target(config):
+            raise CredentialConfigurationError(
+                "The URSA config key is not approved for this endpoint. Select its provider again or save a separate key."
+            )
+        value = KeyringCredentialStore(service_name="ursa").get_secret(
+            reference
+        )
+        if not value:
+            raise CredentialConfigurationError(
+                "The URSA config key is missing from system storage. Update it in Default config."
+            )
+        return value
 
     if source == "environment":
         env_name = _config_api_key_env(config) or ""
@@ -276,7 +306,12 @@ def resolve_api_key(
             raise CredentialConfigurationError(
                 "Only embedding settings may reuse the LLM credential."
             )
-        stored = read_api_key(store, credential_id=credential_id(group, "llm"))
+        stored = read_api_key(
+            store,
+            credential_id=(
+                llm_stored_credential_id or credential_id(group, "llm")
+            ),
+        )
         if not stored:
             raise CredentialConfigurationError(
                 "No stored LLM API key is available to reuse."
@@ -290,7 +325,7 @@ def resolve_api_key(
             )
         return value
 
-    expected_id = credential_id(group, kind)
+    expected_id = stored_credential_id or credential_id(group, kind)
     configured_id = str(config.get("credential_id") or "")
     if not configured_id:
         raise CredentialConfigurationError(
@@ -330,6 +365,8 @@ def credential_status(
     group: str,
     kind: CredentialKind,
     store: CredentialStore,
+    stored_credential_id: str | None = None,
+    llm_stored_credential_id: str | None = None,
 ) -> dict[str, object]:
     """Return non-secret status suitable for a dashboard API response."""
     source = effective_credential_source(config)
@@ -342,9 +379,24 @@ def credential_status(
         env_name = str(config.get("api_key_env") or "").strip()
         configured = bool(env_name and os.environ.get(env_name))
         usable = configured or not env_name
+    elif source == "keyring":
+        reference = config.get("api_key_keyring")
+        configured = bool(
+            reference
+            and KeyringCredentialStore(service_name="ursa").get_secret(
+                str(reference)
+            )
+        )
+        usable = configured and config.get("credential_target") == target
+        needs_reentry = configured and not usable
     elif source == "llm":
         stored = (
-            read_api_key(store, credential_id=credential_id(group, "llm"))
+            read_api_key(
+                store,
+                credential_id=(
+                    llm_stored_credential_id or credential_id(group, "llm")
+                ),
+            )
             if kind == "embedding"
             else None
         )
@@ -353,7 +405,7 @@ def credential_status(
         usable = configured and trusted_target == target
         needs_reentry = configured and not usable
     elif source == "stored":
-        expected_id = credential_id(group, kind)
+        expected_id = stored_credential_id or credential_id(group, kind)
         metadata_matches = (
             config.get("credential_id") == expected_id
             and config.get("credential_target") == target

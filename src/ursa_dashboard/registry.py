@@ -181,8 +181,8 @@ register(
     AgentEntry(
         spec=AgentSpec(
             agent_id="chat_agent",
-            display_name="Chat + Execute",
-            description="General chat interface to an LLM.",
+            display_name="Base",
+            description="General chat interface to an LLM that also has tools for doing basic problems. Best to get started and try some simple agentic tasks. Web/arXiv/OSTI search tools available when the dashboard is started with --use-web or agent_init.use_web=true.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
                 supports_cancellation=False,
@@ -237,48 +237,48 @@ register(
     )
 )
 
-register(
-    AgentEntry(
-        spec=AgentSpec(
-            agent_id="prompting_agent",
-            display_name="Prompt Refinement",
-            description="Iterates with the user to refine a rough request into clean, self-contained instructions for a downstream agentic workflow. It can reference available ChatAgent and ExecutionAgent tools when drafting prompts; web/arXiv/OSTI tools are reflected only when web access is enabled.",
-            capabilities=AgentCapabilities(
-                supports_streaming=False,
-                supports_cancellation=False,
-                produces_artifacts=False,
-            ),
-            parameters=[
-                _prompt_param(title="Prompt to refine"),
-                AgentParam(
-                    name="use_web",
-                    title="Include web tool context",
-                    description="Include web/arXiv/OSTI tools in the downstream-tool context used while drafting the prompt.",
-                    type="boolean",
-                    required=False,
-                    default=False,
-                    advanced=True,
-                    source=ParamSource.agent_init,
-                    target="use_web",
-                ),
-            ]
-            + _common_llm_params()
-            + _runner_params(),
-            tags=["planning", "prompting"],
-        ),
-        build_adapter=_baseagent_adapter_builder(
-            "ursa.agents.prompting_agent.PromptingAgent"
-        ),
-        build_inputs=lambda p: p["prompt"],
-    )
-)
+### register(
+###     AgentEntry(
+###         spec=AgentSpec(
+###             agent_id="prompting_agent",
+###             display_name="Prompting Agent",
+###             description="Iterates with the user to refine a rough request into clean, self-contained instructions for a downstream agentic workflow. It can reference available ChatAgent and ExecutionAgent tools when drafting prompts; web/arXiv/OSTI tools are reflected only when web access is enabled.",
+###             capabilities=AgentCapabilities(
+###                 supports_streaming=False,
+###                 supports_cancellation=False,
+###                 produces_artifacts=False,
+###             ),
+###             parameters=[
+###                 _prompt_param(title="Prompt to refine"),
+###                 AgentParam(
+###                     name="use_web",
+###                     title="Include web tool context",
+###                     description="Include web/arXiv/OSTI tools in the downstream-tool context used while drafting the prompt.",
+###                     type="boolean",
+###                     required=False,
+###                     default=False,
+###                     advanced=True,
+###                     source=ParamSource.agent_init,
+###                     target="use_web",
+###                 ),
+###             ]
+###             + _common_llm_params()
+###             + _runner_params(),
+###             tags=["planning", "prompting"],
+###         ),
+###         build_adapter=_baseagent_adapter_builder(
+###             "ursa.agents.prompting_agent.PromptingAgent"
+###         ),
+###         build_inputs=lambda p: p["prompt"],
+###     )
+### )
 
 register(
     AgentEntry(
         spec=AgentSpec(
             agent_id="execution_agent",
-            display_name="Execution + Reflect",
-            description="Tool-using agent that can write/edit files and run shell commands. Web/arXiv/OSTI search tools are available only when the dashboard is started with --use-web or agent_init.use_web=true.",
+            display_name="Execution",
+            description="Tool-using agent that can write/edit files and run shell commands. Uses an internal review to push it to fully complete the users request. Best for complex tasks where a quick agentic run may miss details or stop early. Web/arXiv/OSTI search tools available when the dashboard is started with --use-web or agent_init.use_web=true.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
                 supports_cancellation=False,
@@ -288,15 +288,15 @@ register(
                 _prompt_param(),
                 AgentParam(
                     name="tokens_before_summarize",
-                    title="Tokens before summarize",
-                    description="Conversation token budget before context is summarized.",
+                    title="Summarization fallback (tokens)",
+                    description="Override the Settings → LLM fallback when model context is unknown; otherwise summarize at 70% of the context window.",
                     type="integer",
                     required=False,
-                    default=50000,
+                    default=None,
                     advanced=True,
                     source=ParamSource.agent_init,
                     target="tokens_before_summarize",
-                    constraints=ParamConstraint(minimum=1000),
+                    constraints=ParamConstraint(minimum=1),
                 ),
                 AgentParam(
                     name="messages_to_keep",
@@ -348,8 +348,8 @@ register(
     AgentEntry(
         spec=AgentSpec(
             agent_id="planning_executor_workflow",
-            display_name="Plan -> Execute",
-            description="Uses one persistent planning/execution agent with native planner and executor subgraphs. Best for longer, complex tasks. Web/arXiv/OSTI tools are opt-in via --use-web or agent_init.use_web=true.",
+            display_name="Planning + Execution",
+            description="Runs a PlanningAgent to break the task into steps, then an ExecutionAgent to execute each step sequentially. Best for longer, complex tasks, especially with smaller or cheaper LLMs. Executor web/arXiv/OSTI search tools are opt-in via --use-web or agent_init.use_web=true.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
                 supports_cancellation=False,
@@ -372,15 +372,15 @@ register(
                 ),
                 AgentParam(
                     name="tokens_before_summarize",
-                    title="Tokens before summarize",
-                    description="Conversation token budget before context is summarized (executor).",
+                    title="Summarization fallback (tokens)",
+                    description="Override the Settings → LLM executor fallback when model context is unknown; otherwise summarize at 70% of the context window.",
                     type="integer",
                     required=False,
-                    default=50000,
+                    default=None,
                     advanced=True,
                     source=ParamSource.agent_init,
                     target="tokens_before_summarize",
-                    constraints=ParamConstraint(minimum=1000),
+                    constraints=ParamConstraint(minimum=1),
                 ),
                 AgentParam(
                     name="messages_to_keep",
@@ -665,7 +665,7 @@ register(
         spec=AgentSpec(
             agent_id="hypothesizer_agent",
             display_name="Hypothesize",
-            description="Maintains a persistent hypothesis space in an experience artifact for reuse by other agents.",
+            description="Defines and maintains a persistent hypothesis space in an experience artifact for reuse by tool-using agents to solve problems. Helpful for providing a reviewable set of approaches that a Chat or Execution agent could then use to guide work or provide a framing for multi-agent environments.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
                 supports_cancellation=False,

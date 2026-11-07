@@ -21,38 +21,21 @@ Use URSA when you want to:
 
 ## Quick install
 
-We recommend installing with [`uv`](https://docs.astral.sh/uv/):
+We recommend installing URSA by running the following command in a terminal:
 
-```bash
-uv tool install --python 3.13 'ursa-ai[dashboard]'
-```
-
-See [Getting started][getting-started] for installation alternatives and a
-walkthrough of using URSA.
-
-## Quick first run
-
-For OpenAI, set the standard API-key environment variable and run URSA. The
-built-in provider includes the model and base URL, so no config file is needed:
-
-=== "macOS/Linux"
+=== "Linux/MacOS"
 
     ```bash
-    export OPENAI_API_KEY="..."
-    ursa
+    curl -LsSf https://lanl.github.io/ursa/latest/install.sh | sh
     ```
 
-=== "Windows PowerShell"
+=== "Windows"
 
     ```powershell
-    $env:OPENAI_API_KEY = "..."
-    ursa
+    powershell -ExecutionPolicy Bypass -c "irm https://lanl.github.io/ursa/latest/install.ps1 | iex"
     ```
 
-Inside the URSA app, type `/` to browse commands or try:
-
-- `Summarize what URSA can help me do.`
-- `#execute Write and run a Python script that prints the first 10 prime numbers.`
+The installer will install URSA using [`uv`](https://docs.astral.sh/uv/), then launch a setup wizard for URSA.
 
 ## Where to go next
 

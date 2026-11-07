@@ -19,16 +19,26 @@ from mcp import StdioServerParameters
 from pydantic import ValidationError
 from rich.console import Console as RealConsole
 
+from ursa import security
 from ursa.agents.base import AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import ChatModelConfig, EmbModelConfig, UrsaConfig
-from ursa.cli.runtime import HITL, AgentHITL
+from ursa.cli.runtime import EPHEMERAL_AGENT_PREFIX, HITL, AgentHITL
 from ursa.cli.tui.agent_info import load_agent_tools
 from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.rendering import event_artifact
 
 LOGGER = logging.getLogger(__name__)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ursa_cache(monkeypatch, tmp_path_factory):
+    # Every session now owns a (temporary) agent directory under the cache, so
+    # the real runtime must never be exercised against the user's ~/.cache.
+    monkeypatch.setattr(
+        security, "URSA_CACHE_DIR", tmp_path_factory.mktemp("ursa_cache")
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -98,23 +108,57 @@ async def test_agents_use_configured_workspace(ursa_config, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_unnamed_cli_agent_does_not_create_checkpointer(
+async def test_unnamed_cli_session_uses_temporary_agent_removed_on_close(
     tmp_path, monkeypatch
 ):
     _stub_hitl_dependencies(monkeypatch)
     workspace = tmp_path / "ephemeral-workspace"
     hitl = HITL(UrsaConfig(workspace=workspace))
 
-    async def unexpected_checkpointer(_checkpoint_path):
-        pytest.fail("Unnamed CLI sessions must not create a checkpointer")
-
-    monkeypatch.setattr(hitl, "_get_checkpointer", unexpected_checkpointer)
+    # The user-facing name stays unset, so the UI never shows the generated one.
+    assert hitl.agent_name is None
+    name = hitl.session_agent_name
+    assert name.startswith(EPHEMERAL_AGENT_PREFIX)
+    den = security.group_agents_dir(hitl.group) / name
 
     agent = await hitl.get_agent("chat")
 
+    # History is checkpointed in the agent den, never in the workspace.
     assert agent._agent is not None
-    assert agent._agent.checkpointer is None
+    assert isinstance(agent._agent.checkpointer, AsyncSqliteSaver)
+    assert agent._agent.den == den
+    assert (den / "db" / "checkpointer.db").exists()
     assert not (workspace / "db" / "checkpointer.db").exists()
+
+    await hitl.aclose()
+    assert not den.exists()
+
+
+@pytest.mark.asyncio
+async def test_temporary_agent_names_are_unique_per_session(
+    tmp_path, monkeypatch
+):
+    _stub_hitl_dependencies(monkeypatch)
+    first = HITL(UrsaConfig(workspace=tmp_path / "a"))
+    second = HITL(UrsaConfig(workspace=tmp_path / "b"))
+    try:
+        assert first.session_agent_name != second.session_agent_name
+    finally:
+        await first.aclose()
+        await second.aclose()
+
+
+@pytest.mark.asyncio
+async def test_named_session_agent_is_kept_on_close(tmp_path, monkeypatch):
+    _stub_hitl_dependencies(monkeypatch)
+    hitl = HITL(UrsaConfig(workspace=tmp_path, agent_name="keep-me"))
+    assert hitl.session_agent_name == "keep-me"
+    den = security.group_agents_dir(hitl.group) / "keep-me"
+
+    await hitl.get_agent("chat")
+    await hitl.aclose()
+
+    assert den.exists()  # only generated, prefixed agents are ever removed
 
 
 @pytest.mark.asyncio
@@ -1137,6 +1181,27 @@ async def test_agents_apply_agent_config_overrides(
     assert agent._agent.telemetry.enable == override["enable_metrics"]
 
 
+async def test_global_summarization_fallback_and_agent_override(
+    tmp_path, monkeypatch
+):
+    _stub_hitl_dependencies(monkeypatch)
+    hitl = HITL(
+        UrsaConfig(
+            workspace=tmp_path,
+            tokens_before_summarize=12000,
+            agent_config={"chat": {"tokens_before_summarize": 8000}},
+        )
+    )
+    for name, wrapper in hitl.agents.items():
+        assert wrapper.config["tokens_before_summarize"] == (
+            8000 if name == "chat" else 12000
+        )
+    chat = await hitl.get_agent("chat")
+    execute = await hitl.get_agent("execute")
+    assert chat._agent.tokens_before_summarize == 8000
+    assert execute._agent.tokens_before_summarize == 12000
+
+
 @pytest.mark.asyncio
 async def test_thread_id_propagates_from_config(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
@@ -1633,3 +1698,212 @@ async def test_mcp_smoke(mcp_server: Client):
 async def test_mcp_agents(mcp_server: Client, agent: str, query: str):
     response = await mcp_server.call_tool(agent, {"prompt": query})
     assert isinstance(response.structured_content["result"], str)
+
+
+def _recording_models(monkeypatch):
+    """Every chat model the runtime builds, in order (RecordingChatModel)."""
+    from tests.agents.utils import RecordingChatModel
+
+    built = []
+
+    def init_chat_model(self):
+        built.append(RecordingChatModel())
+        return built[-1]
+
+    monkeypatch.setattr(ChatModelConfig, "init_chat_model", init_chat_model)
+    monkeypatch.setattr(
+        "ursa.cli.runtime.validate_model_provider", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        "ursa.cli.runtime.enforce_model_group_policy", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        "ursa.cli.runtime.start_mcp_client", lambda servers: None
+    )
+    return built
+
+
+def _saw(model, text):
+    return any(text in str(m.content) for m in model.calls[-1])
+
+
+@pytest.mark.asyncio
+async def test_unnamed_session_keeps_history_across_model_switch(
+    tmp_path, monkeypatch
+):
+    # Regression: switching models reset the unnamed session's only copy of
+    # the conversation, so every model after a switch started from scratch.
+    built = _recording_models(monkeypatch)
+    hitl = HITL(UrsaConfig(workspace=tmp_path))
+    try:
+        await hitl.run_agent("chat", "My secret word is PINEAPPLE.")
+        await hitl.reconfigure_model("second-model", None)
+        await hitl.run_agent("chat", "What is my secret word?")
+        assert built[-1] is not built[0]  # really a new model
+        assert _saw(built[-1], "PINEAPPLE")
+    finally:
+        await hitl.aclose()
+
+
+@pytest.mark.asyncio
+async def test_unnamed_session_shares_history_across_agent_types(
+    tmp_path, monkeypatch
+):
+    # Same behaviour as a named session: one thread for every agent type.
+    built = _recording_models(monkeypatch)
+    hitl = HITL(UrsaConfig(workspace=tmp_path))
+    try:
+        await hitl.run_agent("chat", "My secret word is PINEAPPLE.")
+        await hitl.run_agent("prompt", "Unrelated request.")
+        assert _saw(built[-1], "PINEAPPLE")
+    finally:
+        await hitl.aclose()
+
+
+class _SharedState(dict):
+    __annotations__ = {"messages": list}
+
+
+class _PlainState(dict):
+    __annotations__ = {"context": str}
+
+
+def _fake_agent_class(state_type, checkpointer=True):
+    """Minimal agent: records the query it is given and returns a fixed answer."""
+
+    class FakeAgent:
+        def __init__(self):
+            self.state_type = state_type
+            self.checkpointer = object() if checkpointer else None
+            self.queries = []
+
+        def format_query(self, prompt, state=None):
+            query = {"prompt": prompt, "state": state}
+            self.queries.append(query)
+            return query
+
+        async def ainvoke(self, query, config=None):
+            return {"messages": ["new"], "extra": "kept"}
+
+        def format_result(self, result):
+            return "answer"
+
+    return FakeAgent
+
+
+SharedA = _fake_agent_class(_SharedState)
+SharedB = _fake_agent_class(_SharedState)
+Plain = _fake_agent_class(_PlainState)
+PlainOther = _fake_agent_class(_PlainState)
+Unpersisted = _fake_agent_class(_SharedState, checkpointer=False)
+
+
+@pytest.mark.parametrize(
+    ("previous", "current", "handoff"),
+    [
+        # Both share the checkpointed history: the output is already there.
+        (SharedA, SharedB, False),
+        # Either side outside the shared history: the handoff is the only copy.
+        (Plain, SharedA, True),  # e.g. /web -> /chat
+        (SharedA, Plain, True),  # e.g. /chat -> /web
+        (Plain, PlainOther, True),  # e.g. /web -> /lammps
+        # Messages schema but no checkpointer: history is not shared.
+        (Unpersisted, SharedA, True),
+        # Same class (e.g. rebuilt after a model switch) never hands off to itself.
+        (Plain, Plain, False),
+        (SharedA, SharedA, False),
+    ],
+    ids=[
+        "shared-to-shared",
+        "plain-to-shared",
+        "shared-to-plain",
+        "plain-to-plain",
+        "unpersisted-to-shared",
+        "same-plain-class",
+        "same-shared-class",
+    ],
+)
+async def test_handoff_only_when_output_is_not_already_shared(
+    previous, current, handoff
+):
+    wrapper = AgentHITL(agent_class=current)
+    wrapper._agent = current()
+
+    await wrapper(
+        "next request", last_agent_result="PREVIOUS", last_agent=previous()
+    )
+
+    prompt = wrapper._agent.queries[-1]["prompt"]
+    assert ("The last agent output was: PREVIOUS" in prompt) is handoff
+    assert "next request" in prompt
+
+
+@pytest.mark.parametrize("checkpointer", [True, False])
+async def test_cached_messages_are_not_resent_to_checkpointed_agents(
+    checkpointer,
+):
+    wrapper = AgentHITL(
+        agent_class=_fake_agent_class(_SharedState, checkpointer=checkpointer)
+    )
+    wrapper._agent = wrapper.agent_class()
+    cached = {"messages": ["old-1", "old-2"], "extra": "kept"}
+    wrapper.state = cached
+
+    await wrapper("hi")
+
+    sent = wrapper._agent.queries[-1]["state"]
+    assert sent["extra"] == "kept"  # non-message state is still passed
+    # The checkpoint holds the history; only unpersisted agents need the copy.
+    assert sent["messages"] == ([] if checkpointer else ["old-1", "old-2"])
+    assert cached["messages"] == ["old-1", "old-2"]  # cache not mutated
+
+
+@pytest.mark.asyncio
+async def test_summarized_messages_are_not_resurrected_by_another_agent(
+    tmp_path, monkeypatch
+):
+    # Regression: chat's cached copy re-sent messages that the prompt agent had
+    # since summarized away, putting them back next to their own summary.
+    _recording_models(monkeypatch)
+    hitl = HITL(UrsaConfig(workspace=tmp_path))
+    try:
+        await hitl.run_agent("chat", "Turn one mentions PINEAPPLE.")
+        prompt = await hitl.get_agent("prompt")
+        prompt._agent.tokens_before_summarize = 1
+        prompt._agent.messages_to_keep = 1
+        await hitl.run_agent("prompt", "Second turn from another agent.")
+        await hitl.run_agent("chat", "Third turn, back on chat.")
+
+        graph = await hitl.agents["chat"]._agent._aget_async_compiled_graph()
+        snapshot = await graph.aget_state({
+            "configurable": {"thread_id": hitl.thread_id}
+        })
+        messages = snapshot.values["messages"]
+        raw = [
+            m
+            for m in messages
+            if "PINEAPPLE" in str(m.content)
+            and "[Summary" not in str(m.content)
+        ]
+        assert any("[Summary" in str(m.content) for m in messages)
+        assert raw == []
+    finally:
+        await hitl.aclose()
+
+
+@pytest.mark.asyncio
+async def test_shared_history_agents_get_no_duplicate_handoff(
+    tmp_path, monkeypatch
+):
+    built = _recording_models(monkeypatch)
+    hitl = HITL(UrsaConfig(workspace=tmp_path))
+    try:
+        await hitl.run_agent("chat", "My secret word is PINEAPPLE.")
+        await hitl.run_agent("prompt", "Unrelated request.")
+        sent = built[-1].calls[-1]
+        assert not any(
+            "The last agent output was" in str(m.content) for m in sent
+        )
+        assert _saw(built[-1], "PINEAPPLE")  # it still has the history
+    finally:
+        await hitl.aclose()

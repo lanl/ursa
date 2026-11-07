@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import ToolMessage
@@ -62,9 +63,11 @@ def test_mcp_header_resolves_keyring_secret_template(monkeypatch):
 
     monkeypatch.setattr(mcp_mod, "UrsaMCPClient", DummyClient)
     monkeypatch.setattr(
-        "keyring.get_password",
-        lambda service, username: (
-            "token" if (service, username) == ("ursa", "demo") else None
+        "ursa.util.secrets.get_keyring",
+        lambda: SimpleNamespace(
+            get_password=lambda service, username: (
+                "token" if (service, username) == ("ursa", "demo") else None
+            )
         ),
     )
 

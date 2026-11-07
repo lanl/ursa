@@ -6,6 +6,8 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
+from ursa.util.secrets import get_keyring as get_keyring
+
 _URSA_SERDE_MODULES = [
     ("ursa.agents.planning_agent", "Plan"),
     ("ursa.agents.planning_agent", "PlanStep"),

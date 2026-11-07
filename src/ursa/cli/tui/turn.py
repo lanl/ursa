@@ -42,9 +42,8 @@ class Turn(Static):
         self.cards: dict[str, EventCard] = {}
         self.started_at = monotonic()
         self.token_usage = 0
-        self._command_count = 0
         self._commands: list[RunCommandCard] = []
-        self._commands_by_id: dict[str, RunCommandCard] = {}
+        self._commands_by_tool_call_id: dict[str, RunCommandCard] = {}
         self._commands_overlapped = False
         self._tool_calls_by_id: dict[str, ToolCallCard] = {}
         self._edits_by_id: dict[str, EditCard] = {}
@@ -388,23 +387,12 @@ class Turn(Static):
 
     async def _run_command_event(self, payload: dict[str, Any]) -> None:
         command = str(payload.get("query") or "").strip()
-        command_id = str(payload.get("_command_id") or "")
-        key = f"command:{command_id}" if command_id else ""
-        card = self._commands_by_id.get(command_id) if command_id else None
-        if card is None and str(payload.get("phase") or "") != "start":
-            matching = [
-                candidate
-                for candidate in self._commands
-                if candidate.command == command and not candidate.completed
-            ]
-            if len(matching) == 1:
-                # Some callback providers assign custom tool events a child
-                # run ID instead of the ID used by on_tool_start. A unique
-                # active command match is safe to correlate and avoids a
-                # duplicate card stuck in its initial state.
-                card = matching[0]
-                if command_id:
-                    self._commands_by_id[command_id] = card
+        raw_tool_call_id = payload.get("tool_call_id")
+        if raw_tool_call_id in (None, ""):
+            raise ValueError("run_command event missing tool_call_id")
+        tool_call_id = str(raw_tool_call_id)
+        key = f"command:{tool_call_id}"
+        card = self._commands_by_tool_call_id.get(tool_call_id)
         if card is None:
             if self._commands_overlapped and not any(
                 command.completed is False for command in self._commands
@@ -415,13 +403,10 @@ class Turn(Static):
                 for previous in self._commands:
                     previous.force_compact = True
                 self._commands_overlapped = False
-            self._command_count += 1
-            key = key or f"command:{self._command_count}"
             card = RunCommandCard(key, command or "(command unavailable)")
             await self._replace_or_mount(key, card)
             self._commands.append(card)
-            if command_id:
-                self._commands_by_id[command_id] = card
+            self._commands_by_tool_call_id[tool_call_id] = card
         assert isinstance(card, RunCommandCard)
         card.update_event(payload)
         self._update_command_layout()

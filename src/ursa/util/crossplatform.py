@@ -49,6 +49,11 @@ def user_config_paths() -> list[Path]:
     return paths
 
 
+def default_user_config_path() -> Path:
+    """Return the user config path with the highest precedence."""
+    return user_config_paths()[-1]
+
+
 SSH_ENV_VARS = ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")
 KITTY_KEYBOARD_ENV_VARS = (
     "ALACRITTY_WINDOW_ID",

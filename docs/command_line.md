@@ -48,7 +48,12 @@ Inspect the running URSA and Python installation with:
 
 ```bash
 ursa self status
+ursa self doctor
+ursa self doctor --json
 ```
+
+`self doctor` resolves the configuration and runs live provider, model (chat,
+forced tool use, structured output, and embeddings), and MCP server checks.
 
 When installed with `uv tool install`, run `ursa self update` to update URSA
 or `ursa self modify --help` to change extras, additional packages, or the

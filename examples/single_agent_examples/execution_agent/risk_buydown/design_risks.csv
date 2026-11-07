@@ -1,0 +1,9 @@
+risk_id,risk_name,risk_area,initial_probability,impact,uncertainty,description
+R01,Usable capacity falls below requirement,Capacity,0.3,0.8,0.7,Uncertainty about whether an NMC lithium-ion battery module supplies the required usable energy over the intended operating range.
+R02,Power delivery falls below requirement,Power capability,0.28,0.75,0.65,Uncertainty about voltage sag and resistance limiting peak power during representative load transients.
+R03,Cycle aging causes premature end of life,Cycle durability,0.35,0.85,0.8,Uncertainty about capacity fade and resistance growth under the intended charge-discharge duty cycle.
+R04,Calendar aging degrades stored modules,Storage durability,0.25,0.7,0.75,Uncertainty about capacity loss and resistance growth during storage at representative temperatures and states of charge.
+R05,Low-temperature operation degrades performance,Thermal environment,0.32,0.78,0.7,Uncertainty about cold-temperature energy delivery and charge acceptance within the declared operating limits.
+R06,Cell failure propagates through the module,Safety,0.15,1,0.85,Uncertainty about whether a cell-level thermal failure can propagate to neighboring cells in the module.
+R07,Protection system fails to detect or isolate faults,Protection controls,0.2,0.95,0.75,Uncertainty about whether the battery management system correctly detects relevant faults and commands protective isolation.
+R08,Cell lot variability causes module imbalance,Manufacturing variability,0.27,0.72,0.65,Uncertainty about whether variation in cell capacity resistance and self-discharge produces unacceptable module imbalance.

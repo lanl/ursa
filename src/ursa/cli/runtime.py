@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import shutil
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -26,10 +28,27 @@ from ursa.cli.config import (
 )
 from ursa.security import (
     enforce_model_group_policy,
+    group_agents_dir,
 )
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.inference_providers import validate_model_provider
 from ursa.util.mcp import start_mcp_client
+
+# Reserved name prefix of the throwaway agents backing unnamed sessions.
+EPHEMERAL_AGENT_PREFIX = "tmp_"
+
+
+def _shares_message_history(agent: Any) -> bool:
+    """Whether ``agent`` reads and writes the session's shared message history.
+
+    True only for checkpointed agents whose state schema has a ``messages``
+    channel. Decided by class, not by runtime state, so it is also correct on
+    an agent's first turn. Unknown schemas count as not sharing.
+    """
+    state_type = getattr(agent, "state_type", None)
+    return getattr(
+        agent, "checkpointer", None
+    ) is not None and "messages" in getattr(state_type, "__annotations__", {})
 
 
 @dataclass
@@ -142,16 +161,37 @@ class AgentHITL:
         assert self._agent is not None, "Agent not yet instantiated"
         agent = self._agent
 
-        # Inject the previous agent's response into the query
-        if (last_agent_result is not None) and (last_agent != agent):
+        # Hand the previous agent's output over only when it is not already in
+        # this agent's context: both agents must share the checkpointed message
+        # history for it to be redundant (it would otherwise be duplicated).
+        # Compared by class so rebuilt agents (e.g. after a model switch) still
+        # count as the same agent.
+        if (
+            last_agent_result is not None
+            and type(last_agent) is not type(agent)
+            and not (
+                _shares_message_history(last_agent)
+                and _shares_message_history(agent)
+            )
+        ):
             prompt = "\n".join([
                 f"The last agent output was: {last_agent_result}\n\n",
                 f"The user stated: {prompt}",
             ])
 
         # Setup the agents input state from it's current state and plain text input
-        # then invoke the agent and extract a final message from it's new state
-        query = agent.format_query(prompt, state=self.state)
+        # then invoke the agent and extract a final message from it's new state.
+        # For checkpointed agents the history already lives in the checkpoint, so
+        # the cached copy is sent without its messages: re-sending them could
+        # resurrect messages another agent has since summarized away.
+        state = self.state
+        if (
+            state is not None
+            and "messages" in state
+            and getattr(agent, "checkpointer", None) is not None
+        ):
+            state = {**state, "messages": []}
+        query = agent.format_query(prompt, state=state)
 
         invoke_config = None
         if callbacks:
@@ -188,6 +228,20 @@ class HITL:
         self.config.workspace.mkdir(parents=True, exist_ok=True)
 
         self.agent_name = self.config.agent_name
+        # Unnamed sessions run as a throwaway persistent agent. Its checkpoint
+        # lives in the agent den (outside the workspace) so conversation history
+        # survives agent rebuilds such as model switches, is shared by every
+        # agent type exactly as it is for a named agent, and keeps the store,
+        # metrics and experiences out of the workspace. It is deleted on close;
+        # leftovers from a crash can be removed with `ursa delete-agent --name 'tmp_*'`.
+        # `agent_name` stays the user's choice (None) so the UI does not show
+        # the generated name.
+        self._ephemeral_agent = self.agent_name is None
+        self.session_agent_name = (
+            f"{EPHEMERAL_AGENT_PREFIX}{uuid.uuid4().hex}"
+            if self._ephemeral_agent
+            else self.agent_name
+        )
         self.group = self.config.group
 
         validate_model_provider(self.config.llm_model, "chat")
@@ -227,7 +281,9 @@ class HITL:
             if deps is not None and not has_optional_dep_group(deps):
                 continue
 
-            config = {}
+            config = {
+                "tokens_before_summarize": self.config.tokens_before_summarize
+            }
             if agent_name in {"chat", "execute", "deep_review", "dsi"}:
                 config.update(rag_tool_config)
             self.agents[agent_name] = AgentHITL(
@@ -327,6 +383,10 @@ class HITL:
         return await asyncio.shield(task)
 
     async def _finalize_named_agent(self, built_agent: Any) -> None:
+        # Custom agent classes from the config need not be persistent
+        # BaseAgents; without a den there is nothing to checkpoint.
+        if getattr(built_agent, "den", None) is None:
+            return
         sync_checkpointer = built_agent.checkpointer
         async_checkpointer = await self._get_checkpointer(built_agent.den)
         try:
@@ -344,14 +404,10 @@ class HITL:
         await agent.instantiate(
             llm=self.model,
             workspace=self.workspace,
-            agent_name=self.agent_name,
+            agent_name=self.session_agent_name,
             group=self.group,
             mcp_client=self.mcp_client,
-            finalizer=(
-                self._finalize_named_agent
-                if self.agent_name is not None
-                else None
-            ),
+            finalizer=self._finalize_named_agent,
             thread_id=f"{self.thread_id}",
         )
         assert agent._agent is not None
@@ -425,8 +481,9 @@ class HITL:
                 self.model = model
                 self.config.llm_model = resolved
                 self.inference_provider = inference_provider
-                self.last_agent = None
-                self.last_agent_result = None
+                # The handoff is kept: like the history it survives a model
+                # switch, and AgentHITL compares agents by class, so the
+                # rebuilt agents still match their pre-switch counterparts.
 
         await self._run_runtime_task(apply_reconfiguration())
 
@@ -491,8 +548,6 @@ class HITL:
                 for wrapper in self.agents.values():
                     if "rag_tool_embedding" in wrapper.config:
                         wrapper.config["rag_tool_embedding"] = new_embedding
-                self.last_agent = None
-                self.last_agent_result = None
 
         await self._run_runtime_task(apply_reconfiguration())
 
@@ -540,6 +595,25 @@ class HITL:
                 return
             await self._close_instantiated_agents()
             self._closed = True
+            await asyncio.to_thread(self._remove_ephemeral_agent)
+
+    def _remove_ephemeral_agent(self) -> None:
+        """Delete the throwaway agent of an unnamed session.
+
+        Runs after every agent and checkpointer is closed. Only ever removes a
+        directory this runtime generated: the flag must be set and the name
+        must carry the reserved prefix.
+        """
+        name = self.session_agent_name
+        if not self._ephemeral_agent or not name.startswith(
+            EPHEMERAL_AGENT_PREFIX
+        ):
+            return
+        path = group_agents_dir(self.group) / name
+        try:
+            shutil.rmtree(path, ignore_errors=True)
+        except Exception:
+            logging.exception("Failed to remove temporary agent %s", path)
 
     def _close_done(self, task: asyncio.Task[None]) -> None:
         if self._close_task is task:

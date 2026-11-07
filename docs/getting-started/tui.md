@@ -43,6 +43,15 @@ You should see the full-screen URSA interface. Type `/` to browse app
 commands, `#` to route a message to an agent, or `@` to insert a workspace
 path.
 
+Use `/status` to see the context window and its 70% summarization threshold
+(or the default fallback, which individual agents can override), plus the source
+of the context limit. The **Config** tab shows the effective
+`tokens_before_summarize`; comments preserve the configured fallback values.
+Set `tokens_before_summarize` in your config or `URSA_TOKENS_BEFORE_SUMMARIZE`
+to change the fallback, which defaults to 50,000 tokens.
+These values refresh when you switch models. For Ollama,
+the allocated window may only become available after the first response.
+
 ### Full-screen interface controls
 
 | Input | Action |

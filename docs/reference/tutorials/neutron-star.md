@@ -15,15 +15,13 @@ This workflow allows you to:
 ## Basic Usage
 
 ```python
-from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
 from ursa.agents import ArxivAgent, ExecutionAgent
+from ursa.cli.config import UrsaConfig
 
 # Initialize the language model
-model = init_chat_model(
-    model="openai:gpt-5.4-mini",
-    max_tokens=50000,
-)
+config = UrsaConfig.user_config()
+model = config.llm_model.init_chat_model()
 
 # Initialize the ArxivAgent
 arxiv_agent = ArxivAgent(

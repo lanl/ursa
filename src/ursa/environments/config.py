@@ -426,7 +426,9 @@ def make_llm(
         return default_llm
     if isinstance(model_config, Mapping):
         model_config = ModelConfig.model_validate(model_config)
-    return init_chat_model(**model_config.kwargs)
+    from ursa.util.openai_compat import with_responses_fallback
+
+    return with_responses_fallback(init_chat_model(**model_config.kwargs))
 
 
 def load_elo_config(
