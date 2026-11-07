@@ -15,15 +15,22 @@ def test_simulator_agent_import():
 
 
 @pytest.mark.parametrize(
-    "config,expected_path",
+    "config,expected_path,with_embeddings",
     [
-        ({}, "../simulator_docs"),
-        ({"docs_path": "custom_docs"}, "custom_docs"),
-        ({"docs_path": Path("custom_docs")}, Path("custom_docs")),
+        ({}, "../simulator_docs", True),
+        ({"docs_path": "custom_docs"}, "custom_docs", True),
+        ({"docs_path": Path("custom_docs")}, Path("custom_docs"), True),
+        ({"docs_path": "custom_docs"}, None, False),
     ],
 )
-def test_simulator_rag_documentation_path(
-    monkeypatch, tmp_path, chat_model, embedding_model, config, expected_path
+def test_simulator_rag_configuration(
+    monkeypatch,
+    tmp_path,
+    chat_model,
+    embedding_model,
+    config,
+    expected_path,
+    with_embeddings,
 ):
     import ursa.agents.simulator_agent as simulator
     import ursa.security as security
@@ -35,45 +42,25 @@ def test_simulator_rag_documentation_path(
     rag_class = Mock()
     monkeypatch.setattr(simulator, "RAGAgent", rag_class)
 
+    embedding = {"embedding": embedding_model} if with_embeddings else {}
     agent = simulator.SimulatorAgent(
         llm=chat_model,
-        embedding=embedding_model,
+        **embedding,
         workspace=tmp_path,
         thread_id="simulation-test",
         checkpointer=None,
         **config,
     )
 
-    assert rag_class.call_args.kwargs["database_path"] == expected_path
-    assert rag_class.call_args.kwargs["embedding"] is embedding_model
-    assert agent.rag_agent is rag_class.return_value
-    agent.documenter.add_tool.assert_called_once()
-    agent.runner.add_tool.assert_called_once()
-
-
-def test_simulator_without_embeddings_does_not_initialize_rag(
-    monkeypatch, tmp_path, chat_model
-):
-    import ursa.agents.simulator_agent as simulator
-    import ursa.security as security
-
-    monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "cache")
-    monkeypatch.setattr(
-        simulator, "ChatAgent", Mock(side_effect=lambda **_: Mock())
-    )
-    rag_class = Mock()
-    monkeypatch.setattr(simulator, "RAGAgent", rag_class)
-
-    agent = simulator.SimulatorAgent(
-        llm=chat_model,
-        workspace=tmp_path,
-        thread_id="simulation-test",
-        checkpointer=None,
-        docs_path="custom_docs",
-    )
-
-    rag_class.assert_not_called()
-    assert (
-        agent.doc_rag("documentation")
-        == "Tool Failed: No RAG database available."
-    )
+    if with_embeddings:
+        assert rag_class.call_args.kwargs["database_path"] == expected_path
+        assert rag_class.call_args.kwargs["embedding"] is embedding_model
+        assert agent.rag_agent is rag_class.return_value
+        agent.documenter.add_tool.assert_called_once()
+        agent.runner.add_tool.assert_called_once()
+    else:
+        rag_class.assert_not_called()
+        assert (
+            agent.doc_rag("documentation")
+            == "Tool Failed: No RAG database available."
+        )

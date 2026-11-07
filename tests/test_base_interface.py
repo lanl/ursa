@@ -174,17 +174,21 @@ def test_handle_tool_errors_propagation(tool_agent, handle_tool_errors):
     assert agent.tool_node._handle_tool_errors == handle_tool_errors
 
 
-async def test_agent_with_tools_add_mcp_tools_adds_all(tool_agent):
+@pytest.mark.parametrize("tool_name", [None, "beta"])
+async def test_agent_with_tools_adds_requested_mcp_tools(tool_agent, tool_name):
     alpha = _make_tool("alpha")
     beta = _make_tool("beta")
     client = AsyncMock()
     client.get_tools.return_value = [alpha, beta]
 
     agent = tool_agent()
-    await agent.add_mcp_tools(client)
+    options = {} if tool_name is None else {"tool_name": tool_name}
+    await agent.add_mcp_tools(client, **options)
 
-    assert agent.tools == {"alpha": alpha, "beta": beta}
-    client.get_tools.assert_awaited_once()
+    expected = {"beta": beta} if tool_name else {"alpha": alpha, "beta": beta}
+    assert agent.tools == expected
+    if tool_name is None:
+        client.get_tools.assert_awaited_once()
 
 
 async def test_agent_with_tools_applies_mcp_tools_off_event_loop(
@@ -208,18 +212,6 @@ async def test_agent_with_tools_applies_mcp_tools_off_event_loop(
 
     assert apply_threads
     assert apply_threads[0] != event_loop_thread
-
-
-async def test_agent_with_tools_add_mcp_tools_filters_by_name(tool_agent):
-    alpha = _make_tool("alpha")
-    beta = _make_tool("beta")
-    client = AsyncMock()
-    client.get_tools.return_value = [alpha, beta]
-
-    agent = tool_agent()
-    await agent.add_mcp_tools(client, tool_name="beta")
-
-    assert agent.tools == {"beta": beta}
 
 
 async def test_agent_with_tools_returns_mcp_tool_provenance_without_mutation(
