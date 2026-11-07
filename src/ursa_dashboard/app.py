@@ -766,6 +766,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         dependencies=[Depends(require_auth)],
     )
     def patch_settings(req: SettingsPatchRequest) -> SettingsResponse:
+        nonlocal config_resolver, provider_ursa_config, inference_providers
         patch_obj = dict(req.patch)
         for section in ("llm", "embedding"):
             section_patch = patch_obj.get(section)
@@ -787,9 +788,53 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
                     raise HTTPException(status_code=400, detail=str(e)) from e
 
         try:
-            stored = merge_global_settings_patch(
-                settings_store.load(), patch_obj
+            current = settings_store.load()
+            stored = merge_global_settings_patch(current, patch_obj)
+
+            # The normal URSA user config is the source of truth for model
+            # defaults shared by the TUI and dashboard. The browser submits all
+            # controls on every update, so write YAML only when a model field
+            # actually changed (not for a fallback-token/theme/MCP-only edit).
+            effective_before = _effective_settings()
+            desired = merge_global_settings_patch(effective_before, patch_obj)
+            model_fields = (
+                "model",
+                "inference_provider",
+                "base_url",
+                "model_kwargs",
             )
+            updates_models = any(
+                any(
+                    getattr(getattr(desired, section), field)
+                    != getattr(getattr(effective_before, section), field)
+                    for field in model_fields
+                )
+                for section in ("llm", "embedding")
+            )
+            if updates_models:
+
+                def validate_user_config(data):
+                    return config_resolver.resolve(
+                        current,
+                        user_override=(user_config_store.path, data),
+                    )
+
+                user_config_store.save_model_defaults(
+                    desired.llm.model_dump(mode="json"),
+                    desired.embedding.model_dump(mode="json"),
+                    validate_user_config,
+                )
+                # Refresh cached config layers and the provider catalog after
+                # writing the same file edited by the Default config tab.
+                config_resolver = DashboardConfigResolver(
+                    group=dashboard_group,
+                    explicit_config=dashboard_config or None,
+                )
+                provider_ursa_config = config_resolver.resolve(stored)[1]
+                inference_providers = dict(
+                    provider_ursa_config.inference_providers
+                )
+
             effective = config_resolver.resolve(stored)[0]
             enforce_group_base_url_policy(
                 effective.llm.base_url, dashboard_group
@@ -798,7 +843,14 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
                 enforce_group_base_url_policy(
                     effective.embedding.base_url, dashboard_group
                 )
-        except (GroupBaseURLPolicyError, ValueError) as e:
+        except ConfigConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except (
+            GroupBaseURLPolicyError,
+            CredentialStoreError,
+            ValueError,
+            OSError,
+        ) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         settings_store.save(stored)
         return SettingsResponse(settings=effective.model_dump(mode="json"))
@@ -4817,7 +4869,16 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   function renderComposerAgentSelect() {
     const wrap = $('#composerAgentType');
     if (!wrap) return;
-    const agents = state.agents.slice().sort((a,b) => (a.display_name||a.agent_id).localeCompare(b.display_name||b.agent_id));
+    const agents = state.agents.slice().sort((a,b) => {
+      const nameA = a.display_name || a.agent_id || '';
+      const nameB = b.display_name || b.agent_id || '';
+      const hasHyphenA = nameA.includes('-');
+      const hasHyphenB = nameB.includes('-');
+      if (hasHyphenA !== hasHyphenB) {
+        return hasHyphenA ? 1 : -1;
+      }
+      return nameA.localeCompare(nameB);
+    });
     const activeAgentId = state.activeSession?.session?.agent_id || '';
     const target = state.selectedComposerAgentId || activeAgentId || agents[0]?.agent_id || '';
     if (target) state.selectedComposerAgentId = target;

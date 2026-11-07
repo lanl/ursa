@@ -297,6 +297,41 @@ class UserConfigStore:
                 model["api_key"] = {"keyring": key_id}
         return data, pending_secrets
 
+    def save_model_defaults(
+        self,
+        llm: dict[str, Any],
+        embedding: dict[str, Any],
+        validate,
+    ) -> dict[str, Any]:
+        """Save dashboard model controls as the normal URSA defaults.
+
+        Build on the existing config editor so unrelated YAML keys, provider
+        definitions, and credential references are preserved exactly as they
+        are for an edit made through the Default config tab.
+        """
+        current = self.describe()
+
+        def model_edit(section: dict[str, Any]) -> DefaultModelEdit:
+            return DefaultModelEdit(
+                model=str(section.get("model") or "").strip(),
+                inference_provider=section.get("inference_provider"),
+                base_url=section.get("base_url"),
+                options=deepcopy(section.get("model_kwargs") or {}),
+            )
+
+        embedding_edit = (
+            model_edit(embedding) if embedding.get("model") else None
+        )
+        request = UserConfigEdit(
+            revision=current["revision"],
+            providers=[
+                ProviderEdit.model_validate(p) for p in current["providers"]
+            ],
+            llm_model=model_edit(llm),
+            emb_model=embedding_edit,
+        )
+        return self.save(request, validate)
+
     def save(self, request: UserConfigEdit, validate) -> dict[str, Any]:
         with self.lock:
             original, _ = self._read()
