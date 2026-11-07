@@ -66,12 +66,8 @@ class CallbackRenderingMixin:
         "HypothesizerAgent": "hypothesizer",
         "LammpsAgent": "lammps",
         "PlanningAgent": "planner",
-        "executor": "executor",
-        "deep_review": "deep_review",
-        "hypothesizer": "hypothesizer",
-        "lammps": "lammps",
-        "planner": "planner",
     }
+    AGENT_KEYS.update({name: name for name in AGENT_KEYS.values()})
     AGENT_RULE_TITLES: ClassVar[dict[str, str]] = {
         "executor": "⚙️ Execute",
         "deep_review": "🔎 Deep Review",
@@ -155,15 +151,12 @@ class CallbackRenderingMixin:
 
     def _display_lines(self, value: Any) -> list[str]:
         text = str(value or "").strip()
-        if not text:
-            return []
         return [line for line in text.splitlines() if line]
 
     def _plan_step_lines(self, steps: Any) -> list[str]:
         if not isinstance(steps, list):
             return []
         lines: list[str] = []
-        total_steps = 0
         for total_steps, step in enumerate(steps, start=1):
             if not isinstance(step, dict):
                 model_dump = getattr(step, "model_dump", None)
@@ -299,9 +292,6 @@ class CallbackRenderingMixin:
             plan_markdown := self._plan_steps_markdown(data.get("steps"))
         ):
             self.console.print(Markdown(plan_markdown))
-        elif agent == "executor" and stage == "step":
-            for line in self._display_lines(data.get("preview")):
-                self.console.print(line)
         elif agent == "lammps":
             self._print_lammps_event_details(data)
         elif stage == "reflect_result":
