@@ -405,31 +405,24 @@ class EnvironmentRunManager:
         name = launch.config.name
 
         if launch.environment_type == "agent_team":
-            definition_path = (
-                team_cache_dir(
-                    self.group,
-                    name,
-                )
-                / "team.yaml"
-            )
-
+            cache_dir = team_cache_dir
+            config_type = AgentTeamConfig
+            save_config = save_team_config
+            filename = "team.yaml"
+            class_name = "AgentTeamEnvironment"
         elif launch.environment_type == "agent_symposium":
-            definition_path = (
-                symposium_cache_dir(
-                    self.group,
-                    name,
-                )
-                / "symposium.yaml"
-            )
-
+            cache_dir = symposium_cache_dir
+            config_type = AgentSymposiumConfig
+            save_config = save_symposium_config
+            filename = "symposium.yaml"
+            class_name = "AgentSymposiumEnvironment"
         else:
-            definition_path = (
-                elo_cache_dir(
-                    self.group,
-                    name,
-                )
-                / "elo.yaml"
-            )
+            cache_dir = elo_cache_dir
+            config_type = AgentEloConfig
+            save_config = save_elo_config
+            filename = "elo.yaml"
+            class_name = "AgentEloEnvironment"
+        definition_path = cache_dir(self.group, name) / filename
 
         definition_matches = False
         if definition_path.exists():
@@ -440,51 +433,14 @@ class EnvironmentRunManager:
                 if isinstance(existing, Mapping):
                     existing_mapping = dict(existing)
                     existing_mapping["group"] = self.group
-                    if launch.environment_type == "agent_team":
-                        existing_config = AgentTeamConfig.from_mapping(
-                            existing_mapping
-                        )
-
-                    elif launch.environment_type == "agent_symposium":
-                        existing_config = AgentSymposiumConfig.from_mapping(
-                            existing_mapping
-                        )
-
-                    else:
-                        existing_config = AgentEloConfig.from_mapping(
-                            existing_mapping
-                        )
+                    existing_config = config_type.from_mapping(existing_mapping)
                     definition_matches = (
                         _plain(existing_config) == launch.config_mapping
                     )
             if not replace_existing and not definition_matches:
                 raise EnvironmentDefinitionExistsError(definition_path)
-        if launch.environment_type == "agent_team":
-            if replace_existing or not definition_path.exists():
-                save_team_config(
-                    launch.config,
-                    definition_path,
-                )
-
-            class_name = "AgentTeamEnvironment"
-
-        elif launch.environment_type == "agent_symposium":
-            if replace_existing or not definition_path.exists():
-                save_symposium_config(
-                    launch.config,
-                    definition_path,
-                )
-
-            class_name = "AgentSymposiumEnvironment"
-
-        else:
-            if replace_existing or not definition_path.exists():
-                save_elo_config(
-                    launch.config,
-                    definition_path,
-                )
-
-            class_name = "AgentEloEnvironment"
+        if replace_existing or not definition_path.exists():
+            save_config(launch.config, definition_path)
 
         effective_run_id = (
             _validate_simple_name(run_id, label="Run ID")
