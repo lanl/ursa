@@ -28,38 +28,24 @@ posix_only = pytest.mark.skipif(
 )
 
 
-def test_install_thread_only_tqdm_lock_sets_thread_lock():
-    """After install, tqdm's global lock is a pure-threading lock.
+@pytest.mark.parametrize("installations", [1, 2])
+def test_install_thread_only_tqdm_lock_is_usable_and_repeatable(installations):
+    """Installing once or repeatedly keeps a usable thread-only lock.
 
-    ``tqdm.std.TRLock`` is a factory that returns a ``_thread.RLock`` (a plain
-    threading reentrant lock), never a ``multiprocessing`` lock. Installing it
-    means tqdm never calls ``create_mp_lock`` / starts the resource tracker,
-    which is what triggers the ``fds_to_keep`` failure under redirected stderr.
+    ``tqdm.std.TRLock`` returns a plain threading reentrant lock. Installing
+    it prevents ``create_mp_lock`` from starting the resource tracker, which
+    triggers the ``fds_to_keep`` failure under redirected stderr.
     """
     from tqdm import tqdm
 
-    install_thread_only_tqdm_lock()
-    lock = tqdm.get_lock()
-    # A usable reentrant threading lock: acquires and releases without spawning.
-    assert hasattr(lock, "acquire") and hasattr(lock, "release")
-    assert lock.acquire(blocking=False) is True
-    lock.release()
-    # It is NOT a multiprocessing synchronization primitive.
-    assert type(lock).__module__ not in {
-        "multiprocessing.synchronize",
-        "multiprocessing",
-    }
-
-
-def test_install_thread_only_tqdm_lock_is_idempotent_and_safe():
-    """Calling it repeatedly is safe and keeps a thread-only lock."""
-    from tqdm import tqdm
-
-    install_thread_only_tqdm_lock()
-    first = tqdm.get_lock()
-    install_thread_only_tqdm_lock()
-    second = tqdm.get_lock()
-    for lock in (first, second):
+    locks = []
+    for _ in range(installations):
+        install_thread_only_tqdm_lock()
+        locks.append(tqdm.get_lock())
+    for lock in locks:
+        assert hasattr(lock, "acquire") and hasattr(lock, "release")
+        assert lock.acquire(blocking=False) is True
+        lock.release()
         assert type(lock).__module__ not in {
             "multiprocessing.synchronize",
             "multiprocessing",

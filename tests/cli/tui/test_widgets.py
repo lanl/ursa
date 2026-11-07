@@ -503,33 +503,7 @@ async def test_named_agent_appears_in_statusline_and_status_command(tmp_path):
         assert "lab-assistant" in app._status_markdown()
 
 
-async def test_welcome_tips_vary_and_keymaps_resolve(app):
-    async with app.run_test(size=(80, 24)):
-        owners = (type(app), PromptArea, HotlistScreen)
-        keymap = runtime_keymap(app, owners)
-        assert all(tip.format_map(keymap) for tip in TIPS)
-        assert len({random_tip(app, owners) for _ in range(100)}) > 1
-
-
-async def test_welcome_tip_border_uses_visible_theme_border(app):
-    async with app.run_test(size=(80, 24)) as pilot:
-        tip = app.query_one("#welcome-tip", Static)
-        for theme_name in ("ursa-dark", "ursa-light"):
-            app.theme = theme_name
-            await pilot.pause()
-
-            theme_colors = (
-                app.get_theme(theme_name).to_color_system().generate()
-            )
-            border_style, border_color = tip.styles.border.top
-            assert border_style == "round"
-            assert border_color.hex == theme_colors["border"]
-            assert border_color != app.screen.styles.background
-
-
-async def test_welcome_version_and_workspace_align_at_narrow_width(
-    tmp_path, app
-):
+async def test_welcome_layout_tips_and_theme_borders(tmp_path, app):
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         logo = app.query_one("#welcome-logo")
@@ -551,6 +525,24 @@ async def test_welcome_version_and_workspace_align_at_narrow_width(
         assert workspace.region.y > label.region.y
         assert len(str(workspace.content)) <= workspace.content_region.width
         assert str(workspace.content).endswith(tmp_path.name[-12:])
+
+        owners = (type(app), PromptArea, HotlistScreen)
+        keymap = runtime_keymap(app, owners)
+        assert all(tip.format_map(keymap) for tip in TIPS)
+        assert len({random_tip(app, owners) for _ in range(100)}) > 1
+
+        tip = app.query_one("#welcome-tip", Static)
+        for theme_name in ("ursa-dark", "ursa-light"):
+            app.theme = theme_name
+            await pilot.pause()
+
+            theme_colors = (
+                app.get_theme(theme_name).to_color_system().generate()
+            )
+            border_style, border_color = tip.styles.border.top
+            assert border_style == "round"
+            assert border_color.hex == theme_colors["border"]
+            assert border_color != app.screen.styles.background
 
 
 async def test_workspace_uses_one_borderless_row_when_it_fits(tmp_path):
