@@ -472,20 +472,10 @@ async def test_range_emits_start_and_terminal_payload(
 async def test_aemit_dispatches_and_async_range_works(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[dict] = []
-
-    async def fake_dispatch(
-        event_name: str,
-        payload: dict,
-        config: dict,
-    ) -> None:
-        assert event_name == "ursa_agent_progress"
-        assert config == {"callbacks": []}
-        calls.append(payload)
-
+    dispatch = AsyncMock(return_value=None)
     monkeypatch.setattr(
         "ursa.util.events.adispatch_custom_event",
-        fake_dispatch,
+        dispatch,
     )
 
     events = AgentEvents(agent="acquisition", config={"callbacks": []})
@@ -510,6 +500,11 @@ async def test_aemit_dispatches_and_async_range_works(
     ) as span:
         span.update(query="cooling load")
 
+    assert dispatch.await_count == dispatch.call_count == 3
+    for call in dispatch.await_args_list:
+        assert call.args[0] == "ursa_agent_progress"
+        assert call.kwargs == {"config": {"callbacks": []}}
+    calls = [call.args[1] for call in dispatch.await_args_list]
     assert calls[0] == payload
     assert calls[1]["phase"] == "start"
     assert calls[1]["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS

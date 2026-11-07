@@ -259,31 +259,19 @@ async def test_phase_model_error_propagates_immediately(tmpdir):
     )
 
 
-async def test_output_lists_have_exactly_one_entry_per_iteration(tmpdir):
-    # One real iteration must produce exactly one entry per output list;
+@pytest.mark.parametrize("iterations", [1, 2])
+async def test_output_lists_match_real_iterations(tmpdir, iterations):
+    # Each real iteration must produce exactly one entry per output list;
     # the previous >= 1 assertions were green with every entry doubled.
     agent = DeepReviewAgent(
         llm=ToolReadyFakeChatModel(messages=_message_stream("ok")),
         workspace=tmpdir,
     )
 
-    result = await agent.ainvoke(dict(_DD_QUESTION))
-
-    assert result["agent1_solution"] == ["ok"]
-    assert result["agent2_critiques"] == ["ok"]
-    assert result["agent3_perspectives"] == ["ok"]
-
-
-async def test_output_lists_scale_with_iterations(tmpdir):
-    agent = DeepReviewAgent(
-        llm=ToolReadyFakeChatModel(messages=_message_stream("ok")),
-        workspace=tmpdir,
-    )
-
-    result = await agent.ainvoke({**_DD_QUESTION, "max_iterations": 2})
+    result = await agent.ainvoke({**_DD_QUESTION, "max_iterations": iterations})
 
     for key in ("agent1_solution", "agent2_critiques", "agent3_perspectives"):
-        assert len(result[key]) == 2, f"{key}: {result[key]}"
+        assert result[key] == ["ok"] * iterations, f"{key}: {result[key]}"
 
 
 async def test_chained_runs_report_real_iterations_only(tmpdir):
