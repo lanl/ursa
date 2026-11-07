@@ -7,12 +7,6 @@ import pytest
 from tests.tools.utils import read_file_content
 
 
-def _bins_available() -> bool:
-    # ocrmypdf usually shells out to these
-    needed = ["ocrmypdf", "tesseract", "qpdf", "gs"]
-    return all(shutil.which(b) for b in needed)
-
-
 def _make_scanned_pdf(path: Path, text: str = "Hello OCR 123") -> None:
     try:
         from reportlab.lib.pagesizes import letter
@@ -37,7 +31,9 @@ def _make_scanned_pdf(path: Path, text: str = "Hello OCR 123") -> None:
 
 
 def test_real_ocr_creates_openable_pdf_and_extracts_text(tmp_path):
-    if not _bins_available():
+    # ocrmypdf usually shells out to these
+    needed = ["ocrmypdf", "tesseract", "qpdf", "gs"]
+    if not all(shutil.which(b) for b in needed):
         pytest.skip("Requires ocrmypdf+tesseract+qpdf+ghostscript on PATH")
 
     # Arrange

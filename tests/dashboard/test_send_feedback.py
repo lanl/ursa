@@ -19,15 +19,6 @@ from ursa_dashboard.credentials import (
 client = test_session_workspaces.client
 
 
-def _make_session(test_client) -> str:
-    response = test_client.post(
-        "/sessions",
-        json={"agent_id": "chat_agent", "workspace_mode": "temporary"},
-    )
-    assert response.status_code == 200
-    return response.json()["session"]["session_id"]
-
-
 def test_fresh_install_stored_source_names_the_real_problem():
     # A fresh install defaults to credential_source="stored" with no
     # credential_id; the error must say no key has been saved yet, not
@@ -58,7 +49,12 @@ def test_mismatched_stored_reference_stays_invalid():
 
 def test_failed_send_does_not_orphan_the_user_message(client):
     test_client, _ = client
-    session_id = _make_session(test_client)
+    response = test_client.post(
+        "/sessions",
+        json={"agent_id": "chat_agent", "workspace_mode": "temporary"},
+    )
+    assert response.status_code == 200
+    session_id = response.json()["session"]["session_id"]
 
     response = test_client.post(
         f"/sessions/{session_id}/message", json={"text": "hello"}

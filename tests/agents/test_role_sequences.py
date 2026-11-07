@@ -117,10 +117,6 @@ async def test_dsi_agent_role_sequences(tmp_path):
     assert_requests_provider_valid(llm.calls)
 
 
-def _tool_call_script(tool_name, args):
-    return [tool_call_message(tool_name, args, "call_1")]
-
-
 @pytest.mark.parametrize(
     ("agent_class", "prompt", "uses_tool"),
     [
@@ -134,9 +130,9 @@ async def test_tool_agent_role_sequences(
 ):
     options = {}
     if uses_tool:
-        options["script"] = _tool_call_script(
-            "read_file", {"filename": "notes.txt"}
-        )
+        options["script"] = [
+            tool_call_message("read_file", {"filename": "notes.txt"}, "call_1")
+        ]
     if agent_class is ExecutionAgent:
         options["structured_factory"] = lambda schema: schema(
             is_complete=True, reason="Work complete."

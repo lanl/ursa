@@ -282,12 +282,6 @@ class AsyncOnlyFlagAgent(Agent):
         self.tools = [SimpleNamespace(func=None, coroutine=async_tool)]
 
 
-def _use_temp_agent_groups(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setattr("ursa.security.URSA_CACHE_DIR", tmp_path / "groups")
-
-
 def test_agent_with_tools_seeds_safe_codes_in_sync_store(tmp_path: Path):
     agent = _make_agent(
         ToolAgent,
@@ -365,7 +359,7 @@ async def test_shared_async_store_serializes_first_use_migrations(
 
 @pytest.fixture
 async def persistent_agent(tmp_path, monkeypatch):
-    _use_temp_agent_groups(monkeypatch, tmp_path)
+    monkeypatch.setattr("ursa.security.URSA_CACHE_DIR", tmp_path / "groups")
     agents = []
 
     def create(agent_class=Agent, **kwargs):
