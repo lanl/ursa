@@ -919,21 +919,24 @@ def feasibility_check_auto(
     except Exception as e:
         return f"Parse error: {e}"
 
+    def heuristic_model():
+        return _heuristic_feasible(
+            sympy_cons,
+            symbols,
+            variable_name,
+            variable_type,
+            variable_bounds,
+            samples=heuristic_samples,
+            seed=heuristic_seed,
+            tol=numeric_tolerance,
+            unbounded_radius_real=heuristic_unbounded_radius_real,
+            unbounded_radius_int=heuristic_unbounded_radius_int,
+        )
+
     # 2) Heuristic (optional)
     if heuristic_enabled and heuristic_first:
         try:
-            h_model = _heuristic_feasible(
-                sympy_cons,
-                symbols,
-                variable_name,
-                variable_type,
-                variable_bounds,
-                samples=heuristic_samples,
-                seed=heuristic_seed,
-                tol=numeric_tolerance,
-                unbounded_radius_real=heuristic_unbounded_radius_real,
-                unbounded_radius_int=heuristic_unbounded_radius_int,
-            )
+            h_model = heuristic_model()
             if h_model is not None:
                 return f"[backend=heuristic] Feasible (sampled witness). Example solution: {h_model}"
         except Exception:
@@ -962,18 +965,7 @@ def feasibility_check_auto(
                 for kw in ("unknown", "not installed", "unsupported", "failed")
             )
         ):
-            h_model = _heuristic_feasible(
-                sympy_cons,
-                symbols,
-                variable_name,
-                variable_type,
-                variable_bounds,
-                samples=heuristic_samples,
-                seed=heuristic_seed,
-                tol=numeric_tolerance,
-                unbounded_radius_real=heuristic_unbounded_radius_real,
-                unbounded_radius_int=heuristic_unbounded_radius_int,
-            )
+            h_model = heuristic_model()
             if h_model is not None:
                 return f"[backend=heuristic] Feasible (sampled witness). Example solution: {h_model}"
         return res
@@ -1008,18 +1000,7 @@ def feasibility_check_auto(
             and not heuristic_first
             and any(kw in res.lower() for kw in ("failed", "unknown"))
         ):
-            h_model = _heuristic_feasible(
-                sympy_cons,
-                symbols,
-                variable_name,
-                variable_type,
-                variable_bounds,
-                samples=heuristic_samples,
-                seed=heuristic_seed,
-                tol=numeric_tolerance,
-                unbounded_radius_real=heuristic_unbounded_radius_real,
-                unbounded_radius_int=heuristic_unbounded_radius_int,
-            )
+            h_model = heuristic_model()
             if h_model is not None:
                 return f"[backend=heuristic] Feasible (sampled witness). Example solution: {h_model}"
         return res
@@ -1061,18 +1042,7 @@ def feasibility_check_auto(
             kw in res.lower() for kw in ("not installed", "failed", "status:")
         )
     ):
-        h_model = _heuristic_feasible(
-            sympy_cons,
-            symbols,
-            variable_name,
-            variable_type,
-            variable_bounds,
-            samples=heuristic_samples,
-            seed=heuristic_seed,
-            tol=numeric_tolerance,
-            unbounded_radius_real=heuristic_unbounded_radius_real,
-            unbounded_radius_int=heuristic_unbounded_radius_int,
-        )
+        h_model = heuristic_model()
         if h_model is not None:
             return f"[backend=heuristic] Feasible (sampled witness). Example solution: {h_model}"
 

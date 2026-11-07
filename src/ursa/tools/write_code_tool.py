@@ -41,6 +41,23 @@ def _resolve_repo_dir(
     return repo, None
 
 
+def _record_file_edit(
+    filename: str, runtime: ToolRuntime[AgentContext]
+) -> None:
+    if (store := runtime.store) is not None:
+        store.put(
+            ("workspace", "file_edit"),
+            str(filename),
+            {
+                "modified": time.time(),
+                "tool_call_id": runtime.tool_call_id,
+                "thread_id": runtime.config.get("metadata", {}).get(
+                    "thread_id", None
+                ),
+            },
+        )
+
+
 def _write_code_file(
     code: str,
     filename: AsciiStr,
@@ -85,18 +102,7 @@ def _write_code_file(
             span.update(artifact=file_artifact(code_file, title="File written"))
     except OSError as exc:
         return f"Failed to write {filename}: {exc}"
-    if (store := runtime.store) is not None:
-        store.put(
-            ("workspace", "file_edit"),
-            str(filename),
-            {
-                "modified": time.time(),
-                "tool_call_id": runtime.tool_call_id,
-                "thread_id": runtime.config.get("metadata", {}).get(
-                    "thread_id", None
-                ),
-            },
-        )
+    _record_file_edit(filename, runtime)
     return f"File {filename} written successfully."
 
 
@@ -374,16 +380,5 @@ def edit_code(
         return f"Failed to edit {filename}: {exc}"
 
     # Record the edit operation
-    if (store := runtime.store) is not None:
-        store.put(
-            ("workspace", "file_edit"),
-            str(filename),
-            {
-                "modified": time.time(),
-                "tool_call_id": runtime.tool_call_id,
-                "thread_id": runtime.config.get("metadata", {}).get(
-                    "thread_id", None
-                ),
-            },
-        )
+    _record_file_edit(filename, runtime)
     return f"File {filename} updated successfully."
