@@ -63,13 +63,8 @@ def _api_key_from_config(
     api_key_reference: SecretReference | None = None
     if api_key is not None:
         if isinstance(api_key, Mapping):
-            candidate = SecretReference.maybe_validate(dict(api_key))
-            if not isinstance(candidate, SecretReference):
-                raise ValueError(
-                    f"Literal {label} API keys are not accepted in worker config"
-                )
-            api_key_reference = candidate
-        else:
+            api_key_reference = SecretReference.maybe_validate(dict(api_key))
+        if not isinstance(api_key_reference, SecretReference):
             raise ValueError(
                 f"Literal {label} API keys are not accepted in worker config"
             )
