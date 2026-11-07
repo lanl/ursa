@@ -716,14 +716,9 @@ async def test_subagents_command_switches_message_and_progress_target(
         await app.workers.wait_for_complete()
 
 
-async def test_command_arrows_navigate_turn_markers_and_end_anchor(app):
-    runtime = app.runtime
-
-    async def run_agent(_name, _prompt, callbacks=None):
-        return "Finished"
-
-    runtime.run_agent = run_agent
-
+async def test_command_arrows_navigate_turn_markers_and_end_anchor(
+    app, finished_agent
+):
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("o", "n", "e", "enter")
         await app.workers.wait_for_complete()
@@ -762,14 +757,9 @@ async def test_command_arrows_navigate_turn_markers_and_end_anchor(app):
         assert app._turn_navigation_marker is markers[5]
 
 
-async def test_turn_navigation_changes_real_scroll_position(app):
-    runtime = app.runtime
-
-    async def run_agent(_name, _prompt, callbacks=None):
-        return "Finished"
-
-    runtime.run_agent = run_agent
-
+async def test_turn_navigation_changes_real_scroll_position(
+    app, finished_agent
+):
     async with app.run_test(size=(80, 20)) as pilot:
         for index in range(6):
             await pilot.press(*str(index), "enter")

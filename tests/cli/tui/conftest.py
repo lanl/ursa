@@ -16,6 +16,14 @@ def app(tmp_path):
 
 
 @pytest.fixture
+def finished_agent(app):
+    async def run_agent(_name, _prompt, callbacks=None):
+        return "Finished"
+
+    app.runtime.run_agent = run_agent
+
+
+@pytest.fixture
 def notifications(app, monkeypatch):
     received = []
     monkeypatch.setattr(

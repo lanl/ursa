@@ -409,14 +409,7 @@ async def test_prompt_supports_option_arrow_word_navigation(app):
         assert prompt.cursor_location == (0, 10)
 
 
-async def test_ctrl_c_clears_prompt_and_adds_it_to_history(app):
-    runtime = app.runtime
-
-    async def run_agent(_name, _prompt, callbacks=None):
-        return "Finished"
-
-    runtime.run_agent = run_agent
-
+async def test_ctrl_c_clears_prompt_and_adds_it_to_history(app, finished_agent):
     async with app.run_test() as pilot:
         await pilot.press("o", "l", "d", "enter")
         await app.workers.wait_for_complete()
