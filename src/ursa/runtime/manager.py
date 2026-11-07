@@ -595,7 +595,11 @@ class AgentProcess:
                 self.context._resolve(message)
                 continue
             if kind == "message":
-                routed = self._routed_message(message)
+                routed = AgentMessage(
+                    sender=str(message.get("sender") or "host"),
+                    recipient=self.spec.agent_id,
+                    payload=message.get("payload"),
+                )
                 await self.context._deliver(routed)
                 # Inbox delivery must remain available while a normal invoke
                 # is running so messages can be accepted concurrently.
@@ -705,13 +709,6 @@ class AgentProcess:
             raise ValueError("only public agent methods may be called")
         return await _call_without_blocking(
             getattr(self.agent, method_name), *args, **kwargs
-        )
-
-    def _routed_message(self, message: Mapping[str, Any]) -> AgentMessage:
-        return AgentMessage(
-            sender=str(message.get("sender") or "host"),
-            recipient=self.spec.agent_id,
-            payload=message.get("payload"),
         )
 
     async def _handle_message(self, routed: AgentMessage) -> Any:

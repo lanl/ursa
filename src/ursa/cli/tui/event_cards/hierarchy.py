@@ -63,7 +63,9 @@ class AgentToolCard(ToolEventCard):
             agent_type = str(self.tool_input.get("agent_type") or "").strip()
             return f"{name} ({agent_type})" if agent_type else name
         if self.tool in {"send_message", "wait_for"}:
-            return self._target_description()
+            # Describe selectors as expressions, never guessed agent counts.
+            description, count = target_summary(self.targets)
+            return f"{count} agents" if count > 1 else description
         if self.tool == "stop_agent":
             return str(self.tool_input.get("target") or "another agent")
         return "agent hierarchy"
@@ -82,11 +84,6 @@ class AgentToolCard(ToolEventCard):
     @property
     def task(self) -> str:
         return str(self.tool_input.get("message") or "").strip()
-
-    def _target_description(self) -> str:
-        """Describe selectors as expressions, never guessed agent counts."""
-        description, count = target_summary(self.targets)
-        return f"{count} agents" if count > 1 else description
 
     @property
     def request(self) -> str:

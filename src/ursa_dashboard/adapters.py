@@ -126,17 +126,6 @@ class BaseAgentInProcessAdapter(DirectInvokeAdapter):
         self._supports_streaming = supports_streaming
 
 
-def _dashboard_console() -> Console:
-    """Create the plain-text console used for dashboard worker log streaming."""
-    return Console(
-        file=sys.stdout,
-        force_terminal=False,
-        force_interactive=False,
-        color_system="standard",
-        width=120,
-    )
-
-
 def _callback_config(invoke: Callable, workspace_dir: Path) -> dict[str, Any]:
     """Attach CLI progress only to targets that accept runnable configuration."""
     try:
@@ -152,7 +141,14 @@ def _callback_config(invoke: Callable, workspace_dir: Path) -> dict[str, Any]:
         "config": {
             "callbacks": [
                 AgentLogEventHandler(
-                    console=_dashboard_console(), workspace=workspace_dir
+                    console=Console(
+                        file=sys.stdout,
+                        force_terminal=False,
+                        force_interactive=False,
+                        color_system="standard",
+                        width=120,
+                    ),
+                    workspace=workspace_dir,
                 )
             ]
         }
