@@ -1,4 +1,6 @@
 import subprocess
+from collections.abc import Callable
+from pathlib import Path
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
@@ -15,6 +17,30 @@ GO_BUILD_TIMEOUT = (
 )
 GO_TEST_TIMEOUT = 600  # seconds (10 min) - test suites can be slow
 LINT_TIMEOUT = 180  # seconds (3 min) - linting is moderate speed
+
+
+def _run_go_command(
+    args: list[str],
+    repo: Path,
+    timeout: int,
+    label: str,
+    on_timeout: Callable[[], str],
+) -> str:
+    """Run a Go operation, retaining its command-specific timeout guidance."""
+    try:
+        result = subprocess.run(
+            args,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            cwd=repo,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return _format_result("", on_timeout())
+    except Exception as exc:
+        return _format_result("", f"Error running {label}: {exc}")
+    return _format_result(result.stdout, result.stderr)
 
 
 @tool
@@ -50,24 +76,14 @@ def go_build(
 ) -> str:
     """Build a Go module using go build ./..."""
     repo = _repo_path(repo_path, runtime)
-    try:
-        result = subprocess.run(
-            ["go", "build", "./..."],
-            text=True,
-            capture_output=True,
-            timeout=GO_BUILD_TIMEOUT,
-            cwd=repo,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return _format_result(
-            "",
-            f"go build timed out after {GO_BUILD_TIMEOUT}s (5 minutes). "
-            "Large builds may need to be run in smaller chunks.",
-        )
-    except Exception as exc:
-        return _format_result("", f"Error running go build: {exc}")
-    return _format_result(result.stdout, result.stderr)
+    return _run_go_command(
+        ["go", "build", "./..."],
+        repo,
+        GO_BUILD_TIMEOUT,
+        "go build",
+        lambda: f"go build timed out after {GO_BUILD_TIMEOUT}s (5 minutes). "
+        "Large builds may need to be run in smaller chunks.",
+    )
 
 
 @tool
@@ -82,24 +98,14 @@ def go_test(
     if verbose:
         args.append("-v")
     args.append("./...")
-    try:
-        result = subprocess.run(
-            args,
-            text=True,
-            capture_output=True,
-            timeout=GO_TEST_TIMEOUT,
-            cwd=repo,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return _format_result(
-            "",
-            f"go test timed out after {GO_TEST_TIMEOUT}s (10 minutes). "
-            "Large test suites may need to run selectively.",
-        )
-    except Exception as exc:
-        return _format_result("", f"Error running go test: {exc}")
-    return _format_result(result.stdout, result.stderr)
+    return _run_go_command(
+        args,
+        repo,
+        GO_TEST_TIMEOUT,
+        "go test",
+        lambda: f"go test timed out after {GO_TEST_TIMEOUT}s (10 minutes). "
+        "Large test suites may need to run selectively.",
+    )
 
 
 @tool
@@ -109,22 +115,13 @@ def go_vet(
 ) -> str:
     """Run Go vet for code pattern analysis using go vet ./..."""
     repo = _repo_path(repo_path, runtime)
-    try:
-        result = subprocess.run(
-            ["go", "vet", "./..."],
-            text=True,
-            capture_output=True,
-            timeout=GO_ANALYSIS_TIMEOUT,
-            cwd=repo,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return _format_result(
-            "", f"go vet timed out after {GO_ANALYSIS_TIMEOUT}s."
-        )
-    except Exception as exc:
-        return _format_result("", f"Error running go vet: {exc}")
-    return _format_result(result.stdout, result.stderr)
+    return _run_go_command(
+        ["go", "vet", "./..."],
+        repo,
+        GO_ANALYSIS_TIMEOUT,
+        "go vet",
+        lambda: f"go vet timed out after {GO_ANALYSIS_TIMEOUT}s.",
+    )
 
 
 @tool
@@ -134,22 +131,13 @@ def go_mod_tidy(
 ) -> str:
     """Clean up and validate Go module dependencies using go mod tidy."""
     repo = _repo_path(repo_path, runtime)
-    try:
-        result = subprocess.run(
-            ["go", "mod", "tidy"],
-            text=True,
-            capture_output=True,
-            timeout=GO_ANALYSIS_TIMEOUT,
-            cwd=repo,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return _format_result(
-            "", f"go mod tidy timed out after {GO_ANALYSIS_TIMEOUT}s."
-        )
-    except Exception as exc:
-        return _format_result("", f"Error running go mod tidy: {exc}")
-    return _format_result(result.stdout, result.stderr)
+    return _run_go_command(
+        ["go", "mod", "tidy"],
+        repo,
+        GO_ANALYSIS_TIMEOUT,
+        "go mod tidy",
+        lambda: f"go mod tidy timed out after {GO_ANALYSIS_TIMEOUT}s.",
+    )
 
 
 @tool
@@ -190,23 +178,13 @@ def golangci_lint(
     if config_file.exists():
         args.extend(["--config", str(config_file)])
 
-    try:
-        result = subprocess.run(
-            args,
-            text=True,
-            capture_output=True,
-            timeout=LINT_TIMEOUT,
-            cwd=repo,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return _format_result(
-            "", f"golangci-lint timed out after {LINT_TIMEOUT}s (3 minutes)."
-        )
-    except Exception as exc:
-        return _format_result("", f"Error running golangci-lint: {exc}")
-
-    return _format_result(result.stdout, result.stderr)
+    return _run_go_command(
+        args,
+        repo,
+        LINT_TIMEOUT,
+        "golangci-lint",
+        lambda: f"golangci-lint timed out after {LINT_TIMEOUT}s (3 minutes).",
+    )
 
 
 GO_TOOLS = [
