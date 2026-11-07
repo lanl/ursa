@@ -42,25 +42,19 @@ class CommandSafetyIndicator(ActivityIndicator):
 
     def passed(self) -> None:
         self.status = "passed"
-        if self._timer is not None:
-            self._timer.pause()
-        self.query_one(".activity-spinner", Static).update("✓")
+        self._stop_spinner("✓")
         self.query_one(".activity-text", Static).update("Safety check passed")
 
     def failed(self, reason: str | None = None) -> None:
         self.status = "failed"
-        if self._timer is not None:
-            self._timer.pause()
-        self.query_one(".activity-spinner", Static).update("⚔️")
+        self._stop_spinner("⚔️")
         self.query_one(".activity-text", Static).update(
             Text(reason or "Safety check failed")
         )
 
     def unavailable(self) -> None:
         self.status = "unavailable"
-        if self._timer is not None:
-            self._timer.pause()
-        self.query_one(".activity-spinner", Static).update("✗")
+        self._stop_spinner("✗")
         self.query_one(".activity-text", Static).update(
             "Safety check did not complete"
         )

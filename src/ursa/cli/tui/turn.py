@@ -432,9 +432,7 @@ class Turn(Static):
         if len(active) > 1:
             self._commands_overlapped = True
         detailed: set[RunCommandCard] = set()
-        if self._commands_overlapped:
-            detailed = set()
-        elif len(active) == 1:
+        if not self._commands_overlapped and len(active) == 1:
             detailed.add(active[0])
 
         for command_card in self._commands:

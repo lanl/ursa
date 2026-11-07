@@ -2363,10 +2363,13 @@ class ActivityIndicator(Horizontal):
                 Text(message[-500:])
             )
 
-    def finish(self, *, elapsed: float, tokens: int) -> None:
+    def _stop_spinner(self, symbol: str) -> None:
         if self._timer is not None:
             self._timer.pause()
-        self.query_one(".activity-spinner", Static).update("")
+        self.query_one(".activity-spinner", Static).update(symbol)
+
+    def finish(self, *, elapsed: float, tokens: int) -> None:
+        self._stop_spinner("")
         if elapsed <= 30:
             self.query_one(".activity-text", Static).update("")
             self.query_one(".activity-done-mark", Static).update("")
