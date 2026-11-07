@@ -1103,7 +1103,6 @@ class AgentManager:
             # the target may be stuck in a model/tool call and must not delay
             # the caller or receive another turn before it exits.
             process.terminate()
-            await asyncio.to_thread(process.join, graceful_timeout)
         else:
             try:
                 await self._send(
@@ -1111,7 +1110,7 @@ class AgentManager:
                 )
             except (BrokenPipeError, EOFError, OSError):
                 pass
-            await asyncio.to_thread(process.join, graceful_timeout)
+        await asyncio.to_thread(process.join, graceful_timeout)
         if process.is_alive():
             process.terminate()
             await asyncio.to_thread(process.join, graceful_timeout)
@@ -1551,10 +1550,7 @@ class AgentManager:
                 os.fsync(stream.fileno())
             os.replace(temporary, path)
         except BaseException:
-            try:
-                os.unlink(temporary)
-            except FileNotFoundError:
-                pass
+            Path(temporary).unlink(missing_ok=True)
             raise
 
 
