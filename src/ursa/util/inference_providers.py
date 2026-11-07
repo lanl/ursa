@@ -224,9 +224,7 @@ def _returned_model_provider(
         raw.get("litellm_provider"),
     )
     for candidate in candidates:
-        if not isinstance(candidate, str):
-            continue
-        if candidate in supported:
+        if isinstance(candidate, str) and candidate in supported:
             return candidate
     inferred = _attempt_infer_model_provider(name.rsplit("/", 1)[-1])
     if inferred in supported:
