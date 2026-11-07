@@ -41,14 +41,16 @@ async def routing(request, runtime_factory, chat_model, tmp_path, monkeypatch):
 
     callback = Callback()
 
-    async def send(sender, target, message="Share your progress."):
+    async def send(
+        sender, target, message="Share your progress.", *, configured=True
+    ):
         if managed:
             multiple = isinstance(target, list)
             result = await runtime_request(
                 runtime,
                 identities[sender],
                 "invoke_many" if multiple else "invoke",
-                callbacks=(callback,),
+                callbacks=(callback,) if configured else (),
                 message=message,
                 **({"targets": target} if multiple else {"target": target}),
             )
@@ -58,12 +60,13 @@ async def routing(request, runtime_factory, chat_model, tmp_path, monkeypatch):
                 else result
             )
         agent = members[sender]
-        agent._current_agent_message = AgentMessage(
-            content="coordinate",
-            sender="user",
-            recipient=sender,
-            config={"callbacks": [callback]},
-        )
+        if configured:
+            agent._current_agent_message = AgentMessage(
+                content="coordinate",
+                sender="user",
+                recipient=sender,
+                config={"callbacks": [callback]},
+            )
         try:
             return await hierarchy_tool(agent, "send_message").ainvoke({
                 "target": target,
@@ -106,6 +109,7 @@ async def routing(request, runtime_factory, chat_model, tmp_path, monkeypatch):
             members[path]._hierarchy_stopping = True
 
     yield SimpleNamespace(
+        managed=managed,
         send=send,
         drain=drain,
         expand=expand,
@@ -132,31 +136,43 @@ async def test_groups_expand_in_hierarchy_order_without_the_sender(
     assert routing.expand("root/analyst", target) == expected
 
 
-async def test_mixed_group_and_explicit_routes_deduplicate_in_input_order(
-    routing,
-):
-    recipients = ["root/reviewer", "root/analyst/specialist", "root"]
-    response = await routing.send(
-        "root/analyst",
-        [
-            "@peers",
-            "root/reviewer",
-            "@reports",
-            "@supervisor",
+@pytest.mark.parametrize("configured", [False, True])
+@pytest.mark.parametrize(
+    ("sender", "targets", "message", "recipients"),
+    [
+        (
+            "root",
+            ["reviewer", "analyst"],
+            "Compare the proposal.",
+            ["root/reviewer", "root/analyst"],
+        ),
+        (
             "root/analyst",
-        ],
+            [
+                "@peers",
+                "root/reviewer",
+                "@reports",
+                "@supervisor",
+                "root/analyst",
+            ],
+            "Share your progress.",
+            ["root/reviewer", "root/analyst/specialist", "root"],
+        ),
+    ],
+)
+async def test_valid_routes_deduplicate_and_deliver_in_input_order(
+    routing, configured, sender, targets, message, recipients
+):
+    response = await routing.send(
+        sender, targets, message, configured=configured
     )
     await routing.drain()
-    positions = []
-    for path in recipients:
-        acknowledgement = f"Message queued for {path}."
-        assert response.count(acknowledgement) == 1
-        positions.append(response.index(acknowledgement))
-    assert positions == sorted(positions)
-    expected = [
-        ("root/analyst", path, "Share your progress.") for path in recipients
-    ]
-    assert routing.logged == expected
+    assert response == "\n\n".join(
+        ("" if routing.managed else f"{path}: ") + f"Message queued for {path}."
+        for path in recipients
+    )
+    expected = [(sender, path, message) for path in recipients]
+    assert routing.logged == (expected if configured else [])
     assert sorted(routing.received) == sorted(expected)
 
 

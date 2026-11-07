@@ -303,27 +303,6 @@ async def test_hierarchy_tool_propagates_callbacks_to_child(mailbox):
     )
 
 
-async def test_hierarchy_tool_broadcasts_valid_targets_in_input_order(mailbox):
-    root = mailbox()
-    analyst = root.spawn_subagent("analyst")
-    reviewer = root.spawn_subagent("reviewer")
-    send_message = hierarchy_tool(root, "send_message")
-
-    response = await send_message.ainvoke({
-        "target": ["reviewer", "analyst"],
-        "message": "Compare the proposal.",
-    })
-    await asyncio.gather(
-        reviewer.wait_for_messages(), analyst.wait_for_messages()
-    )
-
-    assert response.index("reviewer:") < response.index("analyst:")
-    assert "Message queued for root/reviewer." in response
-    assert "Message queued for root/analyst." in response
-    assert reviewer.received[0].content == "Compare the proposal."
-    assert analyst.received[0].content == "Compare the proposal."
-
-
 async def test_send_message_everyone_errors_when_the_sender_is_alone(mailbox):
     root = mailbox()
 
