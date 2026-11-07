@@ -137,6 +137,14 @@ class _BufferedAgentMessage:
     # fire-and-forget and leave this unset.
     response: asyncio.Future[str | None] | None = None
 
+    def envelope(self) -> dict[str, str]:
+        """Retain the trusted route and exact body in either delivery path."""
+        return {
+            "sender": self.sender_path,
+            "recipient": self.target_path,
+            "content": self.message,
+        }
+
 
 class _ProcessRuntimeBridge:
     """Child-side facade for hierarchy operations owned by the host."""
@@ -1411,14 +1419,7 @@ class AgentRuntime:
                 f"Received {len(buffered)} messages while waiting. "
                 "Each entry retains its sender, recipient, and exact content:\n"
                 + json.dumps(
-                    [
-                        {
-                            "sender": item.sender_path,
-                            "recipient": item.target_path,
-                            "content": item.message,
-                        }
-                        for item in buffered
-                    ],
+                    [item.envelope() for item in buffered],
                     ensure_ascii=False,
                 )
             )
@@ -1576,12 +1577,7 @@ class AgentRuntime:
                         "ursa_message_sender": item.sender_path,
                     },
                     "ursa_additional_messages": [
-                        {
-                            "sender": item.sender_path,
-                            "recipient": item.target_path,
-                            "content": item.message,
-                        }
-                        for item in additional
+                        item.envelope() for item in additional
                     ],
                 },
                 callbacks=callbacks,
