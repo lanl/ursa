@@ -71,15 +71,12 @@ _AGENT_TYPES = (
 def _resolve_host_secrets(config: UrsaConfig) -> UrsaConfig:
     """Resolve runtime secrets before configuration crosses a process boundary."""
     resolved = resolve_ursa_config(config)
-    for owner, field_name in (
-        (resolved, "llm_model"),
-        (resolved, "emb_model"),
-    ):
-        model = getattr(owner, field_name)
+    for field_name in ("llm_model", "emb_model"):
+        model = getattr(resolved, field_name)
         if model is None or not isinstance(model.api_key, SecretReference):
             continue
         setattr(
-            owner,
+            resolved,
             field_name,
             model.model_copy(update={"api_key": model.api_key.resolve()}),
         )
@@ -1372,13 +1369,18 @@ class AgentRuntime:
 
     def _teardown_task_done(self, task: asyncio.Task[None]) -> None:
         self._background_teardown_tasks.discard(task)
+        self._log_task_failure(task, "Asynchronous subagent teardown failed")
+
+    @staticmethod
+    def _log_task_failure(task: asyncio.Task[Any], message: str) -> None:
+        """Observe a background task's failure without disrupting its host."""
         if task.cancelled():
             return
         try:
             task.result()
         except Exception as exc:
             LOGGER.error(
-                "Asynchronous subagent teardown failed",
+                message,
                 exc_info=(type(exc), exc, exc.__traceback__),
             )
 
@@ -1629,15 +1631,7 @@ class AgentRuntime:
                 ),
             )
             self._mark_working(target_path, -1)
-        if task.cancelled():
-            return
-        try:
-            task.result()
-        except Exception as exc:
-            LOGGER.error(
-                "Asynchronous agent message failed",
-                exc_info=(type(exc), exc, exc.__traceback__),
-            )
+        self._log_task_failure(task, "Asynchronous agent message failed")
 
     @staticmethod
     async def _cancel_background_tasks(tasks: set[asyncio.Task[Any]]) -> None:

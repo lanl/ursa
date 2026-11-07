@@ -2215,21 +2215,15 @@ class MessagesScreen(ModalScreen[None]):
         footer_width = self.query_one(
             "#messages-footer", Static
         ).content_region.width
+        state = "Live" if self._live else "History" if has_newer else "Paused"
         if footer_width < 45:
-            text = (
-                "Live · Enter · End · Esc"
-                if self._live
-                else "History · Enter · End · Esc"
-                if has_newer
-                else "Paused · Enter · End · Esc"
-            )
+            text = f"{state} · Enter · End · Esc"
         elif self._live:
             text = "Live · Enter expands · ←/→ · Esc"
         elif has_newer:
             text = "History · newer available · → newer · End latest · Esc"
         else:
             text = "Paused · Enter expands · End live · Esc"
-        state = "Live" if self._live else "History" if has_newer else "Paused"
         self.query_one("#messages-title", Static).update(
             f"Messages · {state} · {len(self._ids)} shown"
         )
