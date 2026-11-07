@@ -95,14 +95,9 @@ def _make_tool(name: str):
 
 
 class DummyAgentWithTools(AgentWithTools, BaseAgent):
-    def __init__(self, llm, tools=None, handle_tool_errors=True, **kwargs):
+    def __init__(self, handle_tool_errors=True, **kwargs):
         self.build_graph_calls = 0
-        super().__init__(
-            llm=llm,
-            tools=tools,
-            handle_tool_errors=handle_tool_errors,
-            **kwargs,
-        )
+        super().__init__(handle_tool_errors=handle_tool_errors, **kwargs)
 
     def _noop(self, state):
         return state

@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from pydantic import BaseModel, Field
 
 from ursa.util.structured_output import (
@@ -11,18 +13,6 @@ class ExampleSchema(BaseModel):
     reason: str = Field(description="Reason.")
 
 
-class FakeStructuredLLM:
-    def __init__(self, parent):
-        self.parent = parent
-
-    def invoke(self, input, **kwargs):
-        self.parent.invocations.append((input, kwargs))
-        response = self.parent.responses.pop(0)
-        if isinstance(response, Exception):
-            raise response
-        return response
-
-
 class FakeLLM:
     def __init__(self, responses):
         self.responses = list(responses)
@@ -31,7 +21,14 @@ class FakeLLM:
 
     def with_structured_output(self, schema, **kwargs):
         self.calls.append((schema, kwargs))
-        return FakeStructuredLLM(self)
+        return SimpleNamespace(parent=self, invoke=self._invoke)
+
+    def _invoke(self, input, **kwargs):
+        self.invocations.append((input, kwargs))
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 def test_invoke_structured_retries_function_calling_after_none():
