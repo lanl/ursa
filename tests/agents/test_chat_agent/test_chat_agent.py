@@ -11,6 +11,13 @@ from tests.agents.utils import ScriptedRecordingChatModel
 from ursa.agents.chat_agent import ChatAgent
 
 
+@pytest.fixture
+async def agent(chat_model, tmp_path):
+    agent = ChatAgent(llm=chat_model, workspace=tmp_path)
+    yield agent
+    await agent.stop_message_loop(descendants=True)
+
+
 async def test_chat_agent_appends_ai_response(chat_model, tmpdir):
     agent = ChatAgent(llm=chat_model, workspace=tmpdir)
     user_prompt = "Share a quick greeting."
@@ -97,11 +104,7 @@ async def test_chat_agent_runs_independent_tool_calls_concurrently(tmp_path):
     ]
 
 
-async def test_spawn_startup_timeout_is_a_recoverable_tool_error(
-    chat_model, tmp_path
-):
-    agent = ChatAgent(llm=chat_model, workspace=tmp_path)
-
+async def test_spawn_startup_timeout_is_a_recoverable_tool_error(agent):
     async def failed_start(_name, _message, _agent_type):
         raise RuntimeError(
             "Agent 'session:sub:root/slow' did not become ready within 120 seconds"
@@ -115,9 +118,7 @@ async def test_spawn_startup_timeout_is_a_recoverable_tool_error(
         })
 
 
-async def test_chat_agent_exposes_hierarchy_tools(chat_model, tmp_path):
-    agent = ChatAgent(llm=chat_model, workspace=tmp_path)
-
+async def test_chat_agent_exposes_hierarchy_tools(agent):
     assert {
         "spawn_agent",
         "send_message",
@@ -159,8 +160,6 @@ async def test_chat_agent_exposes_hierarchy_tools(chat_model, tmp_path):
     assert isinstance(response, str)
     assert response
 
-    await agent.stop_message_loop(descendants=True)
-
 
 async def test_spawn_agent_limit_becomes_recoverable_tool_error(
     chat_model, tmp_path
@@ -193,11 +192,7 @@ async def test_spawn_agent_limit_becomes_recoverable_tool_error(
     await agent.stop_message_loop(descendants=True)
 
 
-async def test_local_spawn_agent_rejects_host_agent_type_selection(
-    chat_model, tmp_path
-):
-    agent = ChatAgent(llm=chat_model, workspace=tmp_path)
-
+async def test_local_spawn_agent_rejects_host_agent_type_selection(agent):
     with pytest.raises(ToolException, match="managed AgentRuntime"):
         await agent.tools["spawn_agent"].ainvoke({
             "name": "planner",
@@ -206,16 +201,14 @@ async def test_local_spawn_agent_rejects_host_agent_type_selection(
         })
 
     assert [member.agent_path for member in agent.walk_agents()] == ["root"]
-    await agent.stop_message_loop(descendants=True)
 
 
 @pytest.mark.parametrize(
     "bridge_method", [None, "send_message", "wait_for_agent"]
 )
 async def test_unknown_agent_path_is_a_recoverable_hierarchy_tool_error(
-    chat_model, tmp_path, monkeypatch, bridge_method
+    agent, monkeypatch, bridge_method
 ):
-    agent = ChatAgent(llm=chat_model, workspace=tmp_path)
     spawned = await agent.tools["spawn_agent"].ainvoke({
         "name": "reviewer",
         "message": "Review this normally.",
@@ -239,14 +232,9 @@ async def test_unknown_agent_path_is_a_recoverable_hierarchy_tool_error(
     if bridge_method is not None:
         monkeypatch.delattr(agent, "_process_runtime")
     assert "root/reviewer" in await agent.tools["list_agents"].ainvoke({})
-    await agent.stop_message_loop(descendants=True)
 
 
-async def test_managed_hierarchy_tool_queues_broadcast_in_input_order(
-    chat_model, tmp_path
-):
-    agent = ChatAgent(llm=chat_model, workspace=tmp_path)
-
+async def test_managed_hierarchy_tool_queues_broadcast_in_input_order(agent):
     expected = [
         f"Message queued for {target}."
         for target in ("first", "missing", "second")
@@ -263,4 +251,3 @@ async def test_managed_hierarchy_tool_queues_broadcast_in_input_order(
         ["first", "missing", "second"], "Review this."
     )
     assert response.split("\n\n") == expected
-    await agent.stop_message_loop(descendants=True)
