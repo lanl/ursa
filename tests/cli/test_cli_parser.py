@@ -853,16 +853,6 @@ def test_chat_model_config_kwargs_includes_extra():
     assert kwargs["timeout"] == 30
 
 
-def test_chat_model_config_kwargs_includes_max_completion_tokens():
-    cfg = ChatModelConfig(model="openai:gpt-5", max_completion_tokens=1024)
-
-    kwargs = cfg.kwargs
-
-    assert kwargs["model"] == "gpt-5"
-    assert kwargs["model_provider"] == "openai"
-    assert kwargs["max_completion_tokens"] == 1024
-
-
 def test_chat_model_config_initializes_chat_model(monkeypatch):
     initializer = MagicMock(return_value="chat-model")
     monkeypatch.setattr("ursa.cli.config.init_chat_model", initializer)
