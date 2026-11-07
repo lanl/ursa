@@ -90,10 +90,11 @@ class DirectInvokeAdapter:
         try:
             if self._setup_hook is not None:
                 await maybe_await(self._setup_hook(agent, ctx, inputs))
-            result = await _ainvoke_with_cli_handler(
-                agent,
-                inputs,
-                workspace_dir=ctx.workspace_dir,
+            workspace_dir = ctx.workspace_dir
+            result = await maybe_await(
+                agent.ainvoke(
+                    inputs, **_callback_config(agent.ainvoke, workspace_dir)
+                )
             )
             return _format_agent_result(agent, result)
         finally:
@@ -195,31 +196,7 @@ def _invoke_sync_target_with_setup(
         result = setup_hook(agent, ctx, inputs)
         if inspect.isawaitable(result):
             asyncio.run(result)
-    result = _invoke_with_cli_handler(
-        agent,
-        inputs,
-        workspace_dir=workspace_dir,
+    result = agent.invoke(
+        inputs, **_callback_config(agent.invoke, workspace_dir)
     )
     return _format_agent_result(agent, result)
-
-
-def _invoke_with_cli_handler(
-    agent: Any,
-    inputs: Any,
-    *,
-    workspace_dir: Path,
-) -> Any:
-    """Invoke a dashboard target, attaching the shared CLI callback when supported."""
-    return agent.invoke(inputs, **_callback_config(agent.invoke, workspace_dir))
-
-
-async def _ainvoke_with_cli_handler(
-    agent: Any,
-    inputs: Any,
-    *,
-    workspace_dir: Path,
-) -> Any:
-    """Async invoke a dashboard target with the shared CLI callback when supported."""
-    return await maybe_await(
-        agent.ainvoke(inputs, **_callback_config(agent.ainvoke, workspace_dir))
-    )
