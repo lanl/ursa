@@ -285,66 +285,41 @@ def test_mcp_server_passes_transport_specific_run_options(
     mcp.run.assert_called_once_with(**expected)
 
 
-def test_mcp_server_config_flag_sets_hosted_llm(monkeypatch, tmp_path):
-    """`ursa mcp-server --config FILE` must configure the hosted URSA instance.
+@pytest.mark.parametrize("http", [False, True])
+def test_mcp_server_configures_hosted_llm_with_transport(
+    monkeypatch, tmp_path, http
+):
+    """Subcommand --config must configure the hosted URSA instance.
 
-    Regression: previously the mcp-server subparser had no --config option, so
-    `ursa mcp-server --config foo.yaml` failed with "Unrecognized arguments".
-    The subcommand-local --config should feed the LLM model/endpoint (and other
-    UrsaConfig fields) into the AgentRuntime instance backing the MCP server.
+    Regression: the mcp-server subparser once rejected --config as an
+    unrecognized argument. Model/endpoint settings must reach AgentRuntime
+    both with default transport and alongside explicit HTTP options.
     """
     runtime_class = _stub_runtime(monkeypatch)
-
+    model = {"model": "ollama:llama3.1"}
+    if not http:
+        model["base_url"] = "http://localhost:11434"
     config_file = tmp_path / "mcp.yaml"
-    config_file.write_text(
-        yaml.safe_dump({
-            "llm_model": {
-                "model": "ollama:llama3.1",
-                "base_url": "http://localhost:11434",
-            }
-        })
+    config_file.write_text(yaml.safe_dump({"llm_model": model}))
+    options = (
+        ["--transport", "streamable-http", "--port", "9001"] if http else []
     )
 
-    main(["mcp-server", "--config", str(config_file)])
-
-    # AgentRuntime should be constructed with the config loaded from --config.
-    (ursa_config,), _ = runtime_class.call_args
-    assert ursa_config.llm_model.model == "llama3.1"
-    assert ursa_config.llm_model.model_provider == "ollama"
-    assert ursa_config.llm_model.base_url == "http://localhost:11434"
-
-
-def test_mcp_server_config_flag_parses_alongside_transport(
-    monkeypatch, tmp_path
-):
-    """--config coexists with MCP transport options on the subcommand."""
-    runtime_class = _stub_runtime(monkeypatch)
-    mcp = runtime_class.return_value.as_mcp_server.return_value
-
-    config_file = tmp_path / "mcp.yaml"
-    config_file.write_text(
-        yaml.safe_dump({"llm_model": {"model": "ollama:llama3.1"}})
-    )
-
-    main([
-        "mcp-server",
-        "--config",
-        str(config_file),
-        "--transport",
-        "streamable-http",
-        "--port",
-        "9001",
-    ])
+    main(["mcp-server", "--config", str(config_file), *options])
 
     (ursa_config,), _ = runtime_class.call_args
     assert ursa_config.llm_model.model == "llama3.1"
     assert ursa_config.llm_model.model_provider == "ollama"
-    mcp.run.assert_called_once_with(
-        transport="streamable-http",
-        log_level="INFO",
-        host="localhost",
-        port=9001,
-    )
+    if http:
+        mcp = runtime_class.return_value.as_mcp_server.return_value
+        mcp.run.assert_called_once_with(
+            transport="streamable-http",
+            log_level="INFO",
+            host="localhost",
+            port=9001,
+        )
+    else:
+        assert ursa_config.llm_model.base_url == "http://localhost:11434"
 
 
 def test_cli_parses_typed_flags(tmp_path):
