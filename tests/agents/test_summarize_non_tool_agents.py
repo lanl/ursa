@@ -96,11 +96,16 @@ def _plain_agent(llm, workspace, agent_class=BasicChatAgent, keep: int = 2):
     )
 
 
-def test_plain_chat_agent_summarizes_instead_of_crashing(tmp_path):
+@pytest.mark.parametrize("explicit_none", [False, True])
+def test_plain_chat_agent_summarizes_without_a_tool_model(
+    tmp_path, explicit_none
+):
     # Regression for #295: BasicChatAgent has no tool_llm, and the first
     # summarization raised AttributeError before any request was sent.
     llm = RecordingChatModel()
     agent = _plain_agent(llm, tmp_path)
+    if explicit_none:
+        agent.tool_llm = None
     with closing(agent):
         result = agent.invoke({"messages": _long_history()})
 
@@ -203,14 +208,3 @@ def test_agent_prefers_an_explicit_tool_llm(tmp_path, agent_class):
     assert _summarizer_requests(llm.calls) == []
     if agent_class is ChatAgent:
         assert_requests_provider_valid(llm.calls)
-
-
-def test_plain_agent_with_tool_llm_none_falls_back_to_llm(tmp_path):
-    # An explicit tool_llm = None counts as having no tool_llm.
-    llm = RecordingChatModel()
-    agent = _plain_agent(llm, tmp_path)
-    agent.tool_llm = None
-    with closing(agent):
-        agent.invoke({"messages": _long_history()})
-
-    assert len(_summarizer_requests(llm.calls)) == 1

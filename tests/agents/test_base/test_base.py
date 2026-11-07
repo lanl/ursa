@@ -122,23 +122,6 @@ def _make_agent(agent_class=Agent, **kwargs):
     return agent_class(llm=TinyCountingModel(), **kwargs)
 
 
-class RecordingAsyncHandler(AsyncCallbackHandler):
-    def __init__(self):
-        self.events: list[tuple[str, dict]] = []
-
-    async def on_custom_event(
-        self,
-        name: str,
-        data,
-        *,
-        run_id,
-        tags=None,
-        metadata=None,
-        **kwargs,
-    ) -> None:
-        self.events.append((name, data))
-
-
 @pytest.fixture(autouse=True)
 def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
@@ -281,7 +264,7 @@ def test_build_config_includes_default_event_logging_handler(tmpdir: Path):
 
 def test_build_config_dedupes_default_callbacks(tmpdir: Path):
     agent = _make_agent(workspace=tmpdir, enable_metrics=True)
-    custom_handler = RecordingAsyncHandler()
+    custom_handler = AsyncCallbackHandler()
 
     config = agent.build_config(
         callbacks=[
@@ -578,7 +561,8 @@ def test_user_supplied_checkpointer_is_not_automatically_pruned(
 
 async def test_ainvoke_merges_callback_config(tmpdir: Path):
     agent = _make_agent(EventAgent, workspace=tmpdir, enable_metrics=False)
-    handler = RecordingAsyncHandler()
+    handler = AsyncCallbackHandler()
+    handler.on_custom_event = AsyncMock(return_value=None)
 
     result = await agent.ainvoke(
         "hello",
@@ -586,17 +570,17 @@ async def test_ainvoke_merges_callback_config(tmpdir: Path):
     )
 
     assert result["messages"][-1].text == "done"
-    assert handler.events == [
-        (
-            "ursa_agent_progress",
-            {
-                "agent": "EventAgent",
-                "stage": "generate",
-                "message": "Drafting plan",
-                "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
-            },
-        )
-    ]
+    handler.on_custom_event.assert_awaited_once()
+    assert "run_id" in handler.on_custom_event.await_args.kwargs
+    assert handler.on_custom_event.await_args.args == (
+        "ursa_agent_progress",
+        {
+            "agent": "EventAgent",
+            "stage": "generate",
+            "message": "Drafting plan",
+            "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
+        },
+    )
 
 
 async def test_ainvoke_logs_progress_event_by_default(
