@@ -167,21 +167,9 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             return ""
         if isinstance(content, str):
             raw_text = content.strip()
-            if (
-                raw_text.startswith(("[", "{"))
-                and "'type'" in raw_text
-                and "'text'" in raw_text
-            ):
-                try:
-                    parsed = ast.literal_eval(raw_text)
-                except (SyntaxError, ValueError):
-                    return cls._clean_markdown_text(raw_text)
-                parsed_text = cls._response_text(parsed)
-                return parsed_text or cls._clean_markdown_text(raw_text)
-            if (
-                raw_text.startswith(("[", "{"))
-                and '"type"' in raw_text
-                and '"text"' in raw_text
+            if raw_text.startswith(("[", "{")) and (
+                ("'type'" in raw_text and "'text'" in raw_text)
+                or ('"type"' in raw_text and '"text"' in raw_text)
             ):
                 try:
                     parsed = ast.literal_eval(raw_text)
