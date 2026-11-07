@@ -41,15 +41,6 @@ class Plan(BaseModel):
     def __str__(self):
         plan = []
         for id, step in enumerate(self.steps):
-            expected_outputs = [
-                f"- {output}" for output in step.expected_outputs
-            ]
-            expected_outputs = "\n".join(expected_outputs)
-            success_criteria = [
-                f"- {criterion}" for criterion in step.success_criteria
-            ]
-            success_criteria = "\n".join(success_criteria)
-
             step_str = f"""
             ## {id} -- {step.name}
             Requires Code: {step.requires_code}
