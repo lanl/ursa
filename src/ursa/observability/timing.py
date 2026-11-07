@@ -271,21 +271,8 @@ def render_session_summary(thread_id: str):
         header_style="bold",
         padding=COL_PAD,
     )
-    t_cost.add_column(
-        "Model",
-        style="cyan",
-        no_wrap=True,
-        width=NAME_W,
-        min_width=NAME_W,
-        max_width=NAME_W,
-    )
-    t_cost.add_column(
-        "Cost",
-        justify="right",
-        width=TOTAL_W,
-        min_width=TOTAL_W,
-        max_width=TOTAL_W,
-    )
+    _add_fixed_column(t_cost, "Model", NAME_W, style="cyan", no_wrap=True)
+    _add_fixed_column(t_cost, "Cost", TOTAL_W, justify="right")
     if rollup.cost_by_model_usd:
         for model, amt in sorted(
             rollup.cost_by_model_usd.items(), key=lambda kv: kv[1], reverse=True
@@ -943,6 +930,13 @@ def _parse_iso(timestamp: str | None):
         return None
 
 
+def _add_fixed_column(table: Table, label: str, width: int, **options) -> None:
+    """Keep timing and cost columns aligned at their configured widths."""
+    table.add_column(
+        label, **options, width=width, min_width=width, max_width=width
+    )
+
+
 def _mk_table(
     title: str, rows: list[tuple[str, int, float, float, float]]
 ) -> Table:
@@ -958,43 +952,16 @@ def _mk_table(
     )
 
     # lock all column widths so every table renders identically
-    t.add_column(
-        "Name",
-        style="cyan",
-        no_wrap=True,
-        overflow="ellipsis",
-        width=NAME_W,
-        min_width=NAME_W,
-        max_width=NAME_W,
+    _add_fixed_column(
+        t, "Name", NAME_W, style="cyan", no_wrap=True, overflow="ellipsis"
     )
-    t.add_column(
-        "Count",
-        justify="right",
-        width=COUNT_W,
-        min_width=COUNT_W,
-        max_width=COUNT_W,
-    )
-    t.add_column(
-        "Total(s)",
-        justify="right",
-        width=TOTAL_W,
-        min_width=TOTAL_W,
-        max_width=TOTAL_W,
-    )
-    t.add_column(
-        "Avg(ms)",
-        justify="right",
-        width=AVG_W,
-        min_width=AVG_W,
-        max_width=AVG_W,
-    )
-    t.add_column(
-        "Max(ms)",
-        justify="right",
-        width=MAX_W,
-        min_width=MAX_W,
-        max_width=MAX_W,
-    )
+    for label, width in (
+        ("Count", COUNT_W),
+        ("Total(s)", TOTAL_W),
+        ("Avg(ms)", AVG_W),
+        ("Max(ms)", MAX_W),
+    ):
+        _add_fixed_column(t, label, width, justify="right")
 
     if not rows:
         t.add_row("—", "0", f"{0.00:,.2f}", f"{0:,.0f}", f"{0:,.0f}")
