@@ -216,28 +216,23 @@ async def test_mixed_user_batch_promotes_every_turn_without_delegated_spinner(
 
     monkeypatch.setattr(runtime._manager, "invoke", invoke)
     runtime._mark_working("root", 1)
-    first = asyncio.create_task(
-        runtime.run_active_agent(
-            "root",
-            "first user",
-            callbacks=[LifecycleCallback(lifecycle)],
-            on_start=lambda _message: starts.append("first"),
+    requests = []
+    for name in ("first", "second"):
+        requests.append(
+            asyncio.create_task(
+                runtime.run_active_agent(
+                    "root",
+                    f"{name} user",
+                    callbacks=[LifecycleCallback(lifecycle)],
+                    on_start=lambda _message, name=name: starts.append(name),
+                )
+            )
         )
-    )
-    await asyncio.sleep(0)
-    second = asyncio.create_task(
-        runtime.run_active_agent(
-            "root",
-            "second user",
-            callbacks=[LifecycleCallback(lifecycle)],
-            on_start=lambda _message: starts.append("second"),
-        )
-    )
-    await asyncio.sleep(0)
+        await asyncio.sleep(0)
     runtime._mark_working("root", -1)
 
-    assert await first is None
-    assert await second == "one combined reply"
+    assert await requests[0] is None
+    assert await requests[1] == "one combined reply"
     assert starts == ["first", "second"]
     assert lifecycle == []
     assert invocations[0][1] == "first user"

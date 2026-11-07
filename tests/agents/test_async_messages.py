@@ -202,15 +202,9 @@ def test_subagent_limit_is_hierarchy_wide(mailbox, limit):
         parent.spawn_subagent("overflow")
 
 
-@pytest.mark.parametrize(
-    "limit",
-    [
-        {"subagent_max_agents": 0},
-        {"subagent_max_depth": 0},
-    ],
-)
+@pytest.mark.parametrize("limit", ["max_agents", "max_depth"])
 def test_zero_subagent_limit_disables_spawning(mailbox, limit):
-    root = mailbox(**limit)
+    root = mailbox(**{f"subagent_{limit}": 0})
 
     with pytest.raises(RuntimeError, match="Subagents are disabled"):
         root.spawn_subagent("disabled")
