@@ -381,24 +381,20 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
         self._async_storage: BaseStore | None = None
         self._async_compiled_graph: CompiledStateGraph | None = None
         self._checkpoint_retention_enabled = False
-        persist_agent = (agent_name is not None) or set_checkpointer
-        if persist_agent:
-            if set_checkpointer:
-                if set_name:
-                    logger.warning(
-                        "Both checkpointer and den persistence are set. "
-                        "Using checkpointer; only use one in the future."
-                    )
-                self.den = self.workspace
-            else:
-                den_name = Path(self.group) / "agents" / agent_name
-                self.den = group_agents_dir(self.group) / agent_name
-                if not self.den.exists():
-                    logger.info("Agent created: %s", den_name)
-                self.checkpointer = Checkpointer.from_workspace(self.den)
-                self._checkpoint_retention_enabled = True
+        if set_checkpointer and set_name:
+            logger.warning(
+                "Both checkpointer and den persistence are set. "
+                "Using checkpointer; only use one in the future."
+            )
+        if agent_name is not None and not set_checkpointer:
+            den_name = Path(self.group) / "agents" / agent_name
+            self.den = group_agents_dir(self.group) / agent_name
+            if not self.den.exists():
+                logger.info("Agent created: %s", den_name)
+            self.checkpointer = Checkpointer.from_workspace(self.den)
+            self._checkpoint_retention_enabled = True
         else:
-            # Keep current behavior if the user is not persisting.
+            # Explicit checkpointers and unnamed agents use the workspace.
             self.den = self.workspace
         # A generated default, as the docstring above promises. A constant here
         # means two agents that share a checkpoint store share one thread, so
