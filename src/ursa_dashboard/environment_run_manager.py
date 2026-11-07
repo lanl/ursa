@@ -686,20 +686,16 @@ class EnvironmentRunManager:
             self._update_manifest(
                 run_id, {"status": "running", "runtime": {"pid": proc.pid}}
             )
-        stdout_task = asyncio.create_task(
-            self._drain(
-                proc.stdout,
-                paths.logs_dir / "stdout.log",
-                self.config.stdout_cap_bytes,
+        stream_tasks = [
+            asyncio.create_task(
+                self._drain(
+                    getattr(proc, name),
+                    paths.logs_dir / f"{name}.log",
+                    getattr(self.config, f"{name}_cap_bytes"),
+                )
             )
-        )
-        stderr_task = asyncio.create_task(
-            self._drain(
-                proc.stderr,
-                paths.logs_dir / "stderr.log",
-                self.config.stderr_cap_bytes,
-            )
-        )
+            for name in ("stdout", "stderr")
+        ]
         timeout = (launch.get("runner") or {}).get("timeout_seconds")
         timed_out = False
         try:
@@ -717,9 +713,7 @@ class EnvironmentRunManager:
                 proc.kill()
                 await proc.wait()
         finally:
-            await asyncio.gather(
-                stdout_task, stderr_task, return_exceptions=True
-            )
+            await asyncio.gather(*stream_tasks, return_exceptions=True)
         inflight = self._inflight.pop(run_id, None)
         if inflight and inflight.cancel_requested:
             self._update_manifest(

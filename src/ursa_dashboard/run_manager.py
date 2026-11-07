@@ -587,27 +587,15 @@ class RunManager:
             return
 
         # Write config JSON blobs for the worker.
-        params_json = paths.run_dir / "params.json"
-        agent_init_json = paths.run_dir / "agent_init.json"
-        llm_json = paths.run_dir / "llm.json"
-        embedding_json = paths.run_dir / "embedding.json"
-        mcp_json = paths.run_dir / "mcp.json"
+        config_paths = {
+            name: paths.run_dir / f"{name}.json"
+            for name in ("params", "agent_init", "llm", "embedding", "mcp")
+        }
         output_json = paths.run_dir / "output.json"
-        params_json.write_text(
-            json.dumps(rec.get("params") or {}, indent=2), encoding="utf-8"
-        )
-        agent_init_json.write_text(
-            json.dumps(rec.get("agent_init") or {}, indent=2), encoding="utf-8"
-        )
-        llm_json.write_text(
-            json.dumps(rec.get("llm") or {}, indent=2), encoding="utf-8"
-        )
-        embedding_json.write_text(
-            json.dumps(rec.get("embedding") or {}, indent=2), encoding="utf-8"
-        )
-        mcp_json.write_text(
-            json.dumps(rec.get("mcp") or {}, indent=2), encoding="utf-8"
-        )
+        for name, path in config_paths.items():
+            path.write_text(
+                json.dumps(rec.get(name) or {}, indent=2), encoding="utf-8"
+            )
 
         timeout = None
         runner_cfg = rec.get("runner") or {}
@@ -643,15 +631,15 @@ class RunManager:
             "--workspace-dir",
             str(agent_workspace_dir),
             "--params-json",
-            str(params_json),
+            str(config_paths["params"]),
             "--agent-init-json",
-            str(agent_init_json),
+            str(config_paths["agent_init"]),
             "--llm-json",
-            str(llm_json),
+            str(config_paths["llm"]),
             "--embedding-json",
-            str(embedding_json),
+            str(config_paths["embedding"]),
             "--mcp-json",
-            str(mcp_json),
+            str(config_paths["mcp"]),
             "--output-json",
             str(output_json),
             "--secrets-stdin",
@@ -743,26 +731,19 @@ class RunManager:
             )
 
         # Stream stdout/stderr
-        stdout_task = asyncio.create_task(
-            self._drain_stream(
-                run_id=run_id,
-                agent_id=agent_id,
-                stream_name="stdout",
-                stream=proc.stdout,
-                log_path=paths.stdout_path,
-                cap_bytes=self.config.stdout_cap_bytes,
+        stream_tasks = [
+            asyncio.create_task(
+                self._drain_stream(
+                    run_id=run_id,
+                    agent_id=agent_id,
+                    stream_name=name,
+                    stream=getattr(proc, name),
+                    log_path=getattr(paths, f"{name}_path"),
+                    cap_bytes=getattr(self.config, f"{name}_cap_bytes"),
+                )
             )
-        )
-        stderr_task = asyncio.create_task(
-            self._drain_stream(
-                run_id=run_id,
-                agent_id=agent_id,
-                stream_name="stderr",
-                stream=proc.stderr,
-                log_path=paths.stderr_path,
-                cap_bytes=self.config.stderr_cap_bytes,
-            )
-        )
+            for name in ("stdout", "stderr")
+        ]
 
         try:
             if timeout:
@@ -788,9 +769,7 @@ class RunManager:
                 await proc.wait()
         finally:
             # Ensure streams drained
-            await asyncio.gather(
-                stdout_task, stderr_task, return_exceptions=True
-            )
+            await asyncio.gather(*stream_tasks, return_exceptions=True)
 
         rc = proc.returncode
 
