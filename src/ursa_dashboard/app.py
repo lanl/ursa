@@ -1284,19 +1284,14 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             ts = ts[:-1] + "+00:00"
         return datetime.fromisoformat(ts).astimezone(timezone.utc)
 
-    @app.get("/workspace/runs", dependencies=[Depends(require_auth)])
-    async def list_workspace_by_run(
-        agent_id: str | None = None,
-        status: str | None = None,
-        created_after: str | None = None,
-        created_before: str | None = None,
-        limit: int = Query(default=50, ge=1, le=200),
-        include_files: bool = True,
-        refresh: bool = False,
-    ):
-        """Default workspace browser view: group files by run_id with filters."""
-        runs = await rm.list_runs(limit=500)
-
+    def _filter_workspace_runs(
+        runs: list[dict[str, Any]],
+        agent_id: str | None,
+        status: str | None,
+        created_after: str | None,
+        created_before: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
         if agent_id:
             runs = [r for r in runs if r.get("agent_id") == agent_id]
         if status:
@@ -1317,6 +1312,24 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             ]
 
         runs = runs[:limit]
+        return runs
+
+    @app.get("/workspace/runs", dependencies=[Depends(require_auth)])
+    async def list_workspace_by_run(
+        agent_id: str | None = None,
+        status: str | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
+        limit: int = Query(default=50, ge=1, le=200),
+        include_files: bool = True,
+        refresh: bool = False,
+    ):
+        """Default workspace browser view: group files by run_id with filters."""
+        runs = await rm.list_runs(limit=500)
+
+        runs = _filter_workspace_runs(
+            runs, agent_id, status, created_after, created_before, limit
+        )
 
         items: list[dict[str, Any]] = []
         for r in runs:
@@ -2298,25 +2311,9 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         limit: int = Query(default=25, ge=1, le=200),
     ) -> HTMLResponse:
         runs = await rm.list_runs(limit=500)
-        if agent_id:
-            runs = [r for r in runs if r.get("agent_id") == agent_id]
-        if status:
-            runs = [r for r in runs if r.get("status") == status]
-        if created_after:
-            ca = _parse_rfc3339(created_after)
-            runs = [
-                r
-                for r in runs
-                if r.get("created_at") and _parse_rfc3339(r["created_at"]) >= ca
-            ]
-        if created_before:
-            cb = _parse_rfc3339(created_before)
-            runs = [
-                r
-                for r in runs
-                if r.get("created_at") and _parse_rfc3339(r["created_at"]) <= cb
-            ]
-        runs = runs[:limit]
+        runs = _filter_workspace_runs(
+            runs, agent_id, status, created_after, created_before, limit
+        )
 
         # Build filter options from registry and known statuses.
         agent_opts = "".join(
@@ -5528,6 +5525,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
                 f"id: {seq}\nevent: message\nretry: 1500\ndata: {data}\n\n"
             ).encode("utf-8")
 
+        final_flush = False
         while True:
             if paths.events_path.exists():
                 with paths.events_path.open("rb") as f:
@@ -5550,6 +5548,9 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
                         cursor_seq = seq
                         yield format_sse(event)
 
+            if final_flush:
+                break
+
             status = None
             with contextlib.suppress(Exception):
                 status = json.loads(
@@ -5559,27 +5560,8 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
                 # Give writers a moment to flush any final event records that
                 # landed just before or after the terminal manifest update.
                 await asyncio.sleep(0.1)
-                if paths.events_path.exists():
-                    with paths.events_path.open("rb") as f:
-                        if offset:
-                            f.seek(offset)
-                        while True:
-                            line_b = f.readline()
-                            if not line_b:
-                                offset = f.tell()
-                                break
-                            try:
-                                event = json.loads(
-                                    line_b.decode("utf-8", errors="replace")
-                                )
-                                seq = int(event.get("seq", 0))
-                            except Exception:
-                                continue
-                            if seq <= cursor_seq:
-                                continue
-                            cursor_seq = seq
-                            yield format_sse(event)
-                break
+                final_flush = True
+                continue
 
             now = asyncio.get_event_loop().time()
             if now - last_keepalive > 15:
