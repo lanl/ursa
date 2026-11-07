@@ -618,34 +618,6 @@ def test_prompts_share_task_criteria_and_preserve_lineage_guidance(elo_factory):
     assert "exactly one JSON object" not in prompt
 
 
-def test_expired_deadline_captures_progress_without_invoking_member(
-    elo_factory, monkeypatch
-):
-    env = elo_factory.make()
-    member = env.member_configs[0]
-    report = (
-        env._member_workspace(member.name)
-        / env._progress_report_relative_path()
-    )
-    report.parent.mkdir()
-    report.write_text("Saved progress")
-
-    async def unexpected(*args, **kwargs):
-        pytest.fail("Expired deadline must not start member execution")
-
-    monkeypatch.setattr(env.members[member.name], "ainvoke", unexpected)
-    run = asyncio.run(
-        env._run_member(
-            member,
-            "task",
-            {},
-            deadline=datetime.now(timezone.utc) - timedelta(seconds=1),
-        )
-    )
-    assert run.timed_out
-    assert run.progress_report == "Saved progress"
-
-
 @pytest.mark.parametrize("source_kind", ["mapping", "model", "yaml", "kwargs"])
 def test_config_sources_and_overrides_preserve_execution(
     elo_factory, tmp_path, source_kind
@@ -857,6 +829,8 @@ def test_member_result_preserves_execution_outcomes(
         else None,
     )
     assert invoked == (outcome != "expired")
+    if outcome == "expired":
+        assert run.timed_out
 
 
 @pytest.mark.parametrize(
