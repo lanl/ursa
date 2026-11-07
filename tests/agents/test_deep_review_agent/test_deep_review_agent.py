@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from tests.agents.utils import (
     ToolReadyFakeChatModel,
     message_stream_with_usage,
+    message_with_usage,
     recording_model,
 )
 from ursa.agents.deep_review_agent import DeepReviewAgent
@@ -23,7 +24,7 @@ class WorkspaceToolCallingFakeChatModel(ToolReadyFakeChatModel):
             self, "_called_workspace", False
         ):
             self._called_workspace = True
-            message = AIMessage(
+            message = message_with_usage(
                 content="",
                 tool_calls=[
                     {
@@ -33,21 +34,9 @@ class WorkspaceToolCallingFakeChatModel(ToolReadyFakeChatModel):
                         "type": "tool_call",
                     }
                 ],
-                usage_metadata={
-                    "input_tokens": 1,
-                    "output_tokens": 1,
-                    "total_tokens": 2,
-                },
             )
         else:
-            message = AIMessage(
-                content="workspace-informed response",
-                usage_metadata={
-                    "input_tokens": 1,
-                    "output_tokens": 1,
-                    "total_tokens": 2,
-                },
-            )
+            message = message_with_usage(content="workspace-informed response")
         return ChatResult(generations=[ChatGeneration(message=message)])
 
 
@@ -157,14 +146,7 @@ def _distinct_stream() -> Iterator[AIMessage]:
     n = 0
     while True:
         n += 1
-        yield AIMessage(
-            content=f"turn-{n:02d}",
-            usage_metadata={
-                "input_tokens": 1,
-                "output_tokens": 1,
-                "total_tokens": 2,
-            },
-        )
+        yield message_with_usage(content=f"turn-{n:02d}")
 
 
 _DD_QUESTION = {

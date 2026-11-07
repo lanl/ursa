@@ -3,13 +3,16 @@ from importlib import metadata
 import pytest
 from dotenv import load_dotenv
 from langchain_core.embeddings import FakeEmbeddings
-from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from pydantic import BaseModel
 
-from tests.agents.utils import ToolReadyFakeChatModel, message_stream
+from tests.agents.utils import (
+    ToolReadyFakeChatModel,
+    message_stream,
+    message_with_usage,
+)
 
 
 def extraskip(extra: str, package: str = "ursa-ai") -> None:
@@ -111,14 +114,7 @@ class FakeChatModel(ToolReadyFakeChatModel):
         else:
             content = "ok"
 
-        message = AIMessage(
-            content=content,
-            usage_metadata={
-                "input_tokens": 1,
-                "output_tokens": 1,
-                "total_tokens": 2,
-            },
-        )
+        message = message_with_usage(content=content)
         return ChatResult(generations=[ChatGeneration(message=message)])
 
     def with_structured_output(self, schema, **kwargs):

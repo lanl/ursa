@@ -17,16 +17,22 @@ def message_stream(content: str) -> Iterator[AIMessage]:
         yield AIMessage(content=content)
 
 
+def message_with_usage(content: str, **kwargs: Any) -> AIMessage:
+    """Build a fresh fake response with one input and one output token."""
+    return AIMessage(
+        content=content,
+        usage_metadata={
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "total_tokens": 2,
+        },
+        **kwargs,
+    )
+
+
 def message_stream_with_usage(content: str) -> Iterator[AIMessage]:
     while True:
-        yield AIMessage(
-            content=content,
-            usage_metadata={
-                "input_tokens": 1,
-                "output_tokens": 1,
-                "total_tokens": 2,
-            },
-        )
+        yield message_with_usage(content=content)
 
 
 def simple_plan(schema):
