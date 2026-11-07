@@ -7,26 +7,16 @@ orphan the user message in the transcript, and the favicon must resolve.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
-from fastapi.testclient import TestClient
 
-from ursa import security
-from ursa_dashboard.app import create_app
+from tests.dashboard import test_session_workspaces
 from ursa_dashboard.credentials import (
     CredentialConfigurationError,
     MemoryCredentialStore,
     resolve_api_key,
 )
 
-
-@pytest.fixture
-def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "ursa-cache")
-    app = create_app(credential_store=MemoryCredentialStore())
-    with TestClient(app) as test_client:
-        yield test_client, tmp_path
+client = test_session_workspaces.client
 
 
 def _make_session(test_client) -> str:

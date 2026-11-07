@@ -304,9 +304,8 @@ def test_dashboard_can_validate_create_and_replace_environment_run(
         assert "Run ID" in page.text
 
 
-async def test_environment_run_manager_cancels_queued_run(
-    monkeypatch, tmp_path
-):
+async def _queued_team_run(monkeypatch, tmp_path, name, prompt):
+    """Create an unstarted, zero-concurrency run for lifecycle tests."""
     monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "ursa")
     manager = EnvironmentRunManager(
         group="default",
@@ -314,13 +313,22 @@ async def test_environment_run_manager_cancels_queued_run(
         config=EnvironmentRunManagerConfig(concurrency=0),
     )
     launch = validate_environment_launch(
-        "agent_team", _team_yaml("cancel_team"), group="default"
+        "agent_team", _team_yaml(name), group="default"
     )
     manifest = await manager.create_run(
         launch=launch,
-        prompt="A queued task",
+        prompt=prompt,
         llm={"model": "none", "credential_source": "none"},
         runner={},
+    )
+    return manager, manifest
+
+
+async def test_environment_run_manager_cancels_queued_run(
+    monkeypatch, tmp_path
+):
+    manager, manifest = await _queued_team_run(
+        monkeypatch, tmp_path, "cancel_team", "A queued task"
     )
     cancelled = await manager.cancel(manifest["run_id"], reason="test_request")
     assert cancelled["status"] == "cancelled"
@@ -330,20 +338,8 @@ async def test_environment_run_manager_cancels_queued_run(
 async def test_environment_run_manager_marks_interrupted_run_failed(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "ursa")
-    manager = EnvironmentRunManager(
-        group="default",
-        credential_store=MemoryCredentialStore(),
-        config=EnvironmentRunManagerConfig(concurrency=0),
-    )
-    launch = validate_environment_launch(
-        "agent_team", _team_yaml("recovery_team"), group="default"
-    )
-    manifest = await manager.create_run(
-        launch=launch,
-        prompt="An interrupted task",
-        llm={"model": "none", "credential_source": "none"},
-        runner={},
+    manager, manifest = await _queued_team_run(
+        monkeypatch, tmp_path, "recovery_team", "An interrupted task"
     )
     manager._update_manifest(manifest["run_id"], {"status": "running"})
 
