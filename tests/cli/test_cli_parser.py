@@ -1017,37 +1017,27 @@ def test_inference_provider_applies_to_llm_model():
     assert "inference_provider" not in resolved.kwargs
 
 
-def test_model_config_model_provider_overrides_inference_provider():
+@pytest.mark.parametrize("explicit_provider", [True, False])
+def test_model_provider_inherits_only_when_unset(explicit_provider):
     config = UrsaConfig(
         inference_providers={"gateway": {"model_provider": "anthropic"}},
         llm_model={
             "model": "gpt-test",
-            "model_provider": "openai",
+            **({"model_provider": "openai"} if explicit_provider else {}),
             "inference_provider": "gateway",
         },
     )
 
     resolved = config.resolve()
 
-    assert resolved.llm_model.model_provider == "openai"
-    assert resolved.inference_providers["gateway"].model_extra == {
-        "model_provider": "anthropic"
-    }
-
-
-def test_inference_provider_sets_unset_model_provider():
-    config = UrsaConfig(
-        inference_providers={"gateway": {"model_provider": "anthropic"}},
-        llm_model={
-            "model": "gpt-test",
-            "inference_provider": "gateway",
-        },
-    )
-
-    resolved = config.resolve()
-
-    assert "model_provider" not in config.llm_model.model_fields_set
-    assert resolved.llm_model.model_provider == "anthropic"
+    if explicit_provider:
+        assert resolved.llm_model.model_provider == "openai"
+        assert resolved.inference_providers["gateway"].model_extra == {
+            "model_provider": "anthropic"
+        }
+    else:
+        assert "model_provider" not in config.llm_model.model_fields_set
+        assert resolved.llm_model.model_provider == "anthropic"
 
 
 def test_inference_provider_applies_to_embedding_model():
