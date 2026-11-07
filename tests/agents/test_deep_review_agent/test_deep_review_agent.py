@@ -120,17 +120,6 @@ def test_deep_review_agent_exposes_web_tools_only_when_enabled(
     assert "run_osti_search" in with_web.tools
 
 
-def _exploding_model(calls: list) -> ToolReadyFakeChatModel:
-    """Fake model that raises on every call and counts the calls."""
-
-    class _Exploder(ToolReadyFakeChatModel):
-        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-            calls.append(len(messages))
-            raise RuntimeError("provider exploded")
-
-    return _Exploder(messages=message_stream_with_usage("unused"))
-
-
 def _system_prefix_ok(messages) -> bool:
     seen_non_system = False
     for message in messages:
@@ -202,7 +191,14 @@ async def test_phase_model_error_propagates_immediately(tmpdir):
     # failing model still produced a normal-looking run. The first
     # failure must propagate before any further model call happens.
     calls: list = []
-    agent = DeepReviewAgent(llm=_exploding_model(calls), workspace=tmpdir)
+    model = ToolReadyFakeChatModel(messages=message_stream_with_usage("unused"))
+
+    def fail(messages, stop=None, run_manager=None, **kwargs):
+        calls.append(len(messages))
+        raise RuntimeError("provider exploded")
+
+    model._generate = fail
+    agent = DeepReviewAgent(llm=model, workspace=tmpdir)
 
     with pytest.raises(RuntimeError, match="provider exploded"):
         await agent.ainvoke(dict(_DD_QUESTION))
