@@ -1104,16 +1104,13 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
         update = dict(extra or {})
         if full_overwrite:
             messages = list(state.get("messages") or [])
-            if message_update is None:
-                update["messages"] = Overwrite(messages)
-            else:
+            if message_update is not None:
                 if isinstance(message_update, list):
                     messages.extend(message_update)
                 else:
                     messages.append(message_update)
-                update["messages"] = Overwrite(messages)
-        else:
-            update["messages"] = message_update
+            message_update = Overwrite(messages)
+        update["messages"] = message_update
         return update
 
     def _normalize_inputs(self, inputs: InputLike) -> Mapping[str, Any]:

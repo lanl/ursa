@@ -72,8 +72,6 @@ def _strip_blank_optional_strings(value: Any) -> str | Any | None:
     """Normalize blank strings to ``None`` after stripping whitespace.
     Non-string values are returned unchanged.
     """
-    if value is None:
-        return None
     if not isinstance(value, str):
         return value
     value = value.strip()
