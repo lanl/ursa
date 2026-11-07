@@ -31,6 +31,7 @@ from textual.widgets import (
 
 import ursa.util.crossplatform as crossplatform
 from tests.cli._app_helpers import (
+    assert_eventually,
     make_ollama_runtime,
     make_runtime,
     static_text,
@@ -159,8 +160,9 @@ async def test_agent_hotlist_routes_selected_agent(app):
         prompt.insert("make a plan")
         await pilot.press("enter")
         await pilot.pause()
-        await wait_for(pilot, lambda: calls == [("plan", "make a plan")])
-        assert calls == [("plan", "make a plan")]
+        await assert_eventually(
+            pilot, lambda: calls == [("plan", "make a plan")]
+        )
 
 
 async def test_agent_selection_moves_to_front_replaces_and_preserves_cursor(
@@ -173,18 +175,16 @@ async def test_agent_selection_moves_to_front_replaces_and_preserves_cursor(
 
         await pilot.press("#", "p", "l", "enter")
         await pilot.pause()
-        await wait_for(
+        await assert_eventually(
             pilot, lambda: prompt.text == "#plan Review docs carefully"
         )
-        assert prompt.text == "#plan Review docs carefully"
         assert prompt.cursor_location == (0, 12)
 
         await pilot.press("#", "c", "h", "enter")
         await pilot.pause()
-        await wait_for(
+        await assert_eventually(
             pilot, lambda: prompt.text == "#chat Review docs carefully"
         )
-        assert prompt.text == "#chat Review docs carefully"
         assert prompt.cursor_location == (0, 12)
 
 
@@ -211,8 +211,9 @@ async def test_macro_selectors_close_with_escape(app):
         assert prompt.text == "Review docs carefully"
         await pilot.press("ctrl+y")
         await pilot.pause()
-        await wait_for(pilot, lambda: prompt.text == "Review# docs carefully")
-        assert prompt.text == "Review# docs carefully"
+        await assert_eventually(
+            pilot, lambda: prompt.text == "Review# docs carefully"
+        )
         assert not isinstance(app.screen, HotlistScreen)
 
         prompt.load_text("")
@@ -243,14 +244,12 @@ async def test_escaping_command_picker_preserves_multiline_draft_and_undo(
         await pilot.press("escape")
         await pilot.pause()
 
-        await wait_for(pilot, lambda: prompt.text == "/alpha\nbeta")
-        assert prompt.text == "/alpha\nbeta"
+        await assert_eventually(pilot, lambda: prompt.text == "/alpha\nbeta")
         await pilot.press("ctrl+z")
         assert prompt.text == "alpha\nbeta"
         await pilot.press("ctrl+y")
         await pilot.pause()
-        await wait_for(pilot, lambda: prompt.text == "/alpha\nbeta")
-        assert prompt.text == "/alpha\nbeta"
+        await assert_eventually(pilot, lambda: prompt.text == "/alpha\nbeta")
         assert not isinstance(app.screen, HotlistScreen)
 
 
@@ -262,19 +261,20 @@ async def test_macro_choice_is_undoable_without_reopening_picker(app):
 
         await pilot.press("#", "p", "l", "enter")
         await pilot.pause()
-        await wait_for(pilot, lambda: prompt.text == "#plan Review docs")
-        assert prompt.text == "#plan Review docs"
+        await assert_eventually(
+            pilot, lambda: prompt.text == "#plan Review docs"
+        )
 
         await pilot.press("ctrl+z")
         await pilot.pause()
-        await wait_for(pilot, lambda: prompt.text == "Review# docs")
-        assert prompt.text == "Review# docs"
+        await assert_eventually(pilot, lambda: prompt.text == "Review# docs")
         assert not isinstance(app.screen, HotlistScreen)
 
         await pilot.press("ctrl+y")
         await pilot.pause()
-        await wait_for(pilot, lambda: prompt.text == "#plan Review docs")
-        assert prompt.text == "#plan Review docs"
+        await assert_eventually(
+            pilot, lambda: prompt.text == "#plan Review docs"
+        )
         assert not isinstance(app.screen, HotlistScreen)
 
 
@@ -285,14 +285,16 @@ async def test_programmatic_and_pasted_macro_characters_do_not_open_picker(
         prompt = app.query_one(PromptArea)
         prompt.load_text("#plan programmatic")
         await pilot.pause()
-        await wait_for(pilot, lambda: not isinstance(app.screen, HotlistScreen))
-        assert not isinstance(app.screen, HotlistScreen)
+        await assert_eventually(
+            pilot, lambda: not isinstance(app.screen, HotlistScreen)
+        )
 
         prompt.load_text("")
         app.post_message(events.Paste("@notes.md /status"))
         await pilot.pause()
-        await wait_for(pilot, lambda: prompt.text == "@notes.md /status")
-        assert prompt.text == "@notes.md /status"
+        await assert_eventually(
+            pilot, lambda: prompt.text == "@notes.md /status"
+        )
         assert not isinstance(app.screen, HotlistScreen)
 
 
@@ -327,10 +329,9 @@ async def test_file_hotlist_uses_at_trigger(app, tmp_path):
         await pilot.pause()
         await pilot.press("d", "o", "c", "s", "enter")
         await pilot.pause()
-        await wait_for(
+        await assert_eventually(
             pilot, lambda: prompt.text == f"@{Path('docs')}{os.sep} "
         )
-        assert prompt.text == f"@{Path('docs')}{os.sep} "
 
 
 @pytest.mark.parametrize("key", ["shift+enter", "ctrl+j"])
@@ -362,8 +363,7 @@ async def test_prompt_has_markdown_highlighting_paste_undo_and_redo(app):
 
         app.post_message(events.Paste("# heading\nbody"))
         await pilot.pause()
-        await wait_for(pilot, lambda: prompt.text == "# heading\nbody")
-        assert prompt.text == "# heading\nbody"
+        await assert_eventually(pilot, lambda: prompt.text == "# heading\nbody")
 
         await pilot.press("ctrl+z")
         assert prompt.text == ""
@@ -666,8 +666,9 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
 
         await pilot.press("s", "t", "a", "t", "u", "s", "enter")
         await pilot.pause()
-        await wait_for(pilot, lambda: isinstance(app.screen, InformationScreen))
-        assert isinstance(app.screen, InformationScreen)
+        await assert_eventually(
+            pilot, lambda: isinstance(app.screen, InformationScreen)
+        )
         assert "LLM Endpoint" in app.screen.content
         assert "lab-assistant" in app.screen.content
         assert "MCP servers" in app.screen.content
@@ -780,8 +781,7 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         await wait_for(pilot, lambda: len(tree_rows()) >= 26, timeout=3)
         await pilot.press("end")
         await pilot.pause()
-        await wait_for(pilot, lambda: tree.scroll_y > 0, timeout=3)
-        assert tree.scroll_y > 0
+        await assert_eventually(pilot, lambda: tree.scroll_y > 0, timeout=3)
 
         runtime._hierarchies[root_id].pop("root/researcher")
         await wait_for(
@@ -828,8 +828,7 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         assert body.scroll_y == 0
         await pilot.press("end")
         await pilot.pause()
-        await wait_for(pilot, lambda: body.scroll_y > 0)
-        assert body.scroll_y > 0
+        await assert_eventually(pilot, lambda: body.scroll_y > 0)
 
         body.scroll_home(animate=False, immediate=True)
         assert body.scroll_y == 0
@@ -841,10 +840,9 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         assert timers
         await pilot.press("escape")
         await pilot.pause()
-        await wait_for(
+        await assert_eventually(
             pilot, lambda: not isinstance(app.screen, InformationScreen)
         )
-        assert not isinstance(app.screen, InformationScreen)
         assert all(timer._task is None for timer in timers)
 
 
@@ -951,8 +949,7 @@ async def test_exit_command_quits_the_app(app):
         await pilot.press("/", "e", "x", "i", "t", "enter")
         await pilot.pause()
 
-        await wait_for(pilot, lambda: app._exit)
-        assert app._exit
+        await assert_eventually(pilot, lambda: app._exit)
 
 
 async def test_model_command_switches_provider_and_model(app, model_dialog):
@@ -1038,14 +1035,10 @@ async def test_model_command_switches_provider_and_model(app, model_dialog):
         )
         app.screen.query_one("#chat-model-name", Select).value = "claude-stale"
         await pilot.pause()
-        await wait_for(
+        await assert_eventually(
             pilot,
             lambda: app.screen.query_one("#chat-model-provider", Select).value
             == "anthropic",
-        )
-        assert (
-            app.screen.query_one("#chat-model-provider", Select).value
-            == "anthropic"
         )
         assert app.screen.query_one(
             "#embedding-model-provider", Select
@@ -1170,8 +1163,9 @@ provider_options:
         ).value = "changed-model"
         await pilot.pause()
 
-        await wait_for(pilot, lambda: "model: changed-model" in editor.text)
-        assert "model: changed-model" in editor.text
+        await assert_eventually(
+            pilot, lambda: "model: changed-model" in editor.text
+        )
         assert "temperature: 0.25" in editor.text
         assert "reasoning: high" in editor.text
         assert editor.text.index("temperature:") < editor.text.index("model:")
@@ -1199,10 +1193,9 @@ provider_options:
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        await wait_for(
+        await assert_eventually(
             pilot, lambda: runtime.config.llm_model.model == "applied-model"
         )
-        assert runtime.config.llm_model.model == "applied-model"
         assert runtime.config.llm_model.model_extra == {
             "temperature": 0.35,
             "provider_options": {"reasoning": "high"},
@@ -1369,8 +1362,9 @@ async def test_programmatic_control_sync_suppresses_queued_events(
         app.screen._update_controls_from_config("chat", updated)
         await pilot.pause()
 
-        await wait_for(pilot, lambda: app.screen.drafts["chat"] is updated)
-        assert app.screen.drafts["chat"] is updated
+        await assert_eventually(
+            pilot, lambda: app.screen.drafts["chat"] is updated
+        )
         assert editor.text == app.screen._yaml_text("chat")
         assert discoveries == []
 
@@ -1599,8 +1593,9 @@ async def test_cancel_discards_yaml_with_pending_validation(
         app.screen.action_cancel()
         await pilot.pause()
 
-        await wait_for(pilot, lambda: not isinstance(app.screen, ModelScreen))
-        assert not isinstance(app.screen, ModelScreen)
+        await assert_eventually(
+            pilot, lambda: not isinstance(app.screen, ModelScreen)
+        )
         assert runtime.config.llm_model == original
         assert timer._task is None
 
@@ -1620,8 +1615,7 @@ async def test_yaml_debounce_restarts_from_latest_edit(app, model_dialog):
         assert not editor.has_class("yaml-valid", "yaml-invalid")
         await asyncio.sleep(ModelScreen.YAML_VALIDATION_DELAY / 2 + 0.1)
         await pilot.pause()
-        await wait_for(pilot, lambda: editor.has_class("yaml-valid"))
-        assert editor.has_class("yaml-valid")
+        await assert_eventually(pilot, lambda: editor.has_class("yaml-valid"))
         assert app.screen.drafts["chat"].model == "second-edit"
 
 
@@ -1658,8 +1652,7 @@ api_key:
         assert isinstance(app.screen, ModelScreen)
         app.screen.query_one("#chat-advanced", Collapsible).collapsed = False
         await pilot.pause()
-        await wait_for(pilot, lambda: editor.has_class("yaml-invalid"))
-        assert editor.has_class("yaml-invalid")
+        await assert_eventually(pilot, lambda: editor.has_class("yaml-invalid"))
         error = app.screen.query_one("#chat-yaml-error", Static)
         assert "validation errors for ChatModelConfig" in str(error.content)
         assert "api_key:" in str(error.content)
@@ -1841,8 +1834,9 @@ async def test_immediate_apply_clears_direct_url_for_named_provider(
         app.screen.action_apply()
         await pilot.pause()
 
-        await wait_for(pilot, lambda: not isinstance(app.screen, ModelScreen))
-        assert not isinstance(app.screen, ModelScreen)
+        await assert_eventually(
+            pilot, lambda: not isinstance(app.screen, ModelScreen)
+        )
         assert runtime.config.llm_model.inference_provider == "openai"
         assert (
             runtime.config.llm_model.base_url
@@ -2027,8 +2021,9 @@ async def test_model_modal_seeded_provider_fuzz_preserves_invariants(
                 model_select.value = ModelScreen.CUSTOM_VALUE
                 custom.value = f"custom-{iteration}"
                 await pilot.pause()
-                await wait_for(pilot, lambda: not custom.has_class("hidden"))
-                assert not custom.has_class("hidden")
+                await assert_eventually(
+                    pilot, lambda: not custom.has_class("hidden")
+                )
             elif rng.random() < 0.5:
                 model_select.value = rng.choice([
                     value
@@ -2087,8 +2082,9 @@ async def test_command_picker_prioritizes_command_name_over_description(
         await pilot.press("/", "k", "e")
         await pilot.pause()
 
-        await wait_for(pilot, lambda: isinstance(app.screen, HotlistScreen))
-        assert isinstance(app.screen, HotlistScreen)
+        await assert_eventually(
+            pilot, lambda: isinstance(app.screen, HotlistScreen)
+        )
         assert app.screen.matches[0].startswith("keymap —")
         assert any(match.startswith("status —") for match in app.screen.matches)
         assert app.screen.query_one("#hotlist-options").highlighted == 0
@@ -2107,8 +2103,9 @@ async def test_theme_command_selects_theme_and_escape_preserves_it(app):
         await pilot.press("t", "h", "e", "m", "e", "enter")
         await pilot.pause()
 
-        await wait_for(pilot, lambda: isinstance(app.screen, ThemeScreen))
-        assert isinstance(app.screen, ThemeScreen)
+        await assert_eventually(
+            pilot, lambda: isinstance(app.screen, ThemeScreen)
+        )
         assert app.screen.styles.background.a == 0
         assert app.screen.picker_title == "Themes"
         assert app.screen.candidates[:2] == ["ursa-dark", "ursa-light"]
@@ -2116,51 +2113,43 @@ async def test_theme_command_selects_theme_and_escape_preserves_it(app):
         await pilot.press("down")
         await pilot.pause()
 
-        await wait_for(pilot, lambda: app.theme == "ursa-light")
-        assert app.theme == "ursa-light"
+        await assert_eventually(pilot, lambda: app.theme == "ursa-light")
         assert status.styles.background != dark_background
         await pilot.press("up")
         await pilot.pause()
-        await wait_for(pilot, lambda: app.theme == "ursa-dark")
-        assert app.theme == "ursa-dark"
+        await assert_eventually(pilot, lambda: app.theme == "ursa-dark")
         assert status.styles.background == dark_background
 
         await pilot.press("down", "enter")
         await pilot.pause()
 
-        await wait_for(pilot, lambda: app.theme == "ursa-light")
-        assert app.theme == "ursa-light"
+        await assert_eventually(pilot, lambda: app.theme == "ursa-light")
         assert status.styles.background != dark_background
         assert "| Theme | `ursa-light` |" in app._status_markdown()
 
         await app._show_command("theme")
         await pilot.pause()
-        await wait_for(
+        await assert_eventually(
             pilot,
             lambda: app.screen.candidates[:2] == ["ursa-light", "ursa-dark"],
         )
-        assert app.screen.candidates[:2] == ["ursa-light", "ursa-dark"]
         await pilot.press("down")
         await pilot.pause()
-        await wait_for(pilot, lambda: app.theme == "ursa-dark")
-        assert app.theme == "ursa-dark"
+        await assert_eventually(pilot, lambda: app.theme == "ursa-dark")
         await pilot.press("escape")
         await pilot.pause()
 
-        await wait_for(pilot, lambda: app.theme == "ursa-light")
-        assert app.theme == "ursa-light"
+        await assert_eventually(pilot, lambda: app.theme == "ursa-light")
         assert app.query_one(PromptArea).has_focus
 
         await app._show_command("theme")
         await pilot.pause()
         app.screen.query_one(Input).value = "nord"
         await pilot.pause()
-        await wait_for(pilot, lambda: app.theme == "nord")
-        assert app.theme == "nord"
+        await assert_eventually(pilot, lambda: app.theme == "nord")
         await pilot.press("escape")
         await pilot.pause()
-        await wait_for(pilot, lambda: app.theme == "ursa-light")
-        assert app.theme == "ursa-light"
+        await assert_eventually(pilot, lambda: app.theme == "ursa-light")
 
 
 @pytest.mark.real_llm
@@ -2175,8 +2164,9 @@ async def test_agents_command_uses_real_process_tool_details(tmp_path):
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        await wait_for(pilot, lambda: isinstance(app.screen, AgentsScreen))
-        assert isinstance(app.screen, AgentsScreen)
+        await assert_eventually(
+            pilot, lambda: isinstance(app.screen, AgentsScreen)
+        )
         panes = list(app.screen.query(TabPane))
         assert len(panes) == 1
         assert [tab.label_text for tab in app.screen.query(Tab)] == ["#chat"]
@@ -2329,11 +2319,10 @@ async def test_immediate_switch_preempts_large_tool_render(app, monkeypatch):
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
-        await wait_for(
+        await assert_eventually(
             pilot,
             lambda: len(app.screen.query("#agent-tools-1 .agent-tool")) == 100,
         )
-        assert len(app.screen.query("#agent-tools-1 .agent-tool")) == 100
         assert not app.screen.query("#agent-tools-1 .agent-tool Markdown")
         assert not app.screen.query("#agent-tools-1 .agent-tools-loading")
         # A queued timer tick after the loader disappears is harmless.
@@ -2378,13 +2367,10 @@ async def test_agent_tool_render_failure_is_displayed(app, monkeypatch):
 
         await pilot.press("left")
         await pilot.pause()
-        await wait_for(
+        await assert_eventually(
             pilot,
             lambda: app.screen.query_one("#agents-tabs", TabbedContent).active
             == "agent-tab-0",
-        )
-        assert app.screen.query_one("#agents-tabs", TabbedContent).active == (
-            "agent-tab-0"
         )
 
         await pilot.press("right")
@@ -2430,12 +2416,11 @@ async def test_initialized_tools_render_while_schema_hydration_is_pending(
             schema_release.set()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            await wait_for(
+            await assert_eventually(
                 pilot,
                 lambda: len(app.screen.query("#agent-tools-0 .agent-tool"))
                 == 1,
             )
-            assert len(app.screen.query("#agent-tools-0 .agent-tool")) == 1
     finally:
         schema_release.set()
 
@@ -2519,8 +2504,7 @@ async def test_agents_lazily_render_execution_agent_tools(tmp_path):
         assert children.index(tools_title) < children.index(tools_container)
         app.screen.refresh(layout=True)
         await pilot.pause()
-        await wait_for(pilot, lambda: first_tool.region.height > 0)
-        assert first_tool.region.height > 0
+        await assert_eventually(pilot, lambda: first_tool.region.height > 0)
         assert tools_container.region.contains_region(first_tool.region)
         assert first_tool.region.y < app.screen.region.bottom
 

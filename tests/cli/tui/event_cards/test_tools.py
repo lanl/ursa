@@ -6,6 +6,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
 from tests.cli._app_helpers import (
+    assert_eventually,
     emit_tool_start,
     make_runtime,
     static_text,
@@ -51,8 +52,7 @@ async def test_default_tool_card_switches_from_input_to_output(app, event_turn):
         )
         await pilot.pause()
 
-        await wait_for(pilot, lambda: card.completed)
-        assert card.completed
+        await assert_eventually(pilot, lambda: card.completed)
         assert card.query_one(".tool-call-state", Static).content == "✓"
         assert "polar" in static_text(card, ".tool-call-preview")
         assert not card.query_one(".tool-output-pane").has_class("hidden")

@@ -3,10 +3,10 @@ import asyncio
 from textual.widgets import Static
 
 from tests.cli._app_helpers import (
+    assert_eventually,
     emit_event,
     emit_tool_start,
     make_runtime,
-    wait_for,
 )
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import CommandSafetyIndicator, RunCommandCard
@@ -57,8 +57,7 @@ async def test_overlapping_commands_stay_compact_and_complete_independently(
             "result": "",
         })
         await pilot.pause()
-        await wait_for(pilot, lambda: cards[0].completed)
-        assert cards[0].completed
+        await assert_eventually(pilot, lambda: cards[0].completed)
         assert cards[0].returncode == 0
         assert not cards[1].completed
         assert (
@@ -220,13 +219,13 @@ async def test_run_command_card_tracks_safety_and_collapses_on_result(tmp_path):
 
         pass_safety.set()
         await pilot.pause()
-        await wait_for(pilot, lambda: safety.status == "passed")
-        assert safety.status == "passed"
+        await assert_eventually(pilot, lambda: safety.status == "passed")
 
         return_result.set()
         await pilot.pause()
-        await wait_for(pilot, lambda: source.content.code == "echo line-1 …")
-        assert source.content.code == "echo line-1 …"
+        await assert_eventually(
+            pilot, lambda: source.content.code == "echo line-1 …"
+        )
         output = card.query_one(".command-output", Static)
         assert output.content.code == "command output"
         cards = list(app.query(RunCommandCard))

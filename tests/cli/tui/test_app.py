@@ -11,7 +11,12 @@ from textual.widgets import Markdown, Static
 
 import ursa.cli.tui.app as app_module
 import ursa.util.crossplatform as crossplatform
-from tests.cli._app_helpers import emit_event, make_runtime, wait_for
+from tests.cli._app_helpers import (
+    assert_eventually,
+    emit_event,
+    make_runtime,
+    wait_for,
+)
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import (
     EventCard,
@@ -176,10 +181,9 @@ async def test_welcome_banner_starts_at_top_of_conversation(tmp_path, app):
         await turn.add_response("Short response")
         await pilot.pause()
 
-        await wait_for(
+        await assert_eventually(
             pilot, lambda: banner.region.y == conversation.content_region.y
         )
-        assert banner.region.y == conversation.content_region.y
 
 
 async def test_prompt_submission_events_and_history(app):
@@ -217,8 +221,7 @@ async def test_prompt_submission_events_and_history(app):
         await pilot.press("h", "e", "l", "l", "o", "enter")
         await pilot.pause()
 
-        await wait_for(pilot, lambda: calls == [("chat", "hello")])
-        assert calls == [("chat", "hello")]
+        await assert_eventually(pilot, lambda: calls == [("chat", "hello")])
         messages = list(app.query(MessageCard))
         assert len(messages) == 2
         assert messages[0].styles.background != messages[1].styles.background
@@ -362,8 +365,7 @@ async def test_agent_exception_card_expands_to_full_traceback(app):
 
         card.on_click(Click())
         await pilot.pause()
-        await wait_for(pilot, lambda: card.expanded)
-        assert card.expanded
+        await assert_eventually(pilot, lambda: card.expanded)
         rich_traceback = card.query_one(".exception-traceback", Static)
         assert not rich_traceback.has_class("hidden")
         assert type(rich_traceback.content).__name__ == "Traceback"
@@ -778,11 +780,10 @@ async def test_turn_navigation_changes_real_scroll_position(app):
 
         await pilot.press("alt+down")
         await pilot.pause()
-        await wait_for(
+        await assert_eventually(
             pilot,
             lambda: app._turn_navigation_marker is app._turn_markers()[-1],
         )
-        assert app._turn_navigation_marker is app._turn_markers()[-1]
         assert conversation.scroll_y == conversation.max_scroll_y
         assert conversation.is_anchored
 

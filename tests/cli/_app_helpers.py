@@ -99,3 +99,9 @@ async def wait_for(pilot, condition, *, timeout=3.0, interval=0.05):
         await asyncio.sleep(interval)
         await pilot.pause()
     return bool(condition())
+
+
+async def assert_eventually(pilot, condition, **options):
+    """Poll a UI condition, then assert its current value once more."""
+    await wait_for(pilot, condition, **options)
+    assert condition()
