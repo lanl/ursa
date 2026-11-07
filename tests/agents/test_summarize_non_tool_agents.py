@@ -12,6 +12,8 @@ case raised on the issue. The kept tail is left as it was; that boundary
 is pinned too.
 """
 
+from contextlib import closing
+
 import pytest
 from langchain_core.messages import (
     AIMessage,
@@ -99,10 +101,8 @@ def test_plain_chat_agent_summarizes_instead_of_crashing(tmp_path):
     # summarization raised AttributeError before any request was sent.
     llm = RecordingChatModel()
     agent = _plain_agent(llm, tmp_path)
-    try:
+    with closing(agent):
         result = agent.invoke({"messages": _long_history()})
-    finally:
-        agent.close()
 
     assert_requests_provider_valid(llm.calls)
     assert len(_summarizer_requests(llm.calls)) == 1
@@ -117,10 +117,8 @@ def test_plain_prompting_agent_summarizes_instead_of_crashing(tmp_path):
     # prepare_messages_context with summarization enabled.
     llm = RecordingChatModel()
     agent = _plain_agent(llm, tmp_path, agent_class=PromptingAgent)
-    try:
+    with closing(agent):
         agent.invoke(PromptingState(messages=_long_history(), approved=False))
-    finally:
-        agent.close()
 
     assert_requests_provider_valid(llm.calls)
     assert len(_summarizer_requests(llm.calls)) == 1
@@ -136,10 +134,8 @@ def test_mixed_tool_history_summarizes_as_plain_text_on_a_plain_agent(
     # summarizer request.
     llm = RecordingChatModel()
     agent = _plain_agent(llm, tmp_path)
-    try:
+    with closing(agent):
         agent.invoke({"messages": _tool_history()})
-    finally:
-        agent.close()
 
     assert_requests_provider_valid(llm.calls)
     (summarizer_request,) = _summarizer_requests(llm.calls)
@@ -156,10 +152,8 @@ def test_mixed_tool_history_kept_tail_is_left_as_is(tmp_path):
     # and results it held, and goes to the plain agent's llm unchanged.
     llm = RecordingChatModel()
     agent = _plain_agent(llm, tmp_path, keep=4)
-    try:
+    with closing(agent):
         agent.invoke({"messages": _tool_history()})
-    finally:
-        agent.close()
 
     (summarizer_request,) = _summarizer_requests(llm.calls)
     assert not any(isinstance(m, ToolMessage) for m in summarizer_request)
@@ -178,10 +172,8 @@ def test_mixed_tool_history_summarizer_request_passes_the_anthropic_converter(
         pytest.skip("langchain-anthropic no longer exposes _format_messages")
     llm = RecordingChatModel()
     agent = _plain_agent(llm, tmp_path)
-    try:
+    with closing(agent):
         agent.invoke({"messages": _tool_history()})
-    finally:
-        agent.close()
 
     (summarizer_request,) = _summarizer_requests(llm.calls)
     _system, formatted = format_messages(summarizer_request)
@@ -196,37 +188,21 @@ def test_mixed_tool_history_summarizer_request_passes_the_anthropic_converter(
     assert "tool_result" not in block_types
 
 
-def test_tool_agent_still_summarizes_through_tool_llm(tmp_path):
-    # Guard: a ChatAgent keeps summarizing through tool_llm (its unbound
-    # copy) rather than its tool-bound llm.
+@pytest.mark.parametrize("agent_class", [ChatAgent, BasicChatAgent])
+def test_agent_prefers_an_explicit_tool_llm(tmp_path, agent_class):
+    # Both tool-bound ChatAgent and plain agents honor an explicit tool_llm.
+    # The fallback to llm applies only when tool_llm is absent or None.
     llm = RecordingChatModel()
-    agent = _plain_agent(llm, tmp_path, agent_class=ChatAgent)
+    agent = _plain_agent(llm, tmp_path, agent_class=agent_class)
     summarizer = RecordingChatModel()
     agent.tool_llm = summarizer
-    try:
+    with closing(agent):
         agent.invoke({"messages": _long_history()})
-    finally:
-        agent.close()
 
     assert len(_summarizer_requests(summarizer.calls)) == 1
     assert _summarizer_requests(llm.calls) == []
-    assert_requests_provider_valid(llm.calls)
-
-
-def test_plain_agent_prefers_an_explicit_tool_llm(tmp_path):
-    # Guard: a plain agent that sets tool_llm itself is honored, so the
-    # fallback only applies when the attribute is absent.
-    llm = RecordingChatModel()
-    agent = _plain_agent(llm, tmp_path)
-    summarizer = RecordingChatModel()
-    agent.tool_llm = summarizer
-    try:
-        agent.invoke({"messages": _long_history()})
-    finally:
-        agent.close()
-
-    assert len(_summarizer_requests(summarizer.calls)) == 1
-    assert _summarizer_requests(llm.calls) == []
+    if agent_class is ChatAgent:
+        assert_requests_provider_valid(llm.calls)
 
 
 def test_plain_agent_with_tool_llm_none_falls_back_to_llm(tmp_path):
@@ -234,9 +210,7 @@ def test_plain_agent_with_tool_llm_none_falls_back_to_llm(tmp_path):
     llm = RecordingChatModel()
     agent = _plain_agent(llm, tmp_path)
     agent.tool_llm = None
-    try:
+    with closing(agent):
         agent.invoke({"messages": _long_history()})
-    finally:
-        agent.close()
 
     assert len(_summarizer_requests(llm.calls)) == 1
