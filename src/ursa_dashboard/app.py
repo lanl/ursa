@@ -1388,6 +1388,16 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             files=sorted(files, key=lambda x: x["rel_path"])
         )
 
+    def _workspace_file(root: Path, path: str) -> Path:
+        """Resolve an existing file within the selected workspace."""
+        try:
+            fp = safe_join(root, path)
+        except WorkspaceJailError:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        if not fp.exists() or not fp.is_file():
+            raise HTTPException(status_code=404, detail="Not found")
+        return fp
+
     @app.get(
         "/runs/{run_id}/workspace/file/meta",
         response_model=FileMetaResponse,
@@ -1402,12 +1412,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Unknown run_id")
 
         run_dir = _run_dir_for(run)
-        try:
-            fp = safe_join(run_dir, path)
-        except WorkspaceJailError:
-            raise HTTPException(status_code=403, detail="Forbidden")
-        if not fp.exists() or not fp.is_file():
-            raise HTTPException(status_code=404, detail="Not found")
+        fp = _workspace_file(run_dir, path)
 
         st = fp.stat()
         mime, _ = mimetypes.guess_type(fp.name)
@@ -1457,27 +1462,16 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     def _looks_binary(sample: bytes) -> bool:
         return b"\x00" in sample
 
-    @app.get(
-        "/runs/{run_id}/workspace/file/preview",
-        dependencies=[Depends(require_auth)],
-    )
-    async def preview_file(
-        run_id: str, path: str = Query(..., min_length=1)
+    def _workspace_file_preview(
+        fp: Path,
+        path: str,
+        record: dict[str, Any],
+        resource: str,
+        resource_id: str,
+        *,
+        size_marker: str,
     ) -> HTMLResponse:
-        """Safe previewer (HTML-escaped text, inline images, basic PDF embed)."""
-        try:
-            run = await rm.get_run(run_id)
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="Unknown run_id")
-
-        run_dir = _run_dir_for(run)
-        try:
-            fp = safe_join(run_dir, path)
-        except WorkspaceJailError:
-            raise HTTPException(status_code=403, detail="Forbidden")
-        if not fp.exists() or not fp.is_file():
-            raise HTTPException(status_code=404, detail="Not found")
-
+        """Render the common preview while retaining each route's links and markup."""
         st = fp.stat()
         size = st.st_size
         mime, _ = mimetypes.guess_type(fp.name)
@@ -1487,11 +1481,11 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         TEXT_CAP = 1_000_000  # 1MB
         EMBED_CAP = 50 * 1024 * 1024  # 50MB for images/pdf embed
 
-        file_url = f"/runs/{run_id}/workspace/file?path={quote(path)}&disposition=inline"
-        download_url = f"/runs/{run_id}/workspace/file?path={quote(path)}&disposition=attachment"
+        file_url = f"/{resource}/{resource_id}/workspace/file?path={quote(path)}&disposition=inline"
+        download_url = f"/{resource}/{resource_id}/workspace/file?path={quote(path)}&disposition=attachment"
 
         header = (
-            f'<div> <span class="pill">{html.escape(str(run.get("agent_id", "")))}</span>'
+            f'<div> <span class="pill">{html.escape(str(record.get("agent_id", "")))}</span>'
             f'<span class="muted" style="margin-top:8px"> · {html.escape(path)}</span></div>'
             f'<div class="muted">{html.escape(mime)} · {size} bytes · <a href="{download_url}">download</a></div>'
         )
@@ -1502,7 +1496,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
                 return _html_page(
                     "Preview",
                     header
-                    + f'<p>Image too large to preview (> {EMBED_CAP} bytes). <a href="{download_url}">Download</a></p>',
+                    + f'<p>Image too large to preview ({size_marker} {EMBED_CAP} bytes). <a href="{download_url}">Download</a></p>',
                 )
             body = (
                 header
@@ -1516,7 +1510,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
                 return _html_page(
                     "Preview",
                     header
-                    + f'<p>PDF too large to embed (> {EMBED_CAP} bytes). <a href="{download_url}">Download</a></p>',
+                    + f'<p>PDF too large to embed ({size_marker} {EMBED_CAP} bytes). <a href="{download_url}">Download</a></p>',
                 )
             body = header + (
                 f'<div style="margin-top:12px">'
@@ -1598,6 +1592,26 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             + f'<p>No safe preview available for this file type. <a href="{download_url}">Download</a></p>',
         )
 
+    @app.get(
+        "/runs/{run_id}/workspace/file/preview",
+        dependencies=[Depends(require_auth)],
+    )
+    async def preview_file(
+        run_id: str, path: str = Query(..., min_length=1)
+    ) -> HTMLResponse:
+        """Safe previewer (HTML-escaped text, inline images, basic PDF embed)."""
+        try:
+            run = await rm.get_run(run_id)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Unknown run_id")
+
+        run_dir = _run_dir_for(run)
+        fp = _workspace_file(run_dir, path)
+
+        return _workspace_file_preview(
+            fp, path, run, "runs", run_id, size_marker=">"
+        )
+
     def _parse_range(h: str, size: int) -> tuple[int, int] | None:
         # Supports a single range: bytes=start-end | bytes=start- | bytes=-suffix
         if not h:
@@ -1653,30 +1667,8 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
                 remaining -= len(chunk)
                 yield chunk
 
-    @app.get(
-        "/runs/{run_id}/workspace/file", dependencies=[Depends(require_auth)]
-    )
-    async def open_file(
-        request: Request,
-        run_id: str,
-        path: str = Query(..., min_length=1),
-        disposition: str = Query(
-            default="inline", pattern="^(inline|attachment)$"
-        ),
-    ):
-        try:
-            run = await rm.get_run(run_id)
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="Unknown run_id")
-
-        run_dir = _run_dir_for(run)
-        try:
-            fp = safe_join(run_dir, path)
-        except WorkspaceJailError:
-            raise HTTPException(status_code=403, detail="Forbidden")
-        if not fp.exists() or not fp.is_file():
-            raise HTTPException(status_code=404, detail="Not found")
-
+    def _workspace_file_response(fp: Path, request: Request, disposition: str):
+        """Serve a full file or its requested byte range with the same headers."""
         st = fp.stat()
         size = st.st_size
         mime, _ = mimetypes.guess_type(fp.name)
@@ -1707,6 +1699,27 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             headers=headers,
             media_type=mime or "application/octet-stream",
         )
+
+    @app.get(
+        "/runs/{run_id}/workspace/file", dependencies=[Depends(require_auth)]
+    )
+    async def open_file(
+        request: Request,
+        run_id: str,
+        path: str = Query(..., min_length=1),
+        disposition: str = Query(
+            default="inline", pattern="^(inline|attachment)$"
+        ),
+    ):
+        try:
+            run = await rm.get_run(run_id)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Unknown run_id")
+
+        run_dir = _run_dir_for(run)
+        fp = _workspace_file(run_dir, path)
+
+        return _workspace_file_response(fp, request, disposition)
 
     # Back-compat alias
     @app.get("/api/runs/{run_id}/file", include_in_schema=False)
@@ -2212,12 +2225,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
         ws = _require_session_workspace_dir(session_id, sess)
-        try:
-            fp = safe_join(ws, path)
-        except WorkspaceJailError:
-            raise HTTPException(status_code=403, detail="Forbidden")
-        if not fp.exists() or not fp.is_file():
-            raise HTTPException(status_code=404, detail="Not found")
+        fp = _workspace_file(ws, path)
 
         st = fp.stat()
         mime, _ = mimetypes.guess_type(fp.name)
@@ -2244,123 +2252,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
         ws = _require_session_workspace_dir(session_id, sess)
-        try:
-            fp = safe_join(ws, path)
-        except WorkspaceJailError:
-            raise HTTPException(status_code=403, detail="Forbidden")
-        if not fp.exists() or not fp.is_file():
-            raise HTTPException(status_code=404, detail="Not found")
+        fp = _workspace_file(ws, path)
 
-        st = fp.stat()
-        size = st.st_size
-        mime, _ = mimetypes.guess_type(fp.name)
-        mime = mime or "application/octet-stream"
-
-        TEXT_CAP = 1_000_000
-        EMBED_CAP = 50 * 1024 * 1024
-
-        file_url = f"/sessions/{session_id}/workspace/file?path={quote(path)}&disposition=inline"
-        download_url = f"/sessions/{session_id}/workspace/file?path={quote(path)}&disposition=attachment"
-
-        header = (
-            f'<div> <span class="pill">{html.escape(str(sess.get("agent_id", "")))}</span>'
-            f'<span class="muted" style="margin-top:8px"> · {html.escape(path)}</span></div>'
-            f'<div class="muted">{html.escape(mime)} · {size} bytes · <a href="{download_url}">download</a></div>'
-        )
-
-        if mime.startswith("image/"):
-            if size > EMBED_CAP:
-                return _html_page(
-                    "Preview",
-                    header
-                    + f'<p>Image too large to preview (&gt; {EMBED_CAP} bytes). <a href="{download_url}">Download</a></p>',
-                )
-            body = (
-                header
-                + f'<div style="margin-top:12px"><img src="{file_url}" style="max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 8px" /></div>'
-            )
-            return _html_page("Preview", body)
-
-        if mime == "application/pdf":
-            if size > EMBED_CAP:
-                return _html_page(
-                    "Preview",
-                    header
-                    + f'<p>PDF too large to embed (&gt; {EMBED_CAP} bytes). <a href="{download_url}">Download</a></p>',
-                )
-            body = header + (
-                f'<div style="margin-top:12px">'
-                f'<iframe src="{file_url}" style="width: 100%; height: 80vh; border: 1px solid #ddd; border-radius: 8px"></iframe>'
-                f"</div>"
-            )
-            return _html_page("Preview", body)
-
-        text_exts = {
-            ".py",
-            ".txt",
-            ".md",
-            ".json",
-            ".yaml",
-            ".yml",
-            ".toml",
-            ".ini",
-            ".cfg",
-            ".csv",
-            ".tsv",
-            ".js",
-            ".ts",
-            ".html",
-            ".css",
-            ".sh",
-            ".bat",
-            ".ps1",
-            ".log",
-            ".tex",
-            ".rst",
-        }
-        is_texty = (
-            mime.startswith("text/")
-            or fp.suffix.lower() in text_exts
-            or mime
-            in {
-                "application/json",
-                "application/xml",
-                "application/x-yaml",
-                "application/yaml",
-            }
-        )
-        if is_texty:
-            with fp.open("rb") as f:
-                sample = f.read(8192)
-                if _looks_binary(sample):
-                    return _html_page(
-                        "Preview",
-                        header
-                        + f'<p>Binary file (detected NUL bytes). <a href="{download_url}">Download</a></p>',
-                    )
-                f.seek(0)
-                data = f.read(TEXT_CAP + 1)
-
-            truncated = len(data) > TEXT_CAP
-            if truncated:
-                data = data[:TEXT_CAP]
-            text = data.decode("utf-8", errors="replace")
-            escaped = html.escape(text)
-            note = (
-                ""
-                if not truncated
-                else f'<div class="muted">Preview truncated to {TEXT_CAP} bytes.</div>'
-            )
-            body = (
-                header
-                + f'<div style="margin-top:12px">{note}<pre><code>{escaped}</code></pre></div>'
-            )
-            return _html_page("Preview", body)
-
-        return _html_page(
-            "Preview",
-            header
-            + f'<p>No safe preview available for this file type. <a href="{download_url}">Download</a></p>',
+        return _workspace_file_preview(
+            fp, path, sess, "sessions", session_id, size_marker="&gt;"
         )
 
     @app.get(
@@ -2381,42 +2276,9 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
         ws = _require_session_workspace_dir(session_id, sess)
-        try:
-            fp = safe_join(ws, path)
-        except WorkspaceJailError:
-            raise HTTPException(status_code=403, detail="Forbidden")
-        if not fp.exists() or not fp.is_file():
-            raise HTTPException(status_code=404, detail="Not found")
+        fp = _workspace_file(ws, path)
 
-        st = fp.stat()
-        size = st.st_size
-        mime, _ = mimetypes.guess_type(fp.name)
-
-        base_headers = {
-            "Content-Disposition": f'{disposition}; filename="{fp.name}"',
-            "Accept-Ranges": "bytes",
-        }
-
-        rng = _parse_range(
-            request.headers.get("range") or request.headers.get("Range") or "",
-            size,
-        )
-        if rng is None:
-            return FileResponse(fp, headers=base_headers, media_type=mime)
-
-        start, end = rng
-        content_length = end - start + 1
-        headers = {
-            **base_headers,
-            "Content-Range": f"bytes {start}-{end}/{size}",
-            "Content-Length": str(content_length),
-        }
-        return StreamingResponse(
-            _iter_file(fp, start, end),
-            status_code=206,
-            headers=headers,
-            media_type=mime or "application/octet-stream",
-        )
+        return _workspace_file_response(fp, request, disposition)
 
     # ----------------------------
     # Minimal UI: workspace browser + previewer (run-first)
