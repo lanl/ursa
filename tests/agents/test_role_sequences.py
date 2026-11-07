@@ -5,6 +5,8 @@ be non-empty and must not end on an assistant turn, or providers without
 assistant-message prefill support reject it with a 400.
 """
 
+from types import SimpleNamespace
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -29,14 +31,6 @@ from ursa.agents.prompting_agent import PromptingAgent
 from ursa.agents.rag_agent import RAGAgent
 from ursa.agents.recall_agent import RecallAgent
 from ursa.util.has_optional_dep_group import has_optional_dep_group
-
-
-class StubMemory:
-    def __init__(self, memories):
-        self._memories = memories
-
-    def retrieve(self, query):
-        return self._memories
 
 
 @pytest.mark.parametrize(
@@ -87,9 +81,10 @@ async def test_rag_agent_role_sequences(embedding_model, monkeypatch, tmp_path):
 
 async def test_recall_agent_role_sequences(tmpdir):
     llm = RecordingChatModel()
+    memories = ["remembered detail one", "remembered detail two"]
     agent = RecallAgent(
         llm=llm,
-        memory=StubMemory(["remembered detail one", "remembered detail two"]),
+        memory=SimpleNamespace(retrieve=lambda query: memories),
         workspace=tmpdir,
     )
 
