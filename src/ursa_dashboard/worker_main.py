@@ -229,19 +229,11 @@ async def _attach_mcp_tools(adapter: Any, mcp_cfg: Mapping[str, Any]) -> None:
     async def attach(agent_obj: Any, _ctx: Any, _inputs: Any) -> None:
         client = start_mcp_client(mcp_servers)
         targets: list[Any] = []
-        seen: set[int] = set()
-
-        def add(target: Any) -> None:
-            if target is None or id(target) in seen:
-                return
-            seen.add(id(target))
-            targets.append(target)
-
         if isinstance(agent_obj, AgentWithTools):
-            add(agent_obj)
+            targets.append(agent_obj)
         executor = getattr(agent_obj, "executor", None)
-        if isinstance(executor, AgentWithTools):
-            add(executor)
+        if isinstance(executor, AgentWithTools) and executor is not agent_obj:
+            targets.append(executor)
         if not targets:
             logger.warning(
                 "No compatible AgentWithTools target found; skipping MCP tools"
