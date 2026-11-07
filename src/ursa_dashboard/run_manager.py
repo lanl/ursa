@@ -237,6 +237,9 @@ class RunManager:
         paths = self._run_paths(agent_id=agent_id, run_id=run_id)
         ensure_dirs(paths)
 
+        def relative_path(path: Path) -> str:
+            return str(path.relative_to(self.dashboard_root)).replace("\\", "/")
+
         rec: dict[str, Any] = {
             "run_id": run_id,
             "agent_id": agent_id,
@@ -251,29 +254,15 @@ class RunManager:
             "agent_init": agent_init,
             "llm": llm,
             "runner": runner,
-            "run_dir": str(
-                paths.run_dir.relative_to(self.dashboard_root)
-            ).replace("\\", "/"),
+            "run_dir": relative_path(paths.run_dir),
             "logs": {
-                "stdout": str(
-                    paths.stdout_path.relative_to(self.dashboard_root)
-                ).replace("\\", "/"),
-                "stderr": str(
-                    paths.stderr_path.relative_to(self.dashboard_root)
-                ).replace("\\", "/"),
-                "events": str(
-                    paths.events_path.relative_to(self.dashboard_root)
-                ).replace("\\", "/"),
+                "stdout": relative_path(paths.stdout_path),
+                "stderr": relative_path(paths.stderr_path),
+                "events": relative_path(paths.events_path),
             },
             "artifacts": {
-                "dir": str(
-                    paths.artifacts_dir.relative_to(self.dashboard_root)
-                ).replace("\\", "/"),
-                "manifest": str(
-                    paths.artifacts_manifest_path.relative_to(
-                        self.dashboard_root
-                    )
-                ).replace("\\", "/"),
+                "dir": relative_path(paths.artifacts_dir),
+                "manifest": relative_path(paths.artifacts_manifest_path),
             },
             "result": None,
             "error": None,
