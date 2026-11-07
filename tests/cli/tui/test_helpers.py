@@ -6,7 +6,6 @@ from ursa.cli.tui.helpers import (
     TokenUsage,
     _fuzzy_match,
     _plan_step_text,
-    _token_usage,
     _token_usage_breakdown,
     _truncate_middle,
 )
@@ -15,7 +14,10 @@ from ursa.cli.tui.helpers import (
 def test_fuzzy_match_and_token_usage_support_common_shapes():
     assert _fuzzy_match("sre", "src/example.py")
     assert not _fuzzy_match("xyz", "src/example.py")
-    assert _token_usage({"usage": {"total_tokens": 42}}) == 42
+    assert (
+        _token_usage_breakdown({"usage": {"total_tokens": 42}}).total_tokens
+        == 42
+    )
 
     usage = _token_usage_breakdown({
         "usage_metadata": {

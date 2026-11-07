@@ -263,11 +263,6 @@ def _token_usage_breakdown(value: Any) -> TokenUsage:
     )
 
 
-def _token_usage(value: Any) -> int:
-    """Extract total token usage from common LangChain response shapes."""
-    return _token_usage_breakdown(value).total_tokens
-
-
 def _reasoning_trace(chunk: Any) -> str | None:
     """Extract provider-published reasoning summaries from an LLM chunk."""
 

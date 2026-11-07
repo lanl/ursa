@@ -5,7 +5,7 @@ from __future__ import annotations
 from argparse import Namespace
 from pathlib import Path
 
-from ursa.cli.config import ModelConfig, UrsaConfig
+from ursa.cli.config import UrsaConfig
 from ursa.rag.persistence import (
     build_persistent_rag_agent,
     delete_rag_agent,
@@ -91,24 +91,19 @@ def add_rag_subcommands(subparsers) -> None:
         )
 
 
-def _model_config_from_namespace(
-    args: Namespace,
-) -> tuple[ModelConfig, ModelConfig | None]:
-    data = args.as_dict() if hasattr(args, "as_dict") else vars(args)
-    cfg = UrsaConfig.model_validate(data, extra="ignore")
-    return cfg.llm_model, cfg.emb_model
-
-
 def _init_models(
     root_args: Namespace,
     cmd_args: Namespace,
     config: UrsaConfig | None = None,
 ):
-    llm_model, emb_model = (
-        (config.llm_model, config.emb_model)
-        if config is not None
-        else _model_config_from_namespace(root_args)
-    )
+    if config is None:
+        data = (
+            root_args.as_dict()
+            if hasattr(root_args, "as_dict")
+            else vars(root_args)
+        )
+        config = UrsaConfig.model_validate(data, extra="ignore")
+    llm_model, emb_model = config.llm_model, config.emb_model
     group = getattr(cmd_args, "group", "default") or "default"
     enforce_group_base_url_policy(llm_model.base_url, group)
     llm = llm_model.init_chat_model()

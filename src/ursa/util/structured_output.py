@@ -87,7 +87,10 @@ def invoke_structured(
     """
 
     normalized_methods = tuple(methods) or (None,)
-    repair_attempts = _repair_count(repair)
+    if isinstance(repair, bool):
+        repair_attempts = 1 if repair else 0
+    else:
+        repair_attempts = max(0, int(repair))
     attempts: list[StructuredOutputAttempt] = []
 
     result = _try_methods(
@@ -271,12 +274,6 @@ def _validate_parsed(
         if value is None:
             raise ValueError("Structured-output validator returned None.")
     return value
-
-
-def _repair_count(repair: bool | int) -> int:
-    if isinstance(repair, bool):
-        return 1 if repair else 0
-    return max(0, int(repair))
 
 
 def _build_repair_input(

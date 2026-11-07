@@ -19,10 +19,6 @@ def _group_agents_dir(group_name: str) -> Path:
     return _group_root_dir(group_name) / "agents"
 
 
-def _group_config_file(group_name: str) -> Path:
-    return _group_root_dir(group_name) / GROUP_CONFIG_FILENAME
-
-
 def _ensure_group_subdirs(group_name: str) -> None:
     group_dir = _group_root_dir(group_name)
     for subdir in ("agents", "rag", "dashboard", "environments"):
@@ -167,6 +163,6 @@ def update_group(group_name: str, config_file: Path) -> None:
     if not group_dir.exists() or not group_dir.is_dir():
         raise FileNotFoundError(f"Group does not exist: {group_name}")
 
-    destination = _group_config_file(group_name)
+    destination = _group_root_dir(group_name) / GROUP_CONFIG_FILENAME
     shutil.copy2(config_file, destination)
     print(f"Updated group '{group_name}' config at {destination}")  # noqa: T201
