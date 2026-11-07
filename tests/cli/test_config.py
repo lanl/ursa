@@ -335,114 +335,52 @@ def test_model_merge_keeps_provider_defaults_resolvable():
 
 
 @pytest.mark.parametrize(
-    (
-        "base_data",
-        "override_data",
-        "expected_model",
-        "expected_provider",
-        "expected_base_url",
-        "expected_inference_provider",
-        "resolve_result",
-        "expected_api_key_env",
-        "expect_nested_type",
-    ),
+    "base_data",
     [
-        (
-            {
-                "emb_model": _openai_embedding_config(
-                    inference_provider="openai"
-                )
-            },
-            {"emb_model": _ollama_embedding_config()},
-            "nomic-embed-text:latest",
-            "ollama",
-            "http://localhost:11434",
-            None,
-            False,
-            None,
-            False,
-        ),
-        (
-            {"emb_model": _ollama_embedding_config()},
-            {
-                "emb_model": _openai_embedding_config(
-                    inference_provider="openai"
-                )
-            },
-            "text-embedding-3-large",
-            "openai",
-            None,
-            "openai",
-            False,
-            None,
-            False,
-        ),
-        (
-            {"emb_model": _openai_embedding_config()},
-            {"emb_model": _ollama_embedding_config()},
-            "nomic-embed-text:latest",
-            "ollama",
-            "http://localhost:11434",
-            None,
-            False,
-            None,
-            False,
-        ),
-        (
-            {},
-            {
-                "emb_model": _openai_embedding_config(
-                    inference_provider="openai"
-                )
-            },
-            "text-embedding-3-large",
-            "openai",
-            "https://api.openai.com/v1",
-            "openai",
-            True,
-            "OPENAI_API_KEY",
-            False,
-        ),
-        (
-            {},
-            {"emb_model": _ollama_embedding_config()},
-            "nomic-embed-text:latest",
-            "ollama",
-            "http://localhost:11434",
-            None,
-            False,
-            None,
-            True,
-        ),
+        {"emb_model": _openai_embedding_config(inference_provider="openai")},
+        {"emb_model": _openai_embedding_config()},
+        {},
     ],
 )
-def test_ursa_config_emb_model_layering(
-    base_data,
-    override_data,
-    expected_model,
-    expected_provider,
-    expected_base_url,
-    expected_inference_provider,
-    resolve_result,
-    expected_api_key_env,
-    expect_nested_type,
+def test_ursa_config_layers_ollama_embedding(base_data):
+    base = config_mod.UrsaConfig.model_validate(base_data)
+
+    merged = base.model_merge({"emb_model": _ollama_embedding_config()})
+
+    assert merged.emb_model is not None
+    assert isinstance(merged.emb_model, config_mod.EmbModelConfig)
+    assert merged.emb_model.model == "nomic-embed-text:latest"
+    assert merged.emb_model.model_provider == "ollama"
+    assert merged.emb_model.base_url == "http://localhost:11434"
+    assert merged.emb_model.inference_provider is None
+
+
+@pytest.mark.parametrize(
+    ("base_data", "resolve_result", "expected_base_url"),
+    [
+        ({"emb_model": _ollama_embedding_config()}, False, None),
+        ({}, True, "https://api.openai.com/v1"),
+    ],
+)
+def test_ursa_config_layers_openai_embedding(
+    base_data, resolve_result, expected_base_url
 ):
     base = config_mod.UrsaConfig.model_validate(base_data)
 
-    merged = base.model_merge(override_data)
+    merged = base.model_merge({
+        "emb_model": _openai_embedding_config(inference_provider="openai")
+    })
 
     if resolve_result:
         merged = merged.resolve()
 
     assert merged.emb_model is not None
-    if expect_nested_type:
-        assert isinstance(merged.emb_model, config_mod.EmbModelConfig)
-    assert merged.emb_model.model == expected_model
-    assert merged.emb_model.model_provider == expected_provider
+    assert merged.emb_model.model == "text-embedding-3-large"
+    assert merged.emb_model.model_provider == "openai"
     assert merged.emb_model.base_url == expected_base_url
-    assert merged.emb_model.inference_provider == expected_inference_provider
-    if expected_api_key_env is not None:
-        assert merged.emb_model.api_key.env == expected_api_key_env
+    assert merged.emb_model.inference_provider == "openai"
+    if resolve_result:
+        assert merged.emb_model.api_key.env == "OPENAI_API_KEY"
 
 
 def test_ursa_config_merges_multiple_embedding_model_layers():
