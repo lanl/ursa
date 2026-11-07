@@ -46,6 +46,13 @@ def _activate_hierarchy(runtime, *paths):
     return root_id
 
 
+async def start_turn_tool(app, turn, tool):
+    """Start a tool through the app's event-to-turn route."""
+    await app.add_turn_event(
+        turn, {"type": "custom", "tool": tool, "phase": "start"}
+    )
+
+
 def test_copy_bindings_are_uniform_and_global():
     bindings = {
         binding.key: binding
@@ -794,14 +801,7 @@ async def test_new_cards_follow_bottom_without_moving_scrolled_view(
         await conversation.mount(turn)
 
         for index in range(12):
-            await app.add_turn_event(
-                turn,
-                {
-                    "type": "custom",
-                    "tool": f"tool-{index}",
-                    "phase": "start",
-                },
-            )
+            await start_turn_tool(app, turn, f"tool-{index}")
             await pilot.pause()
 
         assert await wait_for(
@@ -818,14 +818,7 @@ async def test_new_cards_follow_bottom_without_moving_scrolled_view(
         scrolled_position = conversation.scroll_y
         assert scrolled_position < conversation.max_scroll_y
 
-        await app.add_turn_event(
-            turn,
-            {
-                "type": "custom",
-                "tool": "one-more-tool",
-                "phase": "start",
-            },
-        )
+        await start_turn_tool(app, turn, "one-more-tool")
         await pilot.pause()
 
         assert conversation.scroll_y == pytest.approx(scrolled_position)
@@ -838,14 +831,7 @@ async def test_user_scroll_cancels_initial_anchor_transition(tmp_path, app):
         await conversation.mount(turn)
 
         for index in range(12):
-            await app.add_turn_event(
-                turn,
-                {
-                    "type": "custom",
-                    "tool": f"tool-{index}",
-                    "phase": "start",
-                },
-            )
+            await start_turn_tool(app, turn, f"tool-{index}")
             await pilot.pause(0.01)
             if app._conversation_anchor_transition:
                 break
@@ -862,14 +848,7 @@ async def test_user_scroll_cancels_initial_anchor_transition(tmp_path, app):
 
         assert not conversation.is_anchored
         scrolled_position = conversation.scroll_y
-        await app.add_turn_event(
-            turn,
-            {
-                "type": "custom",
-                "tool": "after-interruption",
-                "phase": "start",
-            },
-        )
+        await start_turn_tool(app, turn, "after-interruption")
         await pilot.pause()
 
         assert conversation.scroll_y == pytest.approx(scrolled_position)
