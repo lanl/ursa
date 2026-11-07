@@ -20,15 +20,17 @@ def make_runtime(
     limit: int = 3000,
     store: BaseStore | None = None,
     config: dict[str, Any] | None = None,
+    agent_name: str | None = None,
+    den: Path | None = None,
 ) -> ToolRuntime[AgentContext]:
     """Construct a minimal ToolRuntime populated with AgentContext."""
     return ToolRuntime(
         state={},
         context=AgentContext(
             llm=llm,
-            agent_name=None,
+            agent_name=agent_name,
             group="default",
-            den=None,
+            den=den,
             workspace=workspace,
             tool_character_limit=limit,
         ),

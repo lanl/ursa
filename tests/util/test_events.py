@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
-from langchain.tools import ToolRuntime
 
 from tests.event_fixtures import (
     FIXED_MONOTONIC_TIMESTAMP_NS,
@@ -14,7 +13,7 @@ from tests.event_fixtures import (
 from tests.event_fixtures import (
     fixed_monotonic_timestamp as fixed_monotonic_timestamp,
 )
-from ursa.agents.base import AgentContext
+from tests.tools.utils import make_runtime
 from ursa.util.events import (
     AgentEvents,
     EnvironmentEvents,
@@ -52,19 +51,14 @@ def log_record():
 @pytest.fixture
 def tool_runtime():
     def create(agent_name, metadata, call_id):
-        return ToolRuntime(
-            state={},
-            context=AgentContext(
-                llm=None,
-                workspace=Path("workspace"),
-                den=Path("workspace"),
-                agent_name=agent_name,
-                group="default",
-            ),
+        return make_runtime(
+            workspace=Path("workspace"),
+            llm=None,
+            den=Path("workspace"),
+            agent_name=agent_name,
+            limit=30000,
             config={"metadata": metadata},
-            stream_writer=lambda _: None,
             tool_call_id=call_id,
-            store=None,
         )
 
     return create
