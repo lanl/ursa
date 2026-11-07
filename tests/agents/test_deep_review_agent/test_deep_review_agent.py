@@ -201,13 +201,15 @@ _DD_QUESTION = {
 }
 
 
-async def test_phase_requests_keep_system_prompts_leading(tmpdir):
+async def test_phase_prompts_lead_requests_without_persisting_in_history(
+    tmpdir,
+):
     # Issue 294: from the second debate phase onward, requests carried
     # mid-conversation system messages, which langchain-anthropic rejects.
     log: list = []
     agent = DeepReviewAgent(llm=_recording_model(log), workspace=tmpdir)
 
-    await agent.ainvoke(dict(_DD_QUESTION))
+    result = await agent.ainvoke(dict(_DD_QUESTION))
 
     assert log, "no model requests captured"
     bad = [
@@ -217,13 +219,6 @@ async def test_phase_requests_keep_system_prompts_leading(tmpdir):
     ]
     assert not bad, f"requests with mid-conversation system messages: {bad}"
 
-
-async def test_phase_prompts_not_persisted_as_system_messages(tmpdir):
-    log: list = []
-    agent = DeepReviewAgent(llm=_recording_model(log), workspace=tmpdir)
-
-    result = await agent.ainvoke(dict(_DD_QUESTION))
-
     persisted_systems = [
         message
         for message in result.get("messages", [])
@@ -232,13 +227,6 @@ async def test_phase_prompts_not_persisted_as_system_messages(tmpdir):
     assert persisted_systems == [], (
         "phase role prompts must not accumulate in the message channel"
     )
-
-
-async def test_each_phase_request_leads_with_its_own_role_prompt(tmpdir):
-    log: list = []
-    agent = DeepReviewAgent(llm=_recording_model(log), workspace=tmpdir)
-
-    await agent.ainvoke(dict(_DD_QUESTION))
 
     leading_prompts = [
         request[0].content

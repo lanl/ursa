@@ -183,27 +183,8 @@ class RecordingPlanningChatModel(GenericFakeChatModel):
         )
 
 
-async def test_planner_requests_never_end_with_assistant_message(tmpdir):
-    """Every planner request must be accepted by models without prefill."""
-    llm = RecordingPlannerChatModel()
-    planning_agent = PlanningAgent(
-        llm=llm, workspace=tmpdir, max_reflection_steps=1
-    )
-
-    await planning_agent.ainvoke({
-        "messages": [HumanMessage(content="make a plan")]
-    })
-
-    assert len(llm.calls) >= 2, "expected generation and reflection calls"
-    for call in llm.calls:
-        assert not isinstance(call[-1], AIMessage), (
-            "planner sent a request ending with an AI message, which "
-            "models without assistant-message prefill support reject"
-        )
-
-
-async def test_planner_accumulates_messages_across_nodes(tmpdir):
-    """Planner state must retain the original request and drafted plan."""
+async def test_planner_preserves_history_without_assistant_prefill(tmpdir):
+    """Retain the request and drafted plan while sending provider-valid calls."""
     llm = RecordingPlannerChatModel()
     planning_agent = PlanningAgent(
         llm=llm, workspace=tmpdir, max_reflection_steps=1
@@ -213,6 +194,13 @@ async def test_planner_accumulates_messages_across_nodes(tmpdir):
     result = await planning_agent.ainvoke({
         "messages": [HumanMessage(content=prompt)]
     })
+
+    assert len(llm.calls) >= 2, "expected generation and reflection calls"
+    for call in llm.calls:
+        assert not isinstance(call[-1], AIMessage), (
+            "planner sent a request ending with an AI message, which "
+            "models without assistant-message prefill support reject"
+        )
 
     contents = [msg.content for msg in result["messages"]]
     assert contents[0] == prompt, "original request should be preserved"
