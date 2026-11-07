@@ -81,10 +81,16 @@ def chat_model():
     return ToolReadyFakeChatModel(messages=message_stream("ok"))
 
 
-def test_execution_agent_captures_current_invoke_request(
-    chat_model, tmpdir: Path
-):
-    execution_agent = ExecutionAgent(llm=chat_model, workspace=tmpdir)
+@pytest.fixture
+def make_agent(chat_model, tmpdir):
+    def create(**options):
+        return ExecutionAgent(llm=chat_model, workspace=tmpdir, **options)
+
+    return create
+
+
+def test_execution_agent_captures_current_invoke_request(make_agent):
+    execution_agent = make_agent()
 
     normalized = execution_agent._normalize_inputs("current request")
 
@@ -104,7 +110,7 @@ def test_execution_agent_captures_current_invoke_request(
 
 
 def test_execution_agent_review_uses_current_invoke_request(
-    chat_model, monkeypatch, tmpdir: Path
+    make_agent, monkeypatch
 ):
     captured = {}
 
@@ -125,7 +131,7 @@ def test_execution_agent_review_uses_current_invoke_request(
         fake_invoke_structured,
     )
 
-    execution_agent = ExecutionAgent(llm=chat_model, workspace=tmpdir)
+    execution_agent = make_agent()
     result = execution_agent.review_work({
         "messages": [
             HumanMessage(content="old persisted request"),
@@ -145,7 +151,7 @@ def test_execution_agent_review_uses_current_invoke_request(
 
 
 def test_execution_agent_persistent_thread_reviews_latest_invoke_request(
-    chat_model, monkeypatch, tmpdir: Path
+    make_agent, monkeypatch, tmpdir: Path
 ):
     reviewed_requests = []
 
@@ -165,10 +171,8 @@ def test_execution_agent_persistent_thread_reviews_latest_invoke_request(
         fake_invoke_structured,
     )
 
-    execution_agent = ExecutionAgent(
-        llm=chat_model,
-        workspace=tmpdir,
-        checkpointer=Checkpointer.from_workspace(Path(tmpdir) / "checkpoints"),
+    execution_agent = make_agent(
+        checkpointer=Checkpointer.from_workspace(Path(tmpdir) / "checkpoints")
     )
     with closing(execution_agent):
         execution_agent.invoke("first persisted request")
@@ -181,9 +185,9 @@ def test_execution_agent_persistent_thread_reviews_latest_invoke_request(
 
 
 async def test_execution_agent_ainvoke_returns_ai_message(
-    chat_model, tmpdir: Path
+    make_agent, tmpdir: Path
 ):
-    execution_agent = ExecutionAgent(llm=chat_model, workspace=tmpdir)
+    execution_agent = make_agent()
     workspace = tmpdir / ".ursa"
     inputs = {
         "messages": [
@@ -214,17 +218,13 @@ async def test_execution_agent_ainvoke_returns_ai_message(
     )
 
 
-async def test_execution_agent_invokes_extra_tool(chat_model, tmpdir: Path):
+async def test_execution_agent_invokes_extra_tool(make_agent, tmpdir: Path):
     @tool
     def do_magic(a: int, b: int) -> float:
         """Return the hypotenuse for the provided right-triangle legs."""
         return sqrt(a**2 + b**2)
 
-    execution_agent = ExecutionAgent(
-        llm=chat_model,
-        extra_tools=[do_magic],
-        workspace=tmpdir,
-    )
+    execution_agent = make_agent(extra_tools=[do_magic])
     workspace = tmpdir / ".ursa_with_tool"
     prompt = "List every tool you have access to and provide the names only."
     inputs = {
@@ -282,11 +282,8 @@ def test_execution_agent_keeps_tool_calls_out_of_summary_and_recap(
     assert query_result["messages"].tool_calls[0]["name"] == "fake_run_command"
 
 
-def test_safe_codes_in_store(chat_model, tmpdir):
-    execution_agent = ExecutionAgent(
-        llm=chat_model,
-        workspace=tmpdir,
-    )
+def test_safe_codes_in_store(make_agent):
+    execution_agent = make_agent()
     assert len(execution_agent.safe_codes) > 0
     store = execution_agent.storage
     safe_codes = [
@@ -297,10 +294,7 @@ def test_safe_codes_in_store(chat_model, tmpdir):
 
 
 def test_patch_dangling_tool_calls_emits_events(
-    chat_model,
-    monkeypatch,
-    capsys,
-    tmpdir,
+    make_agent, monkeypatch, capsys
 ):
     events = []
 
@@ -312,7 +306,7 @@ def test_patch_dangling_tool_calls_emits_events(
         capture_event,
     )
 
-    execution_agent = ExecutionAgent(llm=chat_model, workspace=tmpdir)
+    execution_agent = make_agent()
     state = {
         "messages": [
             AIMessage(
