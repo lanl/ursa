@@ -40,10 +40,7 @@ def has_ollama_model(model_name: str):
         print("ollama server is not running")
         return False
 
-    for m in models:
-        if m.model == model_name:
-            return True
-    return False
+    return any(model.model == model_name for model in models)
 
 
 @pytest.mark.skipif(
