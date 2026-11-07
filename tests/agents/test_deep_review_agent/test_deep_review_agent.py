@@ -215,7 +215,7 @@ async def test_phase_model_error_propagates_immediately(tmpdir):
 
 
 @pytest.mark.parametrize("iterations", [1, 2])
-async def test_output_lists_match_real_iterations(tmpdir, iterations):
+async def test_outputs_and_report_match_real_iterations(tmpdir, iterations):
     # Each real iteration must produce exactly one entry per output list;
     # the previous >= 1 assertions were green with every entry doubled.
     agent = DeepReviewAgent(
@@ -227,6 +227,12 @@ async def test_output_lists_match_real_iterations(tmpdir, iterations):
 
     for key in ("agent1_solution", "agent2_critiques", "agent3_perspectives"):
         assert result[key] == ["ok"] * iterations, f"{key}: {result[key]}"
+
+    # Report sections also follow real iterations, guarding finalization order.
+    text = sorted(agent.workspace.glob("iteration_details_*.txt"))[
+        -1
+    ].read_text(encoding="utf-8")
+    assert text.count("\\subsection") == iterations
 
 
 async def test_chained_runs_report_real_iterations_only(tmpdir):
@@ -271,20 +277,3 @@ async def test_seeded_visited_sites_survive(tmpdir):
     })
 
     assert "https://seeded.example/x" in result["visited_sites"]
-
-
-async def test_details_file_has_one_section_per_iteration(tmpdir):
-    # Guard (green before and after the fix): a single run's report has
-    # exactly one section per real iteration, protecting the
-    # finalize-summarize-print ordering against future rewiring.
-    agent = DeepReviewAgent(
-        llm=ToolReadyFakeChatModel(messages=message_stream_with_usage("ok")),
-        workspace=tmpdir,
-    )
-
-    await agent.ainvoke({**_DD_QUESTION, "max_iterations": 2})
-
-    text = sorted(agent.workspace.glob("iteration_details_*.txt"))[
-        -1
-    ].read_text(encoding="utf-8")
-    assert text.count("\\subsection") == 2
