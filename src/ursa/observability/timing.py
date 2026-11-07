@@ -164,18 +164,11 @@ class SessionRollup:
 
         # aggregate tables
         tables = payload.get("tables") or {}
-        for row in tables.get("runnable") or []:
-            self.runnable_by_name[row["name"]].add(
-                row["count"], row["total_s"], row["max_ms"]
-            )
-        for row in tables.get("tool") or []:
-            self.tool_by_name[row["name"]].add(
-                row["count"], row["total_s"], row["max_ms"]
-            )
-        for row in tables.get("llm") or []:
-            self.llm_by_name[row["name"]].add(
-                row["count"], row["total_s"], row["max_ms"]
-            )
+        for kind in ("runnable", "tool", "llm"):
+            for row in tables.get(kind) or []:
+                getattr(self, f"{kind}_by_name")[row["name"]].add(
+                    row["count"], row["total_s"], row["max_ms"]
+                )
 
         # recompute llm/tool totals from buckets
         self.llm_total_s = (
