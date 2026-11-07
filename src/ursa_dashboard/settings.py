@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
@@ -21,7 +21,38 @@ def _qualified_model_name(model_config) -> str:
     return f"{model_config.model_provider}:{model_config.model}"
 
 
-class LLMSettings(BaseModel):
+class _ModelSettings(BaseModel):
+    """Shared validation without changing either model's field definitions."""
+
+    _kwargs_context: ClassVar[str]
+
+    @field_validator("model_kwargs", check_fields=False)
+    @classmethod
+    def _validate_model_kwargs(cls, v: Any) -> dict[str, Any]:
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            raise ValueError(f"{cls._kwargs_context} must be a JSON object")
+        assert_no_raw_api_key(v, context=cls._kwargs_context)
+        return v
+
+    @field_validator("api_key_env", check_fields=False)
+    @classmethod
+    def _validate_api_key_env(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = str(v).strip()
+        if v == "":
+            return None
+        # Conservative env-var name validation.
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", v):
+            raise ValueError(
+                "api_key_env must be a valid environment variable name"
+            )
+        return v
+
+
+class LLMSettings(_ModelSettings):
     model: str = "openai:gpt-5.2"
     base_url: str | None = None
     tokens_before_summarize: int = Field(
@@ -47,30 +78,7 @@ class LLMSettings(BaseModel):
         description="Additional keyword arguments passed to langchain.chat_models.init_chat_model.",
     )
 
-    @field_validator("model_kwargs")
-    @classmethod
-    def _validate_model_kwargs(cls, v: Any) -> dict[str, Any]:
-        if v is None:
-            return {}
-        if not isinstance(v, dict):
-            raise ValueError("llm.model_kwargs must be a JSON object")
-        assert_no_raw_api_key(v, context="llm.model_kwargs")
-        return v
-
-    @field_validator("api_key_env")
-    @classmethod
-    def _validate_api_key_env(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        v = str(v).strip()
-        if v == "":
-            return None
-        # Conservative env-var name validation.
-        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", v):
-            raise ValueError(
-                "api_key_env must be a valid environment variable name"
-            )
-        return v
+    _kwargs_context = "llm.model_kwargs"
 
 
 class RunnerSettings(BaseModel):
@@ -106,7 +114,7 @@ class MCPSettings(BaseModel):
         return v
 
 
-class EmbeddingSettings(BaseModel):
+class EmbeddingSettings(_ModelSettings):
     """Dashboard-level embedding model settings for RAG features."""
 
     model: str | None = None
@@ -122,29 +130,7 @@ class EmbeddingSettings(BaseModel):
     credential_target: str | None = None
     model_kwargs: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("model_kwargs")
-    @classmethod
-    def _validate_model_kwargs(cls, v: Any) -> dict[str, Any]:
-        if v is None:
-            return {}
-        if not isinstance(v, dict):
-            raise ValueError("embedding.model_kwargs must be a JSON object")
-        assert_no_raw_api_key(v, context="embedding.model_kwargs")
-        return v
-
-    @field_validator("api_key_env")
-    @classmethod
-    def _validate_api_key_env(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        v = str(v).strip()
-        if v == "":
-            return None
-        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", v):
-            raise ValueError(
-                "api_key_env must be a valid environment variable name"
-            )
-        return v
+    _kwargs_context = "embedding.model_kwargs"
 
 
 class ToolSettings(BaseModel):
@@ -177,6 +163,34 @@ class GlobalSettings(BaseModel):
     mcp: MCPSettings = Field(default_factory=MCPSettings)
     tools: ToolSettings = Field(default_factory=ToolSettings)
     ui: UISettings = Field(default_factory=UISettings)
+
+
+def _add_model_kwargs(patch, config, source: str, *, promoted=()) -> None:
+    """Merge provider extras, preserving model-specific promoted fields."""
+    model_kwargs: dict[str, Any] = {}
+    for key, value in (config.model_extra or {}).items():
+        if value is None:
+            continue
+        if key == "api_key":
+            raise ValueError(
+                f"Dashboard config does not store raw {source}.api_key; "
+                f"use {source}.api_key_env instead."
+            )
+        if key in promoted:
+            patch[key] = value
+            continue
+        if key == "model_kwargs":
+            if not isinstance(value, dict):
+                raise ValueError(f"{source}.model_kwargs must be an object")
+            model_kwargs.update(value)
+            continue
+        # CLI configs may include provider-specific kwargs such as timeout,
+        # seed, or use_responses_api. The dashboard worker forwards these via
+        # init_chat_model(**model_kwargs).
+        model_kwargs[key] = value
+
+    if model_kwargs:
+        patch["model_kwargs"] = model_kwargs
 
 
 def dashboard_llm_patch_from_ursa_config(
@@ -243,30 +257,7 @@ def dashboard_llm_patch_from_ursa_config(
     if llm_cfg.max_completion_tokens is not None:
         patch["max_tokens"] = llm_cfg.max_completion_tokens
 
-    model_kwargs: dict[str, Any] = {}
-    for key, value in (llm_cfg.model_extra or {}).items():
-        if value is None:
-            continue
-        if key == "api_key":
-            raise ValueError(
-                "Dashboard config does not store raw llm_model.api_key; "
-                "use llm_model.api_key_env instead."
-            )
-        if key == "temperature":
-            patch["temperature"] = value
-            continue
-        if key == "model_kwargs":
-            if not isinstance(value, dict):
-                raise ValueError("llm_model.model_kwargs must be an object")
-            model_kwargs.update(value)
-            continue
-        # CLI configs may include provider-specific kwargs such as timeout,
-        # seed, or use_responses_api. The dashboard worker forwards these via
-        # init_chat_model(**model_kwargs).
-        model_kwargs[key] = value
-
-    if model_kwargs:
-        patch["model_kwargs"] = model_kwargs
+    _add_model_kwargs(patch, llm_cfg, "llm_model", promoted=("temperature",))
 
     # Validate against the dashboard settings schema before returning, so CLI
     # errors fail early instead of being deferred until the first run.
@@ -284,24 +275,7 @@ def dashboard_llm_patch_from_ursa_config(
             emb_patch["api_key_env"] = emb_api_key_env
             emb_patch["credential_source"] = "environment"
 
-        emb_model_kwargs: dict[str, Any] = {}
-        for key, value in (emb_cfg.model_extra or {}).items():
-            if value is None:
-                continue
-            if key == "api_key":
-                raise ValueError(
-                    "Dashboard config does not store raw emb_model.api_key; "
-                    "use emb_model.api_key_env instead."
-                )
-            if key == "model_kwargs":
-                if not isinstance(value, dict):
-                    raise ValueError("emb_model.model_kwargs must be an object")
-                emb_model_kwargs.update(value)
-                continue
-            emb_model_kwargs[key] = value
-
-        if emb_model_kwargs:
-            emb_patch["model_kwargs"] = emb_model_kwargs
+        _add_model_kwargs(emb_patch, emb_cfg, "emb_model")
 
         EmbeddingSettings.model_validate(emb_patch)
         out["embedding"] = emb_patch
