@@ -184,22 +184,17 @@ def _validate_config_mapping(
     assert_no_raw_api_key(data, context="environment config")
     try:
         if environment_type == "agent_team":
-            config = AgentTeamConfig.from_mapping(data)
-
-            lead = config.pi
-            lead_label = "PI"
-
+            config_type, lead_field, lead_label = AgentTeamConfig, "pi", "PI"
         elif environment_type == "agent_symposium":
-            config = AgentSymposiumConfig.from_mapping(data)
-
-            lead = config.organizer
-            lead_label = "Organizer"
-
+            config_type, lead_field, lead_label = (
+                AgentSymposiumConfig,
+                "organizer",
+                "Organizer",
+            )
         else:
-            config = AgentEloConfig.from_mapping(data)
-
-            lead = None
-            lead_label = None
+            config_type, lead_field, lead_label = AgentEloConfig, None, None
+        config = config_type.from_mapping(data)
+        lead = getattr(config, lead_field) if lead_field is not None else None
 
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Invalid environment configuration: {exc}") from exc
