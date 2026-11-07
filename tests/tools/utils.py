@@ -1,3 +1,4 @@
+from itertools import chain
 from pathlib import Path
 from typing import Any
 
@@ -69,11 +70,6 @@ def invoke_with_parent_run(call):
     return RunnableLambda(lambda _, config: call(config)).invoke(None)
 
 
-def _inject_runtime_config(config: dict[str, Any], value: Any) -> None:
-    if isinstance(value, ToolRuntime):
-        value.config = config
-
-
 def invoke_with_event_recorder(
     f,
     *args: Any,
@@ -83,10 +79,9 @@ def invoke_with_event_recorder(
     recorder = CustomEventRecorder()
 
     def call(_, config):
-        for arg in args:
-            _inject_runtime_config(config, arg)
-        for value in kwargs.values():
-            _inject_runtime_config(config, value)
+        for value in chain(args, kwargs.values()):
+            if isinstance(value, ToolRuntime):
+                value.config = config
         return f(*args, **kwargs)
 
     result = RunnableLambda(call).invoke(
