@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Iterator
 from types import SimpleNamespace
 
+import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 
@@ -49,14 +50,19 @@ def _roll(message=None, llm_output=None, messages=None):
     return timer.samples[-1]["metrics"].get("usage_rollup") or {}
 
 
-def test_standardized_details_captured():
-    # Issue 165: reasoning and cache_read arriving only in the
-    # standardized usage_metadata details (the Gemini, OpenAI Responses,
-    # and streaming shapes) must be captured.
-    roll = _roll(message=AIMessage("x", usage_metadata=dict(_STANDARDIZED)))
+@pytest.mark.parametrize("contents", [("x",), ("a", "b")])
+def test_standardized_details_sum_across_generations(contents):
+    # Issue 165: standardized reasoning and cache_read details must be captured
+    # from each generation, including sums across multiple generations.
+    roll = _roll(
+        messages=[
+            AIMessage(content, usage_metadata=dict(_STANDARDIZED))
+            for content in contents
+        ]
+    )
 
-    assert roll.get("reasoning_tokens") == 30
-    assert roll.get("cached_tokens") == 20
+    assert roll.get("reasoning_tokens") == 30 * len(contents)
+    assert roll.get("cached_tokens") == 20 * len(contents)
 
 
 def test_responses_raw_naming_captured():
@@ -145,20 +151,6 @@ def test_service_tier_prefixed_details_captured():
 
     assert roll.get("reasoning_tokens") == 30
     assert roll.get("cached_tokens") == 20
-
-
-def test_two_generations_sum_reasoning():
-    # Per-message summation is preserved: two generations each carrying
-    # standardized reasoning must sum.
-    roll = _roll(
-        messages=[
-            AIMessage("a", usage_metadata=dict(_STANDARDIZED)),
-            AIMessage("b", usage_metadata=dict(_STANDARDIZED)),
-        ]
-    )
-
-    assert roll.get("reasoning_tokens") == 60
-    assert roll.get("cached_tokens") == 40
 
 
 def _standardized_stream() -> Iterator[AIMessage]:
