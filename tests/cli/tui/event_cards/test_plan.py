@@ -7,6 +7,15 @@ from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import PlanCard
 
 
+async def _plan_event(turn, stage, message, **details):
+    await turn.event({
+        "agent": "PlanningAgent",
+        "stage": stage,
+        "message": message,
+        **details,
+    })
+
+
 def plan_steps(count=7):
     return [
         {
@@ -22,22 +31,15 @@ def plan_steps(count=7):
 
 async def test_plan_card_renders_drafting_and_collapsed_steps(event_turn):
     async with event_turn("make a plan", size=(100, 36)) as (pilot, turn):
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "generate",
-            "message": "Drafting plan",
-        })
+        await _plan_event(turn, "generate", "Drafting plan")
         await pilot.pause()
         plan = turn.query_one(PlanCard)
         assert plan.state == "drafting"
         assert plan.steps == []
 
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "generate_result",
-            "message": "Drafted plan",
-            "steps": plan_steps(),
-        })
+        await _plan_event(
+            turn, "generate_result", "Drafted plan", steps=plan_steps()
+        )
         await pilot.pause()
         markdown = plan.query_one(Markdown)
         source = str(markdown.source)
@@ -72,20 +74,17 @@ async def test_plan_card_renders_drafting_and_collapsed_steps(event_turn):
 
 async def test_plan_card_tracks_revisions_approval_and_expansion(event_turn):
     async with event_turn("make a plan", size=(100, 36)) as (pilot, turn):
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "generate_result",
-            "message": "Drafted plan",
-            "steps": plan_steps(),
-        })
+        await _plan_event(
+            turn, "generate_result", "Drafted plan", steps=plan_steps()
+        )
         plan = turn.query_one(PlanCard)
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "reflect_result",
-            "message": "Plan needs another pass",
-            "approved": False,
-            "reason": "Add a concrete validation step before implementation.",
-        })
+        await _plan_event(
+            turn,
+            "reflect_result",
+            "Plan needs another pass",
+            approved=False,
+            reason="Add a concrete validation step before implementation.",
+        )
         collapsed_source = str(plan.query_one(Markdown).source)
         assert plan.state == "revision_needed"
         assert plan.review_reason == (
@@ -93,33 +92,19 @@ async def test_plan_card_tracks_revisions_approval_and_expansion(event_turn):
         )
         assert "concrete validation step" not in collapsed_source
 
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "generate",
-            "message": "Drafting plan",
-        })
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "generate_result",
-            "message": "Revised plan",
-            "steps": plan_steps(4),
-        })
+        await _plan_event(turn, "generate", "Drafting plan")
+        await _plan_event(
+            turn, "generate_result", "Revised plan", steps=plan_steps(4)
+        )
         revised = list(turn.query(PlanCard))[-1]
         assert revised.revision == 2
         assert len(revised.steps) == 4
         assert revised.state == "reviewing"
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "reflect",
-            "message": "Reviewing plan",
-        })
+        await _plan_event(turn, "reflect", "Reviewing plan")
         assert revised.state == "reviewing"
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "reflect_result",
-            "message": "Plan approved",
-            "approved": True,
-        })
+        await _plan_event(
+            turn, "reflect_result", "Plan approved", approved=True
+        )
         await pilot.pause()
 
         plans = list(turn.query(PlanCard))
@@ -190,11 +175,7 @@ async def test_agent_completion_stops_pending_plan_review_spinner(tmp_path):
 
 async def test_failed_agent_stops_drafting_plan_spinner(event_turn):
     async with event_turn("make a plan", size=(100, 36)) as (pilot, turn):
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "generate",
-            "message": "Drafting plan",
-        })
+        await _plan_event(turn, "generate", "Drafting plan")
         plan = turn.query_one(PlanCard)
 
         turn.finish_activity(succeeded=False)
