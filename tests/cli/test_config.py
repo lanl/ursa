@@ -133,47 +133,31 @@ def test_deep_interp_env_recurses_nested_dictionaries(
 
 
 @pytest.mark.parametrize(
-    ("cls", "model", "expected_model", "expected_provider"),
+    "model",
+    ["openai:gpt-5.4", "ollama:nomic-embed-text:latest"],
+)
+def test_base_model_config_preserves_provider_prefix(model):
+    cfg = config_mod.ModelConfig(model=model)
+
+    assert cfg.model == model
+    assert cfg.model_provider is None
+
+
+@pytest.mark.parametrize(
+    ("cls", "provider", "model"),
     [
-        (
-            config_mod.ModelConfig,
-            "openai:gpt-5.4",
-            "openai:gpt-5.4",
-            None,
-        ),
-        (
-            config_mod.ChatModelConfig,
-            "openai:gpt-5.4",
-            "gpt-5.4",
-            "openai",
-        ),
-        (
-            config_mod.ChatModelConfig,
-            "ollama:llama3.1",
-            "llama3.1",
-            "ollama",
-        ),
-        (
-            config_mod.ModelConfig,
-            "ollama:nomic-embed-text:latest",
-            "ollama:nomic-embed-text:latest",
-            None,
-        ),
-        (
-            config_mod.EmbModelConfig,
-            "ollama:nomic-embed-text:latest",
-            "nomic-embed-text:latest",
-            "ollama",
-        ),
+        (config_mod.ChatModelConfig, "openai", "gpt-5.4"),
+        (config_mod.ChatModelConfig, "ollama", "llama3.1"),
+        (config_mod.EmbModelConfig, "ollama", "nomic-embed-text:latest"),
     ],
 )
 def test_model_config_model_parsing_for_known_provider_prefix(
-    cls, model, expected_model, expected_provider
+    cls, provider, model
 ):
-    cfg = cls(model=model)
+    cfg = cls(model=f"{provider}:{model}")
 
-    assert cfg.model == expected_model
-    assert cfg.model_provider == expected_provider
+    assert cfg.model == model
+    assert cfg.model_provider == provider
 
 
 @pytest.mark.parametrize(
