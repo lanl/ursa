@@ -173,19 +173,14 @@ async def test_agent_selection_moves_to_front_replaces_and_preserves_cursor(
         prompt.load_text("Review docs carefully")
         prompt.move_cursor((0, 6))
 
-        await pilot.press("#", "p", "l", "enter")
-        await pilot.pause()
-        await assert_eventually(
-            pilot, lambda: prompt.text == "#plan Review docs carefully"
-        )
-        assert prompt.cursor_location == (0, 12)
-
-        await pilot.press("#", "c", "h", "enter")
-        await pilot.pause()
-        await assert_eventually(
-            pilot, lambda: prompt.text == "#chat Review docs carefully"
-        )
-        assert prompt.cursor_location == (0, 12)
+        for keys, expected in (
+            (("p", "l"), "#plan Review docs carefully"),
+            (("c", "h"), "#chat Review docs carefully"),
+        ):
+            await pilot.press("#", *keys, "enter")
+            await pilot.pause()
+            await assert_eventually(pilot, lambda: prompt.text == expected)
+            assert prompt.cursor_location == (0, 12)
 
 
 async def test_macro_selectors_close_with_escape(app):
@@ -265,17 +260,14 @@ async def test_macro_choice_is_undoable_without_reopening_picker(app):
             pilot, lambda: prompt.text == "#plan Review docs"
         )
 
-        await pilot.press("ctrl+z")
-        await pilot.pause()
-        await assert_eventually(pilot, lambda: prompt.text == "Review# docs")
-        assert not isinstance(app.screen, HotlistScreen)
-
-        await pilot.press("ctrl+y")
-        await pilot.pause()
-        await assert_eventually(
-            pilot, lambda: prompt.text == "#plan Review docs"
-        )
-        assert not isinstance(app.screen, HotlistScreen)
+        for key, expected in (
+            ("ctrl+z", "Review# docs"),
+            ("ctrl+y", "#plan Review docs"),
+        ):
+            await pilot.press(key)
+            await pilot.pause()
+            await assert_eventually(pilot, lambda: prompt.text == expected)
+            assert not isinstance(app.screen, HotlistScreen)
 
 
 async def test_programmatic_and_pasted_macro_characters_do_not_open_picker(
