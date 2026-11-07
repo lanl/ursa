@@ -349,21 +349,8 @@ def test_chat_model_merge_inference_provider_overrides_base_url(
     assert merged.base_url is None
     assert merged.inference_provider == "hosted"
     assert "base_url" not in merged.model_fields_set
-    assert merged.model_extra == {}
-
-
-def test_chat_model_merge_marks_cleared_base_url_as_unset():
-    base = config_mod.ChatModelConfig(
-        model="gpt-5.4",
-        base_url="https://models.example/v1",
-    )
-
-    merged = base.model_merge({"inference_provider": "hosted"})
-
-    assert merged.base_url is None
-    assert merged.inference_provider == "hosted"
-    assert "base_url" not in merged.model_fields_set
     assert "base_url" not in merged.model_dump(exclude_unset=True)
+    assert merged.model_extra == {}
 
 
 def test_chat_model_merge_prefers_base_url_if_override_has_both_endpoints():
