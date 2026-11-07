@@ -4,6 +4,7 @@ import asyncio
 import logging
 from types import SimpleNamespace
 
+import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from ursa import security
@@ -291,12 +292,9 @@ async def test_team_invoke_from_running_loop_raises_clear_error(tmp_path):
         workspace=tmp_path,
     )
 
-    try:
+    with pytest.raises(RuntimeError) as exc:
         team.invoke("called from async context")
-    except RuntimeError as exc:
-        assert "await environment.ainvoke" in str(exc)
-    else:  # pragma: no cover
-        raise AssertionError("Expected .invoke() to reject running event loop")
+    assert "await environment.ainvoke" in str(exc.value)
 
 
 def test_symposium_runs_independent_review_revision_and_synthesis(tmp_path):

@@ -140,22 +140,16 @@ def test_environment_launch_validation_is_group_scoped_and_safe(
         "agent: ChatAgent",
         "agent: ChatAgent\n    model:\n      model: openai:test\n      api_key: secret",
     )
-    try:
+    with pytest.raises(ValueError) as exc:
         validate_environment_launch("agent_team", raw_key, group="default")
-    except ValueError as exc:
-        assert "literal api key" in str(exc).lower()
-    else:  # pragma: no cover - assertion guard
-        raise AssertionError("Literal API key was accepted")
+    assert "literal api key" in str(exc.value).lower()
 
     custom_class = _team_yaml().replace(
         "agent: ChatAgent", "agent: package.module.CustomAgent"
     )
-    try:
+    with pytest.raises(ValueError) as exc:
         validate_environment_launch("agent_team", custom_class, group="default")
-    except ValueError as exc:
-        assert "not available from the dashboard" in str(exc)
-    else:  # pragma: no cover - assertion guard
-        raise AssertionError("Custom class was accepted")
+    assert "not available from the dashboard" in str(exc.value)
 
 
 @pytest.mark.parametrize("setting", ["workspace", "agent_name"])

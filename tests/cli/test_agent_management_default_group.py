@@ -1,3 +1,5 @@
+import pytest
+
 from ursa.cli import agent_management
 from ursa.cli.agent_management import ensure_group_dir
 
@@ -18,11 +20,6 @@ def test_ensure_group_dir_still_requires_non_default_group(
     root = tmp_path / "ursa"
     monkeypatch.setattr(agent_management, "URSA_CACHE_DIR", root)
 
-    try:
+    with pytest.raises(FileNotFoundError) as exc:
         ensure_group_dir("science")
-    except FileNotFoundError as exc:
-        assert "science" in str(exc)
-    else:
-        raise AssertionError(
-            "Expected FileNotFoundError for missing non-default group"
-        )
+    assert "science" in str(exc.value)
