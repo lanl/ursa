@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import os
-from unittest.mock import Mock
+from unittest.mock import Mock, create_autospec
 
 import pytest
 
@@ -158,21 +158,9 @@ def test_worker_error_redaction_removes_full_secret() -> None:
 async def test_dashboard_worker_uses_shared_agent_manager(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    captured: dict[str, object] = {}
-
-    class FakeManager:
-        async def register(self, spec) -> None:
-            captured["spec"] = spec
-
-        async def invoke(self, agent_id: str, inputs: object) -> str:
-            captured["agent_id"] = agent_id
-            captured["inputs"] = inputs
-            return "managed result"
-
-        async def aclose(self) -> None:
-            captured["closed"] = True
-
-    monkeypatch.setattr(worker_main, "AgentManager", FakeManager)
+    manager = create_autospec(worker_main.AgentManager, instance=True)
+    manager.invoke.return_value = "managed result"
+    monkeypatch.setattr(worker_main, "AgentManager", lambda: manager)
     config = {
         "agent_id": "chat_agent",
         "run_id": "run-1",
@@ -186,12 +174,12 @@ async def test_dashboard_worker_uses_shared_agent_manager(
 
     result = await worker_main._run_with_shared_agent_manager(config, "hello")
 
-    spec = captured["spec"]
+    spec = manager.register.await_args.args[0]
+    manager.register.assert_awaited_once_with(spec)
     assert isinstance(spec, AgentSpec)
     assert result == "managed result"
-    assert captured["agent_id"] == "dashboard-run"
-    assert captured["inputs"] == "hello"
-    assert captured["closed"] is True
+    manager.invoke.assert_awaited_once_with("dashboard-run", "hello")
+    manager.aclose.assert_awaited_once_with()
     assert (
         spec.factory == "ursa_dashboard.worker_main:_dashboard_process_factory"
     )
