@@ -81,37 +81,24 @@ def test_dashboard_config_maps_cli_emb_model_to_dashboard_settings(
     }
 
 
-def test_dashboard_config_rejects_raw_api_key(tmp_path):
+@pytest.mark.parametrize("embedding", [False, True])
+def test_dashboard_config_rejects_raw_api_key(tmp_path, embedding):
     cfg_path = tmp_path / "endpoint.yaml"
-    cfg_path.write_text(
-        "\n".join([
-            "llm_model:",
-            "  model: openai:gpt-test",
-            "  api_key: secret-value",
-        ]),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValueError, match="does not store raw"):
-        dashboard_llm_patch_from_ursa_config(cfg_path, group="default")
-
-
-def test_dashboard_config_rejects_raw_embedding_api_key(tmp_path):
-    cfg_path = tmp_path / "endpoint.yaml"
-    cfg_path.write_text(
-        "\n".join([
-            "llm_model:",
-            "  model: openai:gpt-test",
+    lines = ["llm_model:", "  model: openai:gpt-test"]
+    if embedding:
+        lines.extend([
             "emb_model:",
             "  model: openai:text-embedding-3-large",
-            "  api_key: secret-value",
-        ]),
-        encoding="utf-8",
-    )
+        ])
+    lines.append("  api_key: secret-value")
+    cfg_path.write_text("\n".join(lines), encoding="utf-8")
 
-    with pytest.raises(
-        ValueError, match="does not store raw emb_model.api_key"
-    ):
+    match = (
+        "does not store raw emb_model.api_key"
+        if embedding
+        else "does not store raw"
+    )
+    with pytest.raises(ValueError, match=match):
         dashboard_llm_patch_from_ursa_config(cfg_path, group="default")
 
 

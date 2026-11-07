@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, TypedDict
@@ -330,15 +331,13 @@ def test_agent_with_tools_seeds_safe_codes_in_sync_store(tmp_path: Path):
         enable_metrics=False,
     )
 
-    try:
+    with closing(agent):
         safe_codes = [
             item.key
             for item in agent.storage.search(
                 ("workspace", "safe_codes"), limit=1000
             )
         ]
-    finally:
-        agent.close()
 
     assert set(safe_codes) == {"python", "julia"}
 
@@ -571,10 +570,8 @@ def test_user_supplied_checkpointer_is_not_automatically_pruned(
     checkpointer = Checkpointer.from_workspace(tmp_path / "provided")
     agent = _make_agent(checkpointer=checkpointer, enable_metrics=False)
 
-    try:
+    with closing(agent):
         agent.invoke("terminal provided-checkpointer run")
-    finally:
-        agent.close()
 
     assert calls == []
 

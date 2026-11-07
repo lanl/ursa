@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from contextlib import closing
 from math import sqrt
 from pathlib import Path
 from types import SimpleNamespace
@@ -202,11 +203,9 @@ def test_execution_agent_persistent_thread_reviews_latest_invoke_request(
         workspace=tmpdir,
         checkpointer=Checkpointer.from_workspace(Path(tmpdir) / "checkpoints"),
     )
-    try:
+    with closing(execution_agent):
         execution_agent.invoke("first persisted request")
         execution_agent.invoke("second persisted request")
-    finally:
-        execution_agent.close()
 
     assert reviewed_requests == [
         "first persisted request",
