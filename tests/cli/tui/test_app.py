@@ -911,11 +911,14 @@ def test_hash_agent_routing_accepts_whitespace_and_multiline_prompts(
     assert app._route_prompt(prompt) == expected
 
 
-def test_copy_to_clipboard_prefers_platform_tool_when_available(
-    app, monkeypatch
+@pytest.mark.parametrize("platform_available", [True, False])
+def test_copy_to_clipboard_falls_back_only_when_platform_tool_is_unavailable(
+    app, monkeypatch, platform_available
 ):
     fallback = []
-    monkeypatch.setattr(crossplatform, "copy_to_clipboard", lambda text: True)
+    monkeypatch.setattr(
+        crossplatform, "copy_to_clipboard", lambda text: platform_available
+    )
     monkeypatch.setattr(
         app_module.App,
         "copy_to_clipboard",
@@ -924,24 +927,7 @@ def test_copy_to_clipboard_prefers_platform_tool_when_available(
 
     app.copy_to_clipboard("hello")
 
-    assert fallback == []
-    assert app.clipboard == "hello"
-
-
-def test_copy_to_clipboard_uses_osc52_when_platform_copy_unavailable(
-    app, monkeypatch
-):
-    fallback = []
-    monkeypatch.setattr(crossplatform, "copy_to_clipboard", lambda text: False)
-    monkeypatch.setattr(
-        app_module.App,
-        "copy_to_clipboard",
-        lambda self, text: fallback.append(text),
-    )
-
-    app.copy_to_clipboard("hello")
-
-    assert fallback == ["hello"]
+    assert fallback == ([] if platform_available else ["hello"])
     assert app.clipboard == "hello"
 
 
