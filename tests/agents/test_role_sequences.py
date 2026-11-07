@@ -12,6 +12,7 @@ from tests.agents.utils import (
     RecordingChatModel,
     ScriptedRecordingChatModel,
     assert_requests_provider_valid,
+    patch_materials_client,
 )
 from ursa.agents.acquisition_agents import (
     ArxivAgent,
@@ -254,22 +255,7 @@ async def test_materials_project_agent_role_sequences(tmpdir, monkeypatch):
         def search(self, **kwargs):
             return [FakeDoc("mp-001", {"formula": "GaInO3", "band_gap": 1.8})]
 
-    class FakeMaterials:
-        def __init__(self):
-            self.summary = FakeSummary()
-
-    class FakeMPRester:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def __enter__(self):
-            self.materials = FakeMaterials()
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    monkeypatch.setattr("ursa.agents.mp_agent.MPRester", FakeMPRester)
+    patch_materials_client(monkeypatch, FakeSummary)
 
     llm = RecordingChatModel()
     agent = MaterialsProjectAgent(

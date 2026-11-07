@@ -110,3 +110,24 @@ def assert_requests_provider_valid(calls: list[list[BaseMessage]]) -> None:
                 )
             else:
                 past_system_prefix = True
+
+
+def patch_materials_client(monkeypatch, summary_factory):
+    """Install a Materials Project client with a test-specific search service."""
+
+    class FakeMaterials:
+        def __init__(self):
+            self.summary = summary_factory()
+
+    class FakeMPRester:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            self.materials = FakeMaterials()
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("ursa.agents.mp_agent.MPRester", FakeMPRester)

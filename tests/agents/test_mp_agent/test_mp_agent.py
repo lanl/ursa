@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from tests.agents.utils import patch_materials_client
 from ursa.agents import MaterialsProjectAgent
 
 requests = pytest.importorskip("mp_api")
@@ -41,22 +42,7 @@ def stub_mprester(monkeypatch):
             })
             return [FakeDoc(mid, meta) for mid, meta in docs_metadata]
 
-    class FakeMaterials:
-        def __init__(self):
-            self.summary = FakeSummary()
-
-    class FakeMPRester:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def __enter__(self):
-            self.materials = FakeMaterials()
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    monkeypatch.setattr("ursa.agents.mp_agent.MPRester", FakeMPRester)
+    patch_materials_client(monkeypatch, FakeSummary)
     return search_calls, docs_metadata
 
 
