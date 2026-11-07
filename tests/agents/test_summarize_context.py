@@ -6,11 +6,6 @@ for messages_to_keep=0 and for the tool-tail absorption edge case, with
 the summary landing as framed human-role context.
 """
 
-from collections.abc import Iterator
-
-from langchain_core.language_models.fake_chat_models import (
-    GenericFakeChatModel,
-)
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -18,38 +13,13 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+from tests.agents.utils import recording_model
 from ursa.agents.chat_agent import ChatAgent
-
-
-def _message_stream(content: str) -> Iterator[AIMessage]:
-    while True:
-        yield AIMessage(
-            content=content,
-            usage_metadata={
-                "input_tokens": 1,
-                "output_tokens": 1,
-                "total_tokens": 2,
-            },
-        )
-
-
-def _recording_model(log: list) -> GenericFakeChatModel:
-    class _Recorder(GenericFakeChatModel):
-        def bind_tools(self, tools, **kwargs):
-            return self
-
-        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-            log.append(list(messages))
-            return super()._generate(
-                messages, stop=stop, run_manager=run_manager, **kwargs
-            )
-
-    return _Recorder(messages=_message_stream("summary of the chat"))
 
 
 def _agent(log: list, keep: int, workspace) -> ChatAgent:
     return ChatAgent(
-        llm=_recording_model(log),
+        llm=recording_model(log, "summary of the chat"),
         workspace=workspace,
         tokens_before_summarize=1,
         messages_to_keep=keep,

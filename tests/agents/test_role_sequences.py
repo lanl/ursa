@@ -13,6 +13,7 @@ from tests.agents.utils import (
     ScriptedRecordingChatModel,
     assert_requests_provider_valid,
     patch_materials_client,
+    simple_plan,
 )
 from ursa.agents.acquisition_agents import (
     ArxivAgent,
@@ -36,20 +37,6 @@ class StubMemory:
 
     def retrieve(self, query):
         return self._memories
-
-
-def _plan_factory(schema):
-    return schema(
-        steps=[
-            {
-                "name": "Add numbers",
-                "description": "Add 1 and 2.",
-                "requires_code": False,
-                "expected_outputs": ["sum"],
-                "success_criteria": ["sum equals 3"],
-            }
-        ]
-    )
 
 
 @pytest.mark.parametrize(
@@ -275,7 +262,7 @@ async def test_materials_project_agent_role_sequences(tmpdir, monkeypatch):
 
 
 async def test_planning_agent_role_sequences(tmpdir):
-    llm = RecordingChatModel(structured_factory=_plan_factory)
+    llm = RecordingChatModel(structured_factory=simple_plan)
     agent = PlanningAgent(llm=llm, workspace=tmpdir)
 
     await agent.ainvoke({"messages": [HumanMessage(content="make a plan")]})

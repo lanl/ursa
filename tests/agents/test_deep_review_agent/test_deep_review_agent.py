@@ -4,7 +4,11 @@ from pathlib import Path
 import pytest
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
-from tests.agents.utils import ToolReadyFakeChatModel
+from tests.agents.utils import (
+    ToolReadyFakeChatModel,
+    message_stream_with_usage,
+    recording_model,
+)
 from ursa.agents.deep_review_agent import DeepReviewAgent
 
 
@@ -47,21 +51,9 @@ class WorkspaceToolCallingFakeChatModel(ToolReadyFakeChatModel):
         return ChatResult(generations=[ChatGeneration(message=message)])
 
 
-def _message_stream(content: str) -> Iterator[AIMessage]:
-    while True:
-        yield AIMessage(
-            content=content,
-            usage_metadata={
-                "input_tokens": 1,
-                "output_tokens": 1,
-                "total_tokens": 2,
-            },
-        )
-
-
 @pytest.fixture
 def chat_model():
-    return ToolReadyFakeChatModel(messages=_message_stream("ok"))
+    return ToolReadyFakeChatModel(messages=message_stream_with_usage("ok"))
 
 
 async def test_deep_review_agent_ainvoke_without_hidden_web_search(
@@ -104,7 +96,9 @@ async def test_deep_review_agent_can_autonomously_use_workspace_tools(
     tmpdir: Path,
 ) -> None:
     Path(tmpdir, "notes.txt").write_text("cooling note", encoding="utf-8")
-    model = WorkspaceToolCallingFakeChatModel(messages=_message_stream("ok"))
+    model = WorkspaceToolCallingFakeChatModel(
+        messages=message_stream_with_usage("ok")
+    )
     agent = DeepReviewAgent(llm=model, workspace=tmpdir)
 
     result = await agent.ainvoke({
@@ -137,19 +131,6 @@ def test_deep_review_agent_exposes_web_tools_only_when_enabled(
     assert "run_osti_search" in with_web.tools
 
 
-def _recording_model(log: list) -> ToolReadyFakeChatModel:
-    """Fake model that records every request's message list."""
-
-    class _Recorder(ToolReadyFakeChatModel):
-        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-            log.append(list(messages))
-            return super()._generate(
-                messages, stop=stop, run_manager=run_manager, **kwargs
-            )
-
-    return _Recorder(messages=_message_stream("ok"))
-
-
 def _exploding_model(calls: list) -> ToolReadyFakeChatModel:
     """Fake model that raises on every call and counts the calls."""
 
@@ -158,7 +139,7 @@ def _exploding_model(calls: list) -> ToolReadyFakeChatModel:
             calls.append(len(messages))
             raise RuntimeError("provider exploded")
 
-    return _Exploder(messages=_message_stream("unused"))
+    return _Exploder(messages=message_stream_with_usage("unused"))
 
 
 def _system_prefix_ok(messages) -> bool:
@@ -199,7 +180,7 @@ async def test_phase_prompts_lead_requests_without_persisting_in_history(
     # Issue 294: from the second debate phase onward, requests carried
     # mid-conversation system messages, which langchain-anthropic rejects.
     log: list = []
-    agent = DeepReviewAgent(llm=_recording_model(log), workspace=tmpdir)
+    agent = DeepReviewAgent(llm=recording_model(log, "ok"), workspace=tmpdir)
 
     result = await agent.ainvoke(dict(_DD_QUESTION))
 
@@ -256,7 +237,7 @@ async def test_output_lists_match_real_iterations(tmpdir, iterations):
     # Each real iteration must produce exactly one entry per output list;
     # the previous >= 1 assertions were green with every entry doubled.
     agent = DeepReviewAgent(
-        llm=ToolReadyFakeChatModel(messages=_message_stream("ok")),
+        llm=ToolReadyFakeChatModel(messages=message_stream_with_usage("ok")),
         workspace=tmpdir,
     )
 
@@ -298,7 +279,7 @@ async def test_seeded_visited_sites_survive(tmpdir):
     # Guard (green before and after the fix): visited sites provided in
     # the input state survive to the returned state.
     agent = DeepReviewAgent(
-        llm=ToolReadyFakeChatModel(messages=_message_stream("ok")),
+        llm=ToolReadyFakeChatModel(messages=message_stream_with_usage("ok")),
         workspace=tmpdir,
     )
 
@@ -315,7 +296,7 @@ async def test_details_file_has_one_section_per_iteration(tmpdir):
     # exactly one section per real iteration, protecting the
     # finalize-summarize-print ordering against future rewiring.
     agent = DeepReviewAgent(
-        llm=ToolReadyFakeChatModel(messages=_message_stream("ok")),
+        llm=ToolReadyFakeChatModel(messages=message_stream_with_usage("ok")),
         workspace=tmpdir,
     )
 

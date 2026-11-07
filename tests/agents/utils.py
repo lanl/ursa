@@ -17,9 +17,48 @@ def message_stream(content: str) -> Iterator[AIMessage]:
         yield AIMessage(content=content)
 
 
+def message_stream_with_usage(content: str) -> Iterator[AIMessage]:
+    while True:
+        yield AIMessage(
+            content=content,
+            usage_metadata={
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "total_tokens": 2,
+            },
+        )
+
+
+def simple_plan(schema):
+    return schema(
+        steps=[
+            {
+                "name": "Add numbers",
+                "description": "Add 1 and 2.",
+                "requires_code": False,
+                "expected_outputs": ["sum"],
+                "success_criteria": ["sum equals 3"],
+            }
+        ]
+    )
+
+
 class ToolReadyFakeChatModel(GenericFakeChatModel):
     def bind_tools(self, tools, **kwargs):
         return self
+
+
+def recording_model(log: list, content: str) -> ToolReadyFakeChatModel:
+    """Record each request while yielding fresh, token-bearing responses."""
+
+    class _Recorder(ToolReadyFakeChatModel):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            log.append(list(messages))
+            return super()._generate(
+                messages, stop=stop, run_manager=run_manager, **kwargs
+            )
+
+    return _Recorder(messages=message_stream_with_usage(content))
 
 
 class RecordingChatModel(ToolReadyFakeChatModel):

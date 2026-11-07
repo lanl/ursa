@@ -5,7 +5,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import Field
 
-from tests.agents.utils import message_stream
+from tests.agents.utils import message_stream, simple_plan
 from ursa.agents.planning_agent import Plan, PlanningAgent
 
 
@@ -20,17 +20,7 @@ class FakePlanningChatModel(GenericFakeChatModel):
     def with_structured_output(self, schema, **kwargs):
         class _Runner:
             def invoke(self, messages):
-                return schema(
-                    steps=[
-                        {
-                            "name": "Add numbers",
-                            "description": "Add 1 and 2.",
-                            "requires_code": False,
-                            "expected_outputs": ["sum"],
-                            "success_criteria": ["sum equals 3"],
-                        }
-                    ]
-                )
+                return simple_plan(schema)
 
         return _Runner()
 
