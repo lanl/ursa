@@ -308,81 +308,15 @@ class AgentEloEnvironment(BaseEnvironment):
             path=[self.name],
         )
 
-    def _source(
-        self,
-        name: str,
-        *,
-        kind: str = "agent",
-    ) -> dict[str, Any]:
-        return {
-            "id": f"{self.name}.{name}",
-            "name": name,
-            "kind": kind,
-            "path": [
-                self.name,
-                name,
-            ],
-        }
-
     def _member_runtime_config(
         self,
         base_config: Mapping[str, Any] | None,
         member: EnvironmentMemberConfig,
     ) -> dict[str, Any] | None:
         """Attach stable Elo-member identity to nested agent/tool events."""
-
-        if base_config is None:
-            return None
-
-        member_id = f"{self.name}.{member.name}"
-
-        merged = dict(base_config)
-
-        base_metadata = merged.get("metadata")
-
-        metadata = (
-            dict(base_metadata)
-            if isinstance(
-                base_metadata,
-                Mapping,
-            )
-            else {}
+        return super()._member_runtime_config(
+            base_config, member, extra_tags=("elo_member",)
         )
-
-        metadata.update({
-            "environment_id": self.name,
-            "environment_member": (member.name),
-            "environment_member_id": (member_id),
-            "environment_member_role": (member.role),
-            "environment_member_path": [
-                self.name,
-                member.name,
-            ],
-            "agent": member.name,
-            "agent_id": member_id,
-        })
-
-        merged["metadata"] = metadata
-
-        base_tags = merged.get("tags")
-
-        if isinstance(base_tags, str):
-            tags = [base_tags]
-        else:
-            tags = list(base_tags) if base_tags else []
-
-        for tag in (
-            member.name,
-            member_id,
-            "environment_member",
-            "elo_member",
-        ):
-            if tag not in tags:
-                tags.append(tag)
-
-        merged["tags"] = tags
-
-        return merged
 
     def _topology_payload(
         self,
