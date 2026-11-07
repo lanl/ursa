@@ -141,16 +141,13 @@ def handle_rag_command(
             print(f"No RAG agents found in group '{cmd_args.group}'")  # noqa: T201
         return True
 
-    if command == "show-rag-agent":
-        show_rag_agent(cmd_args.name, cmd_args.group)
-        return True
-
-    if command == "delete-rag-agent":
-        delete_rag_agent(cmd_args.name, cmd_args.group)
-        return True
-
-    if command == "save-rag-agent":
-        save_rag_agent(cmd_args.name, cmd_args.group)
+    handlers = {
+        "show-rag-agent": show_rag_agent,
+        "delete-rag-agent": delete_rag_agent,
+        "save-rag-agent": save_rag_agent,
+    }
+    if command in handlers:
+        handlers[command](cmd_args.name, cmd_args.group)
         return True
 
     llm, embedding = _init_models(args, cmd_args, config)
