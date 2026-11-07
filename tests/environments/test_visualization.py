@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
+from tests.environments.test_environments import fake_llm
 from ursa import security
 from ursa.environments import (
     AgentSymposiumEnvironment,
@@ -25,15 +25,6 @@ from ursa.environments.visualization import (
 class Message:
     def __init__(self, text: str):
         self.text = text
-
-
-class ToolCapableFakeChatModel(FakeListChatModel):
-    def bind_tools(self, tools, *, tool_choice=None, **kwargs):
-        return self
-
-
-def fake_llm():
-    return ToolCapableFakeChatModel(responses=["unused"])
 
 
 class VisualMember:

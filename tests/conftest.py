@@ -3,12 +3,13 @@ from importlib import metadata
 import pytest
 from dotenv import load_dotenv
 from langchain_core.embeddings import FakeEmbeddings
-from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from pydantic import BaseModel
+
+from tests.agents.utils import ToolReadyFakeChatModel, message_stream
 
 
 def extraskip(extra: str, package: str = "ursa-ai") -> None:
@@ -65,11 +66,6 @@ def _load_dotenv():
     load_dotenv()
 
 
-def _message_stream(content: str):
-    while True:
-        yield AIMessage(content=content)
-
-
 def _fake_structured(schema):
     if isinstance(schema, type) and issubclass(schema, BaseModel):
         if "steps" in schema.model_fields:
@@ -95,7 +91,7 @@ def _fake_structured(schema):
     return {key: "stub" for key in annotations}
 
 
-class FakeChatModel(GenericFakeChatModel):
+class FakeChatModel(ToolReadyFakeChatModel):
     @property
     def model_name(self) -> str:
         return "fake-chat"
@@ -124,9 +120,6 @@ class FakeChatModel(GenericFakeChatModel):
             },
         )
         return ChatResult(generations=[ChatGeneration(message=message)])
-
-    def bind_tools(self, tools, **kwargs):
-        return self
 
     def with_structured_output(self, schema, **kwargs):
         output = _fake_structured(schema)
@@ -157,7 +150,7 @@ def _stub_model_init(monkeypatch, request):
         return
 
     def fake_init_chat_model(*args, **kwargs):
-        return FakeChatModel(messages=_message_stream("ok"))
+        return FakeChatModel(messages=message_stream("ok"))
 
     def fake_init_embeddings(*args, **kwargs):
         return FakeEmbeddingModel(size=12)
@@ -187,7 +180,7 @@ def _stub_model_init(monkeypatch, request):
 
 @pytest.fixture(scope="function")
 def chat_model():
-    model = FakeChatModel(messages=_message_stream("ok"))
+    model = FakeChatModel(messages=message_stream("ok"))
     model._testing_only_kwargs = {
         "model": "fake:chat",
         "max_tokens": 3000,
