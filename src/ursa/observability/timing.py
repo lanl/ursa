@@ -354,8 +354,10 @@ class _Agg:
 # ---------------------------------
 
 
-class PerToolTimer(BaseCallbackHandler):
-    """Times each tool call via callbacks; robust to decorator order."""
+class _TimerCallback(BaseCallbackHandler):
+    """Shared naming and duration recording for tool and graph callbacks."""
+
+    _fallback_name: str
 
     def __init__(self, agg: _Agg | None = None):
         self.agg = agg or _Agg()
@@ -373,54 +375,41 @@ class PerToolTimer(BaseCallbackHandler):
                     name = "/".join(map(str, sid))
                 elif sid is not None:
                     name = str(sid)
-            return name or "unknown_tool"
+            return name or self._fallback_name
         if isinstance(serialized, str):
             return serialized
-        return "unknown_tool"
+        return self._fallback_name
+
+    def _finish(self, run_id, succeeded: bool) -> None:
+        name, t0 = self._starts.pop(
+            run_id, (self._fallback_name, time.perf_counter())
+        )
+        self.agg.add(name, (time.perf_counter() - t0) * 1000.0, succeeded)
+
+
+class PerToolTimer(_TimerCallback):
+    """Times each tool call via callbacks; robust to decorator order."""
+
+    _fallback_name = "unknown_tool"
 
     def on_tool_start(self, serialized, input_str, *, run_id, **kwargs):
         name = self._name(serialized)
         self._starts[run_id] = (name, time.perf_counter())
 
     def on_tool_end(self, output, *, run_id, **kwargs):
-        name, t0 = self._starts.pop(
-            run_id, ("unknown_tool", time.perf_counter())
-        )
-        self.agg.add(name, (time.perf_counter() - t0) * 1000.0, True)
+        self._finish(run_id, True)
 
     def on_tool_error(self, error, *, run_id, **kwargs):
-        name, t0 = self._starts.pop(
-            run_id, ("unknown_tool", time.perf_counter())
-        )
-        self.agg.add(name, (time.perf_counter() - t0) * 1000.0, False)
+        self._finish(run_id, False)
 
 
-class PerRunnableTimer(BaseCallbackHandler):
+class PerRunnableTimer(_TimerCallback):
     """
     Times LangChain/LangGraph runnables (chains, graphs, nodes). You’ll usually
     see node names in `serialized.get('name')` or `serialized.get('id')`.
     """
 
-    def __init__(self, agg: _Agg | None = None):
-        self.agg = agg or _Agg()
-        self._starts: dict[Any, tuple[str, float]] = {}
-
-    def _name(self, serialized) -> str:
-        # serialized can be None, dict, str, or contain nested ids
-        if isinstance(serialized, dict):
-            name = serialized.get("name")
-            if not name:
-                sid = serialized.get("id")
-                if isinstance(sid, dict):
-                    name = sid.get("name") or sid.get("id")
-                elif isinstance(sid, (list, tuple)):
-                    name = "/".join(map(str, sid))
-                elif sid is not None:
-                    name = str(sid)
-            return name or "runnable"
-        if isinstance(serialized, str):
-            return serialized
-        return "runnable"
+    _fallback_name = "runnable"
 
     # Chains/graphs/nodes map onto these events:
     def on_chain_start(
@@ -476,12 +465,10 @@ class PerRunnableTimer(BaseCallbackHandler):
         self._starts[run_id] = (name, time.perf_counter())
 
     def on_chain_end(self, outputs, *, run_id, **kwargs):
-        name, t0 = self._starts.pop(run_id, ("runnable", time.perf_counter()))
-        self.agg.add(name, (time.perf_counter() - t0) * 1000.0, True)
+        self._finish(run_id, True)
 
     def on_chain_error(self, error, *, run_id, **kwargs):
-        name, t0 = self._starts.pop(run_id, ("runnable", time.perf_counter()))
-        self.agg.add(name, (time.perf_counter() - t0) * 1000.0, False)
+        self._finish(run_id, False)
 
 
 def _to_int(x, default=0):
