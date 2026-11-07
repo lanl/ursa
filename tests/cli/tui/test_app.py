@@ -466,7 +466,7 @@ async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
 
 
 @pytest.mark.parametrize("key", ["ctrl+c", "ctrl+l", "ctrl+q"])
-async def test_controls_during_active_work(app, monkeypatch, key):
+async def test_controls_during_active_work(app, notifications, key):
     started = asyncio.Event()
     release = asyncio.Event()
     finished = asyncio.Event()
@@ -478,12 +478,6 @@ async def test_controls_during_active_work(app, monkeypatch, key):
         return "Finished"
 
     app.runtime.run_agent = run_agent
-    notifications = []
-    monkeypatch.setattr(
-        app,
-        "notify",
-        lambda message, **kwargs: notifications.append((message, kwargs)),
-    )
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("w", "a", "i", "t", "enter")

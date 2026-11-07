@@ -983,18 +983,11 @@ async def test_model_command_switches_provider_and_model(app, model_dialog):
             ("openai (https://api.openai.com/v1)", "openai"),
             ("stale-provider (https://stale.example/v1)", "stale-provider"),
         ]
-        assert (
-            app.screen.query_one("#chat-model-label").tooltip
-            == (ModelScreen.FIELD_HELP["model"])
-        )
-        assert (
-            app.screen.query_one("#chat-model-provider-label").tooltip
-            == ModelScreen.FIELD_HELP["model-provider"]
-        )
-        assert (
-            app.screen.query_one("#chat-inference-provider-label").tooltip
-            == ModelScreen.FIELD_HELP["inference-provider"]
-        )
+        for field in ("model", "model-provider", "inference-provider"):
+            assert (
+                app.screen.query_one(f"#chat-{field}-label").tooltip
+                == ModelScreen.FIELD_HELP[field]
+            )
         assert app.screen.query_one("#chat-model-name", Select)._options == [
             ("None", ModelScreen.NONE_VALUE),
             ("gpt-5.4", "gpt-5.4"),
@@ -1107,15 +1100,8 @@ async def test_model_command_switches_provider_and_model(app, model_dialog):
 
 
 async def test_invalid_model_selection_notifies_without_closing_modal(
-    app, monkeypatch
+    app, monkeypatch, notifications
 ):
-    notifications = []
-    monkeypatch.setattr(
-        app,
-        "notify",
-        lambda message, **kwargs: notifications.append((message, kwargs)),
-    )
-
     def invalid_settings(*_args):
         raise ValueError("invalid model configuration")
 
@@ -1252,52 +1238,37 @@ inference_provider: openai
 async def test_yaml_keeps_unavailable_model_provider_visible(app, model_dialog):
     async with model_dialog() as pilot:
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
-        editor.text = """\
-model: custom-model
-model_provider: future_provider
-inference_provider: openai
-"""
-
-        await wait_for_yaml_debounce(pilot, editor=editor)
-
-        provider = app.screen.query_one("#chat-model-provider", Select)
-        assert provider.value == "future_provider"
-        assert (
-            "Not found: future_provider",
+        for index, name in enumerate((
             "future_provider",
-        ) in provider._options
-        assert app.screen.drafts["chat"].model_provider == "future_provider"
-
-        editor.text = """\
-model: custom-model
-model_provider: another_future_provider
-inference_provider: openai
-"""
-        await pilot.pause()
-        await wait_for_yaml_debounce(pilot)
-
-        assert provider.value == "another_future_provider"
-        assert (
-            "Not found: another_future_provider",
             "another_future_provider",
-        ) in provider._options
-        assert (
-            "Not found: future_provider",
-            "future_provider",
-        ) not in provider._options
-
-        editor.text = """\
-model: custom-model
-model_provider: openai
-inference_provider: openai
-"""
-        await pilot.pause()
-        await wait_for_yaml_debounce(pilot)
-
-        assert provider.value == "openai"
-        assert not any(
-            label.startswith("Not found:") for label, _ in provider._options
-        )
+            "openai",
+        )):
+            editor.text = (
+                "model: custom-model\n"
+                f"model_provider: {name}\n"
+                "inference_provider: openai\n"
+            )
+            if index == 0:
+                await wait_for_yaml_debounce(pilot, editor=editor)
+                provider = app.screen.query_one("#chat-model-provider", Select)
+            else:
+                await pilot.pause()
+                await wait_for_yaml_debounce(pilot)
+            assert provider.value == name
+            if name == "openai":
+                assert not any(
+                    label.startswith("Not found:")
+                    for label, _ in provider._options
+                )
+            else:
+                assert (f"Not found: {name}", name) in provider._options
+                if index == 0:
+                    assert app.screen.drafts["chat"].model_provider == name
+                else:
+                    assert (
+                        "Not found: future_provider",
+                        "future_provider",
+                    ) not in provider._options
 
 
 @pytest.mark.parametrize("kind", ["chat", "embedding"])
@@ -1654,14 +1625,9 @@ async def test_yaml_debounce_restarts_from_latest_edit(app, model_dialog):
         assert app.screen.drafts["chat"].model == "second-edit"
 
 
-async def test_invalid_yaml_blocks_model_accept(app, model_dialog, monkeypatch):
-    notifications = []
-    monkeypatch.setattr(
-        app,
-        "notify",
-        lambda message, **kwargs: notifications.append((message, kwargs)),
-    )
-
+async def test_invalid_yaml_blocks_model_accept(
+    app, model_dialog, notifications
+):
     async with model_dialog():
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = "model: [not valid"

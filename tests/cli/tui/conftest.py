@@ -16,6 +16,17 @@ def app(tmp_path):
 
 
 @pytest.fixture
+def notifications(app, monkeypatch):
+    received = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: received.append((message, kwargs)),
+    )
+    return received
+
+
+@pytest.fixture
 def model_discovery(monkeypatch):
     """Install a catalog provider without contacting a real model endpoint."""
 
