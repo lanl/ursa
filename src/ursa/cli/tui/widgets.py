@@ -2259,19 +2259,14 @@ class MessagesScreen(ModalScreen[None]):
             )
         return self._body()
 
-    def action_scroll_up(self) -> None:
+    def _scroll_line(self, direction: str) -> None:
+        """Move between agents in the tree or scroll the message log."""
         view = self._scroll_view()
-        if isinstance(view, LiveHierarchyTree):
-            view.action_cursor_up()
-        else:
-            view.action_scroll_up()
+        action = "cursor" if isinstance(view, LiveHierarchyTree) else "scroll"
+        getattr(view, f"action_{action}_{direction}")()
 
-    def action_scroll_down(self) -> None:
-        view = self._scroll_view()
-        if isinstance(view, LiveHierarchyTree):
-            view.action_cursor_down()
-        else:
-            view.action_scroll_down()
+    action_scroll_up = partialmethod(_scroll_line, "up")
+    action_scroll_down = partialmethod(_scroll_line, "down")
 
     async def action_scroll_home(self) -> None:
         if self._scroll_view() is not self._body():
