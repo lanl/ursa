@@ -68,7 +68,8 @@ class RecordingChatModel(ToolReadyFakeChatModel):
     covering plain and tool-bound ``invoke`` calls as well as
     ``with_structured_output`` invocations. ``response`` is returned for
     plain calls; ``structured_factory`` builds the object returned for
-    structured calls.
+    structured calls. An optional ``script`` supplies messages before falling
+    back to ``response``, for tests that exercise tool-call sequences.
     """
 
     messages: Iterator[AIMessage | str] = Field(
@@ -76,15 +77,16 @@ class RecordingChatModel(ToolReadyFakeChatModel):
     )
     calls: list[list[BaseMessage]] = Field(default_factory=list)
     response: str = "OK"
+    script: list = Field(default_factory=list)
     structured_factory: Callable[[type], Any] | None = None
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         self.calls.append(list(messages))
-        return ChatResult(
-            generations=[
-                ChatGeneration(message=AIMessage(content=self.response))
-            ]
-        )
+        if self.script:
+            message = self.script.pop(0)
+        else:
+            message = AIMessage(content=self.response)
+        return ChatResult(generations=[ChatGeneration(message=message)])
 
     def model_copy(self, update=None):
         return self
@@ -111,25 +113,6 @@ class RecordingChatModel(ToolReadyFakeChatModel):
                 return parsed
 
         return StructuredOutput()
-
-
-class ScriptedRecordingChatModel(RecordingChatModel):
-    """Recording model that pops scripted responses before the default.
-
-    Seed ``script`` with messages (for example ``AIMessage`` instances
-    carrying ``tool_calls``) to drive an agent's tool loop; once the
-    script is exhausted, the model falls back to ``response``.
-    """
-
-    script: list = Field(default_factory=list)
-
-    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        self.calls.append(list(messages))
-        if self.script:
-            message = self.script.pop(0)
-        else:
-            message = AIMessage(content=self.response)
-        return ChatResult(generations=[ChatGeneration(message=message)])
 
 
 def assert_requests_provider_valid(calls: list[list[BaseMessage]]) -> None:

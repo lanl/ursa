@@ -7,7 +7,7 @@ from langchain.tools import ToolException, tool
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 
-from tests.agents.utils import ScriptedRecordingChatModel
+from tests.agents.utils import RecordingChatModel
 from ursa.agents.chat_agent import ChatAgent
 
 
@@ -56,7 +56,7 @@ def test_chat_agent_preserves_openai_parallel_tool_setting(tmp_path, parallel):
 
 async def test_chat_agent_runs_independent_tool_calls_concurrently(tmp_path):
     """One tool-call turn uses LangGraph's concurrent ToolNode execution."""
-    model = ScriptedRecordingChatModel(
+    model = RecordingChatModel(
         script=[
             AIMessage(
                 content="",

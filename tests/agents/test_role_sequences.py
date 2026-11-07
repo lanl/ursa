@@ -10,7 +10,6 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from tests.agents.utils import (
     RecordingChatModel,
-    ScriptedRecordingChatModel,
     assert_requests_provider_valid,
     patch_materials_client,
     simple_plan,
@@ -131,7 +130,7 @@ def _tool_call_script(tool_name, args):
 
 
 async def test_chat_agent_tool_loop_role_sequences(tmpdir):
-    llm = ScriptedRecordingChatModel(
+    llm = RecordingChatModel(
         script=_tool_call_script("read_file", {"filename": "notes.txt"})
     )
     agent = ChatAgent(llm=llm, workspace=tmpdir)
@@ -145,7 +144,7 @@ async def test_chat_agent_tool_loop_role_sequences(tmpdir):
 
 
 async def test_execution_agent_tool_loop_role_sequences(tmpdir):
-    llm = ScriptedRecordingChatModel(
+    llm = RecordingChatModel(
         script=_tool_call_script("read_file", {"filename": "notes.txt"}),
         structured_factory=lambda schema: schema(
             is_complete=True, reason="Work complete."
