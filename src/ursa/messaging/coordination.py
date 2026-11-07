@@ -42,13 +42,10 @@ def message_group(
         candidates = paths
     elif selector == "@supervisor":
         candidates = [supervisor] if supervisor else []
-    elif selector == "@peers":
+    elif selector in {"@peers", "@reports"}:
+        supervisor_path = supervisor if selector == "@peers" else sender
         candidates = [
-            path for path in paths if path.rpartition("/")[0] == supervisor
-        ]
-    elif selector == "@reports":
-        candidates = [
-            path for path in paths if path.rpartition("/")[0] == sender
+            path for path in paths if path.rpartition("/")[0] == supervisor_path
         ]
     else:
         raise ValueError(f"Unknown message target group {target!r}")
