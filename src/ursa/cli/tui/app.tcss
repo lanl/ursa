@@ -195,12 +195,16 @@ ModelScreen SelectCurrent {
     margin-top: 1;
 }
 
-#messages-controls Button {
+#messages-controls Button,
+.coordination-navigation Button {
     width: 9;
     min-width: 9;
     height: 1;
     padding: 0 1;
     border: none;
+}
+
+#messages-controls Button {
     margin-right: 1;
 }
 
@@ -213,12 +217,16 @@ ModelScreen SelectCurrent {
     color: $accent;
 }
 
-#messages-footer {
+#messages-footer,
+#coordination-subagents-summary {
     height: 1;
     overflow: hidden hidden;
     text-overflow: ellipsis;
     color: $text-muted;
     text-style: italic;
+}
+
+#messages-footer {
     content-align: right middle;
 }
 
@@ -248,7 +256,8 @@ ModelScreen SelectCurrent {
 
 .hierarchy-message-route,
 .tool-call-preview,
-.agent-tool-preview {
+.agent-tool-preview,
+.edit-title {
     width: 1fr;
     height: 1;
     overflow: hidden hidden;
@@ -270,16 +279,12 @@ ModelScreen SelectCurrent {
     text-overflow: ellipsis;
 }
 
-.hierarchy-message-full {
+.hierarchy-message-full,
+.agent-tools,
+.agent-tool,
+.coordination-details,
+.coordination-actions {
     height: auto;
-}
-
-#coordination-subagents-summary {
-    height: 1;
-    color: $text-muted;
-    text-style: italic;
-    overflow: hidden hidden;
-    text-overflow: ellipsis;
 }
 
 #coordination-subagents-tree {
@@ -300,11 +305,6 @@ ModelScreen SelectCurrent {
     padding-top: 1;
     text-style: bold;
     color: $accent;
-}
-
-.agent-tools,
-.agent-tool {
-    height: auto;
 }
 
 .agent-tools-error {
@@ -454,13 +454,16 @@ ModelScreen SelectCurrent {
     border-left: thick $secondary;
 }
 
-.message-role {
+.message-role,
+.agent-tool-detail-title {
     height: 1;
     color: $text-muted;
     text-style: bold;
 }
 
-.message-body {
+.message-body,
+.event-summary,
+.queued-message-body {
     height: auto;
     background: transparent;
 }
@@ -501,11 +504,6 @@ AgentToolCard > .event-expand-hint {
     text-overflow: ellipsis;
 }
 
-.event-summary {
-    height: auto;
-    background: transparent;
-}
-
 .event-card-done {
     display: none;
     dock: right;
@@ -541,14 +539,18 @@ AgentToolCard > .event-expand-hint {
     text-style: italic;
 }
 
-.tool-call-title {
+.tool-call-title,
+.edit-group-title {
     height: 1;
     padding: 0 1;
     text-style: bold;
 }
 
 .tool-call-summary,
-.agent-tool-summary {
+.agent-tool-summary,
+.edit-header,
+.edit-outcome,
+.command-compact {
     height: 1;
     padding: 0 1;
 }
@@ -593,11 +595,6 @@ AgentToolCard > .event-expand-hint {
     text-style: bold;
 }
 
-.coordination-details,
-.coordination-actions {
-    height: auto;
-}
-
 .coordination-actions {
     margin: 0 1;
     padding-left: 1;
@@ -608,14 +605,6 @@ AgentToolCard > .event-expand-hint {
     height: 1;
     padding: 0 1;
     margin: 1 0;
-}
-
-.coordination-navigation Button {
-    width: 9;
-    min-width: 9;
-    height: 1;
-    padding: 0 1;
-    border: none;
 }
 
 .coordination-page {
@@ -634,19 +623,15 @@ AgentToolCard > .event-expand-hint {
     border-left: thick $accent-muted;
 }
 
-.agent-tool-detail-title {
-    height: 1;
-    color: $text-muted;
-    text-style: bold;
-}
-
 .agent-tool-task,
 .agent-tool-result {
     height: auto;
     margin-bottom: 1;
 }
 
-.tool-call-details {
+.tool-call-details,
+.command-source,
+.command-output {
     height: auto;
     padding: 0 1;
 }
@@ -681,24 +666,6 @@ AgentToolCard > .event-expand-hint {
     background: transparent;
 }
 
-.edit-group-title {
-    height: 1;
-    padding: 0 1;
-    text-style: bold;
-}
-
-.edit-header {
-    height: 1;
-    padding: 0 1;
-}
-
-.edit-title {
-    width: 1fr;
-    height: 1;
-    overflow: hidden hidden;
-    text-overflow: ellipsis;
-}
-
 .edit-counts {
     width: auto;
     height: 1;
@@ -713,34 +680,22 @@ AgentToolCard > .event-expand-hint {
     text-style: italic;
 }
 
-.edit-outcome {
-    height: 1;
-    padding: 0 1;
-}
-
 .edit-diff {
     margin-left: 2;
     border: round $border;
     background: $surface;
 }
 
-.command-source,
-.command-output {
-    height: auto;
-    padding: 0 1;
-}
-
-.command-compact {
-    height: 1;
-    padding: 0 1;
-}
-
-.command-compact-state {
+.command-compact-state,
+.tool-message-mark,
+.activity-spinner {
     width: 3;
     color: $primary;
 }
 
-.command-compact-text {
+.command-compact-text,
+.tool-message-body,
+.activity-text {
     width: 1fr;
 }
 
@@ -796,11 +751,6 @@ RunCommandCard.command-expanded > .event-expand-hint {
     text-style: italic;
 }
 
-.queued-message-body {
-    height: auto;
-    background: transparent;
-}
-
 .queued-message.delivery-failed {
     border-left: thick $error-muted;
     opacity: 80%;
@@ -825,26 +775,8 @@ RunCommandCard.command-expanded > .event-expand-hint {
     color: $text-muted;
 }
 
-.tool-message-mark {
-    width: 3;
-    color: $primary;
-}
-
-.tool-message-body {
-    width: 1fr;
-}
-
 .activity.activity-after-user {
     margin-top: 1;
-}
-
-.activity-spinner {
-    width: 3;
-    color: $primary;
-}
-
-.activity-text {
-    width: 1fr;
 }
 
 .activity-done-mark {
