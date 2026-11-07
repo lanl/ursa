@@ -436,27 +436,7 @@ def _choose_n_distinct_styles(n: int) -> list[str]:
     return out
 
 
-def _style_strength_phrase(level: str) -> str:
-    return {
-        "subtle": "Include gentle references to",
-        "clear": "Make the influence of",
-        "overt": "Make the aesthetic of",
-    }.get(level, "Make the aesthetic of")
-
-
 SUPPORTED_SIZES = {"1024x1024", "1024x1536", "1536x1024", "auto"}
-
-
-def _size_for(aspect: str, mode: str) -> str:
-    """
-    Prefer cinematic rectangles for scenes; keep square for logos.
-    Returns only API-supported sizes.
-    """
-    if aspect == "wide":
-        return "1536x1024"
-    if aspect == "tall":
-        return "1024x1536"
-    return "1024x1024"
 
 
 def _normalize_size(size: Optional[str], aspect: str, mode: str) -> str:
@@ -464,7 +444,11 @@ def _normalize_size(size: Optional[str], aspect: str, mode: str) -> str:
     If size is None or invalid, pick a sensible API-supported default based on aspect/mode.
     """
     if not size or size not in SUPPORTED_SIZES:
-        return _size_for(aspect, mode)
+        if aspect == "wide":
+            return "1536x1024"
+        if aspect == "tall":
+            return "1024x1536"
+        return "1024x1024"
     return size
 
 
@@ -598,7 +582,11 @@ def _build_scene_prompt(
     # Open aperture => slightly broader palette choices (still guided)
     palette_rule = palette or random.choice(PALETTES_SCENE)
 
-    style_strength = _style_strength_phrase(style_intensity)
+    style_strength = {
+        "subtle": "Include gentle references to",
+        "clear": "Make the influence of",
+        "overt": "Make the aesthetic of",
+    }.get(style_intensity, "Make the aesthetic of")
 
     objects_pool = (
         STYLE_OBJECTS.get(style_slug)

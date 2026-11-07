@@ -72,14 +72,6 @@ except Exception:
     _HAS_LP = False
 
 
-def _load_scipy_linprog():
-    try:
-        from scipy.optimize import linprog
-    except ImportError:
-        return None
-    return linprog
-
-
 # =========================
 # Parsing & classification
 # =========================
@@ -782,7 +774,10 @@ def _solve_with_highs_lp(
     Notes:
         This route supports only continuous variables and linear relational constraints.
     """
-    linprog = _load_scipy_linprog()
+    try:
+        from scipy.optimize import linprog
+    except ImportError:
+        linprog = None
     if linprog is None:
         return "SciPy not installed. `pip install scipy` to use the HiGHS LP backend."
     try:

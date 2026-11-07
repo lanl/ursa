@@ -53,14 +53,6 @@ def _require_numpy():
     return np
 
 
-def _optional_gaussian_kde():
-    try:
-        from scipy.stats import gaussian_kde  # type: ignore
-    except ImportError:
-        return None
-    return gaussian_kde
-
-
 def compute_llm_wall_seconds(payload: dict) -> float:
     evs = payload.get("llm_events") or []
     intervals = []
@@ -579,7 +571,10 @@ def plot_token_kde(
     """
     plt = _require_pyplot()
     np = _require_numpy()
-    gaussian_kde = _optional_gaussian_kde()
+    try:
+        from scipy.stats import gaussian_kde  # type: ignore
+    except ImportError:
+        gaussian_kde = None
 
     # categories & pretty labels (skip empty series automatically)
     order = [(key, key.replace("_", " ")) for key in _TOKEN_CATEGORIES]

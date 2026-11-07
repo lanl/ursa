@@ -29,40 +29,6 @@ def _optional_dependency_error(package: str, *, utility: str) -> ImportError:
     )
 
 
-def _require_matplotlib():
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.dates as mdates
-        import matplotlib.pyplot as plt
-    except ImportError as exc:
-        raise _optional_dependency_error(
-            "matplotlib", utility="Metrics session chart generation"
-        ) from exc
-    return plt, mdates
-
-
-def _require_pandas():
-    try:
-        import pandas as pd
-    except ImportError as exc:
-        raise _optional_dependency_error(
-            "pandas", utility="Metrics session DataFrame/CSV export"
-        ) from exc
-    return pd
-
-
-def _require_plotly_express():
-    try:
-        import plotly.express as px
-    except ImportError as exc:
-        raise _optional_dependency_error(
-            "plotly", utility="Interactive metrics session timeline"
-        ) from exc
-    return px
-
-
 def _dt(x: str) -> datetime:
     return datetime.fromisoformat(str(x).replace("Z", "+00:00"))
 
@@ -192,7 +158,16 @@ def plot_thread_timeline(
       • Exact bounds: xlim is precisely first start → last end
       • Legend outside bars: compact legend drawn above the axes
     """
-    plt, mdates = _require_matplotlib()
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.dates as mdates
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise _optional_dependency_error(
+            "matplotlib", utility="Metrics session chart generation"
+        ) from exc
     if not runs:
         raise ValueError("No runs provided for timeline")
 
@@ -343,7 +318,12 @@ def plot_thread_timeline(
 
 
 def runs_to_dataframe(runs: list[RunRecord]) -> pd.DataFrame:
-    pd = _require_pandas()
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise _optional_dependency_error(
+            "pandas", utility="Metrics session DataFrame/CSV export"
+        ) from exc
     rows = [
         {
             "thread_id": r.thread_id,
@@ -367,7 +347,12 @@ def plot_thread_timeline_interactive(
     *,
     group_by: str = "agent",  # "agent" (few lanes) or "run" (one lane per run)
 ) -> str:
-    px = _require_plotly_express()
+    try:
+        import plotly.express as px
+    except ImportError as exc:
+        raise _optional_dependency_error(
+            "plotly", utility="Interactive metrics session timeline"
+        ) from exc
 
     if not runs:
         raise ValueError("No runs provided")
