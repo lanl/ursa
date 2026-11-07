@@ -349,19 +349,16 @@ def build_agent_tools(agent: BaseAgent) -> list[BaseTool]:
                 f"{path}{' (self)' if path == agent.agent_path else ''}"
                 for path in paths
             )
-        entries = []
-        for member in agent.root_agent.walk_agents():
-            suffix = " (self)" if member is agent else ""
-            entries.append(f"{member.agent_path}{suffix}")
-        return "\n".join(entries)
+        return "\n".join(
+            f"{member.agent_path}{' (self)' if member is agent else ''}"
+            for member in agent.root_agent.walk_agents()
+        )
 
     return [spawn_agent, send_message, wait_for, stop_agent, list_agents]
 
 
 def _stringify_result(result: Any) -> str:
-    if isinstance(result, str):
-        return result
-    return repr(result)
+    return result if isinstance(result, str) else repr(result)
 
 
 def _completed_local_wait_targets(
