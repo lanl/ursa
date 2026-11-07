@@ -127,16 +127,12 @@ def test_planning_executor_workflow_propagates_callbacks(
             executor_calls.append(config)
             return {"messages": [SimpleNamespace(text=f"done for {prompt}")]}
 
-    class DummyConsole:
-        def status(self, *_args, **_kwargs):
-            return nullcontext()
-
-        def print(self, *_args, **_kwargs):
-            return None
-
     monkeypatch.setattr(
         "ursa.workflows.planning_execution_workflow.console",
-        DummyConsole(),
+        SimpleNamespace(
+            status=lambda *_args, **_kwargs: nullcontext(),
+            print=lambda *_args, **_kwargs: None,
+        ),
     )
     monkeypatch.setattr(
         "ursa.workflows.planning_execution_workflow.render_plan_steps_rich",
