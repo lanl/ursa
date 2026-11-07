@@ -3,6 +3,7 @@
 """Plan generation and review event cards."""
 
 from collections.abc import Sequence
+from functools import partialmethod
 from typing import Any
 
 from textual.app import ComposeResult
@@ -47,27 +48,21 @@ class PlanCard(EventCard):
         self._frame = (self._frame + 1) % len(self.SPINNER_FRAMES)
         self.refresh_content()
 
-    def _resume_spinner(self) -> None:
+    def _set_pending_state(self, state: str) -> None:
+        self.state = state
         if self._spinner_timer is not None:
             self._spinner_timer.resume()
-
-    def set_drafting(self) -> None:
-        self.state = "drafting"
-        self._resume_spinner()
         self.refresh_content()
+
+    set_drafting = partialmethod(_set_pending_state, "drafting")
 
     def set_plan(self, steps: Sequence[Any]) -> None:
         self.steps = [
             _plan_step_text(index, step) for index, step in enumerate(steps, 1)
         ]
-        self.state = "reviewing"
-        self._resume_spinner()
-        self.refresh_content()
+        self._set_pending_state("reviewing")
 
-    def set_reviewing(self) -> None:
-        self.state = "reviewing"
-        self._resume_spinner()
-        self.refresh_content()
+    set_reviewing = partialmethod(_set_pending_state, "reviewing")
 
     def finish_review(self, approved: bool, reason: str = "") -> None:
         self.state = "complete" if approved else "revision_needed"
