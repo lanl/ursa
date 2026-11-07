@@ -1,11 +1,11 @@
 from collections.abc import Iterator
+from unittest.mock import Mock
 
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import Field
 
-from tests.agents.utils import message_stream, simple_plan
+from tests.agents.utils import RecordingChatModel, simple_plan
 from ursa.agents.planning_agent import Plan, PlanningAgent
 
 
@@ -49,31 +49,6 @@ async def test_planning_agent_creates_structured_plan(tmpdir):
     assert getattr(result["messages"][-1], "content", None)
 
 
-class EmptyReflectionFakeChatModel(GenericFakeChatModel):
-    def __init__(self, plan: Plan):
-        super().__init__(messages=message_stream(""))
-        object.__setattr__(self, "plan", plan)
-        object.__setattr__(self, "structured_invocations", 0)
-
-    def with_structured_output(self, schema):
-        model = self
-
-        class StructuredOutput:
-            def invoke(self, messages):
-                object.__setattr__(
-                    model,
-                    "structured_invocations",
-                    model.structured_invocations + 1,
-                )
-                if model.structured_invocations > 1:
-                    raise AssertionError(
-                        "empty reflection should terminate planning without regenerating"
-                    )
-                return model.plan
-
-        return StructuredOutput()
-
-
 async def test_planning_agent_treats_empty_reflection_as_approval(tmpdir):
     plan = Plan.model_validate({
         "steps": [
@@ -86,8 +61,9 @@ async def test_planning_agent_treats_empty_reflection_as_approval(tmpdir):
             }
         ]
     })
+    plan_factory = Mock(return_value=plan)
     planning_agent = PlanningAgent(
-        llm=EmptyReflectionFakeChatModel(plan),
+        llm=RecordingChatModel(response="", structured_factory=plan_factory),
         workspace=tmpdir,
         max_reflection_steps=1,
     )
@@ -98,31 +74,7 @@ async def test_planning_agent_treats_empty_reflection_as_approval(tmpdir):
 
     assert result["plan"] == plan
     assert result["messages"][-1].content == "[APPROVED]"
-
-
-class RecordingPlannerChatModel(FakePlanningChatModel):
-    """Fake chat model that records the messages of every planner LLM call."""
-
-    calls: list = Field(default_factory=list)
-
-    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        self.calls.append(list(messages))
-        return ChatResult(
-            generations=[
-                ChatGeneration(message=AIMessage(content="[APPROVED]"))
-            ]
-        )
-
-    def with_structured_output(self, schema, **kwargs):
-        runner = super().with_structured_output(schema, **kwargs)
-        model = self
-
-        class StructuredOutput:
-            def invoke(self, messages, config=None):
-                model.calls.append(list(messages))
-                return runner.invoke(messages)
-
-        return StructuredOutput()
+    plan_factory.assert_called_once_with(Plan)
 
 
 class RecordingPlanningChatModel(GenericFakeChatModel):
@@ -156,7 +108,9 @@ class RecordingPlanningChatModel(GenericFakeChatModel):
 
 async def test_planner_preserves_history_without_assistant_prefill(tmpdir):
     """Retain the request and drafted plan while sending provider-valid calls."""
-    llm = RecordingPlannerChatModel()
+    llm = RecordingChatModel(
+        response="[APPROVED]", structured_factory=simple_plan
+    )
     planning_agent = PlanningAgent(
         llm=llm, workspace=tmpdir, max_reflection_steps=1
     )
