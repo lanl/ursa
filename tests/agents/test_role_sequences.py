@@ -125,35 +125,37 @@ def _tool_call_script(tool_name, args):
     ]
 
 
-async def test_chat_agent_tool_loop_role_sequences(tmpdir):
-    llm = RecordingChatModel(
-        script=_tool_call_script("read_file", {"filename": "notes.txt"})
-    )
-    agent = ChatAgent(llm=llm, workspace=tmpdir)
-
-    await agent.ainvoke(agent.format_query("Read my notes."))
-
-    assert_requests_provider_valid(llm.calls)
-    assert any(call[-1].type == "tool" for call in llm.calls), (
-        "expected a post-tool re-entry request ending on a tool message"
-    )
-
-
-async def test_execution_agent_tool_loop_role_sequences(tmpdir):
-    llm = RecordingChatModel(
-        script=_tool_call_script("read_file", {"filename": "notes.txt"}),
-        structured_factory=lambda schema: schema(
+@pytest.mark.parametrize(
+    ("agent_class", "prompt", "uses_tool"),
+    [
+        (ChatAgent, "Read my notes.", True),
+        (ExecutionAgent, "read the notes file", True),
+        (ExecutionAgent, "say hello", False),
+    ],
+)
+async def test_tool_agent_role_sequences(
+    tmpdir, agent_class, prompt, uses_tool
+):
+    options = {}
+    if uses_tool:
+        options["script"] = _tool_call_script(
+            "read_file", {"filename": "notes.txt"}
+        )
+    if agent_class is ExecutionAgent:
+        options["structured_factory"] = lambda schema: schema(
             is_complete=True, reason="Work complete."
-        ),
-    )
-    agent = ExecutionAgent(llm=llm, workspace=tmpdir)
+        )
+    llm = RecordingChatModel(**options)
+    agent = agent_class(llm=llm, workspace=tmpdir)
 
-    await agent.ainvoke("read the notes file")
+    inputs = agent.format_query(prompt) if agent_class is ChatAgent else prompt
+    await agent.ainvoke(inputs)
 
     assert_requests_provider_valid(llm.calls)
-    assert any(call[-1].type == "tool" for call in llm.calls), (
-        "expected a post-tool re-entry request ending on a tool message"
-    )
+    if uses_tool:
+        assert any(call[-1].type == "tool" for call in llm.calls), (
+            "expected a post-tool re-entry request ending on a tool message"
+        )
 
 
 def _optimization_factory(schema):
@@ -301,16 +303,3 @@ def test_invariant_rejects_mid_conversation_system_messages():
 
     with pytest.raises(AssertionError, match="after the leading"):
         assert_requests_provider_valid([mid_list_system])
-
-
-async def test_execution_agent_role_sequences(tmpdir):
-    llm = RecordingChatModel(
-        structured_factory=lambda schema: schema(
-            is_complete=True, reason="Work complete."
-        )
-    )
-    agent = ExecutionAgent(llm=llm, workspace=tmpdir)
-
-    await agent.ainvoke("say hello")
-
-    assert_requests_provider_valid(llm.calls)
