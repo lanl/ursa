@@ -1401,16 +1401,7 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
                 config.get("configurable", {}).get("thread_id", self.thread_id)
             )
             result = prune_sqlite_checkpoints(checkpointer, thread_id)
-            if result.pruned:
-                logger.info(
-                    "Pruned %d checkpoints and %d writes for thread %s "
-                    "(%d -> %d bytes)",
-                    result.checkpoints_deleted,
-                    result.writes_deleted,
-                    thread_id,
-                    result.size_before,
-                    result.size_after,
-                )
+            self._log_checkpoint_pruning(result, thread_id)
         except Exception:
             # Retention is maintenance. It must not convert a successful agent
             # result into a failed invocation.
@@ -1433,18 +1424,22 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
                 config.get("configurable", {}).get("thread_id", self.thread_id)
             )
             result = await aprune_sqlite_checkpoints(checkpointer, thread_id)
-            if result.pruned:
-                logger.info(
-                    "Pruned %d checkpoints and %d writes for thread %s "
-                    "(%d -> %d bytes)",
-                    result.checkpoints_deleted,
-                    result.writes_deleted,
-                    thread_id,
-                    result.size_before,
-                    result.size_after,
-                )
+            self._log_checkpoint_pruning(result, thread_id)
         except Exception:
             logger.warning("Checkpoint pruning failed", exc_info=True)
+
+    @staticmethod
+    def _log_checkpoint_pruning(result, thread_id: str) -> None:
+        if result.pruned:
+            logger.info(
+                "Pruned %d checkpoints and %d writes for thread %s "
+                "(%d -> %d bytes)",
+                result.checkpoints_deleted,
+                result.writes_deleted,
+                thread_id,
+                result.size_before,
+                result.size_after,
+            )
 
     def __call__(self, inputs: InputLike, /, **kwargs: Any) -> Any:
         """Specify calling behavior for class instance."""
