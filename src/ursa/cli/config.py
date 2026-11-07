@@ -79,6 +79,9 @@ def _strip_blank_optional_strings(value: Any) -> str | Any | None:
 
 
 APIKey = SecretReference | SecretStr
+StrippedOptionalString = Annotated[
+    str | None, AfterValidator(_strip_blank_optional_strings)
+]
 
 
 def _editable_values(model: BaseModel, *required: str) -> dict[str, Any]:
@@ -112,9 +115,7 @@ class InferenceProviderConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    base_url: Annotated[
-        str | None, AfterValidator(_strip_blank_optional_strings)
-    ] = None
+    base_url: StrippedOptionalString = None
     """Base URL for model API access"""
 
     api_key: APIKey | None = None
@@ -158,21 +159,15 @@ class ModelConfig(BaseModel):
     model: str
     """Model name."""
 
-    model_provider: Annotated[
-        str | None, AfterValidator(_strip_blank_optional_strings)
-    ] = None
+    model_provider: StrippedOptionalString = None
     """LangChain model provider."""
 
-    base_url: Annotated[
-        str | None, AfterValidator(_strip_blank_optional_strings)
-    ] = None
+    base_url: StrippedOptionalString = None
     """Base URL for model API access"""
 
     api_key: APIKey | None = None
 
-    inference_provider: Annotated[
-        str | None, AfterValidator(_strip_blank_optional_strings)
-    ] = None
+    inference_provider: StrippedOptionalString = None
     """Optional named inference provider to inherit shared settings from."""
 
     ssl_verify: bool = True
