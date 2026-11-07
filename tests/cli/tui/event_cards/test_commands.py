@@ -15,6 +15,16 @@ from ursa.cli.tui.widgets import ActivityIndicator
 from ursa.util.events import DEFAULT_EVENT_NAME
 
 
+async def _command_event(turn, phase, query, command_id, **details):
+    await turn.event({
+        "tool": "run_command",
+        "phase": phase,
+        "query": query,
+        "_command_id": command_id,
+        **details,
+    })
+
+
 def test_long_command_preview_keeps_top_and_bottom_eight_lines():
     command = "\n".join(f"line {index}" for index in range(1, 26))
 
@@ -32,12 +42,7 @@ async def test_overlapping_commands_stay_compact_and_complete_independently(
 ):
     async with event_turn("run both", size=(100, 36)) as (pilot, turn):
         for command_id, query in (("one", "sleep 1"), ("two", "sleep 2")):
-            await turn.event({
-                "tool": "run_command",
-                "phase": "start",
-                "query": query,
-                "_command_id": command_id,
-            })
+            await _command_event(turn, "start", query, command_id)
         await pilot.pause()
 
         cards = list(turn.query(RunCommandCard))
@@ -48,14 +53,9 @@ async def test_overlapping_commands_stay_compact_and_complete_independently(
             for card in cards
         )
 
-        await turn.event({
-            "tool": "run_command",
-            "phase": "end",
-            "query": "sleep 1",
-            "_command_id": "one",
-            "returncode": 0,
-            "result": "",
-        })
+        await _command_event(
+            turn, "end", "sleep 1", "one", returncode=0, result=""
+        )
         await pilot.pause()
         await assert_eventually(pilot, lambda: cards[0].completed)
         assert cards[0].returncode == 0
@@ -102,19 +102,10 @@ async def test_identical_concurrent_commands_are_correlated_by_run_id(
 
 async def test_command_completion_finishes_pending_safety_indicator(event_turn):
     async with event_turn("run it", size=(100, 36)) as (pilot, turn):
-        await turn.event({
-            "tool": "run_command",
-            "phase": "start",
-            "query": "uptime",
-            "_command_id": "uptime",
-        })
-        await turn.event({
-            "tool": "run_command",
-            "phase": "end",
-            "query": "uptime",
-            "_command_id": "uptime",
-            "result": "up 10 days",
-        })
+        await _command_event(turn, "start", "uptime", "uptime")
+        await _command_event(
+            turn, "end", "uptime", "uptime", result="up 10 days"
+        )
         await pilot.pause()
 
         safety = turn.query_one(CommandSafetyIndicator)
@@ -126,27 +117,12 @@ async def test_solitary_command_after_overlap_returns_to_detailed_layout(
 ):
     async with event_turn("run commands", size=(100, 36)) as (pilot, turn):
         for command_id in ("one", "two"):
-            await turn.event({
-                "tool": "run_command",
-                "phase": "start",
-                "query": command_id,
-                "_command_id": command_id,
-            })
+            await _command_event(turn, "start", command_id, command_id)
         for command_id in ("one", "two"):
-            await turn.event({
-                "tool": "run_command",
-                "phase": "end",
-                "query": command_id,
-                "_command_id": command_id,
-                "returncode": 0,
-                "result": "done",
-            })
-        await turn.event({
-            "tool": "run_command",
-            "phase": "start",
-            "query": "three",
-            "_command_id": "three",
-        })
+            await _command_event(
+                turn, "end", command_id, command_id, returncode=0, result="done"
+            )
+        await _command_event(turn, "start", "three", "three")
         await pilot.pause()
 
         first, second, third = turn.query(RunCommandCard)
