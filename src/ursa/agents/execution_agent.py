@@ -326,8 +326,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         events = self.events(config)
         new_state.setdefault("symlinkdir", {})
 
-        full_overwrite = False
-
         # 1.5) Check message history length, summarize, and patch dangling tool calls.
         new_state, full_overwrite = self.prepare_messages_context(
             new_state, system_prompt=self.executor_prompt
@@ -429,7 +427,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         """
         new_state = deepcopy(state)
         events = self.events(config)
-        full_overwrite = False
 
         new_state, full_overwrite = self.prepare_messages_context(
             new_state, system_prompt=self.executor_prompt
@@ -513,7 +510,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         """
         new_state = deepcopy(state)
         events = self.events(config)
-        full_overwrite = False
 
         # 0) Check message history length, summarize, and patch dangling tool calls.
         new_state, full_overwrite = self.prepare_messages_context(

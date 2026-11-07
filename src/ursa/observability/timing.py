@@ -471,9 +471,7 @@ class PerRunnableTimer(_TimerCallback):
 
 def _to_int(x, default=0):
     try:
-        if isinstance(x, (int,)):
-            return int(x)
-        if isinstance(x, float):
+        if isinstance(x, (int, float)):
             return int(x)
         if isinstance(x, str):
             # handles "340" or "340.0"

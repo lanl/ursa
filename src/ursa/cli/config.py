@@ -972,10 +972,7 @@ def deep_interp_env(x: dict[str, Any] | str | Any):
     """Interpolate all environment variables in stored keys"""
     if isinstance(x, dict):
         return {k: deep_interp_env(v) for k, v in x.items()}
-    elif isinstance(x, str):
-        return interpolate_env(x)
-    else:
-        return x
+    return interpolate_env(x) if isinstance(x, str) else x
 
 
 def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
