@@ -55,17 +55,12 @@ async def test_chat_agent_runs_independent_tool_calls_concurrently(tmp_path):
                 content="",
                 tool_calls=[
                     {
-                        "name": "first_independent_action",
+                        "name": f"{name}_independent_action",
                         "args": {},
-                        "id": "first",
+                        "id": name,
                         "type": "tool_call",
-                    },
-                    {
-                        "name": "second_independent_action",
-                        "args": {},
-                        "id": "second",
-                        "type": "tool_call",
-                    },
+                    }
+                    for name in ("first", "second")
                 ],
             ),
             AIMessage(content="Both independent actions completed."),
