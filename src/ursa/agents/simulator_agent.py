@@ -134,18 +134,13 @@ class SimulatorAgent(BaseAgent):
 
         self.documenter.remove_tool(["run_command", "write_code"])
 
-        if not self.use_web:
-            self.documenter.remove_tool([
-                "run_web_search",
-                "run_osti_search",
-                "run_arxiv_search",
-            ])
-        if not self.use_web:
-            self.runner.remove_tool([
-                "run_web_search",
-                "run_osti_search",
-                "run_arxiv_search",
-            ])
+        for role in ("documenter", "runner"):
+            if not self.use_web:
+                getattr(self, role).remove_tool([
+                    "run_web_search",
+                    "run_osti_search",
+                    "run_arxiv_search",
+                ])
 
         if self.embedding:
             self.rag_agent = RAGAgent(
@@ -239,20 +234,14 @@ class SimulatorAgent(BaseAgent):
                 events = AgentEvents(
                     agent=self.name, config=self.build_config()
                 )
-                events.emit(
-                    "Primary recap failed",
-                    stage="recap",
-                    phase="error",
-                    error_type=type(ee).__name__,
-                    error=str(ee),
-                )
-                events.emit(
-                    "Fallback recap failed",
-                    stage="recap",
-                    phase="error",
-                    error_type=type(e).__name__,
-                    error=str(e),
-                )
+                for label, error in (("Primary", ee), ("Fallback", e)):
+                    events.emit(
+                        f"{label} recap failed",
+                        stage="recap",
+                        phase="error",
+                        error_type=type(error).__name__,
+                        error=str(error),
+                    )
 
         updated_messages = [*state["messages"], response]
 

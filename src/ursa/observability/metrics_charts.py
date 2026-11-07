@@ -653,6 +653,23 @@ def plot_token_kde(
     return _save_chart(plt, fig, out_path, pad_inches=0.02)
 
 
+def _annotate_rate_bars(
+    ax, bars, *, fontsize, number_format=",.2f", positive_only=True
+):
+    """Label rate bars with the caller's precision and visibility policy."""
+    for rect in bars:
+        h = rect.get_height()
+        if not positive_only or h > 0:
+            ax.text(
+                rect.get_x() + rect.get_width() / 2,
+                h,
+                format(h, number_format),
+                ha="center",
+                va="bottom",
+                fontsize=fontsize,
+            )
+
+
 def plot_token_rates_bar(
     totals: dict[str, int],
     llm_seconds: float,
@@ -754,20 +771,14 @@ def plot_token_rates_bar(
     )
 
     # annotate bars (top center)
-    def _annotate(bars):
-        for b in bars:
-            h = b.get_height()
-            ax.text(
-                b.get_x() + b.get_width() / 2,
-                h,
-                f"{h:.2f}",
-                ha="center",
-                va="bottom",
-                fontsize="x-small",
-            )
-
-    _annotate(bars1)
-    _annotate(bars2)
+    for bars in (bars1, bars2):
+        _annotate_rate_bars(
+            ax,
+            bars,
+            fontsize="x-small",
+            number_format=".2f",
+            positive_only=False,
+        )
 
     # header + subtitle
     header_y = 0.985
@@ -903,17 +914,7 @@ def plot_token_rates_by_model(
         )
 
         for bx in (b1, b2):
-            for rect in bx:
-                h = rect.get_height()
-                if h > 0:
-                    ax.text(
-                        rect.get_x() + rect.get_width() / 2,
-                        h,
-                        f"{h:,.2f}",
-                        ha="center",
-                        va="bottom",
-                        fontsize=8,
-                    )
+            _annotate_rate_bars(ax, bx, fontsize=8)
 
         ax.set_xticks(x, xlabels)
         ax.set_ylabel("tokens / second")
@@ -1119,17 +1120,7 @@ def plot_tps_by_agent_grouped(
     )
 
     for bars in (b1, b2):
-        for rect in bars:
-            h = rect.get_height()
-            if h > 0:
-                ax.text(
-                    rect.get_x() + rect.get_width() / 2,
-                    h,
-                    f"{h:,.2f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize="x-small",
-                )
+        _annotate_rate_bars(ax, bars, fontsize="x-small")
 
     ax.set_xticks(x)
     ax.set_xticklabels(agents, rotation=28, ha="right")
