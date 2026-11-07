@@ -107,32 +107,21 @@ def _prune_statements(thread_id: str) -> Iterator[tuple[Any, ...]]:
         """,
         (thread_id,),
     )
-    yield (
-        f"""
-        DELETE FROM writes
+    delete_rows = """
+        DELETE FROM {table}
         WHERE thread_id = ?
           AND NOT EXISTS (
               SELECT 1
-              FROM {_KEEP_TABLE} AS keep
-              WHERE keep.checkpoint_ns = writes.checkpoint_ns
-                AND keep.checkpoint_id = writes.checkpoint_id
+              FROM {keep_table} AS keep
+              WHERE keep.checkpoint_ns = {table}.checkpoint_ns
+                AND keep.checkpoint_id = {table}.checkpoint_id
           )
-        """,
-        (thread_id,),
-    )
-    yield (
-        f"""
-        DELETE FROM checkpoints
-        WHERE thread_id = ?
-          AND NOT EXISTS (
-              SELECT 1
-              FROM {_KEEP_TABLE} AS keep
-              WHERE keep.checkpoint_ns = checkpoints.checkpoint_ns
-                AND keep.checkpoint_id = checkpoints.checkpoint_id
-          )
-        """,
-        (thread_id,),
-    )
+        """
+    for table in ("writes", "checkpoints"):
+        yield (
+            delete_rows.format(table=table, keep_table=_KEEP_TABLE),
+            (thread_id,),
+        )
     yield (
         """
         UPDATE checkpoints
