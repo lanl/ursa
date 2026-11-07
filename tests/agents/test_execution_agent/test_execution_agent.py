@@ -14,7 +14,11 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from tests.agents.utils import ToolReadyFakeChatModel, message_stream
+from tests.agents.utils import (
+    ToolReadyFakeChatModel,
+    message_stream,
+    tool_call_message,
+)
 from ursa.agents import ExecutionAgent
 from ursa.agents.execution_agent import ReviewAssessment
 from ursa.util import Checkpointer
@@ -63,16 +67,12 @@ class SplitBehaviorFakeChatModel(GenericFakeChatModel):
 
 def _tool_call_message_stream() -> Iterator[AIMessage]:
     while True:
-        yield AIMessage(
+        yield tool_call_message(
+            "fake_run_command",
+            {"query": "pwd"},
+            "call-1",
             content="tool-bound-response",
-            tool_calls=[
-                {
-                    "name": "fake_run_command",
-                    "args": {"query": "pwd"},
-                    "id": "call-1",
-                    "type": "tool_call",
-                }
-            ],
+            type="tool_call",
         )
 
 
@@ -308,18 +308,7 @@ def test_patch_dangling_tool_calls_emits_events(
 
     execution_agent = make_agent()
     state = {
-        "messages": [
-            AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "fake_tool",
-                        "args": {},
-                        "id": "call-1",
-                    }
-                ],
-            )
-        ],
+        "messages": [tool_call_message("fake_tool", {}, "call-1")],
         "symlinkdir": {},
     }
 

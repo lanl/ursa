@@ -13,7 +13,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from tests.agents.utils import recording_model
+from tests.agents.utils import recording_model, tool_call_message
 from ursa.agents.chat_agent import ChatAgent
 
 
@@ -70,16 +70,12 @@ def test_absorbed_tool_tail_still_ends_human(tmp_path):
         "messages": [
             SystemMessage("sys prompt"),
             HumanMessage(_long("question")),
-            AIMessage(
-                _long("calling a tool"),
-                tool_calls=[
-                    {
-                        "name": "some_tool",
-                        "args": {},
-                        "id": "call-1",
-                        "type": "tool_call",
-                    }
-                ],
+            tool_call_message(
+                "some_tool",
+                {},
+                "call-1",
+                content=_long("calling a tool"),
+                type="tool_call",
             ),
             ToolMessage(content=_long("tool output"), tool_call_id="call-1"),
         ]

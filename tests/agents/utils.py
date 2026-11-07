@@ -31,6 +31,14 @@ def message_with_usage(content: str, **kwargs: Any) -> AIMessage:
     )
 
 
+def tool_call_message(name, args, call_id, *, content="", **call_fields):
+    """Build an assistant response requesting one tool with explicit inputs."""
+    return AIMessage(
+        content=content,
+        tool_calls=[{"name": name, "args": args, "id": call_id, **call_fields}],
+    )
+
+
 def message_stream_with_usage(content: str) -> Iterator[AIMessage]:
     while True:
         yield message_with_usage(content=content)

@@ -16,6 +16,7 @@ from tests.agents.utils import (
     assert_requests_provider_valid,
     patch_materials_client,
     simple_plan,
+    tool_call_message,
 )
 from ursa.agents.acquisition_agents import (
     ArxivAgent,
@@ -117,12 +118,7 @@ async def test_dsi_agent_role_sequences(tmp_path):
 
 
 def _tool_call_script(tool_name, args):
-    return [
-        AIMessage(
-            content="",
-            tool_calls=[{"name": tool_name, "args": args, "id": "call_1"}],
-        )
-    ]
+    return [tool_call_message(tool_name, args, "call_1")]
 
 
 @pytest.mark.parametrize(

@@ -25,6 +25,7 @@ from langchain_core.messages import (
 from tests.agents.utils import (
     RecordingChatModel,
     assert_requests_provider_valid,
+    tool_call_message,
 )
 from ursa.agents.base import _SUMMARIZE_INSTRUCTIONS
 from ursa.agents.chat_agent import BasicChatAgent, ChatAgent
@@ -49,15 +50,8 @@ def _tool_history(rounds: int = 3) -> list:
     for index in range(rounds):
         history.append(HumanMessage(f"task {index} {_PAD}"))
         history.append(
-            AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "run_command",
-                        "args": {"query": f"ls {index}"},
-                        "id": f"call_{index}",
-                    }
-                ],
+            tool_call_message(
+                "run_command", {"query": f"ls {index}"}, f"call_{index}"
             )
         )
         history.append(

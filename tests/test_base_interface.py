@@ -6,12 +6,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 from langchain.tools import tool
-from langchain_core.messages import AIMessage
 from langgraph.graph import StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.runtime import Runtime
 
+from tests.agents.utils import tool_call_message
 from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
 from ursa.tools.write_code_tool import write_code
 from ursa.util.memory_logger import AgentMemory
@@ -252,18 +252,13 @@ def test_tool_runtime_preserved_for_tool_node(chat_model, tmp_path: Path):
             messages = list(state["messages"])
             assert isinstance(runtime.context, AgentContext)
             messages.append(
-                AIMessage(
-                    content="",
-                    tool_calls=[
-                        {
-                            "id": "tool_call_write_code",
-                            "name": "write_code",
-                            "args": {
-                                "code": "print('runtime ok')",
-                                "filename": "runtime_check.py",
-                            },
-                        }
-                    ],
+                tool_call_message(
+                    "write_code",
+                    {
+                        "code": "print('runtime ok')",
+                        "filename": "runtime_check.py",
+                    },
+                    "tool_call_write_code",
                 )
             )
             return {"messages": messages}

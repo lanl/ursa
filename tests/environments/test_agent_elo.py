@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.agents.utils import tool_call_message
 from ursa.environments.agent_elo import (
     AgentEloEnvironment,
     MatchResult,
@@ -869,16 +870,7 @@ def test_judge_graph_inspects_files_then_requests_structured_output(
         if not any(
             isinstance(message, ToolMessage) for message in state["messages"]
         ):
-            message = AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "inspect_evidence",
-                        "args": {},
-                        "id": "inspect-1",
-                    }
-                ],
-            )
+            message = tool_call_message("inspect_evidence", {}, "inspect-1")
         else:
             message = AIMessage(content="A has lower verified error.")
         return {"messages": [message]}
