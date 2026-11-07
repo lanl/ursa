@@ -29,48 +29,29 @@ def stub_execution_tools(monkeypatch):
         """Return a placeholder response instead of executing shell commands."""
         return "STDOUT:\nstubbed output\nSTDERR:\n"
 
-    @tool
-    def fake_run_web_search(
-        prompt: str,
-        query: str,
-        runtime: ToolRuntime,
-        max_results: int = 3,
-    ) -> str:
-        """Return a deterministic web search payload for testing."""
-        return f"[stubbed web search] {query}"
+    def search_tool(source, label):
+        def search(
+            prompt: str,
+            query: str,
+            runtime: ToolRuntime,
+            max_results: int = 3,
+        ) -> str:
+            return f"[stubbed {source} search] {query}"
 
-    @tool
-    def fake_run_arxiv_search(
-        prompt: str,
-        query: str,
-        runtime: ToolRuntime,
-        max_results: int = 3,
-    ) -> str:
-        """Return a deterministic arXiv search payload for testing."""
-        return f"[stubbed arxiv search] {query}"
-
-    @tool
-    def fake_run_osti_search(
-        prompt: str,
-        query: str,
-        runtime: ToolRuntime,
-        max_results: int = 3,
-    ) -> str:
-        """Return a deterministic OSTI search payload for testing."""
-        return f"[stubbed osti search] {query}"
+        search.__name__ = f"fake_run_{source}_search"
+        search.__doc__ = (
+            f"Return a deterministic {label} search payload for testing."
+        )
+        return tool(search)
 
     monkeypatch.setattr(
         "ursa.agents.execution_agent.run_command", fake_run_command
     )
-    monkeypatch.setattr(
-        "ursa.agents.execution_agent.run_web_search", fake_run_web_search
-    )
-    monkeypatch.setattr(
-        "ursa.agents.execution_agent.run_arxiv_search", fake_run_arxiv_search
-    )
-    monkeypatch.setattr(
-        "ursa.agents.execution_agent.run_osti_search", fake_run_osti_search
-    )
+    for source, label in (("web", "web"), ("arxiv", "arXiv"), ("osti", "OSTI")):
+        monkeypatch.setattr(
+            f"ursa.agents.execution_agent.run_{source}_search",
+            search_tool(source, label),
+        )
 
 
 class SplitBehaviorFakeChatModel(GenericFakeChatModel):
