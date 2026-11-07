@@ -106,49 +106,38 @@ def test_d4_headers_accept_nondict_mapping():
     )
 
 
-def test_d5b_telemetry_field_endpoint_honored():
+@pytest.mark.parametrize(
+    "source, explicit, expected_port",
+    [
+        pytest.param("field", False, "18888", id="d5b-field"),
+        pytest.param(
+            "environment", False, "17777", id="d6-characterization-env"
+        ),
+        pytest.param("field", True, "16666", id="d6-param-beats-field"),
+        pytest.param(
+            "environment", True, "16666", id="d6-characterization-param"
+        ),
+    ],
+)
+def test_d5b_d6_endpoint_precedence(
+    monkeypatch, source, explicit, expected_port
+):
+    if source == "environment":
+        monkeypatch.setenv(
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+            "http://127.0.0.1:17777/v1/traces",
+        )
     telemetry = _telemetry()
-    telemetry.otel_endpoint = "http://127.0.0.1:18888/v1/traces"
-    telemetry._save_otel(_payload(), None, None)
+    if source == "field":
+        field_port = 15555 if explicit else 18888
+        telemetry.otel_endpoint = f"http://127.0.0.1:{field_port}/v1/traces"
+    elif not explicit:
+        telemetry.otel_endpoint = None
+    argument = "http://127.0.0.1:16666/v1/traces" if explicit else None
+    telemetry._save_otel(_payload(), argument, None)
 
     assert _EXPORTERS
-    assert "18888" in str(_EXPORTERS[-1]._endpoint)
-
-
-def test_d6_characterization_env_honored_when_unset(monkeypatch):
-    monkeypatch.setenv(
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-        "http://127.0.0.1:17777/v1/traces",
-    )
-    telemetry = _telemetry()
-    telemetry.otel_endpoint = None
-    telemetry._save_otel(_payload(), None, None)
-
-    assert _EXPORTERS
-    assert "17777" in str(_EXPORTERS[-1]._endpoint)
-
-
-def test_d6_param_beats_field():
-    # Pins the top of the documented precedence order: an explicit call
-    # parameter wins over the Telemetry.otel_endpoint field.
-    telemetry = _telemetry()
-    telemetry.otel_endpoint = "http://127.0.0.1:15555/v1/traces"
-    telemetry._save_otel(_payload(), "http://127.0.0.1:16666/v1/traces", None)
-
-    assert _EXPORTERS
-    assert "16666" in str(_EXPORTERS[-1]._endpoint)
-
-
-def test_d6_characterization_param_beats_env(monkeypatch):
-    monkeypatch.setenv(
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-        "http://127.0.0.1:17777/v1/traces",
-    )
-    telemetry = _telemetry()
-    telemetry._save_otel(_payload(), "http://127.0.0.1:16666/v1/traces", None)
-
-    assert _EXPORTERS
-    assert "16666" in str(_EXPORTERS[-1]._endpoint)
+    assert expected_port in str(_EXPORTERS[-1]._endpoint)
 
 
 def test_d1_inprocess_unavailable_structured_branch(caplog, monkeypatch):

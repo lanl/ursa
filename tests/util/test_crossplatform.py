@@ -15,10 +15,16 @@ def clipboard_discovery(monkeypatch):
     return configure
 
 
-def test_kitty_keyboard_support_uses_terminal_identity(monkeypatch):
+@pytest.mark.parametrize(
+    "variable, value",
+    [("TERM_PROGRAM", "ghostty"), ("ALACRITTY_WINDOW_ID", "42")],
+)
+def test_kitty_keyboard_support_uses_terminal_identity(
+    monkeypatch, variable, value
+):
     monkeypatch.delenv("TMUX", raising=False)
     monkeypatch.delenv("ZELLIJ", raising=False)
-    monkeypatch.setenv("TERM_PROGRAM", "ghostty")
+    monkeypatch.setenv(variable, value)
 
     assert crossplatform.expects_kitty_keyboard()
 
@@ -37,14 +43,6 @@ def test_kitty_keyboard_support_falls_back_to_terminfo_name(monkeypatch):
     for name in crossplatform.KITTY_KEYBOARD_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("TERM", "xterm-kitty")
-
-    assert crossplatform.expects_kitty_keyboard()
-
-
-def test_kitty_keyboard_support_uses_vendor_session_identity(monkeypatch):
-    monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.delenv("ZELLIJ", raising=False)
-    monkeypatch.setenv("ALACRITTY_WINDOW_ID", "42")
 
     assert crossplatform.expects_kitty_keyboard()
 
