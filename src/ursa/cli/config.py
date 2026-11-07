@@ -866,16 +866,13 @@ def config_search_paths(cfg: Namespace, level: str = "final") -> list[Path]:
     ]
 
 
-def _namespace_values(value: Namespace | dict[str, Any]) -> dict[str, Any]:
-    return value.as_dict() if isinstance(value, Namespace) else value
-
-
 def _ursa_config_values(
     value: Namespace | dict[str, Any],
 ) -> dict[str, Any]:
+    values = value.as_dict() if isinstance(value, Namespace) else value
     return {
         key: item
-        for key, item in _namespace_values(value).items()
+        for key, item in values.items()
         if key in UrsaConfig.model_fields
     }
 

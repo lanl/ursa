@@ -1314,23 +1314,8 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
         """Hook for subclasses to wrap or modify the compiled graph."""
         return graph_app
 
-    def _tool_is_async_only(self, tool: Any) -> bool:
-        """Return True for tools that can only be invoked asynchronously.
-
-        MCP tools are commonly exposed as StructuredTool instances with a
-        coroutine implementation but no synchronous function implementation.
-        Those raise errors like:
-
-            "StructuredTool does not support sync invocation."
-
-        when called via `.invoke()`.
-        """
-
-        func = getattr(tool, "func", None)
-        coroutine = getattr(tool, "coroutine", None)
-        return func is None and coroutine is not None
-
     def _has_async_only_tools(self) -> bool:
+        """Detect tools, such as MCP StructuredTools, requiring async dispatch."""
         tools_obj = getattr(self, "tools", None)
         if not tools_obj:
             return False
@@ -1342,7 +1327,12 @@ class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
         except Exception:
             return False
 
-        return any(self._tool_is_async_only(t) for t in tool_iter)
+        for tool in tool_iter:
+            func = getattr(tool, "func", None)
+            coroutine = getattr(tool, "coroutine", None)
+            if func is None and coroutine is not None:
+                return True
+        return False
 
     def _invoke(self, input, **config):
         config = self.build_config(**config)
