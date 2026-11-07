@@ -1,7 +1,6 @@
 from uuid import uuid4
 
-from langchain.chat_models import init_chat_model
-
+from ursa.cli.config import UrsaConfig
 from ursa.observability.timing import render_session_summary
 from ursa.util.events import configure_event_logging
 from ursa.workflows import PlanningExecutionAgent
@@ -16,11 +15,8 @@ def main():
     try:
         problem = "Find a city with at least 10 vowels in its name."
         workspace = "city_vowel_test"
-        model = init_chat_model(
-            model="openai:gpt-5.4-mini",
-            max_completion_tokens=10000,
-            max_retries=2,
-        )
+        config = UrsaConfig.user_config()
+        model = config.llm_model.init_chat_model()
 
         print(f"\nSolving problem: {problem}\n")
         agent = PlanningExecutionAgent(

@@ -2,13 +2,12 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
-from langchain.chat_models import init_chat_model
 from rich import get_console
 from rich.panel import Panel
 from rich.text import Text
 
+from ursa.cli.config import UrsaConfig
 from ursa.observability.timing import render_session_summary
-from ursa.util import Checkpointer
 from ursa.util.events import configure_event_logging
 from ursa.workflows import PlanningExecutionAgent
 
@@ -36,19 +35,13 @@ def main(mode: str) -> None:
         )
     )
 
-    model = init_chat_model(
-        model="openai:gpt-5.4-mini" if mode == "prod" else "ollama:llama3.1:8b",
-        max_tokens=10000 if mode == "prod" else 4000,
-        max_retries=2,
-    )
-    workspace.mkdir(parents=True, exist_ok=True)
-    checkpointer = Checkpointer.from_workspace(workspace)
+    config = UrsaConfig.user_config()
+    model = config.llm_model.init_chat_model()
 
     agent = PlanningExecutionAgent(
         llm=model,
         workspace=workspace,
-        checkpointer=checkpointer,
-        thread_id="run-" + uuid4().hex[:8],
+        agent_name="run-" + uuid4().hex[:8],
         enable_metrics=True,
     )
     try:

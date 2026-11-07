@@ -1,5 +1,4 @@
-from langchain.chat_models import init_chat_model
-
+from ursa.cli.config import UrsaConfig
 from ursa.util.events import configure_event_logging
 from ursa.workflows import PlanningExecutionAgent
 
@@ -22,18 +21,15 @@ def main():
     agent = None
     try:
         workspace = "qutip_workspace"
-        model = init_chat_model(
-            model="openai:gpt-5.4-mini",
-            max_completion_tokens=20000,
-            max_retries=2,
-        )
+        config = UrsaConfig.user_config()
+        model = config.llm_model.init_chat_model()
 
         print(f"\nSolving problem: {problem}\n")
         agent = PlanningExecutionAgent(
             llm=model,
             workspace=workspace,
             enable_metrics=True,
-            thread_id="quantum_rabi_workflow",
+            agent_name="quantum_rabi_bot",
         )
         return agent.invoke(problem)
     except Exception as exc:

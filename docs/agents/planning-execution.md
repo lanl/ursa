@@ -21,8 +21,11 @@ checkpoint namespaces (`planner` and `executor`).
 from langchain.chat_models import init_chat_model
 
 from ursa.workflows import PlanningExecutionAgent
+from ursa.cli.config import UrsaConfig
 
-model = init_chat_model("openai:o4-mini")
+config = UrsaConfig.user_config()
+model = config.llm_model.init_chat_model()
+
 agent = PlanningExecutionAgent(
     llm=model,
     workspace="plan_execute_workspace",
@@ -48,16 +51,17 @@ Configure persistence on the parent exactly as for any other `BaseAgent`:
 ```python
 from pathlib import Path
 
+from ursa.cli.config import UrsaConfig
 from ursa.workflows import PlanningExecutionAgent
 from ursa.util import Checkpointer
 
-workspace = Path("plan_execute_workspace")
-checkpointer = Checkpointer.from_workspace(workspace)
+config = UrsaConfig.user_config()
+model = config.llm_model.init_chat_model()
+
 agent = PlanningExecutionAgent(
     llm=model,
     workspace=workspace,
-    checkpointer=checkpointer,
-    thread_id="analysis-1",
+    agent_name="analysis-1",
 )
 ```
 
