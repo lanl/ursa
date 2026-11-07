@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 from tests.agents.utils import (
     ToolReadyFakeChatModel,
+    assert_requests_provider_valid,
     message_stream_with_usage,
     message_with_usage,
     recording_model,
@@ -120,17 +121,6 @@ def test_deep_review_agent_exposes_web_tools_only_when_enabled(
     assert "run_osti_search" in with_web.tools
 
 
-def _system_prefix_ok(messages) -> bool:
-    seen_non_system = False
-    for message in messages:
-        if isinstance(message, SystemMessage):
-            if seen_non_system:
-                return False
-        else:
-            seen_non_system = True
-    return True
-
-
 def _distinct_stream() -> Iterator[AIMessage]:
     n = 0
     while True:
@@ -155,13 +145,7 @@ async def test_phase_prompts_lead_requests_without_persisting_in_history(
 
     result = await agent.ainvoke(dict(_DD_QUESTION))
 
-    assert log, "no model requests captured"
-    bad = [
-        [type(message).__name__ for message in request]
-        for request in log
-        if not _system_prefix_ok(request)
-    ]
-    assert not bad, f"requests with mid-conversation system messages: {bad}"
+    assert_requests_provider_valid(log)
 
     persisted_systems = [
         message
