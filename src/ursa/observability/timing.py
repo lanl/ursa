@@ -354,6 +354,20 @@ class _Agg:
 # ---------------------------------
 
 
+def _serialized_name(serialized: dict):
+    """Read the shared name/id shapes used by LangChain callbacks."""
+    name = serialized.get("name")
+    if not name:
+        sid = serialized.get("id")
+        if isinstance(sid, dict):
+            name = sid.get("name") or sid.get("id")
+        elif isinstance(sid, (list, tuple)):
+            name = "/".join(map(str, sid))
+        elif sid is not None:
+            name = str(sid)
+    return name
+
+
 class _TimerCallback(BaseCallbackHandler):
     """Shared naming and duration recording for tool and graph callbacks."""
 
@@ -366,16 +380,7 @@ class _TimerCallback(BaseCallbackHandler):
     def _name(self, serialized) -> str:
         # serialized can be None, dict, str, or contain nested ids
         if isinstance(serialized, dict):
-            name = serialized.get("name")
-            if not name:
-                sid = serialized.get("id")
-                if isinstance(sid, dict):
-                    name = sid.get("name") or sid.get("id")
-                elif isinstance(sid, (list, tuple)):
-                    name = "/".join(map(str, sid))
-                elif sid is not None:
-                    name = str(sid)
-            return name or self._fallback_name
+            return _serialized_name(serialized) or self._fallback_name
         if isinstance(serialized, str):
             return serialized
         return self._fallback_name
@@ -578,16 +583,7 @@ class PerLLMTimer(BaseCallbackHandler):
         if model:
             return f"llm:{model}"
         if isinstance(serialized, dict):
-            name = serialized.get("name")
-            if not name:
-                sid = serialized.get("id")
-                if isinstance(sid, dict):
-                    name = sid.get("name") or sid.get("id")
-                elif isinstance(sid, (list, tuple)):
-                    name = "/".join(map(str, sid))
-                elif sid is not None:
-                    name = str(sid)
-            return f"llm:{name or 'unknown'}"
+            return f"llm:{_serialized_name(serialized) or 'unknown'}"
         if isinstance(serialized, str):
             return f"llm:{serialized}"
         if tags:
@@ -742,42 +738,31 @@ class PerLLMTimer(BaseCallbackHandler):
 
         return out
 
-    def on_llm_end(self, response, *, run_id, **kwargs):
+    def _finish(self, run_id, value, succeeded: bool) -> None:
+        """Record timing and the outcome of one completed LLM call."""
         name, t0, tags, metadata, wall_t0 = self._starts.pop(
             run_id, ("llm:unknown", time.perf_counter(), [], {}, time.time())
         )
         ms = (time.perf_counter() - t0) * 1000.0
         wall_t1 = time.time()
-        self.agg.add(name, ms, True)
-        metrics = self._extract_metrics(response)
+        self.agg.add(name, ms, succeeded)
+        metrics = self._extract_metrics(value) if succeeded else None
         self.samples.append({
             "name": name,
             "ms": ms,
-            "ok": True,
+            "ok": succeeded,
             "tags": tags,
             "metadata": metadata,
-            "metrics": metrics,
+            "metrics": metrics if succeeded else {"error": repr(value)},
             "t_start": wall_t0,
             "t_end": wall_t1,
         })
 
+    def on_llm_end(self, response, *, run_id, **kwargs):
+        self._finish(run_id, response, True)
+
     def on_llm_error(self, error, *, run_id, **kwargs):
-        name, t0, tags, metadata, wall_t0 = self._starts.pop(
-            run_id, ("llm:unknown", time.perf_counter(), [], {}, time.time())
-        )
-        ms = (time.perf_counter() - t0) * 1000.0
-        wall_t1 = time.time()
-        self.agg.add(name, ms, False)
-        self.samples.append({
-            "name": name,
-            "ms": ms,
-            "ok": False,
-            "tags": tags,
-            "metadata": metadata,
-            "metrics": {"error": repr(error)},
-            "t_start": wall_t0,
-            "t_end": wall_t1,
-        })
+        self._finish(run_id, error, False)
 
 
 def _coerce_usage(obj) -> dict:
