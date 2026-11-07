@@ -13,11 +13,8 @@ class ToolReadyFakeChatModel(GenericFakeChatModel):
         return self
 
 
-class WorkspaceToolCallingFakeChatModel(GenericFakeChatModel):
+class WorkspaceToolCallingFakeChatModel(ToolReadyFakeChatModel):
     """Calls list_workspace_files once, then answers normally."""
-
-    def bind_tools(self, tools, **kwargs):
-        return self
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         from langchain_core.outputs import ChatGeneration, ChatResult

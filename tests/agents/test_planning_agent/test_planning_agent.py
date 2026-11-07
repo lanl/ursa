@@ -114,12 +114,9 @@ async def test_planning_agent_treats_empty_reflection_as_approval(tmpdir):
     assert result["messages"][-1].content == "[APPROVED]"
 
 
-class RecordingPlannerChatModel(GenericFakeChatModel):
+class RecordingPlannerChatModel(FakePlanningChatModel):
     """Fake chat model that records the messages of every planner LLM call."""
 
-    messages: Iterator[AIMessage | str] = Field(
-        default_factory=lambda: iter([AIMessage(content="unused")])
-    )
     calls: list = Field(default_factory=list)
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
@@ -130,26 +127,14 @@ class RecordingPlannerChatModel(GenericFakeChatModel):
             ]
         )
 
-    def model_copy(self, update=None):
-        return self
-
     def with_structured_output(self, schema, **kwargs):
+        runner = super().with_structured_output(schema, **kwargs)
         model = self
 
         class StructuredOutput:
             def invoke(self, messages, config=None):
                 model.calls.append(list(messages))
-                return schema(
-                    steps=[
-                        {
-                            "name": "Add numbers",
-                            "description": "Add 1 and 2.",
-                            "requires_code": False,
-                            "expected_outputs": ["sum"],
-                            "success_criteria": ["sum equals 3"],
-                        }
-                    ]
-                )
+                return runner.invoke(messages)
 
         return StructuredOutput()
 
