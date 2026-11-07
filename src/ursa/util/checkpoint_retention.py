@@ -16,6 +16,16 @@ logger = logging.getLogger(__name__)
 
 CHECKPOINT_PRUNE_THRESHOLD_BYTES = 25 * 1024 * 1024
 _KEEP_TABLE = "_ursa_checkpoint_retention_keep"
+_DELTA_CHANNEL_HISTORY_QUERY = """
+SELECT 1
+FROM checkpoints
+WHERE thread_id = ?
+  AND json_type(
+        CAST(metadata AS TEXT),
+        '$.counters_since_delta_snapshot'
+      ) IS NOT NULL
+LIMIT 1
+"""
 
 
 @dataclass(frozen=True)
@@ -69,16 +79,7 @@ def _has_delta_channel_history(
 ) -> bool:
     return (
         conn.execute(
-            """
-            SELECT 1
-            FROM checkpoints
-            WHERE thread_id = ?
-              AND json_type(
-                    CAST(metadata AS TEXT),
-                    '$.counters_since_delta_snapshot'
-                  ) IS NOT NULL
-            LIMIT 1
-            """,
+            _DELTA_CHANNEL_HISTORY_QUERY,
             (thread_id,),
         ).fetchone()
         is not None
@@ -219,16 +220,7 @@ async def _ahas_delta_channel_history(
     saver: AsyncSqliteSaver, thread_id: str
 ) -> bool:
     cursor = await saver.conn.execute(
-        """
-        SELECT 1
-        FROM checkpoints
-        WHERE thread_id = ?
-          AND json_type(
-                CAST(metadata AS TEXT),
-                '$.counters_since_delta_snapshot'
-              ) IS NOT NULL
-        LIMIT 1
-        """,
+        _DELTA_CHANNEL_HISTORY_QUERY,
         (thread_id,),
     )
     try:
