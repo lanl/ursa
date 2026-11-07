@@ -391,8 +391,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 "messages": Overwrite(new_state["messages"]),
                 "symlinkdir": new_state["symlinkdir"],
             }
-        else:
-            return {"messages": response, "symlinkdir": new_state["symlinkdir"]}
+        return {"messages": response, "symlinkdir": new_state["symlinkdir"]}
 
     def _get_current_user_request(self, state: ExecutionState) -> str:
         """Return the user request for the current invoke.
@@ -551,11 +550,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             if self.log_state:
                 self.write_state("execution_agent.json", new_state)
             return Overwrite(new_state)
-        else:
-            if self.log_state:
-                new_state["messages"].append(response)
-                self.write_state("execution_agent.json", new_state)
-            return {"messages": [recap_message, response]}
+        if self.log_state:
+            new_state["messages"].append(response)
+            self.write_state("execution_agent.json", new_state)
+        return {"messages": [recap_message, response]}
 
     def _build_graph(self):
         """Construct and compile the agent's LangGraph state machine."""

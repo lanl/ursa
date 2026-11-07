@@ -215,8 +215,7 @@ def transport(sp: ServerParameters) -> str:
         return "streamable_http"
     elif isinstance(sp, SseServerParameters):
         return "sse"
-    else:
-        raise RuntimeError("Transport for {sp} is unknown")
+    raise RuntimeError("Transport for {sp} is unknown")
 
 
 def start_mcp_client(

@@ -77,17 +77,14 @@ def check_db_valid(db_path: str) -> bool:
     """
     if not os.path.exists(db_path):
         return False
-    else:
-        try:
-            with redirect_stdout(_NULL), redirect_stderr(_NULL):
-                temp_store = DSI(db_path, check_same_thread=False)
-                temp_store.list(
-                    True
-                )  # force things to fail if the table is empty
-                temp_store.close()
+    try:
+        with redirect_stdout(_NULL), redirect_stderr(_NULL):
+            temp_store = DSI(db_path, check_same_thread=False)
+            temp_store.list(True)  # force things to fail if the table is empty
+            temp_store.close()
 
-        except Exception:  # noqa: BLE001
-            return False
+    except Exception:  # noqa: BLE001
+        return False
 
     return True
 
