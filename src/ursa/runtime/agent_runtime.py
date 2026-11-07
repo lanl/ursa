@@ -40,7 +40,7 @@ from ursa.messaging.messages import (
     attach_agent_message_instructions,
 )
 from ursa.security import enforce_model_group_policy
-from ursa.util.async_utils import maybe_await
+from ursa.util.async_utils import cancel_tasks, maybe_await
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.inference_providers import validate_model_provider
 from ursa.util.mcp import (
@@ -489,8 +489,7 @@ class _UrsaProcessAgent(_ProcessRuntimeBridge):
 
     async def aclose(self) -> None:
         if self._worker is not None:
-            self._worker.cancel()
-            await asyncio.gather(self._worker, return_exceptions=True)
+            await cancel_tasks(self._worker)
         while not self._inbox.empty():
             item = self._inbox.get_nowait()
             if not item.response.done():
@@ -1635,11 +1634,7 @@ class AgentRuntime:
 
     @staticmethod
     async def _cancel_background_tasks(tasks: set[asyncio.Task[Any]]) -> None:
-        pending = tuple(tasks)
-        for task in pending:
-            task.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        await cancel_tasks(*tasks)
         tasks.clear()
 
     async def _spawn_runtime_subagent(

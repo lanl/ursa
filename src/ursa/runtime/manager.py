@@ -30,7 +30,7 @@ from uuid import uuid4
 
 from langchain_core.callbacks import AsyncCallbackHandler
 
-from ursa.util.async_utils import maybe_await
+from ursa.util.async_utils import cancel_tasks, maybe_await
 
 LOGGER = logging.getLogger(__name__)
 
@@ -548,25 +548,16 @@ class AgentProcess:
                 })
         finally:
             self._stopping.set()
-            worker.cancel()
-            await asyncio.gather(worker, return_exceptions=True)
-            for task in tuple(self._message_tasks):
-                task.cancel()
-            if self._message_tasks:
-                await asyncio.gather(
-                    *tuple(self._message_tasks), return_exceptions=True
-                )
+            await cancel_tasks(worker)
+            await cancel_tasks(*self._message_tasks)
             await self._close_agent()
-            heartbeat.cancel()
-            await asyncio.gather(heartbeat, return_exceptions=True)
+            await cancel_tasks(heartbeat)
             output.flush()
             if not writer.done():
                 await self.outgoing.put({"type": "stopped"})
                 await self.outgoing.join()
-            writer.cancel()
-            await asyncio.gather(writer, return_exceptions=True)
-            reader.cancel()
-            await asyncio.gather(reader, return_exceptions=True)
+            await cancel_tasks(writer)
+            await cancel_tasks(reader)
             output.restore()
 
     async def _construct_agent(self) -> None:
@@ -744,16 +735,15 @@ class AgentProcess:
     async def _close_agent(self) -> None:
         if self.agent is None:
             return
-        async_close = getattr(self.agent, "aclose", None)
-        if callable(async_close):
+        for name in ("aclose", "close"):
+            close = getattr(self.agent, name, None)
+            if not callable(close):
+                continue
             try:
-                await maybe_await(async_close())
-            except Exception:
-                LOGGER.exception("Failed to close isolated agent")
-        close = getattr(self.agent, "close", None)
-        if callable(close):
-            try:
-                await asyncio.to_thread(close)
+                if name == "aclose":
+                    await maybe_await(close())
+                else:
+                    await asyncio.to_thread(close)
             except Exception:
                 LOGGER.exception("Failed to close isolated agent")
 
@@ -1185,8 +1175,7 @@ class AgentManager:
             agent_ids = tuple(self._agents)
         monitor = self._monitor_task
         if monitor is not None:
-            monitor.cancel()
-            await asyncio.gather(monitor, return_exceptions=True)
+            await cancel_tasks(monitor)
         await asyncio.gather(
             *(self.kill_agent(agent_id) for agent_id in agent_ids),
         )
@@ -1462,8 +1451,7 @@ class AgentManager:
                 async with asyncio.timeout(1):
                     await asyncio.shield(reader)
             except TimeoutError:
-                reader.cancel()
-                await asyncio.gather(reader, return_exceptions=True)
+                await cancel_tasks(reader)
         current = asyncio.current_task()
         response_tasks = tuple(
             task for task in entry.response_tasks if task is not current
@@ -1475,10 +1463,7 @@ class AgentManager:
             for task in entry.background_tasks
             if task is not current and task not in entry.response_tasks
         )
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        await cancel_tasks(*tasks)
         if connection is not None:
             connection.close()
         try:
