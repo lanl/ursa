@@ -953,33 +953,48 @@ def test_model_config_omits_blank_api_key_env(monkeypatch):
     assert "api_key_env" not in cfg.model_dump()
 
 
-def test_inference_provider_applies_to_llm_model():
+@pytest.mark.parametrize(
+    ("field", "provider", "model", "url", "extras"),
+    [
+        (
+            "llm_model",
+            "local-openai",
+            "openai:gpt-5",
+            " https://models.example.org/v1 ",
+            {"api_key_env": "PROVIDER_API_KEY", "timeout": 45},
+        ),
+        (
+            "emb_model",
+            "local-embeddings",
+            "openai:text-embedding-3-large",
+            "https://embeddings.example.org/v1",
+            {"cache_dir": "/tmp/provider-cache"},
+        ),
+    ],
+)
+def test_inference_provider_applies_to_models(
+    field, provider, model, url, extras
+):
     config = UrsaConfig(
         inference_providers={
-            "local-openai": {
-                "base_url": " https://models.example.org/v1 ",
-                "ssl_verify": False,
-                "api_key_env": "PROVIDER_API_KEY",
-                "timeout": 45,
-            }
+            provider: {"base_url": url, "ssl_verify": False, **extras}
         },
-        llm_model={
-            "model": "openai:gpt-5",
-            "inference_provider": "local-openai",
-        },
+        **{field: {"model": model, "inference_provider": provider}},
     )
+    selected = getattr(config, field)
+    assert selected is not None
+    resolved = selected.resolve_inference_provider(config.inference_providers)
 
-    resolved = config.llm_model.resolve_inference_provider(
-        config.inference_providers
-    )
-
-    assert config.llm_model.inference_provider == "local-openai"
-    assert config.llm_model.base_url is None
-    assert resolved.inference_provider == "local-openai"
-    assert resolved.base_url == "https://models.example.org/v1"
+    assert selected.inference_provider == provider
+    assert selected.base_url is None
+    assert resolved.inference_provider == provider
+    assert resolved.base_url == url.strip()
     assert resolved.ssl_verify is False
-    assert resolved.api_key == SecretReference(env="PROVIDER_API_KEY")
-    assert resolved.model_extra["timeout"] == 45
+    for key, value in extras.items():
+        if key == "api_key_env":
+            assert resolved.api_key == SecretReference(env=value)
+        else:
+            assert resolved.model_extra[key] == value
     assert "inference_provider" not in resolved.kwargs
 
 
@@ -1004,34 +1019,6 @@ def test_model_provider_inherits_only_when_unset(explicit_provider):
     else:
         assert "model_provider" not in config.llm_model.model_fields_set
         assert resolved.llm_model.model_provider == "anthropic"
-
-
-def test_inference_provider_applies_to_embedding_model():
-    config = UrsaConfig(
-        inference_providers={
-            "local-embeddings": {
-                "base_url": "https://embeddings.example.org/v1",
-                "ssl_verify": False,
-                "cache_dir": "/tmp/provider-cache",
-            }
-        },
-        emb_model={
-            "model": "openai:text-embedding-3-large",
-            "inference_provider": "local-embeddings",
-        },
-    )
-
-    assert config.emb_model is not None
-    resolved = config.emb_model.resolve_inference_provider(
-        config.inference_providers
-    )
-    assert config.emb_model.inference_provider == "local-embeddings"
-    assert config.emb_model.base_url is None
-    assert resolved.inference_provider == "local-embeddings"
-    assert resolved.base_url == "https://embeddings.example.org/v1"
-    assert resolved.ssl_verify is False
-    assert resolved.model_extra["cache_dir"] == "/tmp/provider-cache"
-    assert "inference_provider" not in resolved.kwargs
 
 
 def test_model_config_explicit_values_override_inference_provider():
