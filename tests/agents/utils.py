@@ -1,6 +1,7 @@
 """Shared fakes for agent tests."""
 
 from collections.abc import Callable, Iterator
+from types import SimpleNamespace
 from typing import Any
 
 from langchain_core.language_models.fake_chat_models import (
@@ -148,19 +149,24 @@ def assert_requests_provider_valid(calls: list[list[BaseMessage]]) -> None:
                 past_system_prefix = True
 
 
+class FakeDoc:
+    def __init__(self, material_id: str, metadata: dict):
+        self.material_id = material_id
+        self._metadata = metadata
+
+    def dict(self) -> dict:
+        return self._metadata
+
+
 def patch_materials_client(monkeypatch, summary_factory):
     """Install a Materials Project client with a test-specific search service."""
-
-    class FakeMaterials:
-        def __init__(self):
-            self.summary = summary_factory()
 
     class FakeMPRester:
         def __init__(self, *args, **kwargs):
             pass
 
         def __enter__(self):
-            self.materials = FakeMaterials()
+            self.materials = SimpleNamespace(summary=summary_factory())
             return self
 
         def __exit__(self, exc_type, exc, tb):

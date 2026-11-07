@@ -2,19 +2,10 @@ import json
 
 import pytest
 
-from tests.agents.utils import patch_materials_client
+from tests.agents.utils import FakeDoc, patch_materials_client
 from ursa.agents import MaterialsProjectAgent
 
 requests = pytest.importorskip("mp_api")
-
-
-class FakeDoc:
-    def __init__(self, material_id: str, metadata: dict):
-        self.material_id = material_id
-        self._metadata = metadata
-
-    def dict(self) -> dict:
-        return self._metadata
 
 
 @pytest.fixture

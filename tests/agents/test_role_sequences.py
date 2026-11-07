@@ -9,6 +9,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from tests.agents.utils import (
+    FakeDoc,
     RecordingChatModel,
     assert_requests_provider_valid,
     patch_materials_client,
@@ -228,14 +229,6 @@ async def test_acquisition_agent_role_sequences(acquisition_cls, tmpdir):
 async def test_materials_project_agent_role_sequences(tmpdir, monkeypatch):
     pytest.importorskip("mp_api")
     from ursa.agents.mp_agent import MaterialsProjectAgent
-
-    class FakeDoc:
-        def __init__(self, material_id, metadata):
-            self.material_id = material_id
-            self._metadata = metadata
-
-        def dict(self):
-            return self._metadata
 
     class FakeSummary:
         def search(self, **kwargs):

@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from tests.environments.test_environments import fake_llm
+from tests.environments.test_environments import Message, fake_llm
 from ursa import security
 from ursa.environments import (
     AgentSymposiumEnvironment,
@@ -20,11 +20,6 @@ from ursa.environments.visualization import (
     read_environment_run_events,
     read_environment_run_manifest,
 )
-
-
-class Message:
-    def __init__(self, text: str):
-        self.text = text
 
 
 class VisualMember:
