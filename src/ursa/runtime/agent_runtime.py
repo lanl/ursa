@@ -1451,24 +1451,17 @@ class AgentRuntime:
                 continue
             if not self._working_counts.get(path, 0):
                 completed.append((path, None))
-            elif relation := self._runtime_wait_dependency_relation(
-                path, waiting_path
+            elif relation := wait_dependency(
+                path,
+                waiting_path,
+                lambda agent: (
+                    target
+                    for waiter in self._wait_dependencies.get(agent, ())
+                    for target in waiter.targets
+                ),
             ):
                 completed.append((path, relation))
         return completed
-
-    def _runtime_wait_dependency_relation(
-        self, path: str, target_path: str
-    ) -> str | None:
-        return wait_dependency(
-            path,
-            target_path,
-            lambda agent: (
-                target
-                for waiter in self._wait_dependencies.get(agent, ())
-                for target in waiter.targets
-            ),
-        )
 
     def _wake_runtime_waiters(
         self, sender_runtime_id: str, *, delivery: str | None = None
@@ -1560,7 +1553,11 @@ class AgentRuntime:
         succeeded = False
         try:
             if deliveries:
-                await self._notify_user_delivery_starts(deliveries)
+                # Promote queued user rows without adding delegated spinners.
+                for delivery in deliveries:
+                    for callback in delivery.callbacks:
+                        if isinstance(callback, _MessageStartCallback):
+                            await callback.on_agent_message_start()
                 for delivery in deliveries:
                     if delivery.response is not response:
                         self._complete_in_band_delivery(delivery)
@@ -1597,16 +1594,6 @@ class AgentRuntime:
                     item.target_path,
                     succeeded=succeeded,
                 )
-
-    @staticmethod
-    async def _notify_user_delivery_starts(
-        deliveries: Sequence[_BufferedAgentMessage],
-    ) -> None:
-        """Promote queued user rows without adding delegated spinners."""
-        for delivery in deliveries:
-            for callback in delivery.callbacks:
-                if isinstance(callback, _MessageStartCallback):
-                    await callback.on_agent_message_start()
 
     def _agent_task_done(
         self,
