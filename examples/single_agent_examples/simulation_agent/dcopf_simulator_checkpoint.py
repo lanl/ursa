@@ -31,7 +31,7 @@ model = init_chat_model(model="openai:gpt-5.2")
 simulator = SimulatorAgent(
     llm=model,
     workspace=workspace,
-    embedding=embedding,
+    rag_tool_embedding=embedding,
     checkpointer=checkpointer,
     thread_id="dcopf_test_executor",
     use_web=True,

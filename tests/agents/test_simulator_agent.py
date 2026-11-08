@@ -108,30 +108,67 @@ def test_simulator_agent_import():
         ({"docs_path": Path("custom_docs")}, Path("custom_docs")),
     ],
 )
+@pytest.mark.parametrize(
+    "rag_config,expected_group,expected_k",
+    [
+        ({}, "default", 10),
+        ({"group": "science", "rag_tool_return_k": 3}, "science", 3),
+        (
+            {
+                "group": "science",
+                "rag_tool_group": "documentation",
+                "rag_tool_return_k": 7,
+            },
+            "documentation",
+            7,
+        ),
+    ],
+)
 def test_simulator_rag_documentation_path(
-    monkeypatch, tmp_path, chat_model, embedding_model, config, expected_path
+    monkeypatch,
+    tmp_path,
+    chat_model,
+    embedding_model,
+    config,
+    expected_path,
+    rag_config,
+    expected_group,
+    expected_k,
 ):
     import ursa.agents.simulator_agent as simulator
     import ursa.security as security
 
     monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "cache")
-    rag_class = Mock()
+    (security.URSA_CACHE_DIR / "science").mkdir(parents=True)
+    monkeypatch.setattr(
+        "ursa.agents.base.enforce_model_group_policy", lambda *_: None
+    )
+    rag_class = Mock(
+        return_value=Mock(
+            invoke=Mock(return_value={"summary": "documentation"})
+        )
+    )
     monkeypatch.setattr(simulator, "RAGAgent", rag_class)
 
     agent = simulator.SimulatorAgent(
         llm=chat_model,
-        embedding=embedding_model,
+        rag_tool_embedding=embedding_model,
         workspace=tmp_path,
         thread_id="simulation-test",
         checkpointer=None,
         **config,
+        **rag_config,
     )
 
     assert rag_class.call_args.kwargs["database_path"] == expected_path
     assert rag_class.call_args.kwargs["embedding"] is embedding_model
+    assert rag_class.call_args.kwargs["group"] == expected_group
+    assert rag_class.call_args.kwargs["return_k"] == expected_k
     assert agent.rag_agent is rag_class.return_value
     assert "documentation_rag" in agent.documenter.tools
     assert "documentation_rag" in agent.runner.tools
+    assert agent.doc_rag("how to run") == "documentation"
+    agent.rag_agent.invoke.assert_called_once_with(context="how to run")
     agent.close()
 
 
