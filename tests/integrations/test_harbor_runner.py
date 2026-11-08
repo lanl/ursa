@@ -25,12 +25,12 @@ from packaging.requirements import Requirement
 
 from ursa.agents import BaseAgent
 from ursa.cli import agent_management
-from ursa.integration import harbor as harbor_integration
-from ursa.integration.harbor import (
+from ursa.integrations import harbor as harbor_integration
+from ursa.integrations.harbor import (
     UrsaHarborAgent,
     _jsonl_token_usage,
 )
-from ursa.integration.harbor.runner import _run as _runner_run
+from ursa.integrations.harbor.runner import _run as _runner_run
 from ursa.util import Checkpointer
 from ursa.util.events import AgentEvents
 

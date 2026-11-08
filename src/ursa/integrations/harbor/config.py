@@ -31,7 +31,7 @@ from ursa.util.secrets import SecretReference
 if TYPE_CHECKING:
     from harbor.models.trial.config import AgentConfig as HarborAgentConfig
 
-URSA_AGENT = "ursa.integration.harbor:UrsaHarborAgent"
+URSA_AGENT = "ursa.integrations.harbor:UrsaHarborAgent"
 NonEmptyString = Annotated[str, Field(min_length=1)]
 EnvironmentVariable = Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
 

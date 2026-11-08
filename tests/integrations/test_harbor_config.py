@@ -6,8 +6,8 @@ import pytest
 pytest.importorskip("harbor")
 
 from ursa.cli.config import InferenceProviderConfig
-from ursa.integration.harbor import UrsaHarborAgent
-from ursa.integration.harbor.config import (
+from ursa.integrations.harbor import UrsaHarborAgent
+from ursa.integrations.harbor.config import (
     URSA_AGENT,
     AgentConfig,
     ModelConfig,

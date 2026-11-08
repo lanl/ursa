@@ -13,7 +13,7 @@ and Docker for Harbor's default environment. Set a provider credential, then:
 export OPENAI_API_KEY=...
 uv run harbor run \
   --path benchmark/tasks/install-pytorch \
-  --agent ursa.integration.harbor:UrsaHarborAgent \
+  --agent ursa.integrations.harbor:UrsaHarborAgent \
   --agent-kwarg config="$PWD/ursa.yaml" \
   --model openai/openai:gpt-5.4-nano
 ```
@@ -76,7 +76,7 @@ and common secret files. An implicit host checkout is built into a wheel first.
 ```bash
 uv run harbor run \
   --path benchmark/tasks/install-pytorch \
-  --agent ursa.integration.harbor:UrsaHarborAgent \
+  --agent ursa.integrations.harbor:UrsaHarborAgent \
   --agent-kwarg config="$PWD/ursa.yaml" \
   --model openai/openai:gpt-5.4-nano \
   --agent-kwarg 'ursa_install_spec=ursa-ai @ file:///absolute/path/to/ursa' \
@@ -100,7 +100,7 @@ chat token usage), and `agent/ursa_result.out`.
 Use this environment for direct runs:
 
 ```bash
---env ursa.integration.harbor.singularity:DockerfileSingularityEnvironment
+--env ursa.integrations.harbor.singularity:DockerfileSingularityEnvironment
 ```
 
 It builds `environment/Dockerfile` with Buildah, Podman, or Docker and converts
@@ -116,8 +116,8 @@ Validate tasks against URSA's Singularity constraints, or warm the SIF cache,
 without running an agent:
 
 ```bash
-uv run -m ursa.integration.harbor validate benchmark/tasks
-uv run -m ursa.integration.harbor prebuild benchmark/tasks
+uv run -m ursa.integrations.harbor validate benchmark/tasks
+uv run -m ursa.integrations.harbor prebuild benchmark/tasks
 ```
 
 ### Compose and networking
@@ -164,7 +164,7 @@ adapter rejects unresolved workdirs before launch.
 
 ## Configure other agents
 
-For other Harbor agents, `ursa.integration.harbor.config` exports `AgentConfig`, `ModelConfig`,
+For other Harbor agents, `ursa.integrations.harbor.config` exports `AgentConfig`, `ModelConfig`,
 `load_agent_config`, `load_provider_config`, and `resolve_run`. It resolves one invocation;
 callers control scheduling and output locations.
 
@@ -187,7 +187,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from ursa.integration.harbor.config import (
+from ursa.integrations.harbor.config import (
     ModelConfig, load_agent_config, load_provider_config, resolve_run,
 )
 
@@ -263,7 +263,7 @@ retention:
 
 ```bash
 uv run harbor run --path benchmark/tasks/install-pytorch --agent oracle \
-  --plugin ursa.integration.harbor.retention:RetentionPlugin \
+  --plugin ursa.integrations.harbor.retention:RetentionPlugin \
   --plugin-kwarg policy=retention.yaml
 ```
 
@@ -294,11 +294,11 @@ scores: require `status: complete` in `retention-status.json` to confirm retenti
 ### Preview, resume, and restore
 
 ```bash
-uv run -m ursa.integration.harbor artifacts plan \
+uv run -m ursa.integrations.harbor artifacts plan \
   --run-dir jobs/example --policy retention.yaml
-uv run -m ursa.integration.harbor artifacts apply \
+uv run -m ursa.integrations.harbor artifacts apply \
   --run-dir jobs/example --policy retention.yaml
-uv run -m ursa.integration.harbor artifacts restore \
+uv run -m ursa.integrations.harbor artifacts restore \
   --manifest jobs/example/retention.json --destination restored-example
 ```
 
