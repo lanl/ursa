@@ -72,7 +72,6 @@ classifiers = [
 [project.scripts]
 ursa = "ursa.cli:main"
 ursa-dashboard = "ursa_dashboard.main:app"
-ursa-artifacts = "ursa.cli.artifacts:app"
 
 [project.urls]
 Homepage = "https://github.com/lanl/ursa"
@@ -121,6 +120,7 @@ harbor = [
     "harbor>=0.25.0,<0.26; python_version >= '3.12'",
     "singularity-compose>=0.1.19,<0.2",
     "archspec>=0.2.6,<0.3",
+    "packaging>=25,<27",
 ]
 
 [tool.uv]

@@ -26,9 +26,11 @@ import urllib.request
 from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, urlparse
 
 import typer
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 from pydantic import SecretStr
 
 try:
@@ -109,9 +111,9 @@ class UrsaHarborAgent(BaseInstalledAgent):
             to :class:`ursa.agents.ExecutionAgent`.
         config: URSA's native YAML/JSON file or inline JSON-compatible mapping.
             This is Harbor's standard installed-agent configuration input.
-        ursa_install_spec: Package requirement, Git URL, local Python project,
-            or local wheel/sdist installed in each task container. Defaults to
-            this URSA checkout or installed version.
+        ursa_install_spec: PEP 508 requirement for URSA, including named Git or
+            file URL references to a project, wheel, or sdist. Defaults to this
+            URSA checkout or installed version.
         ursa_extras: Additional URSA package extras to install, as a sequence or
             comma-separated string. The ``harbor`` extra is always installed.
         extra_packages: Additional Python packages to install. Pass one requirement
@@ -139,7 +141,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
         *args: Any,
         agent_import_path: str = "ursa.agents:ExecutionAgent",
         config: str | Path | dict[str, Any] | None = None,
-        ursa_install_spec: str | Path | None = None,
+        ursa_install_spec: str | None = None,
         ursa_extras: str | Sequence[str] | None = None,
         extra_packages: str | Sequence[str] | None = None,
         **kwargs: Any,
@@ -152,10 +154,13 @@ class UrsaHarborAgent(BaseInstalledAgent):
             else ursa_install_spec
         )
         self.ursa_install_spec = self._parse_install_spec(install_spec)
+        self._install_source = self._local_install_source(
+            self.ursa_install_spec
+        )
         self._build_default_install_wheel = (
             ursa_install_spec is None
-            and isinstance(self.ursa_install_spec, Path)
-            and self.ursa_install_spec.is_dir()
+            and self._install_source is not None
+            and self._install_source.is_dir()
         )
         requested_extras = self._parse_list(
             ursa_extras, name="ursa_extras", split_commas=True
@@ -208,56 +213,49 @@ class UrsaHarborAgent(BaseInstalledAgent):
         return path.name.endswith((".whl", ".zip", ".tar.gz"))
 
     @staticmethod
-    def _default_install_spec() -> str | Path:
+    def _default_install_spec() -> str:
         checkout = Path(__file__).resolve().parents[3]
         if (checkout / "pyproject.toml").is_file():
-            return checkout
+            return f"ursa-ai @ {checkout.as_uri()}"
         distribution = importlib.metadata.distribution("ursa-ai")
         direct_url = distribution.read_text("direct_url.json")
         if direct_url:
             provenance = json.loads(direct_url)
             url = provenance.get("url")
             if isinstance(url, str):
-                parsed = urlparse(url)
-                if parsed.scheme == "file":
-                    source = Path(unquote(parsed.path))
-                    if (source / "pyproject.toml").is_file():
-                        return source.resolve()
-                    if source.is_file() and UrsaHarborAgent._is_package_archive(
-                        source
-                    ):
-                        return source.resolve()
-                    raise ValueError(
-                        "URSA was installed from a local source that is no longer "
-                        "available; pass ursa_install_spec explicitly"
-                    )
                 vcs = provenance.get("vcs_info", {})
                 if isinstance(vcs, dict) and isinstance(vcs.get("vcs"), str):
                     revision = vcs.get("commit_id") or vcs.get(
                         "requested_revision"
                     )
                     suffix = f"@{revision}" if revision else ""
-                    return f"{vcs['vcs']}+{url}{suffix}"
-                return url
+                    url = f"{vcs['vcs']}+{url}{suffix}"
+                return f"ursa-ai @ {url}"
         return f"ursa-ai=={distribution.version}"
 
     @staticmethod
-    def _parse_install_spec(value: str | Path) -> str | Path:
-        if isinstance(value, Path):
-            path = value.expanduser()
-        else:
-            value = value.strip()
-            if not value:
-                raise ValueError("ursa_install_spec cannot be empty")
-            candidate = Path(value).expanduser()
-            if not (
-                candidate.exists()
-                or candidate.is_absolute()
-                or value.startswith(("./", "../"))
-            ):
-                return value
-            path = candidate
+    def _parse_install_spec(value: str) -> Requirement:
+        try:
+            requirement = Requirement(value)
+        except (InvalidRequirement, TypeError) as exc:
+            raise ValueError(
+                "ursa_install_spec must be a PEP 508 requirement, such as "
+                "'ursa-ai==0.17.3' or 'ursa-ai @ file:///path/to/checkout'"
+            ) from exc
+        if canonicalize_name(requirement.name) != "ursa-ai":
+            raise ValueError("ursa_install_spec must name the ursa-ai package")
+        return requirement
 
+    @staticmethod
+    def _local_install_source(requirement: Requirement) -> Path | None:
+        parsed = urlparse(requirement.url or "")
+        if parsed.scheme != "file":
+            return None
+        path = Path(urllib.request.url2pathname(parsed.path))
+        if parsed.netloc not in ("", "localhost") or not path.is_absolute():
+            raise ValueError(
+                "ursa_install_spec must use an absolute local file URL"
+            )
         path = path.resolve()
         if not path.exists():
             raise ValueError(f"ursa_install_spec path does not exist: {path}")
@@ -275,63 +273,24 @@ class UrsaHarborAgent(BaseInstalledAgent):
         extras: dict[str, None] = {}
         for group in extra_groups:
             for extra in group:
-                normalized = re.sub(r"[-_.]+", "-", extra.strip()).lower()
+                normalized = canonicalize_name(extra.strip())
                 if normalized:
                     extras[normalized] = None
         return tuple(extras)
-
-    def _install_target_with_extras(
-        self, name: str, embedded_extras: str | None = None
-    ) -> str:
-        extras = self._merge_extras(
-            embedded_extras.split(",") if embedded_extras else (),
-            self.ursa_extras,
-        )
-        return f"{name}[{','.join(extras)}]"
-
-    def _install_target(self, target: str) -> str:
-        direct_reference = re.match(
-            r"^([A-Za-z0-9][A-Za-z0-9._-]*)"
-            r"\s*(?:\[([^\]]+)\])?\s*@\s*(.+)$",
-            target,
-        )
-        if direct_reference:
-            name, embedded, reference = direct_reference.groups()
-            return f"{self._install_target_with_extras(name, embedded)} @ {reference}"
-        if "://" in target:
-            return f"{self._install_target_with_extras('ursa-ai')} @ {target}"
-        distribution = re.match(
-            r"^([A-Za-z0-9][A-Za-z0-9._-]*)"
-            r"\s*(?:\[([^\]]+)\])?\s*",
-            target,
-        )
-        if distribution:
-            name, embedded = distribution.groups()
-            end = distribution.end()
-            return f"{self._install_target_with_extras(name, embedded)}{target[end:]}"
-        return self._install_target_with_extras(target)
 
     @staticmethod
     def _github_archive_target(target: str) -> str:
         """Use a GitHub archive so task images do not need a Git client."""
         match = re.fullmatch(
-            r"(?:(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)"
-            r"\s*(?P<extras>\[[^\]]+\])?\s*@\s*)?"
             r"git\+https://github\.com/(?P<repository>[^?#]+?)"
-            r"(?:\.git)?@(?P<revision>[^#;\s]+)"
-            r"(?P<marker>\s*;\s*.+)?",
+            r"(?:\.git)?@(?P<revision>[^#;\s]+)",
             target,
         )
         if match is None:
             return target
         repository = match.group("repository").removesuffix(".git")
         revision = quote(match.group("revision"), safe="")
-        archive = f"https://github.com/{repository}/archive/{revision}.tar.gz"
-        name = match.group("name")
-        extras = match.group("extras") or ""
-        marker = match.group("marker") or ""
-        requirement = f"{name}{extras} @ {archive}" if name else archive
-        return f"{requirement}{marker}"
+        return f"https://github.com/{repository}/archive/{revision}.tar.gz"
 
     def _mcp_config(self) -> dict[str, dict[str, Any]]:
         """Convert Harbor's MCP list to URSA's named mapping."""
@@ -603,7 +562,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
         if uv is None:
             raise RuntimeError(
                 "Building the default local URSA installation requires uv; "
-                "pass a wheel or package requirement as ursa_install_spec"
+                "pass a PEP 508 wheel reference or version as ursa_install_spec"
             )
         destination.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
@@ -926,34 +885,38 @@ class UrsaHarborAgent(BaseInstalledAgent):
             env=install_env,
             timeout_sec=600,
         )
-        install_target = self.ursa_install_spec
-        if isinstance(install_target, Path):
+        install_target = Requirement(str(self.ursa_install_spec))
+        install_target.extras = set(
+            self._merge_extras(tuple(install_target.extras), self.ursa_extras)
+        )
+        if (source := self._install_source) is not None:
             if self._build_default_install_wheel:
                 with tempfile.TemporaryDirectory(
                     prefix="ursa-harbor-wheel-"
                 ) as temp_dir:
                     wheel = await asyncio.to_thread(
-                        self._build_wheel, install_target, Path(temp_dir)
+                        self._build_wheel, source, Path(temp_dir)
                     )
                     remote_source = f"{install_root}/tmp/{wheel.name}"
                     await environment.upload_file(wheel, remote_source)
-                install_target = f"file://{remote_source}"
-            elif install_target.is_file():
-                remote_source = f"{install_root}/tmp/{install_target.name}"
-                await environment.upload_file(install_target, remote_source)
-                install_target = f"file://{remote_source}"
+            elif source.is_file():
+                remote_source = f"{install_root}/tmp/{source.name}"
+                await environment.upload_file(source, remote_source)
             else:
                 remote_source = f"{install_root}/tmp/ursa-source"
                 with tempfile.TemporaryDirectory(
                     prefix="ursa-harbor-source-"
                 ) as temp_dir:
                     staged_source = Path(temp_dir) / "ursa"
-                    self._stage_source(install_target, staged_source)
+                    self._stage_source(source, staged_source)
                     await environment.upload_dir(staged_source, remote_source)
-                install_target = remote_source
-        install_target = self._install_target(
-            self._github_archive_target(install_target)
-        )
+            install_target.url = (
+                urlparse(install_target.url)
+                ._replace(netloc="", path=quote(remote_source))
+                .geturl()
+            )
+        elif install_target.url:
+            install_target.url = self._github_archive_target(install_target.url)
         extra_packages = " ".join(
             f"--with {shlex.quote(package)}" for package in self.extra_packages
         )
@@ -963,7 +926,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
                 f"{install_root}/bin/uv tool install --force "
                 "--refresh-package ursa-ai --python "
                 f"{self.URSA_PYTHON_VERSION} "
-                f"{extra_packages} {shlex.quote(install_target)} && "
+                f"{extra_packages} {shlex.quote(str(install_target))} && "
                 f"test -x {install_root}/bin/ursa && "
                 f"test -x {install_root}/tools/ursa-ai/bin/python && "
                 "printf '%s\\n' '#!/bin/sh' "
@@ -1075,6 +1038,66 @@ app = typer.Typer(
     no_args_is_help=True,
     help="Run and validate URSA's Harbor integration.",
 )
+
+
+artifacts_app = typer.Typer(
+    help="Preview, apply, resume, or restore completed Harbor job artifacts."
+)
+app.add_typer(artifacts_app, name="artifacts")
+
+
+@artifacts_app.command()
+def plan(
+    run_dir: Annotated[Path, typer.Option(exists=True, file_okay=False)],
+    policy: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+) -> None:
+    """Print a read-only inventory and planned actions (no files are changed)."""
+    from ursa.integrations.harbor_retention import (
+        load_retention_config,
+        plan_job_retention,
+    )
+
+    typer.echo(
+        plan_job_retention(
+            run_dir, load_retention_config(policy)
+        ).model_dump_json(indent=2)
+    )
+
+
+@artifacts_app.command()
+def apply(
+    run_dir: Annotated[Path, typer.Option(exists=True, file_okay=False)],
+    policy: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+) -> None:
+    """Apply a policy, or resume its recorded cleanup after an interruption."""
+    from ursa.integrations.harbor_retention import (
+        apply_job_retention,
+        load_retention_config,
+    )
+
+    typer.echo(
+        json.dumps(
+            apply_job_retention(run_dir, load_retention_config(policy)),
+            indent=2,
+        )
+    )
+
+
+@artifacts_app.command()
+def restore(
+    manifest: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    destination: Annotated[Path, typer.Option()],
+) -> None:
+    """Extract verified archived payloads into a new directory."""
+    from ursa.artifacts.retention import restore_artifacts
+
+    deleted = restore_artifacts(manifest, destination)
+    typer.echo(
+        json.dumps({
+            "destination": str(destination),
+            "unrecoverable_deleted_files": deleted,
+        })
+    )
 
 
 @app.command()

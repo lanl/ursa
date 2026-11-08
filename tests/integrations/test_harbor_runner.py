@@ -21,6 +21,7 @@ from langchain_core.runnables import (
 )
 from langchain_core.tools import tool
 from langgraph.checkpoint.base import empty_checkpoint
+from packaging.requirements import Requirement
 
 from ursa.agents import BaseAgent
 from ursa.cli import agent_management
@@ -235,23 +236,41 @@ def test_native_config_keyring_uses_inference_provider(
     assert secret_env == {"URSA_HARBOR_SECRET_0": "key"}
 
 
+@pytest.mark.parametrize(
+    "source_kind",
+    ["implicit", "project", "wheel", "sdist", "version", "git", "url"],
+)
 @pytest.mark.asyncio
-async def test_default_local_install_builds_and_uploads_a_wheel(
-    tmp_path, monkeypatch
+async def test_install_preserves_requirement_and_uploads_local_sources(
+    tmp_path, monkeypatch, source_kind
 ):
     config = _native_config_file(tmp_path / "ursa.yaml")
-    checkout = tmp_path / "checkout"
+    checkout = tmp_path / "checkout with spaces"
     (checkout / "pyproject.toml").parent.mkdir()
     (checkout / "pyproject.toml").write_text("[project]\nname = 'ursa-ai'\n")
+    wheel = tmp_path / "ursa_ai-1.0.0-py3-none-any.whl"
+    wheel.write_bytes(b"wheel")
+    sdist = tmp_path / "ursa_ai-1.0.0.tar.gz"
+    sdist.write_bytes(b"sdist")
+    targets = {
+        "implicit": f" @ {checkout.as_uri()}",
+        "project": f" @ {checkout.as_uri()}",
+        "wheel": f" @ {wheel.as_uri()}#sha256=abc",
+        "sdist": f" @ {sdist.as_uri()}",
+        "version": ">=0.17.3,<1",
+        "git": " @ git+https://github.com/lanl/ursa.git@feature/harbor",
+        "url": " @ https://example.org/ursa.whl#sha256=abc",
+    }
+    spec = f'ursa-ai[office_readers]{targets[source_kind]} ; python_version >= "3.12"'
     monkeypatch.setattr(
-        UrsaHarborAgent,
-        "_default_install_spec",
-        staticmethod(lambda: checkout),
+        UrsaHarborAgent, "_default_install_spec", staticmethod(lambda: spec)
     )
     agent = UrsaHarborAgent(
         logs_dir=tmp_path / "agent",
         environment_logs_dir=tmp_path / "agent",
         config=config,
+        ursa_install_spec=None if source_kind == "implicit" else spec,
+        ursa_extras="image,harbor",
     )
     built: list[Path] = []
 
@@ -265,12 +284,16 @@ async def test_default_local_install_builds_and_uploads_a_wheel(
     class Environment:
         def __init__(self) -> None:
             self.files: list[tuple[Path, str]] = []
+            self.directories: list[str] = []
 
         async def upload_file(self, source: Path, destination: str) -> None:
             self.files.append((source, destination))
 
-        async def upload_dir(self, *_args: object) -> None:
-            pytest.fail("the implicit local installation must upload a wheel")
+        async def upload_dir(self, source: Path, destination: str) -> None:
+            assert (source / "pyproject.toml").read_text() == (
+                checkout / "pyproject.toml"
+            ).read_text()
+            self.directories.append(destination)
 
     environment = Environment()
     monkeypatch.setattr(
@@ -294,14 +317,69 @@ async def test_default_local_install_builds_and_uploads_a_wheel(
 
     await agent.install(environment)
 
-    assert len(built) == 1
-    assert any(
-        destination.endswith(".whl") for _, destination in environment.files
+    tokens = shlex.split(root.call_args_list[-1].kwargs["command"])
+    installed = Requirement(tokens[tokens.index("&&") - 1])
+    original = Requirement(spec)
+    assert installed.extras == {"harbor", "image", "office-readers"}
+    assert installed.marker == original.marker
+    assert installed.specifier == original.specifier
+    assert str(agent.ursa_install_spec) == str(original)
+    assert len(built) == (source_kind == "implicit")
+    assert environment.directories == (
+        ["/installed-agent/tmp/ursa-source"] if source_kind == "project" else []
     )
-    assert (
-        "file:///installed-agent/tmp/ursa_ai-1.0.0-py3-none-any.whl"
-        in root.call_args_list[-1].kwargs["command"]
-    )
+    if source_kind in {"implicit", "wheel", "sdist"}:
+        filename = sdist.name if source_kind == "sdist" else wheel.name
+        destination = f"/installed-agent/tmp/{filename}"
+        fragment = "#sha256=abc" if source_kind == "wheel" else ""
+        assert installed.url == f"file://{destination}{fragment}"
+        assert any(remote == destination for _, remote in environment.files)
+    elif source_kind == "project":
+        assert installed.url == "file:///installed-agent/tmp/ursa-source"
+    elif source_kind == "git":
+        assert installed.url == (
+            "https://github.com/lanl/ursa/archive/feature%2Fharbor.tar.gz"
+        )
+    else:
+        assert installed.url == original.url
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "./checkout",
+        "/tmp/ursa.whl",
+        "git+https://github.com/lanl/ursa.git",
+        "ursa-ai=>1",
+        Path("checkout"),
+    ],
+)
+def test_install_spec_requires_pep508(value):
+    with pytest.raises(ValueError, match="PEP 508"):
+        UrsaHarborAgent._parse_install_spec(value)
+
+
+def test_install_spec_requires_ursa_package():
+    with pytest.raises(ValueError, match="ursa-ai package"):
+        UrsaHarborAgent._parse_install_spec("another-package>=1")
+
+
+def test_install_spec_validates_local_sources(tmp_path):
+    missing = tmp_path / "missing.whl"
+    with pytest.raises(ValueError, match="does not exist"):
+        UrsaHarborAgent._local_install_source(
+            Requirement(f"ursa-ai @ {missing.as_uri()}")
+        )
+    with pytest.raises(ValueError, match="not a Python project"):
+        UrsaHarborAgent._local_install_source(
+            Requirement(f"ursa-ai @ {tmp_path.as_uri()}")
+        )
+    for url in ("file:relative/path", "file://remote-host/path"):
+        with pytest.raises(ValueError, match="absolute local file URL"):
+            UrsaHarborAgent._local_install_source(
+                Requirement(f"ursa-ai @ {url}")
+            )
 
 
 def test_handoff_imports_checkpoint_as_local_named_agent(

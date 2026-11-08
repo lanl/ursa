@@ -40,9 +40,9 @@ _otel_logger = _logging.getLogger("ursa.observability.otel")
 opentelemetry_available = True
 _otel_import_error: str | None = None
 try:
-    OTLPSpanExporter = importlib.import_module(
-        "opentelemetry.exporter.otlp.proto.http.trace_exporter"
-    ).OTLPSpanExporter
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+        OTLPSpanExporter,
+    )
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor

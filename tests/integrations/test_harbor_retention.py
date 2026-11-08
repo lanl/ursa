@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 
 pytest.importorskip("harbor")
 
-from ursa.cli.artifacts import app
+from ursa.integrations.harbor import app
 from ursa.integrations.harbor_retention import (
     RetentionPlugin,
     apply_job_retention,
@@ -87,10 +87,10 @@ def test_cli_preview_apply_restore(tmp_path):
     policy = job(tmp_path)
     runner = CliRunner()
     args = ["--run-dir", str(tmp_path), "--policy", str(policy)]
-    preview = runner.invoke(app, ["plan", *args])
+    preview = runner.invoke(app, ["artifacts", "plan", *args])
     assert preview.exit_code == 0, preview.output
     assert not (tmp_path / "retention.json").exists()
-    assert runner.invoke(app, ["apply", *args]).exit_code == 0
+    assert runner.invoke(app, ["artifacts", "apply", *args]).exit_code == 0
     assert (
         json.loads((tmp_path / "retention-status.json").read_text())["status"]
         == "complete"
@@ -98,6 +98,7 @@ def test_cli_preview_apply_restore(tmp_path):
     result = runner.invoke(
         app,
         [
+            "artifacts",
             "restore",
             "--manifest",
             str(tmp_path / "retention.json"),

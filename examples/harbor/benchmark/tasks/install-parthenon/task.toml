@@ -6,14 +6,6 @@ description = "Build and install the Parthenon scientific software framework."
 authors = [{ name = "URSA Developers" }]
 keywords = ["cmake", "package-installation", "scientific-computing"]
 
-[metadata]
-author_name = "URSA Developers"
-author_email = "ursa@lanl.gov"
-difficulty = "hard"
-category = "software_engineering"
-expert_time_estimate_min = 20.0
-junior_time_estimate_min = 60.0
-
 [verifier]
 timeout_sec = 1800.0
 

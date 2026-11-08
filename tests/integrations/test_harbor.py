@@ -478,7 +478,7 @@ async def test_agent_install_unprivileged_instance(
             logs_dir=tmp_path / "agent-logs",
             model_name="openai/gpt-4.1-nano",
             config=config,
-            ursa_install_spec=ursa_wheel,
+            ursa_install_spec=f"ursa-ai @ {ursa_wheel.as_uri()}",
         )
         assert (
             await env.exec("touch /outside-writable-binds")
