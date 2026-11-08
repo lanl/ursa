@@ -1,4 +1,4 @@
-"""Tests for the ``python -m ursa.integrations.harbor`` CLI."""
+"""Tests for the ``python -m ursa.integration.harbor`` CLI."""
 
 from pathlib import Path
 
@@ -9,11 +9,11 @@ try:
     from harbor.models.task.config import NetworkMode
     from harbor.models.task.task import Task
 
-    from ursa.integrations import harbor as harbor_integration
-    from ursa.integrations.harbor_singularity import (
+    from ursa.integration import harbor as harbor_integration
+    from ursa.integration.harbor.singularity import (
         DockerfileSingularityEnvironment,
     )
-    from ursa.integrations.harbor_validation import (
+    from ursa.integration.harbor.validation import (
         _task_environments,
         prebuild_harbor_task,
     )
@@ -139,7 +139,7 @@ def test_harbor_prebuild_command_reports_built_sifs(tmp_path, monkeypatch):
         return [cache / "agent.sif", cache / "verifier.sif"]
 
     monkeypatch.setattr(
-        "ursa.integrations.harbor_validation.prebuild_harbor_task", build
+        "ursa.integration.harbor.validation.prebuild_harbor_task", build
     )
 
     result = runner.invoke(

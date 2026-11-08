@@ -214,7 +214,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
 
     @staticmethod
     def _default_install_spec() -> str:
-        checkout = Path(__file__).resolve().parents[3]
+        checkout = Path(__file__).resolve().parents[4]
         if (checkout / "pyproject.toml").is_file():
             return f"ursa-ai @ {checkout.as_uri()}"
         distribution = importlib.metadata.distribution("ursa-ai")
@@ -626,7 +626,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
             "case $pid in ''|*[!0-9]*) exit 0 ;; esac; "
             'command=$(tr "\\000" " " < "/proc/$pid/cmdline" 2>/dev/null) '
             "|| exit 0; "
-            'case "$command" in *"ursa.integrations.harbor runner"*) ;; '
+            'case "$command" in *"ursa.integration.harbor runner"*) ;; '
             "*) exit 0 ;; esac; "
             "descendants() { for child in "
             '$(cat "/proc/$1/task/$1/children" 2>/dev/null); '
@@ -931,7 +931,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
                 f"test -x {install_root}/tools/ursa-ai/bin/python && "
                 "printf '%s\\n' '#!/bin/sh' "
                 "'exec /installed-agent/tools/ursa-ai/bin/python "
-                '-m ursa.integrations.harbor runner "$@"\' '
+                '-m ursa.integration.harbor runner "$@"\' '
                 f"> {install_root}/bin/ursa-harbor-runner && "
                 f"chmod 755 {install_root}/bin/ursa-harbor-runner"
             ),
@@ -1052,7 +1052,7 @@ def plan(
     policy: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
 ) -> None:
     """Print a read-only inventory and planned actions (no files are changed)."""
-    from ursa.integrations.harbor_retention import (
+    from ursa.integration.harbor.retention import (
         load_retention_config,
         plan_job_retention,
     )
@@ -1070,7 +1070,7 @@ def apply(
     policy: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
 ) -> None:
     """Apply a policy, or resume its recorded cleanup after an interruption."""
-    from ursa.integrations.harbor_retention import (
+    from ursa.integration.harbor.retention import (
         apply_job_retention,
         load_retention_config,
     )
@@ -1105,7 +1105,7 @@ def validate(
     paths: TaskPaths,
 ) -> None:
     """Validate Harbor task environments supported by URSA."""
-    from ursa.integrations.harbor_validation import (
+    from ursa.integration.harbor.validation import (
         discover_harbor_tasks,
         validate_harbor_task,
     )
@@ -1141,7 +1141,7 @@ def prebuild_sifs(
     ] = None,
 ) -> None:
     """Pre-build Dockerfile-backed SIF files for Harbor tasks."""
-    from ursa.integrations.harbor_validation import (
+    from ursa.integration.harbor.validation import (
         discover_harbor_tasks,
         prebuild_harbor_task,
     )
@@ -1186,7 +1186,7 @@ def run_runner(
     ],
 ) -> None:
     """Run the container-side Harbor agent process."""
-    from ursa.integrations.harbor_runner import main as runner_main
+    from ursa.integration.harbor.runner import main as runner_main
 
     runner_main(encoded)
 
@@ -1197,7 +1197,3 @@ def main() -> None:
 
 
 __all__ = ["UrsaHarborAgent", "app", "make_harbor_agent"]
-
-
-if __name__ == "__main__":
-    main()

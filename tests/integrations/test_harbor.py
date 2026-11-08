@@ -20,8 +20,8 @@ from harbor.models.task.config import (
 )
 from harbor.models.trial.paths import TrialPaths
 
-from ursa.integrations.harbor import UrsaHarborAgent
-from ursa.integrations.harbor_singularity import (
+from ursa.integration.harbor import UrsaHarborAgent
+from ursa.integration.harbor.singularity import (
     DockerfileSingularityEnvironment,
 )
 
@@ -362,7 +362,7 @@ async def test_network_policy_blocks_loopback(tmp_path, ubuntu_sif):
 
 async def test_host_ca_mount_is_read_only(tmp_path, ubuntu_sif, monkeypatch):
     monkeypatch.setattr(
-        "ursa.integrations.harbor_singularity._host_ca_certificates_pem",
+        "ursa.integration.harbor.singularity._host_ca_certificates_pem",
         lambda: "test host CA bundle\n",
     )
     async with _environment(tmp_path, ubuntu_sif) as env:
@@ -581,7 +581,7 @@ def test_retention_plugin_through_harbor_job(tmp_path, ubuntu_sif, monkeypatch):
             "--agent",
             "oracle",
             "--env",
-            "ursa.integrations.harbor_singularity:DockerfileSingularityEnvironment",
+            "ursa.integration.harbor.singularity:DockerfileSingularityEnvironment",
             "--environment-kwarg",
             "singularity_fakeroot=false",
             "--environment-kwarg",
@@ -591,7 +591,7 @@ def test_retention_plugin_through_harbor_job(tmp_path, ubuntu_sif, monkeypatch):
             "--job-name",
             "retention",
             "--plugin",
-            "ursa.integrations.harbor_retention:RetentionPlugin",
+            "ursa.integration.harbor.retention:RetentionPlugin",
             "--plugin-kwarg",
             f"policy={policy}",
             "--quiet",

@@ -1,4 +1,4 @@
-"""Container-side entry point used by :mod:`ursa.integrations.harbor`."""
+"""Container-side entry point used by :mod:`ursa.integration.harbor`."""
 
 from __future__ import annotations
 

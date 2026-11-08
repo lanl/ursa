@@ -25,7 +25,7 @@ from harbor.trial.network_policy import (
     resolve_trial_network_plan,
 )
 
-from ursa.integrations.harbor_singularity import (
+from ursa.integration.harbor.singularity import (
     DockerfileSingularityEnvironment,
 )
 

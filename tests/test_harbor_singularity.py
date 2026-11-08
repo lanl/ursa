@@ -19,8 +19,8 @@ from harbor.models.task.config import (
 )
 from harbor.models.trial.paths import TrialPaths
 
-from ursa.integrations import harbor_singularity
-from ursa.integrations.harbor_singularity import (
+from ursa.integration.harbor import singularity as harbor_singularity
+from ursa.integration.harbor.singularity import (
     DockerfileSingularityEnvironment,
     docker_compose_to_singularity_compose,
 )
@@ -226,10 +226,10 @@ import ssl
 import sys
 import truststore
 if {import_first!r}:
-    from ursa.integrations.harbor_singularity import _host_ca_certificates_pem
+    from ursa.integration.harbor.singularity import _host_ca_certificates_pem
 from ursa.util.http import inject_truststore_into_ssl
 inject_truststore_into_ssl()
-from ursa.integrations.harbor_singularity import _host_ca_certificates_pem
+from ursa.integration.harbor.singularity import _host_ca_certificates_pem
 actual = _host_ca_certificates_pem()
 assert actual == sys.stdin.read()
 assert ssl.SSLContext is truststore.SSLContext

@@ -7,8 +7,8 @@ from typer.testing import CliRunner
 
 pytest.importorskip("harbor")
 
-from ursa.integrations.harbor import app
-from ursa.integrations.harbor_retention import (
+from ursa.integration.harbor import app
+from ursa.integration.harbor.retention import (
     RetentionPlugin,
     apply_job_retention,
     load_retention_config,
