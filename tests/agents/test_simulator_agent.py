@@ -101,6 +101,32 @@ def test_simulator_agent_import():
 
 
 @pytest.mark.parametrize(
+    "config", [{}, {"thread_id": None}, {"thread_id": "study"}]
+)
+def test_simulator_thread_ids(monkeypatch, tmp_path, chat_model, config):
+    import ursa.agents.simulator_agent as simulator
+    import ursa.security as security
+
+    monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "cache")
+    child_agent = Mock(side_effect=lambda **_: Mock())
+    monkeypatch.setattr(simulator, "ChatAgent", child_agent)
+
+    agent = simulator.SimulatorAgent(
+        llm=chat_model, workspace=tmp_path, checkpointer=None, **config
+    )
+
+    assert isinstance(agent.thread_id, str) and agent.thread_id
+    if config.get("thread_id") is not None:
+        assert agent.thread_id == config["thread_id"]
+    assert [
+        call.kwargs["thread_id"] for call in child_agent.call_args_list
+    ] == [
+        f"{agent.thread_id}_documenter",
+        f"{agent.thread_id}_runner",
+    ]
+
+
+@pytest.mark.parametrize(
     "config,expected_path",
     [
         ({}, "../simulator_docs"),
