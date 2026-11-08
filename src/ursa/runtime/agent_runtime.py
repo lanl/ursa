@@ -395,11 +395,12 @@ class _UrsaProcessAgent(_ProcessRuntimeBridge):
                 committed_state = deepcopy(self.state)
                 if item.on_start is not None:
                     await maybe_await(item.on_start())
+                # Formatting can scan skills or read files. Keep the inbox and
+                # heartbeat responsive while that synchronous work runs.
+                query = await asyncio.to_thread(self._format_prompt, item)
                 # Keep model cancellation separate from worker shutdown.
                 self.state = await asyncio.create_task(
-                    self.agent.ainvoke(
-                        self._format_prompt(item), config=item.config or None
-                    )
+                    self.agent.ainvoke(query, config=item.config or None)
                 )
                 # Rendering failures must preserve the completed model state.
                 committed_state = self.state
@@ -732,7 +733,7 @@ class AgentRuntime:
         self.embedding = None
         self._namespace = f"ursa:{uuid4().hex}"
         self._owns_manager = manager is None
-        self._manager = manager or AgentManager()
+        self._manager = manager or AgentManager(runtime=self.config.runtime)
         self._registered: set[str] = set()
         self._mcp_tool_specs: list[dict[str, Any]] | None = None
         self._mcp_tool_specs_fingerprint: str | None = None

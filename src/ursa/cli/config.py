@@ -27,6 +27,7 @@ from pydantic import (
     model_validator,
 )
 
+from ursa.runtime.config import RuntimeConfig
 from ursa.security import enforce_group_base_url_policy
 from ursa.util.crossplatform import system_config_path, user_config_paths
 from ursa.util.fileio import atomic_write_text
@@ -595,6 +596,9 @@ class UrsaConfig(BaseModel):
 
     subagents: SubagentsConfig = Field(default_factory=SubagentsConfig)
     """Dynamic subagent limits and optional model overrides."""
+
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    """Agent execution backend, worker limits and optional cluster launcher."""
 
     rag_tools: list[str] = Field(default_factory=list)
     """Persisted RAG agent names to bind as tools."""

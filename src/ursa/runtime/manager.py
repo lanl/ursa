@@ -19,6 +19,7 @@ import tempfile
 import threading
 import traceback
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -31,6 +32,8 @@ from uuid import uuid4
 from langchain_core.callbacks import AsyncCallbackHandler
 
 from ursa.util.async_utils import cancel_tasks, maybe_await
+
+from .config import RuntimeConfig
 
 LOGGER = logging.getLogger(__name__)
 
@@ -517,9 +520,14 @@ class AgentProcess:
         self._message_tasks: set[asyncio.Task[None]] = set()
         self._stopping = asyncio.Event()
 
-    async def run(self) -> None:
-        output = _ProcessOutputForwarder(self.outgoing, self.spec.agent_id)
-        output.install()
+    async def run(self, *, isolated: bool = True) -> None:
+        output = (
+            _ProcessOutputForwarder(self.outgoing, self.spec.agent_id)
+            if isolated
+            else None
+        )
+        if output is not None:
+            output.install()
         writer = asyncio.create_task(self._writer())
         heartbeat = asyncio.create_task(self._heartbeat())
         reader = asyncio.create_task(self._reader())
@@ -552,13 +560,15 @@ class AgentProcess:
             await cancel_tasks(*self._message_tasks)
             await self._close_agent()
             await cancel_tasks(heartbeat)
-            output.flush()
+            if output is not None:
+                output.flush()
             if not writer.done():
                 await self.outgoing.put({"type": "stopped"})
                 await self.outgoing.join()
             await cancel_tasks(writer)
             await cancel_tasks(reader)
-            output.restore()
+            if output is not None:
+                output.restore()
 
     async def _construct_agent(self) -> None:
         factory = _load_factory(self.spec.factory)
@@ -721,7 +731,10 @@ class AgentProcess:
 
     async def _heartbeat(self) -> None:
         while not self._stopping.is_set():
-            self.heartbeat.value = monotonic()
+            if self.heartbeat is None:
+                await self.outgoing.put({"type": "heartbeat"})
+            else:
+                self.heartbeat.value = monotonic()
             try:
                 await asyncio.wait_for(
                     self._stopping.wait(), self.heartbeat_interval
@@ -787,6 +800,7 @@ class _ManagedAgent:
     background_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     response_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     heartbeat: Any = None
+    has_state: bool = False
 
 
 class AgentManager:
@@ -799,6 +813,7 @@ class AgentManager:
         heartbeat_interval: float = 1.0,
         heartbeat_timeout: float = 10.0,
         startup_timeout: float = 120.0,
+        runtime: RuntimeConfig | None = None,
     ) -> None:
         if heartbeat_interval <= 0:
             raise ValueError("heartbeat_interval must be positive")
@@ -808,8 +823,12 @@ class AgentManager:
             )
         if startup_timeout <= 0:
             raise ValueError("startup_timeout must be positive")
+        self.runtime = runtime or RuntimeConfig()
         self._mp: Any = multiprocessing.get_context(start_method)
-        if self._mp.get_start_method() == "spawn":
+        if (
+            self.runtime.backend == "process"
+            and self._mp.get_start_method() == "spawn"
+        ):
             _prime_spawn_resource_tracker()
         self.heartbeat_interval = heartbeat_interval
         self.heartbeat_timeout = heartbeat_timeout
@@ -821,6 +840,11 @@ class AgentManager:
         self._monitor_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
         self._closed = False
+        self._pool = None
+        if self.runtime.backend != "process":
+            from .pool import WorkerPool
+
+            self._pool = WorkerPool(self.runtime, self)
 
     async def register(self, spec: AgentSpec, *, start: bool = False) -> None:
         """Register an independently configured agent."""
@@ -872,7 +896,15 @@ class AgentManager:
         if entry.status in {AgentStatus.STARTING, AgentStatus.READY}:
             ready = entry.ready
         else:
-            ready = self._spawn(entry)
+            if self._pool is None:
+                ready = self._spawn(entry)
+            else:
+                process = await self._pool.start(
+                    entry.spec, entry.state, self.heartbeat_interval
+                )
+                ready = self._attach(
+                    entry, process, process.connection, process.heartbeat
+                )
         assert ready is not None
         try:
             async with asyncio.timeout(self.startup_timeout):
@@ -921,18 +953,29 @@ class AgentManager:
         finally:
             child.close()
 
+        return self._attach(entry, process, parent, heartbeat, ready)
+
+    def _attach(self, entry, process, connection, heartbeat, ready=None):
+        if ready is None:
+            ready = asyncio.get_running_loop().create_future()
         entry.generation += 1
         generation = entry.generation
         entry.status = AgentStatus.STARTING
         entry.process = process
-        entry.connection = parent
+        entry.connection = connection
         entry.ready = ready
         entry.last_heartbeat = None
         entry.heartbeat = heartbeat
         entry.reader_task = asyncio.create_task(
-            self._reader_loop(entry.spec.agent_id, generation, parent, process)
+            self._reader_loop(
+                entry.spec.agent_id, generation, connection, process
+            )
         )
         return ready
+
+    def worker_snapshots(self):
+        """Report placement and pending operations for pooled/threaded workers."""
+        return self._pool.snapshots() if self._pool is not None else []
 
     async def invoke(
         self,
@@ -1172,9 +1215,13 @@ class AgentManager:
         monitor = self._monitor_task
         if monitor is not None:
             await cancel_tasks(monitor)
+        if self._pool is not None:
+            await self._pool.stop_scheduling()
         await asyncio.gather(
             *(self.kill_agent(agent_id) for agent_id in agent_ids),
         )
+        if self._pool is not None:
+            await self._pool.aclose()
 
     async def __aenter__(self) -> AgentManager:
         return self
@@ -1211,15 +1258,29 @@ class AgentManager:
         process: multiprocessing.Process,
     ) -> None:
         entry = self._entry(agent_id)
+        executor = None
+        if not hasattr(connection, "arecv"):
+            # Pipe reads are long-lived. They must not exhaust the executor
+            # used for sends, state commits, and process lifecycle operations.
+            executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="ursa-pipe"
+            )
         try:
             while generation == entry.generation:
-                message = await asyncio.to_thread(connection.recv)
+                if hasattr(connection, "arecv"):
+                    message = await connection.arecv()
+                else:
+                    message = await asyncio.get_running_loop().run_in_executor(
+                        executor, connection.recv
+                    )
                 await self._handle_message(
                     entry, generation, connection, message
                 )
         except (EOFError, BrokenPipeError, OSError):
             pass
         finally:
+            if executor is not None:
+                executor.shutdown(wait=False)
             if generation == entry.generation:
                 await self._process_exited(entry, generation, process)
 
@@ -1319,6 +1380,7 @@ class AgentManager:
                     self._write_state, entry.spec.state_path, state
                 )
             entry.state = state
+            entry.has_state = True
 
     def _queue_callback(
         self, entry: _ManagedAgent, message: Mapping[str, Any]

@@ -5,6 +5,9 @@ concurrently running subagents. `ursa.messaging.AsyncMessageMixin` manages inbox
 and hierarchy lifecycles, validates limits, and serializes async invocations
 while allowing reentrant calls. Shared rules live in `ursa.messaging.coordination`.
 
+The host can place agents in dedicated processes, local threads, or a shared
+local/MPI/Slurm worker pool; see [Runtime workers](runtime.md).
+
 ## User messages
 
 Use `request` to await a result, `post_message` for one-way delivery, and
@@ -65,8 +68,10 @@ Every `ChatAgent` exposes these five tools to its model:
   A working target counts as ready only if the wait would close a dependency
   cycle, preventing reciprocal deadlocks without releasing unrelated waits.
 - `stop_agent(target)` marks a descendant subtree as stopping and returns
-  immediately. The host hard-stops its processes in the background without
-  waiting for responses or completion. New messages and spawns into that subtree
+  immediately. The default process backend hard-stops its processes in the
+  background without waiting for responses or completion; threaded backends
+  cancel async work as described in [Runtime workers](runtime.md).
+  New messages and spawns into that subtree
   are rejected. Agents cannot stop themselves, ancestors, siblings, or unrelated
   agents.
 - `list_agents()` lists the hierarchy and marks the caller.
