@@ -18,9 +18,7 @@ from .base import (
 from .config import (
     AgentSymposiumConfig,
     EnvironmentMemberConfig,
-    load_object,
     load_symposium_config,
-    make_llm,
 )
 
 
@@ -237,7 +235,7 @@ class AgentSymposiumEnvironment(BaseEnvironment):
         reuse existing named agents directly from YAML instead of creating new
         ``<symposium>_<member>`` checkpoints.
         """
-        return self._build_symposium_agent(
+        return self._build_member(
             member,
             workspace=self._member_workspace(member.name),
             agent_name=member.name,
@@ -247,30 +245,11 @@ class AgentSymposiumEnvironment(BaseEnvironment):
         self, member: EnvironmentMemberConfig
     ) -> Any:
         """Instantiate the organizer in the parent symposium workspace."""
-        return self._build_symposium_agent(
+        return self._build_member(
             member,
             workspace=self.workspace,
             agent_name=member.name,
         )
-
-    def _build_symposium_agent(
-        self,
-        member: EnvironmentMemberConfig,
-        *,
-        workspace: Path,
-        agent_name: str,
-    ) -> Any:
-        cls = load_object(member.agent)
-        llm = make_llm(self.llm, member.model)
-        kwargs = dict(member.config or {})
-        kwargs.setdefault("workspace", workspace)
-        kwargs.setdefault("group", self.group)
-        if isinstance(cls, type) and issubclass(cls, BaseEnvironment):
-            kwargs.setdefault("name", member.name)
-            kwargs.setdefault("persist_members", self.persist_members)
-        elif self.persist_members:
-            kwargs.setdefault("agent_name", agent_name)
-        return cls(llm=llm, **kwargs)
 
     def _member_workspace_roster(self) -> str:
         return (

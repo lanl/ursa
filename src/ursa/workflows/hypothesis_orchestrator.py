@@ -50,9 +50,15 @@ from ursa.agents.hypothesizer_agent import (
     DEFAULT_HYPOTHESIS_EXPERIENCE,
     HypothesizerAgent,
 )
+from ursa.util.agent_invocation import ainvoke_agent, invoke_agent
 from ursa.util.events import EnvironmentEvents
+from ursa.workflows._hypotheses import (
+    Hypothesis,
+    artifact_text,
+    parse_hypotheses,
+)
+from ursa.workflows._tool_settings import WorkflowToolsMixin
 from ursa.workflows.base_workflow import BaseWorkflow, InputLike
-from ursa.workflows.hypothesis_symposium import Hypothesis
 
 logger = logging.getLogger(__name__)
 
@@ -118,11 +124,13 @@ class _InvestigatorRegistry:
         workspace: Path | None,
         group: str | None,
         run_stamp: str,
+        agent_kwargs: Mapping[str, Any] | None = None,
     ) -> None:
         self._llm = llm
         self._workspace = workspace
         self._group = group
         self._run_stamp = run_stamp
+        self._agent_kwargs = dict(agent_kwargs or {})
         self._agents: dict[str, ExecutionAgent] = {}
         self._names: dict[str, str] = {}
 
@@ -139,7 +147,11 @@ class _InvestigatorRegistry:
         if key in self._agents:
             return self._agents[key]
         agent_name = self._mint_name(label)
-        kwargs: dict[str, Any] = {"agent_name": agent_name}
+        kwargs: dict[str, Any] = {
+            **self._agent_kwargs,
+            "agent_name": agent_name,
+            "thread_id": "ursa",
+        }
         if self._workspace is not None:
             # Give each investigator its own sub-workspace so their artifacts do
             # not collide, while remaining under the run workspace.
@@ -253,7 +265,7 @@ Question:
 """
 
 
-class HypothesisOrchestratorWorkflow(BaseWorkflow):
+class HypothesisOrchestratorWorkflow(WorkflowToolsMixin, BaseWorkflow):
     """Hypothesize, then let an orchestrator spawn/review per-hypothesis agents.
 
     A dynamic-topology alternative to
@@ -307,7 +319,11 @@ class HypothesisOrchestratorWorkflow(BaseWorkflow):
             HypothesizerAgent._validate_experience_filename(experience_filename)
         )
         self.hypothesizer = hypothesizer or HypothesizerAgent(
-            llm, experience_filename=self.experience_filename
+            llm,
+            experience_filename=self.experience_filename,
+            workspace=self.workspace,
+            group=self.group,
+            **self._agent_kwargs,
         )
         self.max_hypotheses = max(1, int(max_hypotheses))
         self._orchestrator_override = orchestrator
@@ -334,7 +350,8 @@ class HypothesisOrchestratorWorkflow(BaseWorkflow):
         self, query: str, context: str, config: Mapping[str, Any] | None
     ) -> list[Hypothesis]:
         """Produce competing hypotheses via the HypothesizerAgent."""
-        result = self.hypothesizer.invoke(
+        result = invoke_agent(
+            self.hypothesizer,
             {
                 "query": query,
                 "new_information": query,
@@ -350,16 +367,7 @@ class HypothesisOrchestratorWorkflow(BaseWorkflow):
 
     @staticmethod
     def _artifact_text(result: Any) -> str:
-        if isinstance(result, str):
-            return result
-        if isinstance(result, Mapping):
-            text = result.get("hypothesis_space_markdown")
-            if text:
-                return str(text)
-            summary = result.get("summary")
-            if summary:
-                return str(summary)
-        return HypothesizerAgent._response_text(result)
+        return artifact_text(result)
 
     # ------------------------------------------------------------- run surface
 
@@ -390,7 +398,7 @@ class HypothesisOrchestratorWorkflow(BaseWorkflow):
             orchestrator = self._build_orchestrator(registry)
             start = perf_counter()
             try:
-                result = orchestrator.invoke(prompt, config=run_config)
+                result = invoke_agent(orchestrator, prompt, config=run_config)
             except BaseException as exc:
                 events.emit(
                     "Orchestration failed",
@@ -583,17 +591,24 @@ class HypothesisOrchestratorWorkflow(BaseWorkflow):
             workspace=self.workspace,
             group=self.group,
             run_stamp=_timestamp(),
+            agent_kwargs={
+                **self._tool_agent_kwargs,
+                "extra_tools": list(self._extra_tools.values()),
+            },
         )
 
     def _build_orchestrator(
         self, registry: _InvestigatorRegistry
     ) -> ExecutionAgent:
-        tools = self._make_spawn_tools(registry)
+        tools = [*self._extra_tools.values(), *self._make_spawn_tools(registry)]
         if self._orchestrator_override is not None:
             orchestrator = self._orchestrator_override
             orchestrator.add_tool(tools)
             return orchestrator
-        kwargs: dict[str, Any] = {"extra_tools": tools}
+        kwargs: dict[str, Any] = {
+            **self._tool_agent_kwargs,
+            "extra_tools": tools,
+        }
         if self.workspace is not None:
             kwargs["workspace"] = str(self.workspace / "orchestrator")
         if self.group is not None:
@@ -765,7 +780,7 @@ class HypothesisOrchestratorWorkflow(BaseWorkflow):
             )
             kwargs = {"config": member_config} if member_config else {}
             try:
-                result = agent.invoke(task, **kwargs)
+                result = invoke_agent(agent, task, **kwargs)
             except BaseException as exc:
                 _error(hypothesis_label, task, exc, started)
                 raise
@@ -785,7 +800,7 @@ class HypothesisOrchestratorWorkflow(BaseWorkflow):
             )
             kwargs = {"config": member_config} if member_config else {}
             try:
-                result = await agent.ainvoke(task, **kwargs)
+                result = await ainvoke_agent(agent, task, **kwargs)
             except BaseException as exc:
                 _error(hypothesis_label, task, exc, started)
                 raise
@@ -847,34 +862,6 @@ class HypothesisOrchestratorWorkflow(BaseWorkflow):
         )
 
     def _parse_hypotheses(self, artifact: str, query: str) -> list[Hypothesis]:
-        hypotheses: list[Hypothesis] = []
-        current: Hypothesis | None = None
-        detail: list[str] = []
-        for raw in artifact.splitlines():
-            line = raw.rstrip()
-            if line.startswith("### H"):
-                if current is not None:
-                    current.detail = "\n".join(detail).strip()
-                    hypotheses.append(current)
-                    detail = []
-                heading = line[3:].strip()
-                statement = heading
-                if ":" in heading:
-                    statement = heading.split(":", 1)[1].strip()
-                current = Hypothesis(
-                    index=len(hypotheses) + 1, statement=statement or heading
-                )
-            elif current is not None:
-                detail.append(line)
-        if current is not None:
-            current.detail = "\n".join(detail).strip()
-            hypotheses.append(current)
-        if not hypotheses:
-            hypotheses = [
-                Hypothesis(
-                    index=1,
-                    statement=query or "primary hypothesis",
-                    detail=artifact,
-                )
-            ]
-        return hypotheses[: self.max_hypotheses]
+        return parse_hypotheses(
+            artifact, query, max_hypotheses=self.max_hypotheses
+        )

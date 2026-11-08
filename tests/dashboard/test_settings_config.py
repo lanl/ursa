@@ -459,11 +459,13 @@ def test_global_model_settings_update_user_config_and_preserve_other_keys(
             "      env: PORTAL_KEY",
             "llm_model:",
             "  model: openai:old-chat",
+            "  ssl_verify: false",
             "  inference_provider: portal",
             "  reasoning:",
             "    effort: medium",
             "emb_model:",
             "  model: openai:old-embedding",
+            "  ssl_verify: false",
             "  inference_provider: portal",
             "  check_embedding_ctx_length: false",
             "agent_config:",
@@ -493,6 +495,18 @@ def test_global_model_settings_update_user_config_and_preserve_other_keys(
     with TestClient(
         create_app(credential_store=MemoryCredentialStore())
     ) as client:
+        original = yaml.safe_load(user.read_text())
+        renamed = client.patch(
+            "/settings",
+            json={"patch": {"llm": {"model": "openai:renamed-chat"}}},
+        )
+        assert renamed.status_code == 200, renamed.text
+        after_rename = yaml.safe_load(user.read_text())
+        assert after_rename["llm_model"] == {
+            **original["llm_model"],
+            "model": "openai:renamed-chat",
+        }
+        assert after_rename["emb_model"] == original["emb_model"]
         response = client.patch(
             "/settings",
             json={
@@ -534,11 +548,13 @@ def test_global_model_settings_update_user_config_and_preserve_other_keys(
 
     saved = yaml.safe_load(user.read_text(encoding="utf-8"))
     assert saved["llm_model"] == {
+        "ssl_verify": False,
         "reasoning": {"effort": "high"},
         "model": "openai:new-chat",
         "inference_provider": "portal",
     }
     assert saved["emb_model"] == {
+        "ssl_verify": False,
         "check_embedding_ctx_length": False,
         "model": "openai:new-embedding",
         "inference_provider": "portal",

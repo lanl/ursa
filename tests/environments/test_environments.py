@@ -4,10 +4,12 @@ import asyncio
 import logging
 from types import SimpleNamespace
 
+import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from ursa import security
 from ursa.environments import (
+    AgentEloEnvironment,
     AgentSymposiumConfig,
     AgentSymposiumEnvironment,
     AgentTeamConfig,
@@ -162,6 +164,73 @@ def fake_llm():
 def test_load_object_resolves_environment_short_names():
     assert load_object("AgentTeamEnvironment") is AgentTeamEnvironment
     assert load_object("AgentSymposiumEnvironment") is AgentSymposiumEnvironment
+
+
+@pytest.mark.parametrize("persist_members", [True, False])
+def test_elo_member_construction_preserves_default_names_and_workspaces(
+    tmp_path, persist_members
+):
+    env = AgentEloEnvironment(
+        llm=fake_llm(),
+        name="research",
+        workspace=tmp_path,
+        persist_members=persist_members,
+        members=[
+            {
+                "name": name,
+                "agent": "tests.environments.test_environments.RecordingMember",
+            }
+            for name in ("alpha", "beta")
+        ],
+    )
+    for name, member in env.members.items():
+        assert member.workspace == tmp_path / name
+        assert member.agent_name == (
+            f"research_{name}" if persist_members else None
+        )
+        assert member.kwargs.get("thread_id") == (
+            "ursa" if persist_members else None
+        )
+
+
+@pytest.mark.parametrize("persist_members", [True, False])
+def test_symposium_constructs_nested_team_with_inherited_settings(
+    tmp_path, persist_members
+):
+    env = AgentSymposiumEnvironment(
+        llm=fake_llm(),
+        name="research",
+        group="science",
+        workspace=tmp_path,
+        persist_members=persist_members,
+        organizer={
+            "name": "organizer",
+            "agent": "tests.environments.test_environments.RecordingOrganizer",
+        },
+        members=[
+            {
+                "name": "nested",
+                "agent": "AgentTeamEnvironment",
+                "config": {
+                    "pi": {
+                        "name": "lead",
+                        "agent": "tests.environments.test_environments.RecordingPI",
+                    },
+                    "members": [],
+                },
+            }
+        ],
+    )
+    team = env.members["nested"]
+    assert team.name == "nested"
+    assert team.workspace == tmp_path / "nested"
+    assert team.group == team.pi.group == "science"
+    assert team.persist_members is persist_members
+    assert team.pi.workspace == team.workspace
+    assert team.pi.agent_name == ("lead" if persist_members else None)
+    assert team.pi.kwargs.get("thread_id") == (
+        "ursa" if persist_members else None
+    )
 
 
 def test_environment_default_workspace_uses_group_cache(monkeypatch, tmp_path):

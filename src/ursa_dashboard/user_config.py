@@ -302,6 +302,8 @@ class UserConfigStore:
         llm: dict[str, Any],
         embedding: dict[str, Any],
         validate,
+        *,
+        changed_fields: dict[str, set[str]],
     ) -> dict[str, Any]:
         """Save dashboard model controls as the normal URSA defaults.
 
@@ -311,23 +313,35 @@ class UserConfigStore:
         """
         current = self.describe()
 
-        def model_edit(section: dict[str, Any]) -> DefaultModelEdit:
-            return DefaultModelEdit(
-                model=str(section.get("model") or "").strip(),
-                inference_provider=section.get("inference_provider"),
-                base_url=section.get("base_url"),
-                options=deepcopy(section.get("model_kwargs") or {}),
-            )
+        def model_edit(
+            section: dict[str, Any], name: str, config_key: str
+        ) -> DefaultModelEdit | None:
+            # Effective dashboard settings omit transport options and can
+            # include launch overrides. Only copy fields the user changed.
+            previous = current[config_key]
+            edit = deepcopy(previous or {})
+            for field in changed_fields[name]:
+                if field == "model_kwargs":
+                    options = deepcopy(section.get(field) or {})
+                    old_options = (previous or {}).get("options", {})
+                    if "ssl_verify" in old_options:
+                        options.setdefault(
+                            "ssl_verify", old_options["ssl_verify"]
+                        )
+                    edit["options"] = options
+                else:
+                    edit[field] = section.get(field)
+            if not edit.get("model"):
+                return None
+            return DefaultModelEdit.model_validate(edit)
 
-        embedding_edit = (
-            model_edit(embedding) if embedding.get("model") else None
-        )
+        embedding_edit = model_edit(embedding, "embedding", "emb_model")
         request = UserConfigEdit(
             revision=current["revision"],
             providers=[
                 ProviderEdit.model_validate(p) for p in current["providers"]
             ],
-            llm_model=model_edit(llm),
+            llm_model=model_edit(llm, "llm", "llm_model"),
             emb_model=embedding_edit,
         )
         return self.save(request, validate)

@@ -283,11 +283,15 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         "planning_executor_workflow",
         "prompting_agent",
         "deep_review_agent",
+        "hypothesis_symposium_agent",
+        "hypothesis_orchestrator_agent",
     }
     rag_tool_agent_ids = {
         "chat_agent",
         "execution_agent",
         "planning_executor_workflow",
+        "hypothesis_symposium_agent",
+        "hypothesis_orchestrator_agent",
     }
 
     def _agent_init_with_dashboard_defaults(
@@ -803,15 +807,16 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
                 "base_url",
                 "model_kwargs",
             )
-            updates_models = any(
-                any(
-                    getattr(getattr(desired, section), field)
-                    != getattr(getattr(effective_before, section), field)
+            changed_model_fields = {
+                section: {
+                    field
                     for field in model_fields
-                )
+                    if getattr(getattr(desired, section), field)
+                    != getattr(getattr(effective_before, section), field)
+                }
                 for section in ("llm", "embedding")
-            )
-            if updates_models:
+            }
+            if any(changed_model_fields.values()):
 
                 def validate_user_config(data):
                     return config_resolver.resolve(
@@ -823,6 +828,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
                     desired.llm.model_dump(mode="json"),
                     desired.embedding.model_dump(mode="json"),
                     validate_user_config,
+                    changed_fields=changed_model_fields,
                 )
                 # Refresh cached config layers and the provider catalog after
                 # writing the same file edited by the Default config tab.

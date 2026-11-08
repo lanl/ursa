@@ -23,8 +23,6 @@ def _agent_with_tools_targets(root: Any) -> list[Any]:
     ``agent_nodes``. The attribute fallbacks retain compatibility with older
     workflow objects while registrations migrate to the generic interface.
     """
-    from ursa.agents.base import AgentWithTools  # type: ignore
-
     targets: list[Any] = []
     pending = [root]
     seen: set[int] = set()
@@ -35,7 +33,8 @@ def _agent_with_tools_targets(root: Any) -> list[Any]:
             continue
         seen.add(marker)
 
-        if isinstance(current, AgentWithTools):
+        # Lazy workflows buffer MCP tools for children created during a run.
+        if callable(getattr(current, "add_mcp_tools", None)):
             targets.append(current)
 
         children = getattr(current, "agent_nodes", None)

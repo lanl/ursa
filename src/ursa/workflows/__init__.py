@@ -1,12 +1,10 @@
+from ._hypotheses import Hypothesis as Hypothesis
 from .base_workflow import BaseWorkflow as BaseWorkflow
 from .hypothesis_orchestrator import (
     HypothesisOrchestratorWorkflow as HypothesisOrchestratorWorkflow,
 )
 from .hypothesis_orchestrator import (
     SpawnInvestigatorInput as SpawnInvestigatorInput,
-)
-from .hypothesis_symposium import (
-    Hypothesis as Hypothesis,
 )
 from .hypothesis_symposium import (
     HypothesisInvestigation as HypothesisInvestigation,

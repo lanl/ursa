@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import operator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Mapping, Sequence, TypedDict
@@ -41,6 +41,13 @@ from ursa.agents.hypothesizer_agent import (
     DEFAULT_HYPOTHESIS_EXPERIENCE,
     HypothesizerAgent,
 )
+from ursa.util.agent_invocation import ainvoke_agent, invoke_agent
+from ursa.workflows._hypotheses import (
+    Hypothesis,
+    artifact_text,
+    parse_hypotheses,
+)
+from ursa.workflows._tool_settings import WorkflowToolsMixin
 from ursa.workflows.base_workflow import BaseWorkflow, InputLike
 
 logger = logging.getLogger(__name__)
@@ -51,31 +58,6 @@ __all__ = [
     "HypothesisSymposiumState",
     "HypothesisSymposiumWorkflow",
 ]
-
-
-@dataclass
-class Hypothesis:
-    """One competing hypothesis to investigate in its own fan-out branch."""
-
-    index: int
-    statement: str
-    detail: str = ""
-
-    def as_task(self, query: str) -> str:
-        lines = [
-            f"Investigate the following hypothesis for the question: {query}",
-            "",
-            f"Hypothesis H{self.index}: {self.statement}",
-        ]
-        if self.detail:
-            lines += ["", self.detail]
-        lines += [
-            "",
-            "Gather and weigh evidence for and against this specific "
-            "hypothesis. Report findings, confidence, and any evidence that "
-            "would change your assessment.",
-        ]
-        return "\n".join(lines)
 
 
 @dataclass
@@ -117,17 +99,7 @@ class HypothesisSymposiumState(TypedDict, total=False):
     summary: str
 
 
-@dataclass
-class _SymposiumSpec:
-    """Lazily-built defaults for the internal symposium reviewer/reviser loop."""
-
-    revision_rounds: int = 1
-    member_names: Sequence[str] = field(
-        default_factory=lambda: ("analyst", "skeptic")
-    )
-
-
-class HypothesisSymposiumWorkflow(BaseWorkflow):
+class HypothesisSymposiumWorkflow(WorkflowToolsMixin, BaseWorkflow):
     """Hypothesize -> fan out -> investigate -> converge -> review -> update.
 
     Every scientific phase is exposed as an overridable hook so a later Plan D
@@ -148,11 +120,11 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
         max_hypotheses: int = 5,
         revision_rounds: int = 1,
         symposium: Any | None = None,
-        symposium_member_names: Sequence[str] | None = None,
         workspace: str | Path | None = None,
         group: str | None = None,
         name: str = "hypothesis_symposium",
         checkpointer: Any | None = None,
+        thread_id: str | None = None,
         recursion_limit: int = 200,
         visualize: bool = True,
         **kwargs: Any,
@@ -165,6 +137,7 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
         # was swallowed into **kwargs and discarded by BaseWorkflow.__init__.
         self.workspace = Path(workspace) if workspace else None
         self.group = group
+        self.thread_id = thread_id or str(uuid4())
         # Display name for the internal symposium environment. It surfaces on
         # the dashboard Runs page, so keep it short and human-readable rather
         # than deriving it from the (long) class name.
@@ -173,17 +146,15 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
             HypothesizerAgent._validate_experience_filename(experience_filename)
         )
         self.hypothesizer = hypothesizer or HypothesizerAgent(
-            llm, experience_filename=self.experience_filename
+            llm,
+            experience_filename=self.experience_filename,
+            workspace=self.workspace,
+            group=self.group,
+            **self._agent_kwargs,
         )
         self.max_hypotheses = max(1, int(max_hypotheses))
-        self._symposium_spec = _SymposiumSpec(
-            revision_rounds=max(1, int(revision_rounds)),
-            member_names=tuple(
-                symposium_member_names or _SymposiumSpec().member_names
-            ),
-        )
+        self.revision_rounds = max(1, int(revision_rounds))
         self._symposium = symposium
-        self._default_symposium: Any | None = None
         # When true, the symposium stage is wrapped in the environment
         # visualization recorder so the dashboard can follow it *while running*
         # (the recorder flushes each event to events.jsonl immediately).
@@ -369,7 +340,8 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
         hypotheses are ``### H...`` lines; those become the fan-out branches.
         """
         query = str(state.get("query", ""))
-        result = self.hypothesizer.invoke(
+        result = invoke_agent(
+            self.hypothesizer,
             {
                 "query": query,
                 "new_information": query,
@@ -475,7 +447,13 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
             "others, challenge weak evidence, and converge on which hypothesis "
             f"is best supported.{digest_block}"
         )
-        return await self._ainvoke_symposium(symposium, task, config)
+        try:
+            return await self._ainvoke_symposium(symposium, task, config)
+        finally:
+            if self._symposium is None:
+                for agent in [*symposium.members.values(), symposium.organizer]:
+                    await agent.aclose()
+                    agent.close()
 
     async def _ainvoke_symposium(
         self, symposium: Any, task: str, config: RunnableConfig
@@ -551,7 +529,8 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
         """Fold ALL new information back into the durable hypothesis space."""
         query = str(state.get("query", ""))
         new_information = self._final_new_information(state)
-        result = await self.hypothesizer.ainvoke(
+        result = await ainvoke_agent(
+            self.hypothesizer,
             {
                 "query": query,
                 "new_information": new_information,
@@ -586,68 +565,23 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
         return "\n".join(sections)
 
     def _parse_hypotheses(self, artifact: str, query: str) -> list[Hypothesis]:
-        hypotheses: list[Hypothesis] = []
-        current: Hypothesis | None = None
-        detail: list[str] = []
-        for raw in artifact.splitlines():
-            line = raw.rstrip()
-            if line.startswith("### H"):
-                if current is not None:
-                    current.detail = "\n".join(detail).strip()
-                    hypotheses.append(current)
-                    detail = []
-                heading = line[3:].strip()  # drop leading "###"
-                statement = heading
-                if ":" in heading:
-                    statement = heading.split(":", 1)[1].strip()
-                current = Hypothesis(
-                    index=len(hypotheses) + 1, statement=statement or heading
-                )
-            elif current is not None:
-                detail.append(line)
-        if current is not None:
-            current.detail = "\n".join(detail).strip()
-            hypotheses.append(current)
-        if not hypotheses:
-            # Fall back to a single "the artifact is the hypothesis" branch so
-            # the fan-out always has at least one thing to investigate.
-            hypotheses = [
-                Hypothesis(
-                    index=1,
-                    statement=query or "primary hypothesis",
-                    detail=artifact,
-                )
-            ]
-        return hypotheses[: self.max_hypotheses]
+        return parse_hypotheses(
+            artifact, query, max_hypotheses=self.max_hypotheses
+        )
 
     @staticmethod
     def _artifact_text(result: Any) -> str:
-        if isinstance(result, str):
-            return result
-        if isinstance(result, Mapping):
-            text = result.get("hypothesis_space_markdown")
-            if text:
-                return str(text)
-            summary = result.get("summary")
-            if summary:
-                return str(summary)
-        return HypothesizerAgent._response_text(result)
+        return artifact_text(result)
 
     def _get_symposium(
         self, hypotheses: Sequence[Hypothesis] | None = None
     ) -> Any:
         # An explicitly injected symposium is used as-is. Otherwise the default
-        # symposium is built *per run* from the hypotheses so that each member
-        # can be assigned one hypothesis as its expertise (design A). We cache
-        # the built default so repeated calls within one run reuse the same
-        # members (and therefore the same in-process investigation memory).
+        # symposium is built per run so its members reflect the current
+        # hypotheses, while the environment retains them across review rounds.
         if self._symposium is not None:
             return self._symposium
-        if self._default_symposium is None:
-            self._default_symposium = self._build_default_symposium(
-                hypotheses or []
-            )
-        return self._default_symposium
+        return self._build_default_symposium(hypotheses or [])
 
     def _hypothesis_member_name(self, hypothesis: Hypothesis) -> str:
         """Stable, filesystem/tool-safe member name for one hypothesis."""
@@ -689,6 +623,7 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
                         f"{hypothesis.statement}"
                     ),
                     agent="ChatAgent",
+                    config=dict(self._tool_agent_kwargs),
                     reviewer=True,
                     prompt=(
                         "Your assigned hypothesis (your expertise for this "
@@ -713,14 +648,21 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
                     name="generalist",
                     role="Hypothesis investigator and reviewer",
                     agent="ChatAgent",
+                    config=dict(self._tool_agent_kwargs),
                     reviewer=True,
                 )
             )
-        return AgentSymposiumEnvironment(
+        symposium = AgentSymposiumEnvironment(
             self.llm,
             name=self.name,
+            organizer=EnvironmentMemberConfig(
+                name="organizer",
+                role="Symposium organizer / final synthesizer",
+                agent="ChatAgent",
+                config=dict(self._tool_agent_kwargs),
+            ),
             members=members,
-            revision_rounds=self._symposium_spec.revision_rounds,
+            revision_rounds=self.revision_rounds,
             persist_members=False,
             # Thread the workflow workspace/group through so members run under
             # the caller/dashboard-provided workspace instead of the shared
@@ -728,6 +670,10 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
             workspace=self.workspace,
             group=self.group,
         )
+        if self._extra_tools:
+            for agent in [*symposium.members.values(), symposium.organizer]:
+                agent.add_tool(list(self._extra_tools.values()))
+        return symposium
 
     # ------------------------------------------------------------- run surface
 
@@ -735,7 +681,7 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
         cfg: dict[str, Any] = dict(config or {})
         cfg.setdefault("recursion_limit", self.recursion_limit)
         configurable = dict(cfg.get("configurable", {}))
-        configurable.setdefault("thread_id", "hypothesis-symposium")
+        configurable.setdefault("thread_id", self.thread_id)
         cfg["configurable"] = configurable
         return cfg  # type: ignore[return-value]
 

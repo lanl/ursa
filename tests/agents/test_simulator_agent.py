@@ -115,9 +115,6 @@ def test_simulator_rag_documentation_path(
     import ursa.security as security
 
     monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "cache")
-    monkeypatch.setattr(
-        simulator, "ChatAgent", Mock(side_effect=lambda **_: Mock())
-    )
     rag_class = Mock()
     monkeypatch.setattr(simulator, "RAGAgent", rag_class)
 
@@ -133,8 +130,9 @@ def test_simulator_rag_documentation_path(
     assert rag_class.call_args.kwargs["database_path"] == expected_path
     assert rag_class.call_args.kwargs["embedding"] is embedding_model
     assert agent.rag_agent is rag_class.return_value
-    agent.documenter.add_tool.assert_called_once()
-    agent.runner.add_tool.assert_called_once()
+    assert "documentation_rag" in agent.documenter.tools
+    assert "documentation_rag" in agent.runner.tools
+    agent.close()
 
 
 def test_simulator_without_embeddings_does_not_initialize_rag(
@@ -144,9 +142,6 @@ def test_simulator_without_embeddings_does_not_initialize_rag(
     import ursa.security as security
 
     monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "cache")
-    monkeypatch.setattr(
-        simulator, "ChatAgent", Mock(side_effect=lambda **_: Mock())
-    )
     rag_class = Mock()
     monkeypatch.setattr(simulator, "RAGAgent", rag_class)
 
@@ -163,3 +158,4 @@ def test_simulator_without_embeddings_does_not_initialize_rag(
         agent.doc_rag("documentation")
         == "Tool Failed: No RAG database available."
     )
+    agent.close()

@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.memory import InMemorySaver
 
 from tests.conftest import FakeChatModel
 from ursa import security
@@ -178,11 +179,12 @@ def test_no_hypotheses_routes_straight_to_converge():
 def test_default_symposium_builds_one_member_per_hypothesis():
     """Design A: each hypothesis becomes a dedicated symposium member whose
     role/prompt assign that hypothesis as its expertise."""
-    wf = HypothesisSymposiumWorkflow(tool_llm())
+    wf = HypothesisSymposiumWorkflow(tool_llm(), revision_rounds=3)
     hypotheses = wf._parse_hypotheses(ARTIFACT, "why?")
     assert len(hypotheses) == 3
 
     symposium = wf._build_default_symposium(hypotheses)
+    assert symposium.config.revision_rounds == 3
     members = list(symposium.config.members)
     assert len(members) == 3
     # Names are stable, unique, and filesystem/tool-safe.
@@ -287,3 +289,72 @@ def test_symposium_display_name_is_overridable():
         wf._parse_hypotheses(ARTIFACT, "why?")
     )
     assert symposium.name == "protein_folding"
+
+
+@pytest.mark.parametrize("thread_ids", [(None, None), ("first", "second")])
+def test_shared_checkpointer_keeps_workflow_threads_separate(
+    tmp_path, thread_ids
+):
+    saver = InMemorySaver()
+    workflows = [
+        StubWorkflow(
+            checkpointer=saver, thread_id=thread_id, workspace=tmp_path / str(i)
+        )
+        for i, thread_id in enumerate(thread_ids)
+    ]
+    try:
+        first, second = workflows
+        first.invoke("first question")
+        second.invoke("second question")
+        assert first.thread_id != second.thread_id
+        assert (
+            first._graph.get_state(first._base_config(None)).values["query"]
+            == "first question"
+        )
+        assert (
+            second._graph.get_state(second._base_config(None)).values["query"]
+            == "second question"
+        )
+        override = {"configurable": {"thread_id": "explicit"}}
+        first.invoke("override question", config=override)
+        assert (
+            first._graph.get_state(override).values["query"]
+            == "override question"
+        )
+    finally:
+        for wf in workflows:
+            wf.hypothesizer.close()
+
+
+async def test_repeated_symposium_runs_use_current_hypotheses(
+    tmp_path, monkeypatch
+):
+    wf = HypothesisSymposiumWorkflow(
+        tool_llm(), workspace=tmp_path, visualize=False
+    )
+    seen = []
+
+    async def record_members(symposium, task, config):
+        seen.append(symposium.config.members)
+        return {"final": "verdict"}
+
+    monkeypatch.setattr(wf, "_ainvoke_symposium", record_members)
+    try:
+        await wf.run_symposium(
+            {"hypotheses": [{"index": 1, "statement": "Old cause"}]}, {}
+        )
+        await wf.run_symposium(
+            {
+                "hypotheses": [
+                    {"index": 1, "statement": "New cause"},
+                    {"index": 2, "statement": "Another cause"},
+                ]
+            },
+            {},
+        )
+        assert len(seen[0]) == 1
+        assert len(seen[1]) == 2
+        assert "New cause" in seen[1][0].prompt
+        assert all("Old cause" not in member.prompt for member in seen[1])
+    finally:
+        wf.hypothesizer.close()

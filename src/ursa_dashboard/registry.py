@@ -123,49 +123,6 @@ def _think_plan_execute_workflow_builder() -> Callable[
     )
 
 
-def _planning_executor_workflow_builder() -> Callable[
-    [Any, dict[str, Any]], AgentAdapter
-]:
-    """Build the one-runtime planning/execution BaseAgent adapter."""
-
-    return _baseagent_adapter_builder(
-        "ursa.workflows.planning_execution_workflow.PlanningExecutionAgent"
-    )
-
-
-def _hypothesis_symposium_workflow_builder() -> Callable[
-    [Any, dict[str, Any]], AgentAdapter
-]:
-    """Build the hypothesis-symposium workflow adapter.
-
-    Like the other LangGraph workflows exposed here (Plan -> Execute,
-    Hypothesize -> Plan -> Execute), this workflow subclasses ``BaseWorkflow``
-    and exposes the same ``ainvoke(inputs, config=...)`` surface, so it can be
-    driven through the shared in-process BaseAgent adapter.
-    """
-
-    return _baseagent_adapter_builder(
-        "ursa.workflows.hypothesis_symposium.HypothesisSymposiumWorkflow"
-    )
-
-
-def _hypothesis_orchestrator_workflow_builder() -> Callable[
-    [Any, dict[str, Any]], AgentAdapter
-]:
-    """Build the hypothesis-orchestrator workflow adapter.
-
-    A dynamic-topology counterpart to the hypothesis-symposium workflow: an
-    orchestrating ExecutionAgent spawns persistent, timestamped per-hypothesis
-    investigator sub-agents on demand and then has them cross-review. Like the
-    other LangGraph workflows exposed here it subclasses ``BaseWorkflow`` and
-    is driven through the shared in-process BaseAgent adapter.
-    """
-
-    return _baseagent_adapter_builder(
-        "ursa.workflows.hypothesis_orchestrator.HypothesisOrchestratorWorkflow"
-    )
-
-
 def register(entry: AgentEntry) -> None:
     agent_id = entry.spec.agent_id
     if agent_id in REGISTRY:
@@ -237,41 +194,6 @@ register(
     )
 )
 
-### register(
-###     AgentEntry(
-###         spec=AgentSpec(
-###             agent_id="prompting_agent",
-###             display_name="Prompting Agent",
-###             description="Iterates with the user to refine a rough request into clean, self-contained instructions for a downstream agentic workflow. It can reference available ChatAgent and ExecutionAgent tools when drafting prompts; web/arXiv/OSTI tools are reflected only when web access is enabled.",
-###             capabilities=AgentCapabilities(
-###                 supports_streaming=False,
-###                 supports_cancellation=False,
-###                 produces_artifacts=False,
-###             ),
-###             parameters=[
-###                 _prompt_param(title="Prompt to refine"),
-###                 AgentParam(
-###                     name="use_web",
-###                     title="Include web tool context",
-###                     description="Include web/arXiv/OSTI tools in the downstream-tool context used while drafting the prompt.",
-###                     type="boolean",
-###                     required=False,
-###                     default=False,
-###                     advanced=True,
-###                     source=ParamSource.agent_init,
-###                     target="use_web",
-###                 ),
-###             ]
-###             + _common_llm_params()
-###             + _runner_params(),
-###             tags=["planning", "prompting"],
-###         ),
-###         build_adapter=_baseagent_adapter_builder(
-###             "ursa.agents.prompting_agent.PromptingAgent"
-###         ),
-###         build_inputs=lambda p: p["prompt"],
-###     )
-### )
 
 register(
     AgentEntry(
@@ -421,7 +343,9 @@ register(
             + _runner_params(),
             tags=["workflow", "planning", "tools"],
         ),
-        build_adapter=_planning_executor_workflow_builder(),
+        build_adapter=_baseagent_adapter_builder(
+            "ursa.workflows.planning_execution_workflow.PlanningExecutionAgent"
+        ),
         build_inputs=lambda p: p["prompt"],
     )
 )
@@ -561,7 +485,9 @@ register(
             + _runner_params(),
             tags=["workflow", "research", "hypotheses", "review"],
         ),
-        build_adapter=_hypothesis_symposium_workflow_builder(),
+        build_adapter=_baseagent_adapter_builder(
+            "ursa.workflows.hypothesis_symposium.HypothesisSymposiumWorkflow"
+        ),
         build_inputs=lambda p: p["prompt"],
     )
 )
@@ -607,58 +533,13 @@ register(
             + _runner_params(),
             tags=["workflow", "research", "hypotheses", "subagents"],
         ),
-        build_adapter=_hypothesis_orchestrator_workflow_builder(),
+        build_adapter=_baseagent_adapter_builder(
+            "ursa.workflows.hypothesis_orchestrator.HypothesisOrchestratorWorkflow"
+        ),
         build_inputs=lambda p: p["prompt"],
     )
 )
 
-# register(
-#     AgentEntry(
-#         spec=AgentSpec(
-#             agent_id="deep_review_agent",
-#             display_name="Propose - Critique - Adversarial Review",
-#             description="Iteratively drafts, critiques, and refines a solution with adversarial review. Workspace file tools are available by default; web/arXiv/OSTI search tools are opt-in via use_web.",
-#             capabilities=AgentCapabilities(
-#                 supports_streaming=False,
-#                 supports_cancellation=False,
-#                 produces_artifacts=True,
-#             ),
-#             parameters=[
-#                 _prompt_param(title="Research question"),
-#                 AgentParam(
-#                     name="max_iterations",
-#                     title="Max iterations",
-#                     description="Number of draft/critique/refinement loops.",
-#                     type="integer",
-#                     required=False,
-#                     default=3,
-#                     advanced=True,
-#                     source=ParamSource.agent_init,
-#                     target="max_iterations",
-#                     constraints=ParamConstraint(minimum=1, maximum=20),
-#                 ),
-#                 AgentParam(
-#                     name="use_web",
-#                     title="Enable web search tools",
-#                     description="Expose web/arXiv/OSTI search tools to the autonomous reviewer. When false, Deep Review cannot perform web searches.",
-#                     type="boolean",
-#                     required=False,
-#                     default=False,
-#                     advanced=True,
-#                     source=ParamSource.agent_init,
-#                     target="use_web",
-#                 ),
-#             ]
-#             + _common_llm_params()
-#             + _runner_params(),
-#             tags=["research", "review"],
-#         ),
-#         build_adapter=_baseagent_adapter_builder(
-#             "ursa.agents.deep_review_agent.DeepReviewAgent"
-#         ),
-#         build_inputs=lambda p: p["prompt"],
-#     )
-# )
 
 register(
     AgentEntry(
