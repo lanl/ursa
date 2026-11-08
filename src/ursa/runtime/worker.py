@@ -24,12 +24,18 @@ import sys
 import threading
 from pathlib import Path
 
+from ursa.util.async_utils import cancel_tasks
+
 from .manager import AgentProcess, _ProcessOutputForwarder
 
 LOGGER = logging.getLogger(__name__)
 _OUTPUT = contextvars.ContextVar("ursa_thread_output", default=None)
 _EOF = object()
 _MAX_PACKET = 128 * 1024 * 1024
+
+
+def _signature(key: bytes, role: bytes, first: bytes, second: bytes) -> bytes:
+    return hmac.digest(key, role + first + second, hashlib.sha256)
 
 
 async def authenticate(reader, writer, key: bytes, *, server: bool) -> None:
@@ -40,29 +46,20 @@ async def authenticate(reader, writer, key: bytes, *, server: bool) -> None:
             writer.write(nonce)
             await writer.drain()
             peer = await reader.readexactly(32)
-            signature = await reader.readexactly(32)
-            expected = hmac.digest(
-                key, b"client" + nonce + peer, hashlib.sha256
-            )
-            if not hmac.compare_digest(signature, expected):
-                raise PermissionError("Invalid worker credentials")
-            writer.write(
-                hmac.digest(key, b"server" + peer + nonce, hashlib.sha256)
-            )
-            await writer.drain()
+            role, error = b"client", "Invalid worker credentials"
         else:
             peer = await reader.readexactly(32)
-            writer.write(
-                nonce
-                + hmac.digest(key, b"client" + peer + nonce, hashlib.sha256)
-            )
+            writer.write(nonce + _signature(key, b"client", peer, nonce))
             await writer.drain()
-            signature = await reader.readexactly(32)
-            expected = hmac.digest(
-                key, b"server" + nonce + peer, hashlib.sha256
-            )
-            if not hmac.compare_digest(signature, expected):
-                raise PermissionError("Invalid host credentials")
+            role, error = b"server", "Invalid host credentials"
+        signature = await reader.readexactly(32)
+        if not hmac.compare_digest(
+            signature, _signature(key, role, nonce, peer)
+        ):
+            raise PermissionError(error)
+        if server:
+            writer.write(_signature(key, b"server", peer, nonce))
+            await writer.drain()
 
 
 async def read_packet(reader):
@@ -87,7 +84,6 @@ class Mailbox:
         self.send = send
         self.incoming = queue.Queue()
         self.pending = None
-        self.closed = False
 
     def poll(self, timeout=0):
         if self.pending is None:
@@ -108,7 +104,6 @@ class Mailbox:
         return value
 
     def close(self):
-        self.closed = True
         self.incoming.put_nowait(_EOF)
 
 
@@ -135,6 +130,7 @@ class _ThreadOutput:
 
     def __init__(self, original, level):
         self.original, self.level = original, level
+        self.detached = False
 
     def write(self, value):
         send = _OUTPUT.get()
@@ -151,6 +147,12 @@ class _ThreadOutput:
     def __getattr__(self, name):
         return getattr(self.original, name)
 
+    def restore_target(self):
+        stream = self.original
+        while isinstance(stream, _ThreadOutput) and stream.detached:
+            stream = stream.original
+        return stream
+
 
 class AgentThread:
     """One event loop per agent; cancellation never blocks the control loop."""
@@ -162,10 +164,9 @@ class AgentThread:
         self.loop = None
         self.task = None
         self.stopped = threading.Event()
-        self.thread = threading.Thread(
+        threading.Thread(
             target=self._run, name=f"ursa-agent-{spec.agent_id}", daemon=True
-        )
-        self.thread.start()
+        ).start()
 
     def stop(self):
         self.stopped.set()
@@ -203,11 +204,7 @@ class AgentThread:
             # A synchronous user tool may not cooperate with cancellation.
             # Do not wait for it on the control path or tear down other agents.
             pending = asyncio.all_tasks(loop)
-            for task in pending:
-                task.cancel()
-            loop.run_until_complete(
-                asyncio.gather(*pending, return_exceptions=True)
-            )
+            loop.run_until_complete(cancel_tasks(*pending))
             loop.run_until_complete(loop.shutdown_asyncgens())
             loop.close()
             _OUTPUT.reset(token)
@@ -219,9 +216,8 @@ class ThreadWorker:
     def __init__(self, send):
         self.send = send
         self.agents: dict[str, AgentThread] = {}
-        self.stdout, self.stderr = sys.stdout, sys.stderr
-        self.output = _ThreadOutput(self.stdout, logging.INFO)
-        self.errors = _ThreadOutput(self.stderr, logging.WARNING)
+        self.output = _ThreadOutput(sys.stdout, logging.INFO)
+        self.errors = _ThreadOutput(sys.stderr, logging.WARNING)
         sys.stdout, sys.stderr = self.output, self.errors
 
     def dispatch(self, packet):
@@ -244,14 +240,21 @@ class ThreadWorker:
             if agent is not None:
                 agent.connection.incoming.put(packet["message"])
 
-    def close(self):
+    def stop(self):
         for agent in self.agents.values():
             agent.stop()
         self.agents.clear()
+
+    def restore_streams(self):
+        self.output.detached = self.errors.detached = True
         if sys.stdout is self.output:
-            sys.stdout = self.stdout
+            sys.stdout = self.output.restore_target()
         if sys.stderr is self.errors:
-            sys.stderr = self.stderr
+            sys.stderr = self.errors.restore_target()
+
+    def close(self):
+        self.stop()
+        self.restore_streams()
 
 
 async def serve(rendezvous: Path) -> None:
@@ -300,11 +303,9 @@ async def serve(rendezvous: Path) -> None:
         for task in done:
             await task
     finally:
-        worker.close()
         output.restore()
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        worker.close()
+        await cancel_tasks(*tasks)
         writer.close()
         await writer.wait_closed()
 

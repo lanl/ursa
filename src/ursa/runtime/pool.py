@@ -20,6 +20,8 @@ from time import monotonic
 from types import SimpleNamespace
 from uuid import uuid4
 
+from ursa.util.async_utils import cancel_tasks
+
 from .manager import AgentProcessExitedError, AgentStatus
 from .worker import (
     HostMailbox,
@@ -59,11 +61,7 @@ class _AgentHandle:
     def _send(self, command, **payload):
         if self.done.is_set() or self.worker.closed:
             raise BrokenPipeError("Worker is no longer available")
-        packet = {
-            "agent": self.identity,
-            "command": command,
-            **payload,
-        }
+        packet = {"agent": self.identity, "command": command, **payload}
         self.worker.send(pickle.loads(pickle.dumps(packet)))
 
     def receive(self, message):
@@ -93,9 +91,7 @@ class _AgentHandle:
     def join(self, timeout=None):
         self.done.wait(timeout)
 
-    def terminate(self):
-        self.finish()
-
+    terminate = finish
     kill = terminate
     close = terminate
 
@@ -198,9 +194,7 @@ class WorkerPool:
         finally:
             worker.close()
             self.workers.pop(worker.identity, None)
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await cancel_tasks(*tasks)
 
     async def _accept(self, reader, writer):
         try:
@@ -227,102 +221,87 @@ class WorkerPool:
             self.workers[worker.identity] = worker
             self._task(self._serve(worker))
         else:
-            self.key = secrets.token_bytes(32)
-            tls = None
-            if self.config.tls_certificate:
-                tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-                tls.load_cert_chain(
-                    self.config.tls_certificate, self.config.tls_key
-                )
-            self.server = await asyncio.start_server(
-                lambda reader, writer: self._task(self._accept(reader, writer)),
-                self.config.bind_host,
-                0,
-                ssl=tls,
-            )
-            root = self.config.rendezvous_dir
-            if root is None and self.config.launch_command:
-                root = Path.cwd()
-            self.directory = tempfile.TemporaryDirectory(
-                prefix="ursa-workers-", dir=root
-            )
-            self.rendezvous = Path(self.directory.name) / "connection.json"
-            address = self.config.advertise_host or self.config.bind_host
-            if address in {"0.0.0.0", "::"}:
-                address = socket.getfqdn()
-            descriptor = os.open(
-                self.rendezvous, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
-            )
-            with os.fdopen(descriptor, "w") as stream:
-                json.dump(
-                    {
-                        "host": address,
-                        "port": self.server.sockets[0].getsockname()[1],
-                        "key": self.key.hex(),
-                        "certificate": str(
-                            self.config.tls_certificate.resolve()
-                        )
-                        if self.config.tls_certificate
-                        else None,
-                    },
-                    stream,
-                )
-            count = (
-                self.config.max_workers
-                if self.config.launch_command
-                else self.config.min_workers
-            )
-            await self._launch(count)
+            await self._start_process_workers()
         self.maintenance = asyncio.create_task(self._maintain())
+
+    async def _start_process_workers(self):
+        self.key = secrets.token_bytes(32)
+        tls = None
+        if self.config.tls_certificate:
+            tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            tls.load_cert_chain(
+                self.config.tls_certificate, self.config.tls_key
+            )
+        self.server = await asyncio.start_server(
+            lambda reader, writer: self._task(self._accept(reader, writer)),
+            self.config.bind_host,
+            0,
+            ssl=tls,
+        )
+        root = self.config.rendezvous_dir or (
+            Path.cwd() if self.config.launch_command else None
+        )
+        self.directory = tempfile.TemporaryDirectory(
+            prefix="ursa-workers-", dir=root
+        )
+        self.rendezvous = Path(self.directory.name) / "connection.json"
+        address = self.config.advertise_host or self.config.bind_host
+        if address in {"0.0.0.0", "::"}:
+            address = socket.getfqdn()
+        descriptor = os.open(
+            self.rendezvous, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+        )
+        with os.fdopen(descriptor, "w") as stream:
+            json.dump(
+                {
+                    "host": address,
+                    "port": self.server.sockets[0].getsockname()[1],
+                    "key": self.key.hex(),
+                    "certificate": (
+                        str(self.config.tls_certificate.resolve())
+                        if self.config.tls_certificate
+                        else None
+                    ),
+                },
+                stream,
+            )
+        await self._launch(
+            self.config.max_workers
+            if self.config.launch_command
+            else self.config.min_workers
+        )
 
     async def _launch(self, count):
         if not self.config.launch_command:
             connected = {worker.pid for worker in self.workers.values()}
             await asyncio.gather(
                 *(
-                    self._stop_launcher(p)
-                    for p in self.processes
-                    if p.returncode is None and p.pid not in connected
+                    self._stop_launcher(process)
+                    for process in self.processes
+                    if process.returncode is None
+                    and process.pid not in connected
                 )
             )
         self.processes = [p for p in self.processes if p.returncode is None]
-        if (
-            not self.config.launch_command
-            and len(self.processes) + count > self.config.max_workers
+        if not self.config.launch_command and (
+            len(self.processes) + count > self.config.max_workers
         ):
             raise AgentProcessExitedError(
                 "Retiring workers have not released the process limit"
             )
         target = len(self.workers) + count
-        commands = (
-            [self.config.launch_command]
-            if self.config.launch_command
-            else [
-                [
-                    sys.executable,
-                    "-m",
-                    "ursa.runtime.worker",
-                    "--rendezvous",
-                    "{rendezvous}",
-                ]
-            ]
-            * count
-        )
-        launched = []
-        for command in commands:
-            values = {
-                "workers": str(count),
-                "python": sys.executable,
-                "rendezvous": str(self.rendezvous),
-            }
-            process = await asyncio.create_subprocess_exec(
-                *(part.format_map(values) for part in command),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            self.processes.append(process)
-            launched.append(process)
-            self._task(self._logs(process))
+        command = self.config.launch_command or [
+            sys.executable,
+            "-m",
+            "ursa.runtime.worker",
+            "--rendezvous",
+            "{rendezvous}",
+        ]
+        launch_count = 1 if self.config.launch_command else count
+        launched = [
+            await self._launch_command(command, count)
+            for _ in range(launch_count)
+        ]
         async with asyncio.timeout(self.manager.startup_timeout):
             while len(self.workers) < target:
                 if any(process.returncode is not None for process in launched):
@@ -330,6 +309,21 @@ class WorkerPool:
                         "Worker launch command exited before workers connected"
                     )
                 await asyncio.sleep(0.02)
+
+    async def _launch_command(self, command, count):
+        values = {
+            "workers": str(count),
+            "python": sys.executable,
+            "rendezvous": str(self.rendezvous),
+        }
+        process = await asyncio.create_subprocess_exec(
+            *(part.format_map(values) for part in command),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        self.processes.append(process)
+        self._task(self._logs(process))
+        return process
 
     async def _logs(self, process):
         while line := await process.stdout.read(4096):
@@ -360,15 +354,17 @@ class WorkerPool:
                     )
                 await self._launch(self.config.min_workers)
             preferred = self.preferred.pop(spec.agent_id, None)
-            available = [
-                w
-                for w in self.workers.values()
-                if w.identity not in self.retiring
-            ]
             worker = self.workers.get(preferred) or min(
-                available or self.workers.values(), key=self._load
+                self._available_workers(), key=self._load
             )
             return _AgentHandle(worker, spec, state, interval)
+
+    def _available_workers(self):
+        return [
+            worker
+            for worker in self.workers.values()
+            if worker.identity not in self.retiring
+        ] or list(self.workers.values())
 
     def _load(self, worker):
         return (
@@ -403,6 +399,12 @@ class WorkerPool:
         """Resize local workers and move only idle agents at committed boundaries."""
         if self.closed or self.config.backend == "thread":
             return
+        await self._resize()
+        await self._move_idle_agents()
+        if not self.config.launch_command:
+            await self._retire_empty_workers()
+
+    async def _resize(self):
         async with self.lock:
             count = sum(len(worker.agents) for worker in self.workers.values())
             wanted = min(
@@ -414,15 +416,19 @@ class WorkerPool:
             )
             if not self.config.launch_command and wanted > len(self.workers):
                 await self._launch(wanted - len(self.workers))
-            self.retiring = set()
-            if not self.config.launch_command:
-                excess = max(0, len(self.workers) - wanted)
-                self.retiring = {
-                    w.identity
-                    for w in sorted(self.workers.values(), key=self._load)[
-                        :excess
-                    ]
-                }
+            excess = (
+                max(0, len(self.workers) - wanted)
+                if not self.config.launch_command
+                else 0
+            )
+            self.retiring = {
+                worker.identity
+                for worker in sorted(self.workers.values(), key=self._load)[
+                    :excess
+                ]
+            }
+
+    async def _move_idle_agents(self):
         # Lifecycle locks exclude new invocations while an idle agent migrates.
         # Never replay running requests or cancel work to improve placement.
         for entry in tuple(self.manager._agents.values()):
@@ -439,14 +445,7 @@ class WorkerPool:
                 ):
                     continue
                 source = process.worker
-                target = min(
-                    (
-                        w
-                        for w in self.workers.values()
-                        if w.identity not in self.retiring
-                    ),
-                    key=self._load,
-                )
+                target = min(self._available_workers(), key=self._load)
                 if source is target or (
                     source.identity not in self.retiring
                     and len(source.agents) <= len(target.agents) + 1
@@ -458,25 +457,24 @@ class WorkerPool:
                     await self.manager._start_locked(entry)
                 finally:
                     self.preferred.pop(entry.spec.agent_id, None)
-        if not self.config.launch_command:
-            async with self.lock:
-                for worker in tuple(self.workers.values()):
-                    if len(self.workers) <= self.config.min_workers:
-                        break
-                    if (
-                        not worker.agents
-                        and monotonic() - worker.last_used
-                        >= self.config.idle_timeout
-                    ):
-                        await write_packet(worker.writer, {"command": "close"})
-                        worker.close()
-                        self.workers.pop(worker.identity, None)
+
+    async def _retire_empty_workers(self):
+        async with self.lock:
+            for worker in tuple(self.workers.values()):
+                if len(self.workers) <= self.config.min_workers:
+                    return
+                if worker.agents or (
+                    monotonic() - worker.last_used < self.config.idle_timeout
+                ):
+                    continue
+                await write_packet(worker.writer, {"command": "close"})
+                worker.close()
+                self.workers.pop(worker.identity, None)
 
     async def stop_scheduling(self):
         self.closed = True
         if self.maintenance is not None:
-            self.maintenance.cancel()
-            await asyncio.gather(self.maintenance, return_exceptions=True)
+            await cancel_tasks(self.maintenance)
 
     async def aclose(self):
         await self.stop_scheduling()
@@ -488,10 +486,7 @@ class WorkerPool:
         await asyncio.gather(
             *(self._stop_launcher(process) for process in self.processes)
         )
-        tasks = tuple(self.tasks)
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await cancel_tasks(*self.tasks)
         if self.directory is not None:
             self.directory.cleanup()
 
