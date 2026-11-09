@@ -45,6 +45,7 @@ from ursa.cli.tui.widgets import (
     FuzzySelectOverlay,
     HotlistScreen,
     InformationScreen,
+    MessageCard,
     ModelScreen,
     ModelSelection,
     PromptArea,
@@ -2677,3 +2678,15 @@ async def test_hotlist_mount_race_with_teardown_does_not_crash(tmp_path):
     async with app.run_test(size=(100, 36)):
         app.push_screen(HotlistScreen("pick", ["one"]))
         app.exit()
+
+
+def test_message_card_does_not_parse_error_text_as_markup():
+    # Regression: an exception message containing "[type=missing, input_value=
+    # {...}, input_type=dict]" was parsed as Textual markup, raising MarkupError
+    # and hiding the real error.
+    text = (
+        "**Agent failed:** `BadRequestError: 1 validation error "
+        "[type=missing, input_value={'type': 'input_image'}, input_type=dict]`"
+    )
+    card = MessageCard("assistant", text)
+    assert card.content == text

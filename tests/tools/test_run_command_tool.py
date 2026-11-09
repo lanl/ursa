@@ -219,6 +219,9 @@ def test_run_command_returns_message_for_unicode_input(
 def test_run_command_blocks_commands_that_fail_safety_check(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
+    # Force the default safety prompt level so safe_codes appear in the prompt
+    # regardless of the caller's URSA_SAFETY_LEVEL environment variable.
+    monkeypatch.delenv("URSA_SAFETY_LEVEL", raising=False)
     captured = _patch_safety_result(
         monkeypatch, chat_model, is_safe=False, reason="Not safe in test"
     )

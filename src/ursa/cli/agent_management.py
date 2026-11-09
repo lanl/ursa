@@ -1,3 +1,4 @@
+import fnmatch
 import re
 import shutil
 import sqlite3
@@ -59,7 +60,14 @@ def add_agent_management_subcommands(subparsers) -> None:
 
     delete_agent_parser = ArgumentParser()
     delete_agent_parser.add_argument(
-        "--name", required=True, type=str, help="Agent name"
+        "--name",
+        required=True,
+        type=str,
+        help=(
+            "Agent name. '*' is a wildcard (quote it so your shell does not "
+            "expand it), e.g. --name 'tmp_*' removes leftover temporary "
+            "agents from crashed sessions"
+        ),
     )
     delete_agent_parser.add_argument(
         "--group",
@@ -323,7 +331,40 @@ def show_agent(agent_name: str, group_name: str = "default") -> None:
             print(f"  - [{kind}] {entry.name}")  # noqa: T201
 
 
+_AGENT_PATTERN_RE = re.compile(r"^[A-Za-z0-9._*-]+$")
+
+
+def _matching_agents(pattern: str, group_name: str) -> list[Path]:
+    """Agent directories in the group whose name matches a ``*`` wildcard."""
+    if not _AGENT_PATTERN_RE.fullmatch(pattern.strip()):
+        raise ValueError(
+            "Agent name pattern may only contain letters, numbers, dot, "
+            "underscore, hyphen, and '*'"
+        )
+    pattern = pattern.strip()
+    return sorted(
+        path
+        for path in ensure_group_dir(group_name).iterdir()
+        if path.is_dir()
+        and not path.is_symlink()
+        and _AGENT_NAME_RE.fullmatch(path.name)
+        and fnmatch.fnmatchcase(path.name, pattern)
+    )
+
+
 def delete_agent(agent_name: str, group_name: str = "default") -> None:
+    if "*" in agent_name:
+        matches = _matching_agents(agent_name, group_name)
+        if not matches:
+            raise FileNotFoundError(
+                f"No agents match '{agent_name}' in group {group_name}"
+            )
+        for path in matches:
+            shutil.rmtree(path)
+            print(f"Deleted agent '{path.name}' from group '{group_name}'")  # noqa: T201
+        print(f"Deleted {len(matches)} agent(s) matching '{agent_name}'")  # noqa: T201
+        return
+
     path = agent_dir(group_name, agent_name)
     if not path.exists() or not path.is_dir():
         raise FileNotFoundError(
