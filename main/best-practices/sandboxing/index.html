@@ -2351,12 +2351,12 @@ the LLM screening policy for <code>run_command</code>. Values are case-insensiti
 commands or reject legitimate ones. They do not screen <code>read_file</code> or provide
 filesystem or network isolation.</p>
 <h2 id="command-timeout">Command timeout<a class="headerlink" href="#command-timeout" title="Permanent link">&para;</a></h2>
-<p><code>run_command</code> executes through a shell with a fixed timeout of 600,000 seconds
-(approximately seven days). There is currently no configuration option for this
-timeout. A command containing an infinite loop can therefore occupy a run for a
-long time.</p>
-<p>For workloads requiring a shorter limit, use an external job scheduler or process
-supervisor with an appropriate wall-time limit.</p>
+<p><code>run_command</code> executes through a shell with a default timeout of 60,000 seconds
+(one hour). Set <code>URSA_COMMAND_TIMEOUT_SECONDS</code> before launching URSA to change
+this limit, for example <code>URSA_COMMAND_TIMEOUT_SECONDS=300</code> for five minutues. 
+The value must be a positive integer number of seconds.
+When the timeout is reached, the tool returns a timeout message.
+This limit applies to subprocess execution, not the preceding LLM safety check.</p>
 <h2 id="web-tools-are-opt-in">Web tools are opt in<a class="headerlink" href="#web-tools-are-opt-in" title="Permanent link">&para;</a></h2>
 <p>URSA web tools are opt in for information-control reasons. They are disabled by default in core CLI configuration.</p>
 <p>Enable them only when you want URSA to make network requests through web-search tools:</p>
