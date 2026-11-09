@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 import ursa.cli.config as config_mod
 
@@ -568,12 +569,51 @@ def test_ursa_config_merges_multiple_embedding_model_layers():
             }
         },
     )
-
     assert isinstance(merged.emb_model, config_mod.EmbModelConfig)
     assert merged.emb_model.model == "nomic-embed-text:latest"
     assert merged.emb_model.model_provider == "ollama"
     assert merged.emb_model.base_url == "http://localhost:11434"
     assert merged.emb_model.inference_provider is None
+
+
+@pytest.mark.parametrize(
+    "override",
+    [{"emb_model": None}, {"emb_model": None}],
+    ids=["mapping", "config"],
+)
+def test_ursa_config_merge_can_disable_embedding_model(override):
+    original = config_mod.UrsaConfig(
+        emb_model={"model": "openai:original-embedding", "dimensions": 128}
+    )
+
+    merged = original.model_merge(override)
+
+    assert merged.emb_model is None
+    assert "emb_model" in merged.model_fields_set
+    assert merged.model_dump(exclude_unset=True)["emb_model"] is None
+    assert original.emb_model.model == "original-embedding"
+    assert original.emb_model.dimensions == 128
+
+
+def test_ursa_config_merge_can_reenable_embedding_after_explicit_null():
+    original = config_mod.UrsaConfig(
+        emb_model={"model": "openai:original-embedding", "dimensions": 128}
+    )
+
+    merged = original.model_merge(
+        {"emb_model": None},
+        {"emb_model": {"model": "openai:replacement-embedding"}},
+    )
+
+    assert merged.emb_model.model == "replacement-embedding"
+    assert "dimensions" not in merged.emb_model.model_extra
+
+
+def test_ursa_config_merge_rejects_null_for_required_llm_model():
+    with pytest.raises(ValidationError) as exc_info:
+        config_mod.UrsaConfig().model_merge({"llm_model": None})
+
+    assert exc_info.value.errors()[0]["loc"] == ("llm_model",)
 
 
 def test_ursa_config_deep_merges_mapping_field():
@@ -729,3 +769,48 @@ def test_ursa_config_from_file(tmp_path):
     config = config_mod.UrsaConfig.from_file(path)
 
     assert config.group == "science"
+
+
+def test_ursa_user_config_merges_system_and_user_layers(tmp_path, monkeypatch):
+    class CustomUrsaConfig(config_mod.UrsaConfig):
+        pass
+
+    system = tmp_path / "system.yaml"
+    user = tmp_path / "user.yaml"
+    system.write_text(
+        "group: system\nagent_config:\n  chat:\n    system: true\n",
+        encoding="utf-8",
+    )
+    user.write_text(
+        "group: user\nagent_config:\n  chat:\n    user: true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_mod, "system_config_paths", lambda: [system])
+    monkeypatch.setattr(config_mod, "user_config_paths", lambda: [user])
+
+    config = CustomUrsaConfig.user_config(resolve=False)
+
+    assert isinstance(config, CustomUrsaConfig)
+    assert config.group == "user"
+    assert config.agent_config == {"chat": {"system": True, "user": True}}
+
+
+def test_ursa_user_config_resolves_by_default(tmp_path, monkeypatch):
+    user = tmp_path / "user.yaml"
+    user.write_text("use_web: true\n", encoding="utf-8")
+    monkeypatch.setattr(config_mod, "system_config_paths", lambda: [])
+    monkeypatch.setattr(config_mod, "user_config_paths", lambda: [user])
+    monkeypatch.setattr(
+        config_mod, "enforce_group_base_url_policy", lambda *_: None
+    )
+
+    unresolved = config_mod.UrsaConfig.user_config(resolve=False)
+    resolved = config_mod.UrsaConfig.user_config()
+
+    assert unresolved.agent_config == {}
+    assert resolved.agent_config == {
+        "chat": {"use_web": True},
+        "execute": {"use_web": True},
+        "deep_review": {"use_web": True},
+        "prompt": {"use_web": True},
+    }

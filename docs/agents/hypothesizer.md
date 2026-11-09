@@ -11,10 +11,11 @@ Use `HypothesizerAgent` when you want a durable, shareable artifact that records
 ## Basic usage
 
 ```python
-from langchain.chat_models import init_chat_model
 from ursa.agents import HypothesizerAgent
+from ursa.cli.config import UrsaConfig
 
-llm = init_chat_model("openai:gpt-5.4-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 agent = HypothesizerAgent(llm=llm, workspace="project_workspace")
 
 state = agent.invoke(

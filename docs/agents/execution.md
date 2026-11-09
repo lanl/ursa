@@ -11,10 +11,11 @@ Use `ExecutionAgent` when the request is action-oriented: create or modify files
 ## Basic usage
 
 ```python
-from langchain.chat_models import init_chat_model
 from ursa.agents import ExecutionAgent
+from ursa.cli.config import UrsaConfig
 
-llm = init_chat_model("openai:gpt-5.4-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 agent = ExecutionAgent(llm=llm, workspace="analysis_workspace")
 
 state = agent.invoke("Write and execute a Python script to print the first 10 integers.")
@@ -103,15 +104,16 @@ The last message after a successful invocation is the recap. `agent.format_resul
 ```python
 from math import sqrt
 from langchain.tools import tool
-from langchain.chat_models import init_chat_model
 from ursa.agents import ExecutionAgent
+from ursa.cli.config import UrsaConfig
 
 @tool
 def hypotenuse(a: int, b: int) -> float:
     """Compute sqrt(a**2 + b**2)."""
     return sqrt(a**2 + b**2)
 
-llm = init_chat_model("openai:gpt-5.4-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 agent = ExecutionAgent(llm=llm, extra_tools=[hypotenuse])
 state = agent.invoke("Use the hypotenuse tool for a=3 and b=4.")
 print(agent.format_result(state))

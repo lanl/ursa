@@ -11,6 +11,7 @@ ursa copy-agent --name my-agent-copy --from my-agent --group default --from-grou
 ursa share-agent --name my-agent --group default
 ursa import-agent path/to/agent.tar.gz --group default
 ursa delete-agent --name my-agent --group default
+ursa delete-agent --name 'tmp_*' --group default  # wildcard; quote it. Removes temporary agents left by crashed unnamed sessions
 ```
 
 ## Groups

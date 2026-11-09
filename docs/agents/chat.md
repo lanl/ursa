@@ -11,10 +11,11 @@ Use `ChatAgent` when you want an interactive assistant that can inspect files, r
 ## Basic usage
 
 ```python
-from langchain.chat_models import init_chat_model
 from ursa.agents import ChatAgent
+from ursa.cli.config import UrsaConfig
 
-llm = init_chat_model("openai:gpt-5.4-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 agent = ChatAgent(llm=llm)
 
 state = agent.invoke("Summarize the files in this workspace.")

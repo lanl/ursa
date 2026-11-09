@@ -10,12 +10,13 @@ workflows on Go projects.
 ```python
 from pathlib import Path
 
-from langchain.chat_models import init_chat_model
 from ursa.agents import GitGoAgent
+from ursa.cli.config import UrsaConfig
 
 # Initialize the agent
+config = UrsaConfig.user_config()
 agent = GitGoAgent(
-    llm=init_chat_model("openai:gpt-5.4-mini"),
+    llm=config.llm_model.init_chat_model(),
     workspace=Path("/path/to/your/repo"),
 )
 
@@ -79,20 +80,13 @@ Operations use differentiated, operation-specific timeouts (not a unified timeou
 If other operations timeout, try running them in smaller chunks or profiling the specific operation.
 
 ### Path Safety
-`write_code`, `write_code_with_repo`, and `edit_code` validate file paths to prevent:
-- **Path traversal attacks** (e.g., `../../../etc/passwd` attempts are rejected)
-- **Writes outside the workspace** (all files must be within the workspace directory)
-- **Writes outside the repository** (`write_code_with_repo`, or `edit_code` when `repo_path` is used)
 
-Path validation is enabled by default. For trusted sandbox/container usage, you can opt in to unsafe writes by setting:
+`write_code`, `write_code_with_repo`, and `edit_code` reject paths outside the
+workspace; repository-aware writes also enforce the specified repository boundary.
+Set `URSA_ALLOW_UNSAFE_WRITES=1` only when you intend to bypass these checks.
 
-```bash
-export URSA_ALLOW_UNSAFE_WRITES=1
-```
-
-When enabled, workspace and repository boundary checks are bypassed for `write_code`, `write_code_with_repo`, and `edit_code`.
-
-Example: Specifying a repo boundary ensures all file modifications stay within that repository.
+These file-tool checks are separate from the
+[command sandbox](../sandbox.md).
 
 ### Golangci-lint Integration
 

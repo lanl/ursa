@@ -199,6 +199,17 @@ def test_environment_run_recorder_marks_success_on_normal_exit(
 
     manifest = read_environment_run_manifest("default", "context-run")
     assert manifest["status"] == "succeeded"
+    assert manifest["task_preview"] == "manual"
+    assert manifest["task_path"] == "task.json"
+    task_path = (
+        security.group_root_dir("default")
+        / "environment_runs"
+        / "context-run"
+        / "task.json"
+    )
+    assert json.loads(task_path.read_text(encoding="utf-8")) == {
+        "prompt": "manual"
+    }
 
 
 def test_recorder_normalizes_tool_owner_as_source_and_tool_as_target(

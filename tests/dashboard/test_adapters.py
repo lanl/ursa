@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
 from ursa.cli.callbacks import HITLLogEventHandler
-from ursa.workflows.planning_execution_workflow import PlanningExecutorWorkflow
+from ursa_dashboard import registry
 from ursa_dashboard.adapters import (
     BaseAgentInProcessAdapter,
     DirectInvokeAdapter,
@@ -102,52 +101,140 @@ def test_direct_invoke_adapter_attaches_cli_handler_when_supported(
     assert isinstance(callbacks[0], HITLLogEventHandler)
 
 
-def test_planning_executor_workflow_propagates_callbacks(
+def test_planning_execution_registry_uses_one_base_agent_runtime(
     tmp_path: Path,
     monkeypatch,
 ):
-    planner_calls: list[dict | None] = []
-    executor_calls: list[dict | None] = []
+    captured: dict[str, object] = {}
 
-    class FakePlanner:
-        checkpointer = None
+    class FakePlanningExecutionAgent:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
 
-        def invoke(self, prompt, *, config=None):
-            planner_calls.append(config)
-            return {"plan": SimpleNamespace(steps=["step one", "step two"])}
+    def fake_lazy_class(path: str):
+        captured["class_path"] = path
+        return FakePlanningExecutionAgent
 
-    class FakeExecutor:
-        checkpointer = None
+    monkeypatch.setattr(registry, "_lazy_class", fake_lazy_class)
 
-        def invoke(self, prompt, *, config=None):
-            executor_calls.append(config)
-            return {"messages": [SimpleNamespace(text=f"done for {prompt}")]}
+    entry = registry.REGISTRY["planning_executor_workflow"]
+    model = object()
+    adapter = entry.build_adapter(model, {"max_reflection_steps": 0})
 
-    class DummyConsole:
-        def status(self, *_args, **_kwargs):
-            return nullcontext()
-
-        def print(self, *_args, **_kwargs):
-            return None
-
-    monkeypatch.setattr(
-        "ursa.workflows.planning_execution_workflow.console",
-        DummyConsole(),
+    assert isinstance(adapter, BaseAgentInProcessAdapter)
+    agent = adapter._agent_factory(tmp_path, "solve this")
+    assert isinstance(agent, FakePlanningExecutionAgent)
+    assert captured["class_path"] == (
+        "ursa.workflows.planning_execution_workflow.PlanningExecutionAgent"
     )
-    monkeypatch.setattr(
-        "ursa.workflows.planning_execution_workflow.render_plan_steps_rich",
-        lambda steps: None,
+    assert captured["llm"] is model
+    assert captured["workspace"] == str(tmp_path)
+    assert captured["max_reflection_steps"] == 0
+    assert "planner" not in captured
+    assert "executor" not in captured
+
+
+def test_hypothesis_symposium_registry_builds_workflow_adapter(
+    tmp_path: Path,
+    monkeypatch,
+):
+    captured: dict[str, object] = {}
+
+    class FakeHypothesisSymposiumWorkflow:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    def fake_lazy_class(path: str):
+        captured["class_path"] = path
+        return FakeHypothesisSymposiumWorkflow
+
+    monkeypatch.setattr(registry, "_lazy_class", fake_lazy_class)
+
+    entry = registry.REGISTRY["hypothesis_symposium_agent"]
+    model = object()
+    adapter = entry.build_adapter(
+        model,
+        {
+            "max_hypotheses": 3,
+            "revision_rounds": 2,
+            "experience_filename": "hypothesis_space.md",
+        },
     )
 
-    workflow = PlanningExecutorWorkflow(
-        planner=FakePlanner(),
-        executor=FakeExecutor(),
-        workspace=tmp_path,
+    assert isinstance(adapter, BaseAgentInProcessAdapter)
+    agent = adapter._agent_factory(tmp_path, "why is the sky blue?")
+    assert isinstance(agent, FakeHypothesisSymposiumWorkflow)
+    assert captured["class_path"] == (
+        "ursa.workflows.hypothesis_symposium.HypothesisSymposiumWorkflow"
     )
-    callbacks = [object()]
+    assert captured["llm"] is model
+    # Like the other workflow entries, the factory passes the workspace through;
+    # BaseWorkflow.__init__(**kwargs) accepts and ignores it.
+    assert captured["workspace"] == str(tmp_path)
+    assert captured["max_hypotheses"] == 3
+    assert captured["revision_rounds"] == 2
+    assert captured["experience_filename"] == "hypothesis_space.md"
 
-    result = workflow.invoke("solve this", config={"callbacks": callbacks})
 
-    assert "done for" in result
-    assert planner_calls == [{"callbacks": callbacks}]
-    assert executor_calls == [{"callbacks": callbacks}] * 2
+def test_hypothesis_symposium_registry_spec_is_well_formed():
+    entry = registry.REGISTRY["hypothesis_symposium_agent"]
+    spec = entry.spec
+
+    assert spec.agent_id == "hypothesis_symposium_agent"
+    assert spec.capabilities.produces_artifacts is True
+    # UI passes a single prompt string, normalized to the workflow's query.
+    assert entry.build_inputs({"prompt": "hello"}) == "hello"
+
+    param_names = {p.name for p in spec.parameters}
+    assert {"prompt", "max_hypotheses", "revision_rounds"} <= param_names
+
+
+def test_hypothesis_orchestrator_registry_builds_workflow_adapter(
+    tmp_path: Path,
+    monkeypatch,
+):
+    captured: dict[str, object] = {}
+
+    class FakeHypothesisOrchestratorWorkflow:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    def fake_lazy_class(path: str):
+        captured["class_path"] = path
+        return FakeHypothesisOrchestratorWorkflow
+
+    monkeypatch.setattr(registry, "_lazy_class", fake_lazy_class)
+
+    entry = registry.REGISTRY["hypothesis_orchestrator_agent"]
+    model = object()
+    adapter = entry.build_adapter(
+        model,
+        {
+            "max_hypotheses": 4,
+            "experience_filename": "hypothesis_space.md",
+        },
+    )
+
+    assert isinstance(adapter, BaseAgentInProcessAdapter)
+    agent = adapter._agent_factory(tmp_path, "why is the sky blue?")
+    assert isinstance(agent, FakeHypothesisOrchestratorWorkflow)
+    assert captured["class_path"] == (
+        "ursa.workflows.hypothesis_orchestrator.HypothesisOrchestratorWorkflow"
+    )
+    assert captured["llm"] is model
+    # Workspace is threaded through so the workflow scopes its sub-agents.
+    assert captured["workspace"] == str(tmp_path)
+    assert captured["max_hypotheses"] == 4
+    assert captured["experience_filename"] == "hypothesis_space.md"
+
+
+def test_hypothesis_orchestrator_registry_spec_is_well_formed():
+    entry = registry.REGISTRY["hypothesis_orchestrator_agent"]
+    spec = entry.spec
+
+    assert spec.agent_id == "hypothesis_orchestrator_agent"
+    assert spec.capabilities.produces_artifacts is True
+    assert entry.build_inputs({"prompt": "hello"}) == "hello"
+
+    param_names = {p.name for p in spec.parameters}
+    assert {"prompt", "max_hypotheses", "experience_filename"} <= param_names

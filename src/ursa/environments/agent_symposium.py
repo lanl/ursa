@@ -18,9 +18,7 @@ from .base import (
 from .config import (
     AgentSymposiumConfig,
     EnvironmentMemberConfig,
-    load_object,
     load_symposium_config,
-    make_llm,
 )
 
 
@@ -237,7 +235,7 @@ class AgentSymposiumEnvironment(BaseEnvironment):
         reuse existing named agents directly from YAML instead of creating new
         ``<symposium>_<member>`` checkpoints.
         """
-        return self._build_symposium_agent(
+        return self._build_member(
             member,
             workspace=self._member_workspace(member.name),
             agent_name=member.name,
@@ -247,30 +245,11 @@ class AgentSymposiumEnvironment(BaseEnvironment):
         self, member: EnvironmentMemberConfig
     ) -> Any:
         """Instantiate the organizer in the parent symposium workspace."""
-        return self._build_symposium_agent(
+        return self._build_member(
             member,
             workspace=self.workspace,
             agent_name=member.name,
         )
-
-    def _build_symposium_agent(
-        self,
-        member: EnvironmentMemberConfig,
-        *,
-        workspace: Path,
-        agent_name: str,
-    ) -> Any:
-        cls = load_object(member.agent)
-        llm = make_llm(self.llm, member.model)
-        kwargs = dict(member.config or {})
-        kwargs.setdefault("workspace", workspace)
-        kwargs.setdefault("group", self.group)
-        if isinstance(cls, type) and issubclass(cls, BaseEnvironment):
-            kwargs.setdefault("name", member.name)
-            kwargs.setdefault("persist_members", self.persist_members)
-        elif self.persist_members:
-            kwargs.setdefault("agent_name", agent_name)
-        return cls(llm=llm, **kwargs)
 
     def _member_workspace_roster(self) -> str:
         return (
@@ -363,7 +342,8 @@ class AgentSymposiumEnvironment(BaseEnvironment):
             f"after review round {round_index}.\n"
             "Use the feedback you received and anything you learned from reviewing "
             "other submissions to improve your own solution. You may change only your "
-            "own work/artifacts. Do not modify the work of other symposium members.\n"
+            "own work/artifacts - you are no longer restricted to only summarization like "
+            "in the review round. Do not modify the work of other symposium members.\n"
             "Return a revised detailed writeup with clear improvements, evidence, "
             "limitations, and reproducibility instructions.\n\n"
             f"Original problem:\n{task}\n\n"
@@ -405,6 +385,47 @@ class AgentSymposiumEnvironment(BaseEnvironment):
             f"Final participant writeups:\n{writeup_block}\n\n"
             f"Peer reviews:\n{review_block}"
         )
+
+    @staticmethod
+    def _member_failure_text(
+        member_name: str,
+        phase_name: str,
+        exc: BaseException,
+        round_index: int | None,
+    ) -> str:
+        """Render a contained member failure as its recorded contribution.
+
+        Returning explanatory text (rather than raising) keeps a single member's
+        failure from discarding the completed work of its siblings and lets the
+        reviewers and organizer reason about the gap explicitly.
+        """
+        round_note = (
+            f" during round {round_index}" if round_index is not None else ""
+        )
+        return (
+            f"[symposium: member '{member_name}' failed the {phase_name} "
+            f"phase{round_note} with {type(exc).__name__}: {exc}. "
+            "No usable output was produced for this phase.]"
+        )
+
+    async def _gather_member_writeups(
+        self, coros: list[Any]
+    ) -> list[tuple[str, str]]:
+        """Await member-phase coroutines, containing any residual failures.
+
+        ``_member_writeup`` already converts member errors into recorded text,
+        so it normally returns ``(name, text)`` tuples. ``return_exceptions``
+        keeps an unexpected error in the gather machinery itself from cancelling
+        the sibling coroutines and aborting the phase; any such error is
+        re-raised only after every sibling has settled.
+        """
+        settled = await asyncio.gather(*coros, return_exceptions=True)
+        pairs: list[tuple[str, str]] = []
+        for outcome in settled:
+            if isinstance(outcome, BaseException):
+                raise outcome
+            pairs.append(outcome)
+        return pairs
 
     def _invoke(
         self, inputs: Mapping[str, Any], **config: Any
@@ -456,7 +477,15 @@ class AgentSymposiumEnvironment(BaseEnvironment):
                 error=str(exc),
                 elapsed_seconds=perf_counter() - start,
             )
-            raise
+            # Member failures are always contained instead of aborting the whole
+            # symposium. A cancellation (e.g. loop shutdown) must still propagate;
+            # every other error is recorded as this member's contribution so
+            # sibling work and downstream review/synthesis survive.
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            return member_name, self._member_failure_text(
+                member_name, phase_name, exc, round_index
+            )
         text = result_to_text(result)
         await events.aemit(
             f"{member_name} completed {phase_name}",
@@ -534,7 +563,7 @@ class AgentSymposiumEnvironment(BaseEnvironment):
                 event_type="symposium_phase_started",
                 task=task,
             )
-            initial_pairs = await asyncio.gather(*[
+            initial_pairs = await self._gather_member_writeups([
                 self._member_writeup(
                     member_config,
                     self._initial_prompt(member_config, task),
@@ -572,7 +601,7 @@ class AgentSymposiumEnvironment(BaseEnvironment):
                     round_index=round_index,
                     writeups=current_writeups,
                 )
-                review_pairs = await asyncio.gather(*[
+                review_pairs = await self._gather_member_writeups([
                     self._member_writeup(
                         reviewer_config,
                         self._review_prompt(
@@ -607,7 +636,7 @@ class AgentSymposiumEnvironment(BaseEnvironment):
                     round_index=round_index,
                     reviews=round_reviews,
                 )
-                revision_pairs = await asyncio.gather(*[
+                revision_pairs = await self._gather_member_writeups([
                     self._member_writeup(
                         member_config,
                         self._revision_prompt(

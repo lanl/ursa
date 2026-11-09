@@ -23,11 +23,14 @@ import inspect
 import logging
 import re
 import sqlite3
+import weakref
 from abc import ABC, abstractmethod
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
+from types import MappingProxyType
 from typing import (
     Any,
     Callable,
@@ -39,6 +42,7 @@ from typing import (
     TypeVar,
     final,
 )
+from uuid import uuid4
 
 from langchain.chat_models import BaseChatModel
 from langchain.embeddings import Embeddings
@@ -68,7 +72,7 @@ from langgraph.prebuilt.tool_node import ToolInvocationError
 from langgraph.store.base import BaseStore
 from langgraph.store.sqlite import SqliteStore
 from langgraph.store.sqlite.aio import AsyncSqliteStore
-from langgraph.types import Overwrite
+from langgraph.types import Command, Overwrite
 
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
@@ -88,6 +92,7 @@ from ursa.util.checkpoint_retention import (
 )
 from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER, AgentEvents
 from ursa.util.mcp import load_mcp_tools_with_sources
+from ursa.util.message_portability import make_portable
 from ursa.util.model_context import (
     DEFAULT_SUMMARIZATION_THRESHOLD,
     summarization_threshold,
@@ -95,8 +100,16 @@ from ursa.util.model_context import (
 
 logger = logging.getLogger(__name__)
 
-InputLike = str | Mapping[str, Any]
+InputLike = str | Mapping[str, Any] | Command
 TState = TypeVar("TState", bound=Mapping[str, Any])
+TChildState = TypeVar("TChildState", bound=Mapping[str, Any])
+_SyncCloseState = tuple[set[int], set[int]]
+_SYNC_CLOSE_STATE: ContextVar[_SyncCloseState | None] = ContextVar(
+    "ursa_sync_close_state", default=None
+)
+_ASYNC_CLOSE_STATE: ContextVar[_SyncCloseState | None] = ContextVar(
+    "ursa_async_close_state", default=None
+)
 
 try:
     URSA_VERSION = importlib.metadata.version("ursa-ai")
@@ -172,17 +185,25 @@ _SUMMARIZE_INSTRUCTIONS = (
 
 
 def _message_text(m: BaseMessage) -> str:
-    text = getattr(m, "text", None)
-    if isinstance(text, str) and text:
-        return text
+    """Visible content of ``m`` for plain-text transcripts (summaries).
+
+    Only text is rendered. Non-text blocks (reasoning items carrying base64
+    signatures / ``encrypted_content``, Responses ``function_call`` items that
+    duplicate ``tool_calls``, base64 images) used to be dumped via ``str()``,
+    inflating summarization requests far past the model context window.
+    """
     if isinstance(m.content, str):
         return m.content
     parts = []
     for block in m.content or []:
-        if isinstance(block, dict) and block.get("type") == "text":
-            parts.append(block.get("text", ""))
-        else:
-            parts.append(str(block))
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict):
+            kind = str(block.get("type") or "")
+            if kind in ("text", "output_text"):
+                parts.append(block.get("text") or "")
+            elif "image" in kind:
+                parts.append("[image]")
     return "\n".join(p for p in parts if p)
 
 
@@ -313,6 +334,10 @@ class BaseAgent(Generic[TState], ABC):
                 stacklevel=2,
             )
         self.llm: BaseChatModel = llm
+        self._agent_nodes: dict[str, BaseAgent[Any]] = {}
+        self._agent_node_parents: weakref.WeakSet[BaseAgent[Any]] = (
+            weakref.WeakSet()
+        )
         self.workspace = Path(workspace or ".")
         self.agent_name = agent_name
         self.group = validate_group_name(group)
@@ -363,7 +388,14 @@ class BaseAgent(Generic[TState], ABC):
         else:
             # Keep current behavior if the user is not persisting.
             self.den = self.workspace
-        self.thread_id = thread_id or "ursa"
+        # A generated default, as the docstring above promises. A constant here
+        # means two agents that share a checkpoint store share one thread, so
+        # the second one's model request carries the first one's messages.
+        # langgraph would otherwise refuse to run a checkpointed graph with no
+        # thread selector at all; a constant turns that error into a silent
+        # merge. The CLI and the dashboard pin "ursa" themselves, so only
+        # library callers reach this. See issue #332.
+        self.thread_id = thread_id or uuid4().hex
         self.telemetry = Telemetry(
             enable=enable_metrics,
             output_dir=self.den.joinpath(metrics_dir),
@@ -437,6 +469,91 @@ class BaseAgent(Generic[TState], ABC):
         _agent_name = agent_name or _to_snake(self.name)
         wrapped_node = self._wrap_node(f, _node_name, _agent_name)
         return self.graph.add_node(_node_name, wrapped_node, **kwargs)
+
+    def add_agent_node(
+        self,
+        name: str,
+        agent: "BaseAgent[TChildState]",
+        input_fn: Callable[[TState], Mapping[str, Any]],
+        output_fn: Callable[[TChildState], Mapping[str, Any]],
+    ) -> StateGraph:
+        """Add an agent as one adapted, checkpoint-aware subgraph node.
+
+        ``input_fn`` maps parent state to the child agent's state and
+        ``output_fn`` maps the completed child state back to a parent-state
+        update. Both adapters are required because the public ``format_query``
+        and ``format_result`` methods do not generally accept and return graph
+        state mappings.
+
+        The child graph is compiled with ``checkpointer=True`` so LangGraph
+        gives it a nested checkpoint namespace owned by the parent graph. The
+        adapter pipeline is still registered as a single parent node, while the
+        compiled child remains discoverable as a LangGraph subgraph.
+        """
+        self._register_agent_node(name, agent)
+        child_graph = agent.build_graph().compile(
+            checkpointer=True,
+            name=name,
+        )
+        node_config = self._node_cfg(name, _to_snake(agent.name))
+        node = (
+            RunnableLambda(input_fn).with_config(**node_config)
+            | child_graph.with_config(**node_config)
+            | RunnableLambda(output_fn).with_config(**node_config)
+        )
+        # Configuring the whole sequence would make LangGraph treat it as an
+        # opaque RunnableBinding and hide the embedded child from
+        # ``get_subgraphs()``. Configure its stages and register the sequence
+        # directly instead.
+        return self.graph.add_node(
+            name,
+            node,
+            metadata=node_config["metadata"],
+        )
+
+    @property
+    def agent_nodes(self) -> Mapping[str, "BaseAgent[Any]"]:
+        """Child agents registered as graph nodes, keyed by node name."""
+        return MappingProxyType(self._agent_nodes)
+
+    def _register_agent_node(self, name: str, agent: "BaseAgent[Any]") -> None:
+        """Register one child while rejecting ambiguous or recursive graphs."""
+        if agent is self or agent._contains_agent(self):
+            raise ValueError("An agent node cannot contain its parent agent.")
+        existing = self._agent_nodes.get(name)
+        if existing is not None and existing is not agent:
+            raise ValueError(
+                f"Agent node {name!r} is already registered to another agent."
+            )
+        self._agent_nodes[name] = agent
+        agent._agent_node_parents.add(self)
+
+    def _contains_agent(self, target: "BaseAgent[Any]") -> bool:
+        """Return whether target is reachable through registered children."""
+        pending = list(self._agent_nodes.values())
+        seen: set[int] = set()
+        while pending:
+            child = pending.pop()
+            if child is target:
+                return True
+            marker = id(child)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            pending.extend(child._agent_nodes.values())
+        return False
+
+    def _invalidate_compiled_graphs(self, seen: set[int] | None = None) -> None:
+        """Invalidate this graph and all composites that embed it."""
+        seen = seen or set()
+        marker = id(self)
+        if marker in seen:
+            return
+        seen.add(marker)
+        self.__dict__.pop("compiled_graph", None)
+        self._async_compiled_graph = None
+        for parent in self._agent_node_parents:
+            parent._invalidate_compiled_graphs(seen)
 
     def write_state(self, filename: str, state: dict) -> None:
         """Writes agent state to a JSON file.
@@ -518,6 +635,28 @@ class BaseAgent(Generic[TState], ABC):
         base.update(overrides)
 
         return base
+
+    def nested_config(
+        self,
+        config: RunnableConfig | None = None,
+        *,
+        tags: list[str] | None = None,
+    ) -> dict:
+        """Merge a graph node's runtime config into a nested model call.
+
+        Passing the active node config preserves caller callbacks, metadata, and
+        tracing context when an agent graph invokes an LLM or another runnable.
+        Agent telemetry callbacks and identifying tags are then added exactly as
+        they are for a top-level invocation.
+        """
+        overrides = dict(config or {})
+        if tags:
+            inherited_tags = list(overrides.get("tags") or [])
+            overrides["tags"] = [
+                *inherited_tags,
+                *(tag for tag in tags if tag not in inherited_tags),
+            ]
+        return self.build_config(**overrides)
 
     def _invoke_engine(
         self,
@@ -1080,6 +1219,7 @@ class BaseAgent(Generic[TState], ABC):
         patch_dangling: bool = True,
         summarize: bool = True,
         sanitize: bool = True,
+        portable: bool = True,
     ) -> tuple[Mapping[str, Any], bool]:
         """Apply standard message-history maintenance before an LLM call.
 
@@ -1087,6 +1227,13 @@ class BaseAgent(Generic[TState], ABC):
         ``add_messages`` reducer should use :meth:`messages_update` with the
         returned flag to avoid appending duplicate history after summarization or
         dangling-tool patching.
+
+        With ``portable`` (default), AI messages produced by a different model
+        than ``self.llm`` are rebuilt from text + tool calls so a model switch
+        (TUI picker, reloaded agent, multi-model gateway) never replays another
+        model's reasoning items/signatures; see
+        :mod:`ursa.util.message_portability`. Runs before summarization so the
+        token count and summary never see foreign signatures.
         """
         new_state = deepcopy(state)
         full_overwrite = False
@@ -1103,12 +1250,21 @@ class BaseAgent(Generic[TState], ABC):
             ):
                 new_state["messages"] = fixed
                 full_overwrite = True
+        if portable and "messages" in new_state:
+            msgs, changed = make_portable(new_state["messages"], self.llm)
+            if changed:
+                new_state["messages"] = msgs
+                full_overwrite = True
         if summarize:
-            new_state, full_overwrite = self._summarize_context(
+            # OR the flag: earlier steps (sanitize, system prompt, portability)
+            # may already require an overwrite that must not be discarded when
+            # no summarization happens.
+            new_state, summarized = self._summarize_context(
                 new_state,
                 system_prompt=system_prompt,
                 summary_prompt=summary_prompt,
             )
+            full_overwrite = full_overwrite or summarized
         if patch_dangling:
             new_state, full_overwrite = self._patch_dangling(
                 new_state, full_overwrite
@@ -1139,7 +1295,9 @@ class BaseAgent(Generic[TState], ABC):
             update["messages"] = message_update
         return update
 
-    def _normalize_inputs(self, inputs: InputLike) -> Mapping[str, Any]:
+    def _normalize_inputs(
+        self, inputs: InputLike
+    ) -> Mapping[str, Any] | Command:
         """Normalizes various input formats into a standardized mapping.
 
         This method converts different input types into a consistent dictionary format
@@ -1157,6 +1315,10 @@ class BaseAgent(Generic[TState], ABC):
         Raises:
             TypeError: If the input type is not supported (neither string nor mapping).
         """
+        if isinstance(inputs, Command):
+            # LangGraph resume/update commands must reach the compiled graph
+            # unchanged so a persisted interrupted run can continue.
+            return inputs
         if isinstance(inputs, str):
             # Adjust to your message type
             return {"messages": [HumanMessage(content=inputs)]}
@@ -1245,7 +1407,7 @@ class BaseAgent(Generic[TState], ABC):
         )
         store = SqliteStore(conn)
         store.setup()
-        self.hook_storage_setup(store)
+        self._setup_storage_tree(store)
         return store
 
     async def _aget_async_storage(self) -> BaseStore:
@@ -1257,9 +1419,35 @@ class BaseAgent(Generic[TState], ABC):
             conn = await aiosqlite.connect(store_path, isolation_level=None)
             store = AsyncSqliteStore(conn)
             await store.setup()
-            await self.ahook_storage_setup(store)
+            await self._asetup_storage_tree(store)
             self._async_storage = store
         return self._async_storage
+
+    def _setup_storage_tree(
+        self, store: BaseStore, seen: set[int] | None = None
+    ) -> None:
+        """Run storage hooks once for every agent in this composition."""
+        seen = seen or set()
+        marker = id(self)
+        if marker in seen:
+            return
+        seen.add(marker)
+        self.hook_storage_setup(store)
+        for child in self._agent_nodes.values():
+            child._setup_storage_tree(store, seen)
+
+    async def _asetup_storage_tree(
+        self, store: BaseStore, seen: set[int] | None = None
+    ) -> None:
+        """Run async storage hooks once for the full agent composition."""
+        seen = seen or set()
+        marker = id(self)
+        if marker in seen:
+            return
+        seen.add(marker)
+        await self.ahook_storage_setup(store)
+        for child in self._agent_nodes.values():
+            await child._asetup_storage_tree(store, seen)
 
     def hook_storage_setup(self, store: BaseStore) -> None:
         pass
@@ -1269,29 +1457,87 @@ class BaseAgent(Generic[TState], ABC):
 
     def close(self) -> None:
         """Close sync SQLite resources owned by this agent when possible."""
-        if "storage" in self.__dict__:
-            self.storage.conn.close()
-        if isinstance(self.checkpointer, SqliteSaver):
+        state = _SYNC_CLOSE_STATE.get()
+        token = None
+        if state is None:
+            state = (set(), set())
+            token = _SYNC_CLOSE_STATE.set(state)
+        try:
+            self._close_tree(*state)
+        finally:
+            if token is not None:
+                _SYNC_CLOSE_STATE.reset(token)
+
+    def _close_tree(
+        self, seen_agents: set[int], seen_resources: set[int]
+    ) -> None:
+        """Close each composed agent and shared resource at most once."""
+        marker = id(self)
+        if marker in seen_agents:
+            return
+        seen_agents.add(marker)
+        for child in self._agent_nodes.values():
+            if id(child) not in seen_agents:
+                child.close()
+
+        store = self.__dict__.get("storage")
+        if store is not None and id(store.conn) not in seen_resources:
+            seen_resources.add(id(store.conn))
+            store.conn.close()
+        if (
+            isinstance(self.checkpointer, SqliteSaver)
+            and id(self.checkpointer.conn) not in seen_resources
+        ):
+            seen_resources.add(id(self.checkpointer.conn))
             self.checkpointer.conn.close()
 
     async def aclose(self) -> None:
         """Close async SQLite resources owned by this agent when possible."""
+        state = _ASYNC_CLOSE_STATE.get()
+        token = None
+        if state is None:
+            state = (set(), set())
+            token = _ASYNC_CLOSE_STATE.set(state)
+        try:
+            await self._aclose_tree(*state)
+        finally:
+            if token is not None:
+                _ASYNC_CLOSE_STATE.reset(token)
+
+    async def _aclose_tree(
+        self, seen_agents: set[int], seen_resources: set[int]
+    ) -> None:
+        """Close each composed async agent and resource at most once."""
+        marker = id(self)
+        if marker in seen_agents:
+            return
+        seen_agents.add(marker)
+        for child in self._agent_nodes.values():
+            if id(child) not in seen_agents:
+                await child.aclose()
+
         if self._async_storage is not None:
             storage_conn = self._async_storage.conn
-            await self._async_storage.__aexit__(None, None, None)
-            await storage_conn.close()
-            # ``aiosqlite.Connection`` is a non-daemon ``threading.Thread``.
-            # ``close()`` only finalizes queued queries and signals the worker
-            # to stop; it does NOT join the thread, which stays alive. Without
-            # joining, each async invoke leaks a live non-daemon thread that
-            # ultimately blocks interpreter shutdown (the TUI "hangs" on quit).
-            await asyncio.to_thread(storage_conn.join)
+            storage_marker = id(storage_conn)
+            if storage_marker not in seen_resources:
+                seen_resources.add(storage_marker)
+                await self._async_storage.__aexit__(None, None, None)
+                await self._async_storage.conn.close()
+
+                # aiosqlite.Connection owns a non-daemon worker thread.
+                # Closing signals it to stop; joining ensures it has terminated.
+                await asyncio.to_thread(storage_conn.join)
             self._async_storage = None
             self._async_compiled_graph = None
+
         if isinstance(self._async_checkpointer, AsyncSqliteSaver):
             checkpointer_conn = self._async_checkpointer.conn
-            await checkpointer_conn.close()
-            await asyncio.to_thread(checkpointer_conn.join)
+            checkpointer_marker = id(checkpointer_conn)
+            if checkpointer_marker not in seen_resources:
+                seen_resources.add(checkpointer_marker)
+                await checkpointer_conn.close()
+                await asyncio.to_thread(checkpointer_conn.join)
+
             self._async_checkpointer = None
             self._async_compiled_graph = None
 
@@ -1343,17 +1589,22 @@ class BaseAgent(Generic[TState], ABC):
 
     def _has_async_only_tools(self) -> bool:
         tools_obj = getattr(self, "tools", None)
-        if not tools_obj:
-            return False
+        if tools_obj:
+            try:
+                tool_iter = (
+                    tools_obj.values()
+                    if isinstance(tools_obj, dict)
+                    else tools_obj
+                )
+                if any(self._tool_is_async_only(t) for t in tool_iter):
+                    return True
+            except Exception:
+                pass
 
-        try:
-            tool_iter = (
-                tools_obj.values() if isinstance(tools_obj, dict) else tools_obj
-            )
-        except Exception:
-            return False
-
-        return any(self._tool_is_async_only(t) for t in tool_iter)
+        return any(
+            child._has_async_only_tools()
+            for child in self._agent_nodes.values()
+        )
 
     def _invoke(self, input, **config):
         config = self.build_config(**config)
@@ -1906,6 +2157,6 @@ class AgentWithTools:
         )
 
         if rebuild_graph and hasattr(self, "build_graph"):
-            self.__dict__.pop("compiled_graph", None)
+            self._invalidate_compiled_graphs()
             if hasattr(self, "graph"):
                 self.build_graph()

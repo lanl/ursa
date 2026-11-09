@@ -10,6 +10,7 @@ from langchain.chat_models import BaseChatModel
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
+from ursa.util.agent_invocation import invoke_agent
 from ursa.util.events import EnvironmentEvents
 
 from .base import (
@@ -24,9 +25,7 @@ from .base import (
 from .config import (
     AgentTeamConfig,
     EnvironmentMemberConfig,
-    load_object,
     load_team_config,
-    make_llm,
 )
 
 logger = logging.getLogger(__name__)
@@ -173,7 +172,9 @@ class AgentTeamEnvironment(BaseEnvironment):
         than creating a new ``<team>_<member>`` checkpoint. All team members see
         the same team workspace so they can collaborate through shared files.
         """
-        return self._build_named_team_agent(member, agent_name=member.name)
+        return self._build_member(
+            member, workspace=self.workspace, agent_name=member.name
+        )
 
     def _build_team_pi(self, member: EnvironmentMemberConfig) -> Any:
         """Instantiate the PI in the shared team workspace.
@@ -182,25 +183,9 @@ class AgentTeamEnvironment(BaseEnvironment):
         yet exist, BaseAgent will create its checkpoint under the usual URSA agent
         cache for the configured group.
         """
-        return self._build_named_team_agent(member, agent_name=member.name)
-
-    def _build_named_team_agent(
-        self,
-        member: EnvironmentMemberConfig,
-        *,
-        agent_name: str,
-    ) -> Any:
-        cls = load_object(member.agent)
-        llm = make_llm(self.llm, member.model)
-        kwargs = dict(member.config or {})
-        kwargs.setdefault("workspace", self.workspace)
-        kwargs.setdefault("group", self.group)
-        if isinstance(cls, type) and issubclass(cls, BaseEnvironment):
-            kwargs.setdefault("name", member.name)
-            kwargs.setdefault("persist_members", self.persist_members)
-        elif self.persist_members:
-            kwargs.setdefault("agent_name", agent_name)
-        return cls(llm=llm, **kwargs)
+        return self._build_member(
+            member, workspace=self.workspace, agent_name=member.name
+        )
 
     def _build_pi(self) -> Any:
         pi_config = self.config.pi
@@ -372,7 +357,9 @@ class AgentTeamEnvironment(BaseEnvironment):
                     runtime_config, member
                 )
                 kwargs = {"config": member_config} if member_config else {}
-                result = self.members[member_name].invoke(prompt, **kwargs)
+                result = invoke_agent(
+                    self.members[member_name], prompt, **kwargs
+                )
             except BaseException as exc:
                 events.emit(
                     f"Delegation to {member_name} failed",

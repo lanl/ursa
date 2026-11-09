@@ -22,8 +22,10 @@ configuration reference.
 
 ## Run the team
 
-Clone URSA, open a terminal at the repository root, and set your OpenAI API key.
-Then install this example's dependencies and run its small Python entry point.
+Clone URSA, open a terminal at the repository root, and configure the model and
+credentials in your URSA user config. With the built-in OpenAI defaults, set
+`OPENAI_API_KEY`. Then install this example's dependencies and run its small
+Python entry point.
 
 === "macOS/Linux"
 
@@ -51,8 +53,8 @@ inside [`run_team.py`](run_team.py) to give the team a problem of your own.
 --8<-- "examples/environments/run_team.py"
 ```
 
-If you use another model provider, configure its credentials and update the
-model in `run_team.py`. See [Models and inference
+The runner loads your system and user configuration with
+`UrsaConfig.user_config()`. See [Models and inference
 providers](../../docs/configuration/models.md) for supported configurations.
 
 ## Shape the team

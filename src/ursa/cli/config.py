@@ -463,8 +463,9 @@ class ChatModelConfig(ModelConfig):
 
     def init_chat_model(self) -> BaseChatModel:
         from ursa.util.model_metadata import load_model_context
+        from ursa.util.openai_compat import with_responses_fallback
 
-        llm = init_chat_model(**self.kwargs)
+        llm = with_responses_fallback(init_chat_model(**self.kwargs))
         self.check_instantiated_model(llm)
         load_model_context(
             llm, explicit_profile="profile" in (self.model_extra or {})
@@ -642,6 +643,12 @@ class UrsaConfig(BaseModel):
     @classmethod
     def from_file(cls, path: Path):
         return cls.model_validate(load_config_file(path))
+
+    @classmethod
+    def user_config(cls, resolve: bool = True) -> Self:
+        """Load and merge the default system and user config layers."""
+        config = cls().model_merge(*config_layers(Namespace()))
+        return config.resolve() if resolve else config
 
     def resolve(self) -> Self:
         """Return this config after applying canonical resolution."""
@@ -868,10 +875,8 @@ def config_layers(
 
     if not final:
         return layers
-    if env_overrides is None:
-        raise ValueError("Final config layering requires sparse env overrides")
 
-    layers.append(_ursa_config_values(env_overrides))
+    layers.append(_ursa_config_values(env_overrides or {}))
     if cli_config_path is not None and cli_config_path in paths:
         layers.append(load_config_file(cli_config_path))
     if cli_overrides is not None:

@@ -91,10 +91,11 @@ symposia, and persistent state so named members can build continuity over time.
 ## A minimal Python example
 
 ```python
-from langchain.chat_models import init_chat_model
+from ursa.cli.config import UrsaConfig
 from ursa.environments import AgentTeamEnvironment
 
-llm = init_chat_model(model="openai:gpt-4o-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 
 team = AgentTeamEnvironment.from_yaml(
     "examples/environments/agent_team.yaml",
@@ -111,10 +112,11 @@ print(result["messages"][-1].content if "messages" in result else result)
 The same pattern works for a symposium:
 
 ```python
-from langchain.chat_models import init_chat_model
+from ursa.cli.config import UrsaConfig
 from ursa.environments import AgentSymposiumEnvironment
 
-llm = init_chat_model(model="openai:gpt-4o-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 
 symposium = AgentSymposiumEnvironment.from_yaml(
     "examples/environments/agent_symposium.yaml",
@@ -164,11 +166,9 @@ environment with its configured workspace behavior.
 
 ## Safety reminder
 
-Environments can contain agents that use web access, write files, or run commands.
-Treat the whole environment as powerful as its most capable member. Use dedicated
-workspaces, review generated code and commands, and apply the same sandboxing
-practices you would use for an
-[`ExecutionAgent`][ursa.agents.execution_agent.ExecutionAgent].
+Use dedicated workspaces and review generated code and commands. Members sharing
+a workspace can modify each other's files. See the
+[Sandboxing](../sandbox.md) for execution controls.
 
 Next, read about [Agent Teams][agent-teams] or
 [Agent Symposia][agent-symposia].

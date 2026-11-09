@@ -12,6 +12,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langgraph.types import Overwrite
 
 from ursa.agents import ExecutionAgent
 from ursa.agents.execution_agent import ReviewAssessment
@@ -314,8 +315,12 @@ def test_execution_agent_keeps_tool_calls_out_of_summary_and_recap(
         {"messages": [HumanMessage(content="hi")], "symlinkdir": {}},
         runtime=SimpleNamespace(context=execution_agent.context),
     )
-    assert query_result["messages"].tool_calls
-    assert query_result["messages"].tool_calls[0]["name"] == "fake_run_command"
+    # The input lacks a system prompt, so prepare_messages_context inserts one
+    # and the node returns a full Overwrite; the reply is the last message.
+    update = query_result["messages"]
+    reply = update.value[-1] if isinstance(update, Overwrite) else update
+    assert reply.tool_calls
+    assert reply.tool_calls[0]["name"] == "fake_run_command"
 
 
 def test_safe_codes_in_store(chat_model, tmpdir):

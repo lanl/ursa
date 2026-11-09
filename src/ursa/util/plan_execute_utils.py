@@ -379,11 +379,15 @@ def setup_llm(
     llm_kwargs = deep_merge_dicts(base_llm_kwargs, yaml_llm_kwargs)
 
     # Initialize
-    model = init_chat_model(
-        model=pure_model,
-        model_provider=provider,
-        **llm_kwargs,
-        **(provider_extra or {}),
+    from ursa.util.openai_compat import with_responses_fallback
+
+    model = with_responses_fallback(
+        init_chat_model(
+            model=pure_model,
+            model_provider=provider,
+            **llm_kwargs,
+            **(provider_extra or {}),
+        )
     )
 
     # Print confirmation

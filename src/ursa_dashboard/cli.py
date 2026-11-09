@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
         "--config",
         "-c",
         default=os.environ.get("URSA_DASHBOARD_CONFIG"),
-        help="YAML/JSON URSA config whose llm_model settings initialize the dashboard LLM endpoint.",
+        help="YAML/JSON URSA config whose model settings and inference providers initialize the dashboard.",
     )
     ap.add_argument(
         "--use-web",

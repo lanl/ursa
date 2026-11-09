@@ -51,7 +51,7 @@ from langchain_core.messages import HumanMessage
 from ursa.agents import ExecutionAgent
 from ursa.cli.config import UrsaConfig
 
-config = UrsaConfig().resolve()
+config = UrsaConfig.user_config()
 llm = config.llm_model.init_chat_model()
 agent = ExecutionAgent(
     llm=llm,
@@ -137,10 +137,11 @@ a PI delegation tools for specialist members. An
 independently, review one another, revise, and then synthesize a final answer.
 
 ```python
-from langchain.chat_models import init_chat_model
+from ursa.cli.config import UrsaConfig
 from ursa.environments import AgentSymposiumEnvironment
 
-llm = init_chat_model(model="openai:gpt-4o-mini")
+config = UrsaConfig.user_config()
+llm = config.llm_model.init_chat_model()
 symposium = AgentSymposiumEnvironment.from_yaml(
     "examples/environments/agent_symposium.yaml",
     llm=llm,

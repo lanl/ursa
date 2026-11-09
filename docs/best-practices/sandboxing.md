@@ -32,6 +32,11 @@ Potential risks include:
 
 Use a virtual machine, container, dedicated user account, or isolated environment for high-risk tasks.
 
+## Command sandbox
+
+See the [Sandboxing](../sandbox.md) for setup,
+access controls, safety settings, and troubleshooting.
+
 ## File access outside the workspace
 
 The workspace is a working directory, not a filesystem security boundary.
@@ -42,9 +47,9 @@ can reach other files readable by the URSA process. File contents may be sent to
 the configured model as tool results.
 
 Although `write_code` checks that its target resolves inside the workspace,
-this does not isolate the agent: shell commands and other tools retain the host
-process's permissions. Use operating-system permissions or an isolated environment
-to restrict access to files.
+this does not isolate every tool. The command sandbox applies only to
+`run_command`. Use operating-system permissions or an isolated environment
+to restrict access across tools.
 
 ## Command screening
 
@@ -56,7 +61,8 @@ the LLM screening policy for `run_command`. Values are case-insensitive.
 | `default` (also used when unset) | Assesses the command with trust assumptions for configured executables, agent-created files, and LaTeX-related operations. The prompt also treats package installation for configured executables as safe. |
 | `low` | Asks the model to scrutinize destructive commands and flag high-concern attempts to extract sensitive information, while trusting workspace files. |
 | `trusted` | Still calls the model, but supplies only a generic statement that the agent is trusted, without the proposed command. This does not provide a command-specific assessment. |
-| `none` or `yolo` | Bypasses the LLM assessment and proceeds to command execution. |
+| `none` | Bypasses the LLM assessment; sandbox settings still apply. |
+| `yolo` | Bypasses the LLM assessment and disables sandboxing. |
 
 Unrecognized values use the default prompt. These policies are model judgments, not deterministic restrictions: they can accept unsafe
 commands or reject legitimate ones. They do not screen `read_file` or provide
@@ -64,7 +70,7 @@ filesystem or network isolation.
 
 ## Command timeout
 
-`run_command` executes through a shell with a default timeout of 3,600 seconds
+`run_command` executes through a shell with a default timeout of 60,000 seconds
 (one hour). Set `URSA_COMMAND_TIMEOUT_SECONDS` before launching URSA to change
 this limit, for example `URSA_COMMAND_TIMEOUT_SECONDS=300` for five minutues. 
 The value must be a positive integer number of seconds.
@@ -137,7 +143,7 @@ Containers can provide partial isolation. The exact command depends on your envi
 3. avoid mounting your full home directory,
 4. run as a non-root user where practical.
 
-The repository README includes Docker and Charliecloud examples for containerized execution.
+See [Sandboxing](../sandbox.md#container-image) for container examples.
 
 ## Responsible-use checklist
 
