@@ -1,5 +1,6 @@
 import os
 import platform
+import subprocess
 from pathlib import Path
 
 from langchain.tools import ToolRuntime
@@ -42,6 +43,9 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
     and formats both streams into a single string. KeyboardInterrupt during
     execution is caught and reported.
 
+    The command timeout defaults to 600000 seconds. Users can set
+    URSA_COMMAND_TIMEOUT_SECONDS to a positive integer to override it.
+
     Args:
         query: The shell command to execute.
 
@@ -53,6 +57,15 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
         query = validate_ascii(query)
     except AsciiValidationError as exc:
         return ascii_validation_message("query", exc)
+    try:
+        timeout = int(os.getenv("URSA_COMMAND_TIMEOUT_SECONDS", "600000"))
+        if timeout <= 0:
+            raise ValueError
+    except ValueError:
+        return (
+            "Invalid URSA_COMMAND_TIMEOUT_SECONDS: expected a positive integer "
+            "number of seconds. Command was not executed."
+        )
     workspace_dir = Path(runtime.context.workspace)
     if runtime.store is not None:
         search_results = runtime.store.search(
@@ -132,20 +145,22 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
                 # * To use sandbox but disable safety checks,
                 #   set URSA_SAFETY_LEVEL=none, URSA_SBX=1 (default)
                 case _, "yolo", _:
-                    sbx = NoSandbox(cwd=workspace_dir)
+                    sbx = NoSandbox(cwd=workspace_dir, timeout=timeout)
                 case _, _, 0:
-                    sbx = NoSandbox(cwd=workspace_dir)
+                    sbx = NoSandbox(cwd=workspace_dir, timeout=timeout)
                 case "Linux", _, 1:
                     sbx = LinuxBwrapSandbox(
                         cwd=workspace_dir,
                         access_network=access_network,
                         extra_writable_paths=extra_writable_paths,
+                        timeout=timeout,
                     )
                 case "Darwin", _, 1:
                     sbx = MacSandbox(
                         cwd=workspace_dir,
                         access_network=access_network,
                         extra_writable_paths=extra_writable_paths,
+                        timeout=timeout,
                     )
                 case "Windows", _, 1:
                     # TODO: Implement WindowsSandbox
@@ -195,6 +210,12 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
                 stderr_truncated=stderr_fit != (stderr or ""),
                 **({"artifacts": artifacts} if artifacts else {}),
             )
+    except subprocess.TimeoutExpired:
+        stdout_fit, stderr_fit = _fit_streams_to_budget(
+            "",
+            f"Command timed out after {timeout} seconds.",
+            runtime.context.tool_character_limit,
+        )
     except KeyboardInterrupt:
         stdout, stderr = "", "KeyboardInterrupt:"
         stdout_fit, stderr_fit = _fit_streams_to_budget(

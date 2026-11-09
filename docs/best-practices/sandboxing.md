@@ -70,13 +70,12 @@ filesystem or network isolation.
 
 ## Command timeout
 
-`run_command` executes through a shell with a fixed timeout of 600,000 seconds
-(approximately seven days). There is currently no configuration option for this
-timeout. A command containing an infinite loop can therefore occupy a run for a
-long time.
-
-For workloads requiring a shorter limit, use an external job scheduler or process
-supervisor with an appropriate wall-time limit.
+`run_command` executes through a shell with a default timeout of 60,000 seconds
+(one hour). Set `URSA_COMMAND_TIMEOUT_SECONDS` before launching URSA to change
+this limit, for example `URSA_COMMAND_TIMEOUT_SECONDS=300` for five minutues. 
+The value must be a positive integer number of seconds.
+When the timeout is reached, the tool returns a timeout message.
+This limit applies to subprocess execution, not the preceding LLM safety check.
 
 ## Web tools are opt in
 
