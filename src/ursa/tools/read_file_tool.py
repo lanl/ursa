@@ -36,8 +36,13 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
     workspace = runtime.context.workspace.resolve()
     full_filename = workspace.joinpath(filename).resolve()
     events = ToolEvents.from_runtime("read_file", runtime)
-    if not _allow_unsafe_reads_enabled() and not full_filename.is_relative_to(
-        workspace
+
+    skills_env = os.getenv("URSA_SKILLS_PATH")
+    skills_path = Path(skills_env).expanduser() if skills_env else None
+
+    if not _allow_unsafe_reads_enabled() and not (
+        full_filename.is_relative_to(workspace)
+        or (skills_path and full_filename.is_relative_to(skills_path))
     ):
         error = (
             f"File path '{filename}' resolves outside workspace directory. "
