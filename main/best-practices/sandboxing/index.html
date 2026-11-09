@@ -2305,11 +2305,18 @@
 access controls, safety settings, and troubleshooting.</p>
 <h2 id="file-access-outside-the-workspace">File access outside the workspace<a class="headerlink" href="#file-access-outside-the-workspace" title="Permanent link">&para;</a></h2>
 <p>The workspace is a working directory, not a filesystem security boundary.
-<code>read_file</code> intentionally permits reading files outside it without an LLM safety
-assessment, so workflows can access existing inputs and reference files. Relative
-paths are resolved from the workspace; absolute paths, <code>../</code> paths, and symlinks
-can reach other files readable by the URSA process. File contents may be sent to
-the configured model as tool results.</p>
+<code>read_file</code> resolves the requested path and permits reads only within the
+workspace by default, without an additional LLM safety assessment. Relative paths are
+resolved from the workspace; absolute paths within it are also accepted.
+Paths containing <code>../</code> and symlinks are rejected if they resolve outside the
+workspace. Copy external inputs into the workspace before reading them with
+this tool. File contents may be sent to the configured model as tool results.</p>
+<p>To explicitly permit outside reads, set <code>URSA_ALLOW_UNSAFE_READS=1</code> before
+launching URSA. The values <code>1</code>, <code>true</code>, <code>yes</code>, and <code>on</code> enable this override
+(case-insensitive, with surrounding whitespace ignored). Unset or any other
+value keeps workspace restrictions enabled. This grants <code>read_file</code> access to
+any file readable by the URSA process, including through absolute paths and
+symlinks.</p>
 <p>Although <code>write_code</code> checks that its target resolves inside the workspace,
 this does not isolate every tool. The command sandbox applies only to
 <code>run_command</code>. Use operating-system permissions or an isolated environment
