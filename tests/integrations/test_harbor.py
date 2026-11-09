@@ -133,7 +133,7 @@ async def _start(
         environment_name="local-test",
         session_id=f"{root.name}__env",
         trial_paths=TrialPaths(root / "trial"),
-        task_env_config=EnvironmentConfig(workdir="/workspace", storage_mb=32),
+        task_env_config=EnvironmentConfig(workdir="/workspace", storage_mb=64),
         mounts=[
             {
                 "type": "bind",

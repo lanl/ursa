@@ -120,6 +120,12 @@ Apptainer is preferred when both runtimes are installed. A failed build or task
 command that reports requiring root under Singularity warns that switching to
 Apptainer may help.
 
+With Apptainer fakeroot, writable overlays are created by
+`apptainer overlay create --fakeroot --sparse` so their ownership matches the
+container's user namespace. Overlay size follows `[environment].storage_mb`
+(default 1024 MiB); Apptainer requires at least 64 MiB. Singularity and runs
+without fakeroot retain the host-created ext3 overlay.
+
 Validate tasks against URSA's Singularity constraints, or warm the SIF cache,
 without running an agent:
 

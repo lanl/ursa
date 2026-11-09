@@ -1919,29 +1919,44 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             source.chmod(0o777)
 
     def _prepare_disk_overlay(self) -> None:
-        """Create a sparse ext3 overlay compatible with Singularity 3.6."""
+        """Create a sparse overlay with ownership suited to the runtime."""
         if self._scratch_dir is None:
             raise RuntimeError("Singularity scratch directory is not prepared")
-        mkfs_ext3 = shutil.which("mkfs.ext3")
-        mkfs = mkfs_ext3 or shutil.which("mke2fs")
-        if mkfs is None:
-            raise RuntimeError(
-                "Singularity --overlay requires mkfs.ext3 or mke2fs"
-            )
-
+        runtime = self._instance_runtime()
         storage_mb = self.task_env_config.storage_mb or 1024
         layout = self._scratch_dir / "overlay-layout"
-        for directory in (layout / "upper", layout / "work"):
-            directory.mkdir(parents=True)
-            directory.chmod(0o777)
         overlay = self._scratch_dir / "overlay.img"
-        overlay.touch(mode=0o600)
-        os.truncate(overlay, storage_mb * 1024 * 1024)
         try:
-            command = [mkfs, "-q"]
-            if mkfs_ext3 is None:
-                command.extend(["-t", "ext3"])
-            command.extend(["-d", str(layout), str(overlay)])
+            if self._fakeroot and Path(runtime).name == "apptainer":
+                # Let Apptainer map overlay ownership, including on hosts
+                # without subordinate UID/GID ranges.
+                command = [
+                    runtime,
+                    "overlay",
+                    "create",
+                    "--fakeroot",
+                    "--sparse",
+                    "--size",
+                    str(storage_mb),
+                    str(overlay),
+                ]
+            else:
+                # Singularity 3.6 has no overlay-create command.
+                mkfs_ext3 = shutil.which("mkfs.ext3")
+                mkfs = mkfs_ext3 or shutil.which("mke2fs")
+                if mkfs is None:
+                    raise RuntimeError(
+                        "Singularity --overlay requires mkfs.ext3 or mke2fs"
+                    )
+                for directory in (layout / "upper", layout / "work"):
+                    directory.mkdir(parents=True)
+                    directory.chmod(0o777)
+                overlay.touch(mode=0o600)
+                os.truncate(overlay, storage_mb * 1024 * 1024)
+                command = [mkfs, "-q"]
+                if mkfs_ext3 is None:
+                    command.extend(["-t", "ext3"])
+                command.extend(["-d", str(layout), str(overlay)])
             subprocess.run(
                 command,
                 check=True,

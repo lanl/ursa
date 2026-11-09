@@ -175,6 +175,78 @@ def test_automatic_fakeroot_allows_offline_validation(tmp_path, monkeypatch):
     _environment(tmp_path, fakeroot=None)
 
 
+@pytest.mark.parametrize("runtime", ["singularity", "apptainer"])
+@pytest.mark.parametrize("fakeroot", [None, False, True])
+@pytest.mark.parametrize("storage_mb", [None, 64])
+def test_overlay_creation_matches_runtime_and_fakeroot(
+    tmp_path, monkeypatch, runtime, fakeroot, storage_mb
+):
+    environment = _environment(tmp_path, fakeroot=fakeroot)
+    environment._runtime_path = f"/usr/bin/{runtime}"
+    environment._scratch_dir = tmp_path / "scratch"
+    environment._scratch_dir.mkdir()
+    environment.task_env_config.storage_mb = storage_mb
+    overlay = environment._scratch_dir / "overlay.img"
+    layout = environment._scratch_dir / "overlay-layout"
+    native = runtime == "apptainer" and fakeroot is not False
+    formatter = Mock(return_value="/usr/bin/mkfs.ext3")
+    monkeypatch.setattr(harbor_singularity.shutil, "which", formatter)
+
+    def create(command, **_kwargs):
+        assert command[-1] == str(overlay)
+        if native:
+            assert command[:3] == ["/usr/bin/apptainer", "overlay", "create"]
+            assert {"--fakeroot", "--sparse"} <= set(command)
+            assert _option_value(command, "--size") == str(storage_mb or 1024)
+            assert not overlay.exists() and not layout.exists()
+            overlay.touch()
+        else:
+            assert command[0] == formatter.return_value
+            assert _option_value(command, "-d") == str(layout)
+            assert overlay.stat().st_size == (storage_mb or 1024) * 1024**2
+            for name in ("upper", "work"):
+                assert (layout / name).stat().st_mode & 0o777 == 0o777
+
+    monkeypatch.setattr(harbor_singularity.subprocess, "run", create)
+    environment._prepare_disk_overlay()
+
+    assert environment._overlay_path == overlay and overlay.is_file()
+    assert not layout.exists()
+    if native:
+        formatter.assert_not_called()
+
+
+@pytest.mark.parametrize("runtime", ["singularity", "apptainer"])
+@pytest.mark.parametrize("failed_to_start", [False, True])
+def test_failed_overlay_creation_removes_partial_files(
+    tmp_path, monkeypatch, runtime, failed_to_start
+):
+    environment = _environment(tmp_path, fakeroot=True)
+    environment._runtime_path = f"/usr/bin/{runtime}"
+    environment._scratch_dir = tmp_path / "scratch"
+    environment._scratch_dir.mkdir()
+    monkeypatch.setattr(
+        harbor_singularity.shutil, "which", lambda _name: "/usr/bin/mkfs.ext3"
+    )
+
+    def fail(command, **_kwargs):
+        Path(command[-1]).write_bytes(b"partial overlay")
+        if failed_to_start:
+            raise OSError("overlay unavailable")
+        raise subprocess.CalledProcessError(
+            1, command, stderr="overlay unavailable"
+        )
+
+    monkeypatch.setattr(harbor_singularity.subprocess, "run", fail)
+    with pytest.raises(
+        RuntimeError, match="writable overlay: overlay unavailable"
+    ):
+        environment._prepare_disk_overlay()
+
+    assert environment._overlay_path is None
+    assert not list(environment._scratch_dir.iterdir())
+
+
 def test_compose_image_requires_explicit_workdir(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Compose main image.*workdir"):
         _environment(tmp_path, compose=True, workdir=None)
