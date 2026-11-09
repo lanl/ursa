@@ -43,7 +43,7 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
     and formats both streams into a single string. KeyboardInterrupt during
     execution is caught and reported.
 
-    The command timeout defaults to 60000 seconds. Users can set
+    The command timeout defaults to 600000 seconds. Users can set
     URSA_COMMAND_TIMEOUT_SECONDS to a positive integer to override it.
 
     Args:
@@ -58,7 +58,7 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
     except AsciiValidationError as exc:
         return ascii_validation_message("query", exc)
     try:
-        timeout = int(os.getenv("URSA_COMMAND_TIMEOUT_SECONDS", "60000"))
+        timeout = int(os.getenv("URSA_COMMAND_TIMEOUT_SECONDS", "600000"))
         if timeout <= 0:
             raise ValueError
     except ValueError:
@@ -145,9 +145,9 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
                 # * To use sandbox but disable safety checks,
                 #   set URSA_SAFETY_LEVEL=none, URSA_SBX=1 (default)
                 case _, "yolo", _:
-                    sbx = NoSandbox(cwd=workspace_dir)
+                    sbx = NoSandbox(cwd=workspace_dir, timeout=timeout)
                 case _, _, 0:
-                    sbx = NoSandbox(cwd=workspace_dir)
+                    sbx = NoSandbox(cwd=workspace_dir, timeout=timeout)
                 case "Linux", _, 1:
                     sbx = LinuxBwrapSandbox(
                         cwd=workspace_dir,

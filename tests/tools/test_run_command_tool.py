@@ -51,7 +51,7 @@ def _patch_safety_result(
     return captured
 
 
-@pytest.mark.parametrize("setting, expected", [(None, 60000), ("7200", 7200)])
+@pytest.mark.parametrize("setting, expected", [(None, 600000), ("7200", 7200)])
 def test_run_command_invokes_subprocess_in_workspace(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel, setting, expected
 ):
