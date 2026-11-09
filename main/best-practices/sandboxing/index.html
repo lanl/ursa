@@ -11,7 +11,7 @@
         <link rel="canonical" href="https://lanl.github.io/ursa/main/best-practices/sandboxing/">
       
       
-        <link rel="prev" href="../../environments/visualization/">
+        <link rel="prev" href="../../sandbox/">
       
       
         <link rel="next" href="../contributing/">
@@ -1418,6 +1418,29 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Command sandbox
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -1483,6 +1506,15 @@
   <a href="#understand-execution-risk" class="md-nav__link">
     <span class="md-ellipsis">
       Understand execution risk
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#command-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      Command sandbox
     </span>
   </a>
   
@@ -2135,6 +2167,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#command-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      Command sandbox
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#file-access-outside-the-workspace" class="md-nav__link">
     <span class="md-ellipsis">
       File access outside the workspace
@@ -2259,6 +2300,9 @@
 <li>executing unsafe generated code.</li>
 </ul>
 <p>Use a virtual machine, container, dedicated user account, or isolated environment for high-risk tasks.</p>
+<h2 id="command-sandbox">Command sandbox<a class="headerlink" href="#command-sandbox" title="Permanent link">&para;</a></h2>
+<p>See the <a href="../../sandbox/">Sandboxing</a> for setup,
+access controls, safety settings, and troubleshooting.</p>
 <h2 id="file-access-outside-the-workspace">File access outside the workspace<a class="headerlink" href="#file-access-outside-the-workspace" title="Permanent link">&para;</a></h2>
 <p>The workspace is a working directory, not a filesystem security boundary.
 <code>read_file</code> intentionally permits reading files outside it without an LLM safety
@@ -2267,9 +2311,9 @@ paths are resolved from the workspace; absolute paths, <code>../</code> paths, a
 can reach other files readable by the URSA process. File contents may be sent to
 the configured model as tool results.</p>
 <p>Although <code>write_code</code> checks that its target resolves inside the workspace,
-this does not isolate the agent: shell commands and other tools retain the host
-process's permissions. Use operating-system permissions or an isolated environment
-to restrict access to files.</p>
+this does not isolate every tool. The command sandbox applies only to
+<code>run_command</code>. Use operating-system permissions or an isolated environment
+to restrict access across tools.</p>
 <h2 id="command-screening">Command screening<a class="headerlink" href="#command-screening" title="Permanent link">&para;</a></h2>
 <p>Set the <code>URSA_SAFETY_LEVEL</code> environment variable before launching URSA to select
 the LLM screening policy for <code>run_command</code>. Values are case-insensitive.</p>
@@ -2294,8 +2338,12 @@ the LLM screening policy for <code>run_command</code>. Values are case-insensiti
 <td>Still calls the model, but supplies only a generic statement that the agent is trusted, without the proposed command. This does not provide a command-specific assessment.</td>
 </tr>
 <tr>
-<td><code>none</code> or <code>yolo</code></td>
-<td>Bypasses the LLM assessment and proceeds to command execution.</td>
+<td><code>none</code></td>
+<td>Bypasses the LLM assessment; sandbox settings still apply.</td>
+</tr>
+<tr>
+<td><code>yolo</code></td>
+<td>Bypasses the LLM assessment and disables sandboxing.</td>
 </tr>
 </tbody>
 </table>
@@ -2354,7 +2402,7 @@ commands do not inherit model API keys.</p>
 <li>avoid mounting your full home directory,</li>
 <li>run as a non-root user where practical.</li>
 </ol>
-<p>The repository README includes Docker and Charliecloud examples for containerized execution.</p>
+<p>See <a href="../../sandbox/#container-image">Sandboxing</a> for container examples.</p>
 <h2 id="responsible-use-checklist">Responsible-use checklist<a class="headerlink" href="#responsible-use-checklist" title="Permanent link">&para;</a></h2>
 <p>Before running an execution or web-enabled workflow, ask:</p>
 <ul>

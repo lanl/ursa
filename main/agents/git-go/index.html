@@ -1625,6 +1625,29 @@
   
   
     <li class="md-nav__item">
+      <a href="../../sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Command sandbox
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../best-practices/sandboxing/" class="md-nav__link">
         
   
@@ -2468,24 +2491,20 @@ workflows on Go projects.</p>
 - Network issues when accessing remote repos</p>
 <p>If other operations timeout, try running them in smaller chunks or profiling the specific operation.</p>
 <h3 id="path-safety">Path Safety<a class="headerlink" href="#path-safety" title="Permanent link">&para;</a></h3>
-<p><code>write_code</code>, <code>write_code_with_repo</code>, and <code>edit_code</code> validate file paths to prevent:
-- <strong>Path traversal attacks</strong> (e.g., <code>../../../etc/passwd</code> attempts are rejected)
-- <strong>Writes outside the workspace</strong> (all files must be within the workspace directory)
-- <strong>Writes outside the repository</strong> (<code>write_code_with_repo</code>, or <code>edit_code</code> when <code>repo_path</code> is used)</p>
-<p>Path validation is enabled by default. For trusted sandbox/container usage, you can opt in to unsafe writes by setting:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">URSA_ALLOW_UNSAFE_WRITES</span><span class="o">=</span><span class="m">1</span>
-</code></pre></div>
-<p>When enabled, workspace and repository boundary checks are bypassed for <code>write_code</code>, <code>write_code_with_repo</code>, and <code>edit_code</code>.</p>
-<p>Example: Specifying a repo boundary ensures all file modifications stay within that repository.</p>
+<p><code>write_code</code>, <code>write_code_with_repo</code>, and <code>edit_code</code> reject paths outside the
+workspace; repository-aware writes also enforce the specified repository boundary.
+Set <code>URSA_ALLOW_UNSAFE_WRITES=1</code> only when you intend to bypass these checks.</p>
+<p>These file-tool checks are separate from the
+<a href="../../sandbox/">command sandbox</a>.</p>
 <h3 id="golangci-lint-integration">Golangci-lint Integration<a class="headerlink" href="#golangci-lint-integration" title="Permanent link">&para;</a></h3>
 <p>The agent automatically integrates with <code>golangci-lint</code> for code quality checks:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Agent detects .golangci.yml and uses it automatically</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="s2">&quot;Run linting and report all issues&quot;</span><span class="p">)</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Linter configuration is respected while agent iterates on fixes</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Agent detects .golangci.yml and uses it automatically</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="s2">&quot;Run linting and report all issues&quot;</span><span class="p">)</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># Linter configuration is respected while agent iterates on fixes</span>
 </code></pre></div>
 <p><strong>Install golangci-lint</strong> if not already present:
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>go<span class="w"> </span>install<span class="w"> </span>github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>go<span class="w"> </span>install<span class="w"> </span>github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 </code></pre></div></p>
 <p>The linter supports:
 - Custom linter configurations via <code>.golangci.yml</code>
@@ -2493,25 +2512,25 @@ workflows on Go projects.</p>
 - Clear error reporting when linter is misconfigured</p>
 <h2 id="common-workflows">Common Workflows<a class="headerlink" href="#common-workflows" title="Permanent link">&para;</a></h2>
 <h3 id="1-build-and-test-validation">1. Build and Test Validation<a class="headerlink" href="#1-build-and-test-validation" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="s2">&quot;Build the module, run all tests, and report any failures.&quot;</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="s2">&quot;Build the module, run all tests, and report any failures.&quot;</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="p">)</span>
 </code></pre></div>
 <h3 id="2-code-quality-check-and-fix">2. Code Quality Check and Fix<a class="headerlink" href="#2-code-quality-check-and-fix" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="s2">&quot;Run golangci-lint, identify issues, and attempt to fix them automatically.&quot;</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="s2">&quot;Run golangci-lint, identify issues, and attempt to fix them automatically.&quot;</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="p">)</span>
 </code></pre></div>
 <h3 id="3-feature-implementation-with-git-integration">3. Feature Implementation with Git Integration<a class="headerlink" href="#3-feature-implementation-with-git-integration" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="s2">&quot;Create a new feature branch, implement the requested functionality, &quot;</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="s2">&quot;run tests and linting, and commit the changes.&quot;</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="s2">&quot;Create a new feature branch, implement the requested functionality, &quot;</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="s2">&quot;run tests and linting, and commit the changes.&quot;</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="p">)</span>
 </code></pre></div>
 <h3 id="4-dependency-management">4. Dependency Management<a class="headerlink" href="#4-dependency-management" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="s2">&quot;Run go mod tidy to clean up dependencies, then commit the changes.&quot;</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="s2">&quot;Run go mod tidy to clean up dependencies, then commit the changes.&quot;</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="p">)</span>
 </code></pre></div>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>

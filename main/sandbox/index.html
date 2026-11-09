@@ -11,6 +11,10 @@
         <link rel="canonical" href="https://lanl.github.io/ursa/main/sandbox/">
       
       
+        <link rel="prev" href="../environments/visualization/">
+      
+      
+        <link rel="next" href="../best-practices/sandboxing/">
       
       
       <link rel="icon" href="../assets/favicon.png">
@@ -18,7 +22,7 @@
     
     
       
-        <title>Sandboxing - URSA</title>
+        <title>Command sandbox - URSA</title>
       
     
     
@@ -115,7 +119,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Sandboxing
+              Command sandbox
             
           </span>
         </div>
@@ -1374,18 +1378,20 @@
       
   
   
+    
   
   
+  
     
     
     
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" checked>
         
           
           <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
@@ -1401,12 +1407,146 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_8">
             <span class="md-nav__icon md-icon"></span>
             Best Practices
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Command sandbox
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Command sandbox
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#start-with-sandboxing-enabled" class="md-nav__link">
+    <span class="md-ellipsis">
+      Start with sandboxing enabled
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#customize-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      Customize access
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#safety-checks-and-troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      Safety checks and troubleshooting
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#container-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      Container image
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Container image">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#docker" class="md-nav__link">
+    <span class="md-ellipsis">
+      Docker
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#charliecloud" class="md-nav__link">
+    <span class="md-ellipsis">
+      Charliecloud
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apptainer" class="md-nav__link">
+    <span class="md-ellipsis">
+      Apptainer
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
             
               
                 
@@ -1970,6 +2110,33 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#start-with-sandboxing-enabled" class="md-nav__link">
+    <span class="md-ellipsis">
+      Start with sandboxing enabled
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#customize-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      Customize access
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#safety-checks-and-troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      Safety checks and troubleshooting
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#container-image" class="md-nav__link">
     <span class="md-ellipsis">
       Container image
@@ -1992,6 +2159,15 @@
   <a href="#charliecloud" class="md-nav__link">
     <span class="md-ellipsis">
       Charliecloud
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apptainer" class="md-nav__link">
+    <span class="md-ellipsis">
+      Apptainer
     </span>
   </a>
   
@@ -2022,66 +2198,99 @@
 
 
 <h1 id="sandboxing">Sandboxing<a class="headerlink" href="#sandboxing" title="Permanent link">&para;</a></h1>
-<p>The <a class="autorefs autorefs-internal" title="ExecutionAgent Documentation" href="../agents/execution/#executionagent-documentation">Execution Agent</a> is allowed to run system
-commands and write/run code. Being able to execute arbitrary system commands or write
-and execute code has the potential to cause problems like:</p>
+<p>URSA now sandboxes commands executed through <code>run_command</code> by default on Linux
+and macOS. Commands can write inside the configured workspace and temporary
+storage; other filesystem locations are read-only unless explicitly allowed.
+File reads and network access remain enabled by default. These restrictions
+apply to <code>run_command</code>, not every URSA tool.</p>
+<h2 id="start-with-sandboxing-enabled">Start with sandboxing enabled<a class="headerlink" href="#start-with-sandboxing-enabled" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Damage code or data on the computer</li>
-<li>Damage the computer</li>
-<li>Transmit your local data</li>
+<li><strong>Linux:</strong> Install <a href="https://github.com/containers/bubblewrap">Bubblewrap</a> and
+  ensure <code>bwrap</code> is on your <code>PATH</code>. If you use <a href="https://pixi.prefix.dev"><code>pixi</code></a>, run
+  <code>pixi global install bubblewrap</code>. Your system must allow user namespaces.</li>
+<li><strong>macOS:</strong> Ensure <code>sandbox-exec</code> is available on your <code>PATH</code>.</li>
 </ul>
-<p>The Web Search Agent scrapes data from urls, so has the potential to attempt to pull information from questionable sources.</p>
-<p>Some suggestions for sandboxing the agent:</p>
-<ul>
-<li>
-<p>Creating a specific environment such that limits URSA's access to only what you want. Examples:</p>
-<ul>
-<li>Creating/using a virtual machine that is sandboxed from the rest of your machine</li>
-<li>Creating a new account on your machine specifically for URSA</li>
-</ul>
-</li>
-<li>
-<p>Creating a network blacklist/whitelist to ensure that network commands and webscraping are contained to safe sources</p>
-</li>
-</ul>
-<p>You have a duty for ensuring that you use URSA responsibly.</p>
+<p>To enable sandboxing on Linux and macOS, leave <code>URSA_SBX</code> unset or set it to <code>1</code>.</p>
+<h2 id="customize-access">Customize access<a class="headerlink" href="#customize-access" title="Permanent link">&para;</a></h2>
+<p>Set environment variables before launching URSA. The following examples use a
+POSIX shell on Linux or macOS.</p>
+<p>Block network access for sandboxed commands:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">URSA_ACCESS_NETWORK</span><span class="o">=</span><span class="m">0</span><span class="w"> </span>ursa
+</code></pre></div>
+<p>Allow writes to additional existing directories, such as a package cache or
+shared output folder:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nv">URSA_EXTRA_WRITABLE_PATHS</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/.cache/uv:</span><span class="nv">$HOME</span><span class="s2">/ursa-output&quot;</span><span class="w"> </span>ursa
+</code></pre></div>
+<p>Separate paths with <code>:</code> on Linux and macOS. Paths are resolved and <code>~</code> is
+expanded; nonexistent paths are ignored. Create directories before launching.</p>
+<h2 id="safety-checks-and-troubleshooting">Safety checks and troubleshooting<a class="headerlink" href="#safety-checks-and-troubleshooting" title="Permanent link">&para;</a></h2>
+<p>Model-based command safety checks remain enabled independently of the sandbox.
+To skip those checks while keeping sandboxing enabled:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nv">URSA_SAFETY_LEVEL</span><span class="o">=</span>none<span class="w"> </span><span class="nv">URSA_SBX</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>ursa
+</code></pre></div>
+<p><code>URSA_SAFETY_LEVEL=yolo</code> disables both safety checks and sandboxing.</p>
+<p>If the backend is missing or cannot start, command execution raises an error
+instead of silently running without a sandbox. Check <code>PATH</code> and, on Linux,
+whether user namespaces are allowed; some HPC systems disable them. Windows
+sandboxing is not implemented.</p>
+<p>To explicitly run commands without sandboxing, including on unsupported systems:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nv">URSA_SBX</span><span class="o">=</span><span class="m">0</span><span class="w"> </span>ursa
+</code></pre></div>
+<p>This removes sandbox filesystem and network restrictions; model-based safety
+checks still follow <code>URSA_SAFETY_LEVEL</code>.</p>
 <h2 id="container-image">Container image<a class="headerlink" href="#container-image" title="Permanent link">&para;</a></h2>
-<p>To enable limited sandboxing insofar as containerization does this, you can run
-the following commands:</p>
+<p>Containers can provide additional isolation. The following examples start
+<code>ursa</code> in a container:</p>
 <h3 id="docker">Docker<a class="headerlink" href="#docker" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Pull the image</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lanl/ursa
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Run script from host system</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>mkdir<span class="w"> </span>-p<span class="w"> </span>scripts
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;import ursa; print(&#39;Hello from ursa&#39;)&quot;</span><span class="w"> </span>&gt;<span class="w"> </span>scripts/my_script.py
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>docker<span class="w"> </span>run<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;OPENAI_API_KEY&quot;</span><span class="o">=</span><span class="nv">$OPENAI_API_KEY</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span>--mount<span class="w"> </span><span class="nv">type</span><span class="o">=</span>bind,src<span class="o">=</span><span class="nv">$PWD</span>/scripts,dst<span class="o">=</span>/mnt/workspace<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span>ghcr.io/lanl/ursa<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span>bash<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;uv run /mnt/workspace/my_script.py&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Pull the image</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lanl/ursa
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Launch ursa in container</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>docker<span class="w"> </span>run<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">    </span>-e<span class="w"> </span><span class="s2">&quot;OPENAI_API_KEY&quot;</span><span class="o">=</span><span class="nv">$OPENAI_API_KEY</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">    </span>--mount<span class="w"> </span><span class="nv">type</span><span class="o">=</span>bind,src<span class="o">=</span><span class="nv">$PWD</span>,dst<span class="o">=</span>/mnt/workspace<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">    </span>ghcr.io/lanl/ursa<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">    </span>ursa<span class="w"> </span>--name<span class="w"> </span>my-session
 </code></pre></div>
 <h3 id="charliecloud">Charliecloud<a class="headerlink" href="#charliecloud" title="Permanent link">&para;</a></h3>
 <p><a href="https://charliecloud.io/">Charliecloud</a>
-is a rootless alternative to docker
-that is sometimes preferred on HPC. The following commands replicate the
-behaviors above for docker.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Pull the image</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>ch-image<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lanl/ursa<span class="w"> </span>ursa
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># Convert image to sqfs, for use on another system</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>ch-convert<span class="w"> </span>ursa<span class="w"> </span>ursa.sqfs
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="c1"># Run script from host system (if wanted, replace ursa with /path/to/ursa.sqfs)</span>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>mkdir<span class="w"> </span>-p<span class="w"> </span>scripts
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;import ursa; print(&#39;Hello from ursa&#39;)&quot;</span><span class="w"> </span>&gt;<span class="w"> </span>scripts/my_script.py
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>ch-run<span class="w"> </span>-W<span class="w"> </span>ursa<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span>--unset-env<span class="o">=</span><span class="s2">&quot;*&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">    </span>--set-env<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">    </span>--set-env<span class="o">=</span><span class="s2">&quot;OPENAI_API_KEY&quot;</span><span class="o">=</span><span class="nv">$OPENAI_API_KEY</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">    </span>--bind<span class="w"> </span><span class="si">${</span><span class="nv">PWD</span><span class="si">}</span>/scripts:/mnt/workspace<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">    </span>--cd<span class="w"> </span>/mnt/workspace<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">    </span>--<span class="w"> </span>bash<span class="w"> </span>-c<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">    </span><span class="s2">&quot;uv run --no-sync my_script.py&quot;</span>
+is a rootless alternative to docker that is sometimes preferred on HPC. The
+following commands replicate the behaviors above for docker.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Pull the image</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>ch-image<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lanl/ursa<span class="w"> </span>ursa
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="c1"># Convert image to sqfs, for use on another system</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>ch-convert<span class="w"> </span>ursa<span class="w"> </span>ursa.sqfs
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="c1"># Launch ursa in container</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>ch-run<span class="w"> </span>-W<span class="w"> </span>ursa<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">    </span>--unset-env<span class="o">=</span><span class="s2">&quot;*&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">    </span>--set-env<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">    </span>--set-env<span class="o">=</span><span class="s2">&quot;OPENAI_API_KEY&quot;</span><span class="o">=</span><span class="nv">$OPENAI_API_KEY</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">    </span>--bind<span class="w"> </span><span class="si">${</span><span class="nv">PWD</span><span class="si">}</span>/scripts:/mnt/workspace<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">    </span>--cd<span class="w"> </span>/mnt/workspace<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="w">    </span>--<span class="w"> </span>ursa<span class="w"> </span>--name<span class="w"> </span>my-session
+</code></pre></div>
+<h3 id="apptainer">Apptainer<a class="headerlink" href="#apptainer" title="Permanent link">&para;</a></h3>
+<p>Apptainer is another rootless alternative to docker.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Pull the image</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>apptainer<span class="w"> </span>pull<span class="w"> </span>/path/to/ursa.sif<span class="w"> </span>docker://ghcr.io/lanl/ursa
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># Launch rusa in container</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>apptainer<span class="w"> </span><span class="nb">exec</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">  </span>--cleanenv<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">  </span>--containall<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">  </span>--no-mount<span class="w"> </span>cwd<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">  </span>--no-home<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">  </span>--home<span class="w"> </span>/root<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="w">  </span>--env<span class="w"> </span><span class="nv">OPENAI_API_KEY</span><span class="o">=</span><span class="nv">$OPENAI_API_KEY</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="w">  </span>--env<span class="w"> </span><span class="nv">UV_NO_CACHE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="w">  </span>--env<span class="w"> </span><span class="nv">UV_SBX</span><span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="w">  </span>--bind<span class="w"> </span><span class="nv">$PWD</span>:/mnt/workspace<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="w">  </span>--pwd<span class="w"> </span>/mnt/workspace<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a><span class="w">  </span>--writable-tmpfs<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a><span class="w">  </span>/path/to/ursa.sif<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a><span class="w">  </span>bash
 </code></pre></div>
 
 

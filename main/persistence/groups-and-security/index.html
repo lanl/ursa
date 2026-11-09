@@ -1526,6 +1526,29 @@
   
   
     <li class="md-nav__item">
+      <a href="../../sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Command sandbox
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../best-practices/sandboxing/" class="md-nav__link">
         
   
@@ -2202,7 +2225,9 @@ unapproved model base URLs are rejected, and an invalid or empty allowlist is
 an error, not a way to disable the policy. Removing the default group's
 <code>group.yaml</code> restores its unrestricted behavior; non-default groups still
 require this file and a non-empty allowlist.</p>
-<p>This policy checks model endpoints; it is not a general network or tool sandbox.</p>
+<p>Group allowlists restrict model endpoints, not shell commands or other tool
+traffic. See the <a href="../../sandbox/">Sandboxing</a> for
+command execution controls.</p>
 <h2 id="how-this-relates-to-model-configuration">How this relates to model configuration<a class="headerlink" href="#how-this-relates-to-model-configuration" title="Permanent link">&para;</a></h2>
 <p>If your model config uses a custom <code>base_url</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">llm_model</span><span class="p">:</span>
