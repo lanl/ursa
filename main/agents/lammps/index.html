@@ -1269,6 +1269,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#result-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Result summary
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1374,6 +1383,52 @@
   
   <span class="md-ellipsis">
     Planning Agent
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../planning-execution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Planning and Execution Agent
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../composing-agent-nodes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Composing agent nodes
     
   </span>
   
@@ -1978,6 +2033,29 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/api/workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    workflows
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/api/environments/" class="md-nav__link">
         
   
@@ -2177,6 +2255,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#result-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Result summary
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2287,7 +2374,8 @@ LAMMPS simulation workflow. At the highest level, it can:</p>
 <li>summarize and choose a potential for the simulation task at hand,</li>
 <li>author a LAMMPS input script using the chosen potential (and an optional template / data file),</li>
 <li>execute LAMMPS via MPI (CPU or Kokkos GPU),</li>
-<li>iteratively “fix” the input script on failures by using run history until success or a max attempt limit.</li>
+<li>iteratively “fix” the input script on failures by using run history until success or a max attempt limit,</li>
+<li>hand successful results to an embedded <code>ExecutionAgent</code> that writes a Markdown summary and relevant plots.</li>
 </ul>
 <p>The agent writes the outputs into a local <code>workspace</code> directory and uses rich console panels to display progress, choices, diffs, and errors.</p>
 <hr />
@@ -2316,11 +2404,14 @@ for other extras.</p>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">config</span> <span class="o">=</span> <span class="n">UrsaConfig</span><span class="o">.</span><span class="n">user_config</span><span class="p">()</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">LammpsAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">llm_model</span><span class="o">.</span><span class="n">init_chat_model</span><span class="p">())</span>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="s2">&quot;simulation_task&quot;</span><span class="p">:</span> <span class="s2">&quot;Carry out a LAMMPS simulation of Cu to determine its equation of state.&quot;</span><span class="p">,</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="s2">&quot;elements&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;Cu&quot;</span><span class="p">],</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="s2">&quot;template&quot;</span><span class="p">:</span> <span class="s2">&quot;No template provided.&quot;</span>  <span class="c1">#Template for the input file</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="p">})</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>        <span class="s2">&quot;simulation_task&quot;</span><span class="p">:</span> <span class="s2">&quot;Carry out a LAMMPS simulation of Cu to determine its equation of state.&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>        <span class="s2">&quot;elements&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;Cu&quot;</span><span class="p">],</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>        <span class="s2">&quot;template&quot;</span><span class="p">:</span> <span class="s2">&quot;No template provided.&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="p">})</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="k">finally</span><span class="p">:</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    <span class="n">agent</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
 </code></pre></div>
 <p>For more advanced usage see examples here: <code>ursa/examples/two_agent_examples/lammps_execute/</code>.</p>
 <hr />
@@ -2404,6 +2495,11 @@ for other extras.</p>
 <p>Stops when:
 - run succeeds (<code>returncode == 0</code>), or
 - <code>fix_attempts &gt;= max_fix_attempts</code></p>
+<h3 id="result-summary">Result summary<a class="headerlink" href="#result-summary" title="Permanent link">&para;</a></h3>
+<p>After a successful run, <code>summarize_results=True</code> sends the task and generated
+files to an embedded <code>ExecutionAgent</code>. The child shares the parent workspace
+and lifecycle and writes a Markdown report, including plots when useful. Set
+<code>summarize_results=False</code> to finish immediately after the LAMMPS run.</p>
 <hr />
 <h2 id="state-model-lammpsstate">State model (<code>LammpsState</code>)<a class="headerlink" href="#state-model-lammpsstate" title="Permanent link">&para;</a></h2>
 <p>The graph state is a <code>TypedDict</code> containing (key fields):</p>
@@ -2460,6 +2556,7 @@ for other extras.</p>
 <li><code>ngpus</code> (default <code>-1</code>): set <code>&gt;= 0</code> to enable Kokkos GPU flags</li>
 <li><code>lammps_cmd</code> (default <code>lmp_mpi</code>): the name of the LAMMPS executable to launch</li>
 <li><code>mpirun_cmd</code> (default <code>mpirun</code>): currently available options are <code>mpirun</code> and <code>mpiexec</code>. Other options such as <code>srun</code> will be added soon</li>
+<li><code>summarize_results</code> (default <code>True</code>): use the embedded execution child to create a Markdown summary after a successful run</li>
 </ul>
 <h3 id="llm-context-trimming">LLM / context trimming<a class="headerlink" href="#llm-context-trimming" title="Permanent link">&para;</a></h3>
 <ul>

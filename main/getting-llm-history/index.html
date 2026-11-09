@@ -1180,6 +1180,52 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agents/planning-execution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Planning and Execution Agent
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agents/composing-agent-nodes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Composing agent nodes
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1774,6 +1820,29 @@
   
   
     <li class="md-nav__item">
+      <a href="../reference/api/workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    workflows
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../reference/api/environments/" class="md-nav__link">
         
   
@@ -1901,18 +1970,18 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#retrieving-history-for-executionagent-only-workflow" class="md-nav__link">
+  <a href="#retrieving-history-for-an-executionagent" class="md-nav__link">
     <span class="md-ellipsis">
-      Retrieving history for ExecutionAgent-only workflow
+      Retrieving history for an ExecutionAgent
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#retrieving-history-for-plan-execute-workflow" class="md-nav__link">
+  <a href="#retrieving-history-for-planning-and-execution" class="md-nav__link">
     <span class="md-ellipsis">
-      Retrieving history for plan-execute workflow
+      Retrieving history for planning and execution
     </span>
   </a>
   
@@ -1938,59 +2007,54 @@
 
 
 <h1 id="getting-llm-history">Getting LLM History<a class="headerlink" href="#getting-llm-history" title="Permanent link">&para;</a></h1>
-<p>This document describes how to all of the content going into/from the LLM even
-when used in an agent.</p>
-<h2 id="retrieving-history-for-executionagent-only-workflow">Retrieving history for ExecutionAgent-only workflow<a class="headerlink" href="#retrieving-history-for-executionagent-only-workflow" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">tempfile</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExecutionAgent</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.util.traced</span><span class="w"> </span><span class="kn">import</span> <span class="n">TracedChatOpenAI</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># OpenAI model with reasoning abilities</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">llm</span> <span class="o">=</span> <span class="n">TracedChatOpenAI</span><span class="p">(</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-5-nano&quot;</span><span class="p">,</span> <span class="n">reasoning</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;effort&quot;</span><span class="p">:</span> <span class="s2">&quot;low&quot;</span><span class="p">,</span> <span class="s2">&quot;summary&quot;</span><span class="p">:</span> <span class="s2">&quot;auto&quot;</span><span class="p">}</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="p">)</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
-<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="c1">## Ollama model with reasoning abilities</span>
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="c1"># from ursa.util.traced import TracedChatOpenAI</span>
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="c1"># llm = &quot;ollama-nemotron-nano&quot;: TracedChatOllama(</span>
-<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="c1">#   model=&quot;nemotron-3-nano:4b&quot;, reasoning=True</span>
-<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="c1"># )</span>
-<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>
-<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="c1">## Ollama Model without reasoning abilities</span>
-<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="c1"># llm TracedChatOllama(model=&quot;nemotron-mini:4b&quot;)</span>
-<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>
-<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="n">executor</span> <span class="o">=</span> <span class="n">ExecutionAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">)</span>
-<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="n">executor</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span>
-<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>    <span class="s2">&quot;Write a python script to print the first 10 positive integer.&quot;</span>
-<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="p">)</span>
-<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="c1"># Save messages to json. Omit indent arg for minified json</span>
-<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="n">llm</span><span class="o">.</span><span class="n">save_messages</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s2">&quot;messages.json&quot;</span><span class="p">),</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<p>This document describes how to retrieve all content sent to and returned from an
+LLM when it is used by an agent.</p>
+<h2 id="retrieving-history-for-an-executionagent">Retrieving history for an ExecutionAgent<a class="headerlink" href="#retrieving-history-for-an-executionagent" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExecutionAgent</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.util.traced</span><span class="w"> </span><span class="kn">import</span> <span class="n">TracedChatOpenAI</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># OpenAI model with reasoning abilities</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">llm</span> <span class="o">=</span> <span class="n">TracedChatOpenAI</span><span class="p">(</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-5-nano&quot;</span><span class="p">,</span> <span class="n">reasoning</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;effort&quot;</span><span class="p">:</span> <span class="s2">&quot;low&quot;</span><span class="p">,</span> <span class="s2">&quot;summary&quot;</span><span class="p">:</span> <span class="s2">&quot;auto&quot;</span><span class="p">}</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="p">)</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="c1"># Ollama models can be traced in the same way with TracedChatOllama.</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="n">executor</span> <span class="o">=</span> <span class="n">ExecutionAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">)</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="n">executor</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="s2">&quot;Write a Python script to print the first 10 positive integers.&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="c1"># Omit indent for minified JSON.</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="n">llm</span><span class="o">.</span><span class="n">save_messages</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s2">&quot;messages.json&quot;</span><span class="p">),</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
 </code></pre></div>
-<h2 id="retrieving-history-for-plan-execute-workflow">Retrieving history for plan-execute workflow<a class="headerlink" href="#retrieving-history-for-plan-execute-workflow" title="Permanent link">&para;</a></h2>
+<h2 id="retrieving-history-for-planning-and-execution">Retrieving history for planning and execution<a class="headerlink" href="#retrieving-history-for-planning-and-execution" title="Permanent link">&para;</a></h2>
+<p><code>PlanningExecutionAgent</code> owns one graph containing adapted planner and executor
+child-agent nodes. Pass the traced model once; every planning, execution,
+review, and recap call uses that model and appears in the same history. Add a
+checkpointer or persistent <code>agent_name</code> when graph state must survive across
+processes or sessions.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">tempfile</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExecutionAgent</span><span class="p">,</span> <span class="n">PlanningAgent</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.workflows</span><span class="w"> </span><span class="kn">import</span> <span class="n">PlanningExecutionAgent</span>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.util.traced</span><span class="w"> </span><span class="kn">import</span> <span class="n">TracedChatOpenAI</span>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.workflows</span><span class="w"> </span><span class="kn">import</span> <span class="n">PlanningExecutorWorkflow</span>
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">llm</span> <span class="o">=</span> <span class="n">TracedChatOpenAI</span><span class="p">(</span>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>  <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-5-nano&quot;</span><span class="p">,</span> <span class="n">reasoning</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;effort&quot;</span><span class="p">:</span> <span class="s2">&quot;low&quot;</span><span class="p">,</span> <span class="s2">&quot;summary&quot;</span><span class="p">:</span> <span class="s2">&quot;auto&quot;</span><span class="p">}</span>
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="p">)</span>
-<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="n">workspace</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">tempfile</span><span class="o">.</span><span class="n">mkdtemp</span><span class="p">())</span>
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">planner</span> <span class="o">=</span> <span class="n">PlanningAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="n">workspace</span><span class="p">)</span>
-<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="n">executor</span> <span class="o">=</span> <span class="n">ExecutionAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="n">workspace</span><span class="p">)</span>
-<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="n">workflow</span> <span class="o">=</span> <span class="n">PlanningExecutorWorkflow</span><span class="p">(</span><span class="n">planner</span><span class="o">=</span><span class="n">planner</span><span class="p">,</span> <span class="n">executor</span><span class="o">=</span><span class="n">executor</span><span class="p">)</span>
-<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="n">workflow</span><span class="p">(</span>
-<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>    <span class="s2">&quot;Write a python script &lt;10 lines to compute Pi &quot;</span>
-<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>    <span class="s2">&quot;using Monte Carlo; use standard lib only.&quot;</span>
-<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>    <span class="s2">&quot;Plan at most two steps.&quot;</span>
-<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="p">)</span>
-<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="n">llm</span><span class="o">.</span><span class="n">save_messages</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;messages.json&quot;</span><span class="p">),</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">llm</span> <span class="o">=</span> <span class="n">TracedChatOpenAI</span><span class="p">(</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-5-nano&quot;</span><span class="p">,</span> <span class="n">reasoning</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;effort&quot;</span><span class="p">:</span> <span class="s2">&quot;low&quot;</span><span class="p">,</span> <span class="s2">&quot;summary&quot;</span><span class="p">:</span> <span class="s2">&quot;auto&quot;</span><span class="p">}</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="p">)</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">workspace</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">tempfile</span><span class="o">.</span><span class="n">mkdtemp</span><span class="p">())</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">PlanningExecutionAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="n">workspace</span><span class="p">)</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="s2">&quot;Write a Python script of fewer than 10 lines to compute pi &quot;</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>    <span class="s2">&quot;using Monte Carlo and the standard library only. Plan at most two steps.&quot;</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="p">)</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="n">llm</span><span class="o">.</span><span class="n">save_messages</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s2">&quot;messages.json&quot;</span><span class="p">),</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="n">agent</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
 </code></pre></div>
+<p>The parent agent owns the workspace, thread, callbacks, telemetry, checkpointer,
+and store. Its planner and executor nodes inherit those resources; do not
+construct or inject separate child agents.</p>
 
 
 

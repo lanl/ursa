@@ -1282,6 +1282,52 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="planning-execution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Planning and Execution Agent
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composing-agent-nodes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Composing agent nodes
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1876,6 +1922,29 @@
   
   
     <li class="md-nav__item">
+      <a href="../reference/api/workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    workflows
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../reference/api/environments/" class="md-nav__link">
         
   
@@ -2133,6 +2202,10 @@ web/search tools according to their implementation. Without it, they should
 rely on local workspace, experience, RAG, MCP, or other explicitly configured
 tools.</p>
 <h2 id="composing-agents">Composing agents<a class="headerlink" href="#composing-agents" title="Permanent link">&para;</a></h2>
+<p>For a fixed child stage inside a custom LangGraph, use
+<a class="autorefs autorefs-internal" title="Composing agents as graph nodes" href="composing-agent-nodes/#composing-agents-as-graph-nodes"><code>BaseAgent.add_agent_node</code></a>. It gives the
+child an explicit input/output state boundary and a parent-owned checkpoint
+namespace.</p>
 <p>For work that benefits from multiple roles, URSA environments compose agents
 behind one <code>invoke(...)</code> interface. Use an <a class="autorefs autorefs-internal" title="Agent Teams" href="../environments/agent-teams/#agent-teams">Agent Team</a> when one PI
 should delegate to specialists and synthesize a coherent answer. Use an
