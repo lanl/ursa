@@ -312,14 +312,25 @@ class UserConfigStore:
         are for an edit made through the Default config tab.
         """
         current = self.describe()
+        content, data = self._read()
 
         def model_edit(
             section: dict[str, Any], name: str, config_key: str
         ) -> DefaultModelEdit | None:
             # Effective dashboard settings omit transport options and can
             # include launch overrides. Only copy fields the user changed.
-            previous = current[config_key]
-            edit = deepcopy(previous or {})
+            # The editor's starter models are suggestions, not saved defaults.
+            # Seed missing sections from the dashboard's actual model settings.
+            previous = _model_view(data.get(config_key)) if content else None
+            edit = deepcopy(
+                previous
+                or {
+                    "model": section.get("model"),
+                    "inference_provider": section.get("inference_provider"),
+                    "base_url": section.get("base_url"),
+                    "options": section.get("model_kwargs") or {},
+                }
+            )
             for field in changed_fields[name]:
                 if field == "model_kwargs":
                     options = deepcopy(section.get(field) or {})
