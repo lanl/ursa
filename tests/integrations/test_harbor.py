@@ -461,7 +461,7 @@ async def test_compose_sidecar_isolation_transfer_and_cleanup(
         await _cleanup(env, names)
 
 
-@pytest.mark.parametrize("fakeroot", [True, False])
+@pytest.mark.parametrize("fakeroot", [None, True, False])
 @pytest.mark.skipif(
     os.geteuid() == 0, reason="requires a genuinely unprivileged host user"
 )
@@ -469,7 +469,10 @@ async def test_agent_install_unprivileged_instance(
     tmp_path, ubuntu_sif, ursa_wheel, monkeypatch, fakeroot
 ):
     monkeypatch.setenv("OPENAI_API_KEY", "host-only-secret")
-    if fakeroot:
+    enabled = (
+        Path(SINGULARITY).name == "apptainer" if fakeroot is None else fakeroot
+    )
+    if enabled:
         _require_fakeroot(ubuntu_sif)
     async with _environment(tmp_path, ubuntu_sif, fakeroot=fakeroot) as env:
         config = tmp_path / "ursa.yaml"
@@ -484,7 +487,7 @@ async def test_agent_install_unprivileged_instance(
             await env.exec("touch /outside-writable-binds")
         ).return_code != 0
         assert (await env.exec("id -u")).stdout.strip() == (
-            "0" if fakeroot else str(os.geteuid())
+            "0" if enabled else str(os.geteuid())
         )
         await agent.install(env)
         assert (

@@ -112,6 +112,14 @@ or `~/.cache/ursa/harbor/sif`; concurrent builds share a lock. Set
 `singularity_image_cache_dir`, or use `prebuild --image-cache-dir` to choose a
 shared cache.
 
+`singularity_fakeroot` defaults to `None`: fakeroot is enabled with Apptainer
+and disabled with Singularity. Passing
+`--environment-kwarg singularity_fakeroot=true` or
+`--environment-kwarg singularity_fakeroot=false` overrides this choice.
+Apptainer is preferred when both runtimes are installed. A failed build or task
+command that reports requiring root under Singularity warns that switching to
+Apptainer may help.
+
 Validate tasks against URSA's Singularity constraints, or warm the SIF cache,
 without running an agent:
 

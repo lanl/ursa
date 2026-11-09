@@ -21,6 +21,7 @@ from collections.abc import (
     Awaitable,
     Callable,
     Generator,
+    Iterable,
     Mapping,
     Sequence,
 )
@@ -602,11 +603,16 @@ async def docker_compose_to_singularity_compose(
     main_environment: Mapping[str, str] | None = None,
     main_mounts: Sequence[Mapping[str, Any]] = (),
     network_mode: NetworkMode = NetworkMode.PUBLIC,
-    fakeroot: bool = True,
+    fakeroot: bool | None = None,
     main_overlay: Path | None = None,
     service_workdirs: Mapping[str, Sequence[Path]] | None = None,
 ) -> dict[str, list[str]]:
     """Convert one or more Docker Compose files into a singularity-compose file."""
+    if fakeroot is None:
+        fakeroot = (
+            Path(DockerfileSingularityEnvironment._runtime()).name
+            == "apptainer"
+        )
     paths = (
         [docker_compose_paths]
         if isinstance(docker_compose_paths, Path)
@@ -785,7 +791,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         *args,
         singularity_image_cache_dir: Path | str | None = None,
         singularity_force_pull: bool = False,
-        singularity_fakeroot: bool = True,
+        singularity_fakeroot: bool | None = None,
         singularity_overlay: bool = True,
         singularity_no_mount: str | None = None,
         singularity_startup_timeout_sec: float = 300,
@@ -924,6 +930,8 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         if runtime is None:
             runtime = self._runtime()
             self._runtime_path = runtime
+        if self._fakeroot is None:
+            self._fakeroot = Path(runtime).name == "apptainer"
         return runtime
 
     @override
@@ -1233,6 +1241,32 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         except (OSError, UnicodeError, ValueError) as exc:
             self.logger.error("Could not display build log %s: %s", path, exc)
 
+    def _warn_root_failure(self, output: Iterable[str]) -> None:
+        runtime = (
+            self._runtime_path
+            or shutil.which("apptainer")
+            or shutil.which("singularity")
+        )
+        if runtime is None or Path(runtime).name != "singularity":
+            return
+        if any(
+            re.search(
+                r"\b(?:(?:must|needs? to) be (?:the )?root|requires? (?:root|superuser)|"
+                r"(?:must|has to|needs? to) (?:be )?run "
+                r"(?:(?:as|by|under) (?:the )?root|with (?:root|superuser) privileges)|"
+                r"(?:root|superuser) privileges (?:are )?required|"
+                r"are you root|(?:you are|you're) not root)\b",
+                line,
+                re.IGNORECASE,
+            )
+            for line in output
+        ):
+            self.logger.warning(
+                "Singularity reported a root-permission failure. Consider "
+                "switching to Apptainer, for which this integration enables "
+                "fakeroot by default."
+            )
+
     async def _run(
         self,
         *command: str,
@@ -1457,6 +1491,9 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             )
             if build_log_path.is_file():
                 self._surface_build_log(build_log_path)
+                with suppress(OSError):
+                    with build_log_path.open(errors="replace") as log:
+                        self._warn_root_failure(log)
             raise RuntimeError(
                 "No container builder succeeded: "
                 + "; ".join(failures)
@@ -2585,6 +2622,8 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
                 self.logger.debug(
                     "Command exited with rc=%s: %s", return_code, error_output
                 )
+                if not timed_out:
+                    self._warn_root_failure((stdout_text, stderr_text))
             return ExecResult(
                 stdout=stdout_text,
                 stderr=stderr_text,

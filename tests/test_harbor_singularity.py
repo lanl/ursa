@@ -4,7 +4,7 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 import yaml
@@ -34,6 +34,7 @@ def _environment(
     phase_network_modes: tuple[NetworkMode, ...] = (),
     overlay: bool = False,
     workdir: str | None = "/workspace",
+    fakeroot: bool | None = False,
 ) -> DockerfileSingularityEnvironment:
     environment_dir = tmp_path / "environment"
     environment_dir.mkdir()
@@ -72,7 +73,7 @@ def _environment(
             NetworkPolicy(network_mode=mode) for mode in phase_network_modes
         ],
         persistent_env={},
-        singularity_fakeroot=False,
+        singularity_fakeroot=fakeroot,
         singularity_overlay=overlay,
     )
     environment._runtime_path = str(tmp_path / "fake-singularity")
@@ -110,6 +111,7 @@ async def _convert_compose(
     tmp_path: Path,
     services: dict[str, object],
     workdirs: dict[str, tuple[Path, ...]],
+    fakeroot: bool | None = False,
 ) -> tuple[dict[str, list[str]], dict[str, object]]:
     compose = tmp_path / "docker-compose.yaml"
     compose.write_text(yaml.safe_dump({"services": services}))
@@ -125,13 +127,52 @@ async def _convert_compose(
         identity="unit",
         image_resolver=resolve,
         staging_dir=staging,
-        fakeroot=False,
+        fakeroot=fakeroot,
         service_workdirs=workdirs,
     )
     instances = yaml.safe_load(
         (tmp_path / "singularity-compose.yml").read_text()
     )["instances"]
     return names, instances
+
+
+@pytest.mark.parametrize("runtime", ["singularity", "apptainer"])
+@pytest.mark.parametrize("fakeroot", [None, False, True])
+async def test_fakeroot_defaults_and_overrides(
+    tmp_path, monkeypatch, runtime, fakeroot
+):
+    environment = _environment(tmp_path, fakeroot=fakeroot)
+    environment._runtime_path = None
+    runtime_path = f"/usr/bin/{runtime}"
+    runtime_lookup = Mock(return_value=runtime_path)
+    monkeypatch.setattr(
+        DockerfileSingularityEnvironment,
+        "_runtime",
+        staticmethod(runtime_lookup),
+    )
+    expected = runtime == "apptainer" if fakeroot is None else fakeroot
+    assert environment._instance_runtime() == runtime_path
+    assert environment._fakeroot is expected
+    assert environment._instance_runtime() == runtime_path
+    runtime_lookup.assert_called_once_with()
+    assert (
+        "--fakeroot" in environment._isolated_runtime_args(tmp_path)
+    ) is expected
+
+    _, instances = await _convert_compose(
+        tmp_path,
+        {"main": {"image": "ubuntu:24.04"}},
+        {"main": (tmp_path / "workdir",)},
+        fakeroot=fakeroot,
+    )
+    assert (
+        "fakeroot" in next(iter(instances.values()))["start"]["options"]
+    ) is expected
+
+
+def test_automatic_fakeroot_allows_offline_validation(tmp_path, monkeypatch):
+    monkeypatch.setattr(harbor_singularity.shutil, "which", lambda _name: None)
+    _environment(tmp_path, fakeroot=None)
 
 
 def test_compose_image_requires_explicit_workdir(tmp_path: Path) -> None:
@@ -417,11 +458,27 @@ async def test_run_build_log_is_retained_only_on_failure(
     assert build_log.exists() is fails
 
 
-@pytest.mark.parametrize("fallback_succeeds", [False, True])
+@pytest.mark.parametrize(
+    "fallback_succeeds,runtime,error,warning",
+    [
+        (False, "singularity", "builder failed", False),
+        (True, "singularity", "You must be the root user", False),
+        (False, "singularity", "You must be the root user", True),
+        (False, "apptainer", "You must be the root user", False),
+    ],
+)
 async def test_build_attempt_logs_are_retained_only_after_all_builders_fail(
-    tmp_path: Path, monkeypatch, capsys, fallback_succeeds: bool
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    caplog,
+    fallback_succeeds,
+    runtime,
+    error,
+    warning,
 ):
     environment = _environment(tmp_path)
+    environment._runtime_path = f"/usr/bin/{runtime}"
     output = tmp_path / "cached-image.sif"
 
     attempts = 0
@@ -432,7 +489,7 @@ async def test_build_attempt_logs_are_retained_only_after_all_builders_fail(
         build_log_path = args[-1]
         assert isinstance(build_log_path, Path)
         if not fallback_succeeds or attempts == 1:
-            build_log_path.write_text("builder failed\n")
+            build_log_path.write_text(f"{error}\n")
             raise RuntimeError("failed")
         output.write_bytes(b"sif")
 
@@ -466,8 +523,9 @@ async def test_build_attempt_logs_are_retained_only_after_all_builders_fail(
             await environment._build_dockerfile_sif(False)
     captured = capsys.readouterr()
     assert not captured.out
-    assert ("builder failed" in captured.err) is not fallback_succeeds
+    assert (error in captured.err) is not fallback_succeeds
     assert output.with_suffix(".build.log").exists() is not fallback_succeeds
+    assert ("switching to Apptainer" in caplog.text) is warning
 
 
 async def test_marking_a_live_sif_twice_keeps_its_usage_marker(
@@ -540,10 +598,12 @@ async def test_compose_conversion_assigns_each_service_a_workdir(
     )
 
 
+@pytest.mark.parametrize("runtime", ["singularity", "apptainer"])
 async def test_prepare_compose_project_wires_runtime_workdirs(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, runtime
 ):
-    environment = _environment(tmp_path, compose=True)
+    environment = _environment(tmp_path, compose=True, fakeroot=None)
+    environment._runtime_path = f"/usr/bin/{runtime}"
     environment._prepare_runtime_workdir()
     environment._staging_dir = tmp_path / "staging"
     environment._staging_dir.mkdir()
@@ -564,6 +624,7 @@ async def test_prepare_compose_project_wires_runtime_workdirs(
     )
     await environment._prepare_compose_project(force_build=False)
 
+    assert observed["fakeroot"] is (runtime == "apptainer")
     workdirs = observed["service_workdirs"]
     assert isinstance(workdirs, dict) and set(workdirs) == {"main", "helper"}
     paths = [path for values in workdirs.values() for path in values]
@@ -582,10 +643,11 @@ async def test_prepare_compose_project_wires_runtime_workdirs(
     )
     environment._persistent_env["SSL_CERT_FILE"] = "/task/ca-bundle.pem"
     runtime_environment = environment._runtime_environment(None)
+    prefix = f"{runtime.upper()}ENV_"
     assert {
-        key.removeprefix("SINGULARITYENV_"): value
+        key.removeprefix(prefix): value
         for key, value in runtime_environment.items()
-        if key.startswith("SINGULARITYENV_")
+        if key.startswith(prefix)
     } == {
         "SSL_CERT_FILE": "/task/ca-bundle.pem",
         "REQUESTS_CA_BUNDLE": "/staging/host-ca-certificates.crt",
@@ -662,6 +724,65 @@ async def test_exec_stages_multiline_environment_values(tmp_path, monkeypatch):
     assert "SINGULARITYENV_PROMPT" not in runtime_env
     assert "SINGULARITYENV_PERSISTENT" not in runtime_env
     assert not list(environment._staging.glob("*exec-env"))
+
+
+@pytest.mark.parametrize(
+    "runtime,return_code,stdout,stderr,warning",
+    [
+        (
+            "singularity",
+            1,
+            b"",
+            b"E: Could not open lock file (are you root?)",
+            True,
+        ),
+        (
+            "singularity",
+            1,
+            b"This command has to be run under the root user",
+            b"",
+            True,
+        ),
+        ("singularity", 1, b"", b"This command requires root privileges", True),
+        (
+            "singularity",
+            1,
+            b"",
+            b"You need to be root to perform this command",
+            True,
+        ),
+        ("singularity", 0, b"", b"requires root privileges", False),
+        ("singularity", 1, b"", b"Connection refused", False),
+        ("singularity", 1, b"", b"Permission denied", False),
+        ("singularity", 1, b"", b"This command must not run as root", False),
+        ("apptainer", 1, b"", b"requires root privileges", False),
+    ],
+)
+async def test_failed_root_commands_suggest_apptainer(
+    tmp_path, monkeypatch, caplog, runtime, return_code, stdout, stderr, warning
+):
+    environment = _environment(tmp_path)
+    environment._runtime_path = f"/usr/bin/{runtime}"
+    _prepare_started_environment(environment, tmp_path)
+
+    class Process:
+        returncode = return_code
+
+        async def communicate(self):
+            return stdout, stderr
+
+    monkeypatch.setattr(
+        harbor_singularity.asyncio,
+        "create_subprocess_exec",
+        AsyncMock(return_value=Process()),
+    )
+    result = await environment._exec_instance(
+        "build-command", cwd=None, env=None, timeout_sec=None, user=None
+    )
+    assert result.return_code == return_code
+    assert result.stdout == stdout.decode()
+    assert result.stderr == stderr.decode()
+    assert ("switching to Apptainer" in caplog.text) is warning
 
 
 async def test_directory_transfers_preserve_symlinks(tmp_path, monkeypatch):
