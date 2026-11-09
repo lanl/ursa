@@ -78,7 +78,7 @@ def test_run_command_invokes_subprocess_in_workspace(
     events = recorder.events
 
     assert result == "STDOUT:\noutput\nSTDERR:\n"
-    assert recorded["kwargs"]["cwd"] == tmp_path
+    assert Path(recorded["kwargs"]["cwd"]) == tmp_path
     assert recorded["kwargs"]["shell"] is True
     assert events[0] == (
         "ursa_agent_progress",
