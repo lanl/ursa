@@ -153,6 +153,40 @@ def test_existing_config_preserves_unrelated_fields_secrets_and_backup(
     )
 
 
+@pytest.mark.parametrize("existing_config", [False, True])
+@pytest.mark.parametrize("section", ["llm", "embedding"])
+def test_settings_save_does_not_select_starter_models(
+    config_client, existing_config, section
+):
+    client, path, _secrets = config_client
+    if existing_config:
+        path.parent.mkdir()
+        path.write_text("agent_config:\n  chat:\n    custom_option: true\n")
+    before = client.get("/settings").json()["settings"]
+    patch = {"base_url": "https://models.example.org/v1"}
+    if section == "embedding":
+        patch["model"] = "openai:test-embedding"
+
+    response = client.patch("/settings", json={"patch": {section: patch}})
+
+    assert response.status_code == 200, response.text
+    after = response.json()["settings"]
+    expected = before[section] | patch
+    assert after[section] == expected
+    other = "embedding" if section == "llm" else "llm"
+    assert after[other] == before[other]
+    assert client.get("/settings").json()["settings"][section] == expected
+    saved = yaml.safe_load(path.read_text())
+    model = saved["llm_model" if section == "llm" else "emb_model"]
+    assert model["model"] == expected["model"]
+    assert model["base_url"] == patch["base_url"]
+    assert model["inference_provider"] is None
+    if section == "llm":
+        assert saved["emb_model"] is None
+    if existing_config:
+        assert saved["agent_config"] == {"chat": {"custom_option": True}}
+
+
 def test_concurrent_edit_is_not_overwritten(config_client):
     client, path, _secrets = config_client
     draft = edit_payload(client)

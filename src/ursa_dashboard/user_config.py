@@ -297,6 +297,66 @@ class UserConfigStore:
                 model["api_key"] = {"keyring": key_id}
         return data, pending_secrets
 
+    def save_model_defaults(
+        self,
+        llm: dict[str, Any],
+        embedding: dict[str, Any],
+        validate,
+        *,
+        changed_fields: dict[str, set[str]],
+    ) -> dict[str, Any]:
+        """Save dashboard model controls as the normal URSA defaults.
+
+        Build on the existing config editor so unrelated YAML keys, provider
+        definitions, and credential references are preserved exactly as they
+        are for an edit made through the Default config tab.
+        """
+        current = self.describe()
+        content, data = self._read()
+
+        def model_edit(
+            section: dict[str, Any], name: str, config_key: str
+        ) -> DefaultModelEdit | None:
+            # Effective dashboard settings omit transport options and can
+            # include launch overrides. Only copy fields the user changed.
+            # The editor's starter models are suggestions, not saved defaults.
+            # Seed missing sections from the dashboard's actual model settings.
+            previous = _model_view(data.get(config_key)) if content else None
+            edit = deepcopy(
+                previous
+                or {
+                    "model": section.get("model"),
+                    "inference_provider": section.get("inference_provider"),
+                    "base_url": section.get("base_url"),
+                    "options": section.get("model_kwargs") or {},
+                }
+            )
+            for field in changed_fields[name]:
+                if field == "model_kwargs":
+                    options = deepcopy(section.get(field) or {})
+                    old_options = (previous or {}).get("options", {})
+                    if "ssl_verify" in old_options:
+                        options.setdefault(
+                            "ssl_verify", old_options["ssl_verify"]
+                        )
+                    edit["options"] = options
+                else:
+                    edit[field] = section.get(field)
+            if not edit.get("model"):
+                return None
+            return DefaultModelEdit.model_validate(edit)
+
+        embedding_edit = model_edit(embedding, "embedding", "emb_model")
+        request = UserConfigEdit(
+            revision=current["revision"],
+            providers=[
+                ProviderEdit.model_validate(p) for p in current["providers"]
+            ],
+            llm_model=model_edit(llm, "llm", "llm_model"),
+            emb_model=embedding_edit,
+        )
+        return self.save(request, validate)
+
     def save(self, request: UserConfigEdit, validate) -> dict[str, Any]:
         with self.lock:
             original, _ = self._read()

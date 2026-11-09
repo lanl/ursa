@@ -3,16 +3,18 @@ import logging
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, Optional, TypedDict
+from typing import Any, Mapping, Optional, TypedDict
 
 import tiktoken
 from langchain.chat_models import BaseChatModel
+from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END
+from langgraph.types import Overwrite
 
-from ursa.agents.execution_agent import ExecutionAgent
+from ursa.agents.execution_agent import ExecutionAgent, ExecutionState
 
 from .base import BaseAgent
 
@@ -63,7 +65,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
         data_max_lines: int = 50,
         ngpus: int = -1,
         mpi_procs: int = 8,
-        workspace: str = "./workspace",
+        workspace: str | Path = "./workspace",
         lammps_cmd: str = "lmp_mpi",
         mpirun_cmd: str = "mpirun",
         tiktoken_model: str = "gpt-5-mini",
@@ -76,7 +78,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
                 "LAMMPS agent requires the atomman and trafilatura dependencies. These can be installed using 'pip install ursa-ai[lammps]' or, if working from a local installation, 'pip install -e .[lammps]' ."
             )
 
-        super().__init__(llm, **kwargs)
+        super().__init__(llm, workspace=Path(workspace), **kwargs)
 
         self.user_potential_files = potential_files
         self.user_pair_style = pair_style
@@ -119,8 +121,18 @@ class LammpsAgent(BaseAgent[LammpsState]):
             "nep",
         ]
 
-        self.workspace = workspace
+        self.workspace = Path(workspace)
         os.makedirs(self.workspace, exist_ok=True)
+
+        # The execution agent is a retained child graph. The parent graph owns
+        # persistence and lifecycle through ``add_agent_node``.
+        self.result_summarizer = ExecutionAgent(
+            llm=llm,
+            workspace=self.workspace,
+            group=self.group,
+            thread_id=self.thread_id,
+            enable_metrics=False,
+        )
 
         self.str_parser = StrOutputParser()
 
@@ -773,31 +785,42 @@ class LammpsAgent(BaseAgent[LammpsState]):
             "fix_attempts": attempt,
         }
 
-    def _summarize(
+    def _summarizer_input(
         self,
         state: LammpsState,
-        config: RunnableConfig | None = None,
-    ) -> LammpsState:
-        events = self.events(config)
-        with events.range(
-            "summarize_results",
+    ) -> Mapping[str, Any]:
+        self.events().emit(
             "Handing LAMMPS results to execution agent",
-            done="LAMMPS result summarization complete",
-            error="LAMMPS result summarization failed",
+            stage="summarize_results",
             workspace=str(self.workspace),
-        ):
-            executor = ExecutionAgent(llm=self.llm, workspace=self.workspace)
+        )
+        request = (
+            "You are part of a larger scientific workflow whose purpose is to "
+            f"accomplish this task: {state['simulation_task']}\n"
+            "A LAMMPS simulation has been done and all output files are located "
+            "in the current workspace directory.\n"
+            "The simulation logs are recorded in the file 'log.lammps'.\n"
+            "Summarize the outcome of this simulation in a markdown document. "
+            "Include plots, if relevant."
+        )
+        return {
+            "messages": Overwrite([HumanMessage(content=request)]),
+            "current_user_request": request,
+            "symlinkdir": {},
+        }
 
-            exe_plan = f"""
-            You are part of a larger scientific workflow whose purpose is to accomplish this task: {state["simulation_task"]}
-            A LAMMPS simulation has been done and all output files are located in the current workspace directory.
-            The simulation logs are recorded in the file 'log.lammps'.
-            Summarize the outcome of this simulation in a markdown document. Include plots, if relevant.
-            """
-
-            executor.invoke(exe_plan, config=dict(config or {}))
-
-        return state
+    def _summarizer_output(
+        self,
+        _state: ExecutionState,
+    ) -> Mapping[str, Any]:
+        self.events().emit(
+            "LAMMPS result summarization complete",
+            stage="summarize_results",
+            workspace=str(self.workspace),
+        )
+        # The child writes its report into the shared workspace. Its transcript
+        # is intentionally not copied into the scientific workflow state.
+        return {}
 
     def _post_run(self, state: LammpsState) -> LammpsState:
         return state
@@ -813,7 +836,12 @@ class LammpsAgent(BaseAgent[LammpsState]):
         self.add_node(self._run_lammps)
         self.add_node(self._fix)
         self.add_node(self._post_run)
-        self.add_node(self._summarize)
+        self.add_agent_node(
+            "_summarize",
+            self.result_summarizer,
+            input_fn=self._summarizer_input,
+            output_fn=self._summarizer_output,
+        )
 
         self.graph.set_entry_point("_entry_router")
 
