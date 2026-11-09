@@ -22,16 +22,18 @@ def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.mark.parametrize("absolute", [False, True])
 def test_read_file_reads_text_from_workspace(
     monkeypatch,
     tmp_path: Path,
     chat_model: BaseChatModel,
+    absolute: bool,
 ):
     target = tmp_path / "example.txt"
     target.write_text("sample text", encoding="utf-8")
     result, recorder = invoke_with_event_recorder(
         read_file.func,
-        filename=str(target.name),
+        filename=str(target) if absolute else target.name,
         runtime=make_runtime(
             tmp_path,
             llm=chat_model,
@@ -57,6 +59,77 @@ def test_read_file_reads_text_from_workspace(
         },
     }
     assert isinstance(finished["elapsed_ms"], float)
+
+
+@pytest.mark.parametrize("path_kind", ["relative", "absolute", "symlink"])
+def test_read_file_rejects_paths_outside_workspace(
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel, path_kind: str
+):
+    monkeypatch.delenv("URSA_ALLOW_UNSAFE_READS", raising=False)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("outside contents", encoding="utf-8")
+    if path_kind == "symlink":
+        link = workspace / "link.txt"
+        try:
+            link.symlink_to(secret)
+        except OSError:
+            pytest.skip("Symlink creation is unavailable")
+        filename = link.name
+    else:
+        filename = "../secret.txt" if path_kind == "relative" else str(secret)
+
+    monkeypatch.setattr(
+        "ursa.tools.read_file_tool.read_text_from_file",
+        lambda path: pytest.fail("Rejected files must not be read"),
+    )
+    result = invoke_with_parent_run(
+        lambda config: read_file.func(
+            filename=filename,
+            runtime=make_runtime(workspace, llm=chat_model, config=config),
+        )
+    )
+    assert "resolves outside workspace directory" in result
+
+
+@pytest.mark.parametrize(
+    "setting, allowed",
+    [
+        ("1", True),
+        ("true", True),
+        ("yes", True),
+        (" ON ", True),
+        ("0", False),
+        ("false", False),
+        ("", False),
+        ("invalid", False),
+    ],
+)
+def test_read_file_outside_workspace_requires_explicit_opt_in(
+    monkeypatch,
+    tmp_path: Path,
+    chat_model: BaseChatModel,
+    setting: str,
+    allowed: bool,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = tmp_path / "external.txt"
+    target.write_text("external input", encoding="utf-8")
+    monkeypatch.setenv("URSA_ALLOW_UNSAFE_READS", setting)
+    # The independent write override must not grant read access.
+    monkeypatch.setenv("URSA_ALLOW_UNSAFE_WRITES", "1")
+    result = invoke_with_parent_run(
+        lambda config: read_file.func(
+            filename=str(target),
+            runtime=make_runtime(workspace, llm=chat_model, config=config),
+        )
+    )
+    if allowed:
+        assert result == "external input"
+    else:
+        assert "resolves outside workspace directory" in result
 
 
 def test_read_file_uses_pdf_reader(
