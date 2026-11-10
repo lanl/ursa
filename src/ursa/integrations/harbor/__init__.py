@@ -844,6 +844,15 @@ class UrsaHarborAgent(BaseInstalledAgent):
             raise RuntimeError(
                 f"Invalid task working directory: {self._workspace!r}"
             )
+        from ursa.integrations.harbor.agent_layers import cached_ursa_install
+
+        if not await cached_ursa_install(self, environment):
+            await self._install_packages(environment)
+        self._remote_config_file = f"{self._INSTALL_ROOT}/tmp/ursa-config.json"
+        await self._upload_native_config(environment, native_config)
+
+    async def _install_packages(self, environment: BaseEnvironment) -> None:
+        """Install the runtime without materializing trial configuration."""
         install_root = self._INSTALL_ROOT
         install_env = {
             "HOME": f"{install_root}/home",
@@ -938,8 +947,6 @@ class UrsaHarborAgent(BaseInstalledAgent):
             env=install_env,
             timeout_sec=900,
         )
-        self._remote_config_file = f"{install_root}/tmp/ursa-config.json"
-        await self._upload_native_config(environment, native_config)
 
     async def run(
         self,
@@ -1149,6 +1156,13 @@ def prebuild_sifs(
             help="Cache a complete agent install layer (NAME or NAME@VERSION); repeat for multiple agents",
         ),
     ] = None,
+    agent_kwargs: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--agent-kwarg",
+            help="URSA install option KEY=VALUE (ursa_install_spec, ursa_extras, extra_packages); requires one --agent",
+        ),
+    ] = None,
     agent_cache_dir: Annotated[
         Path | None,
         typer.Option(
@@ -1173,12 +1187,15 @@ def prebuild_sifs(
     ] = None,
 ) -> None:
     """Cache task/verifier images and optionally complete agent install layers."""
+    from harbor.cli.utils import parse_kwargs
+
     from ursa.integrations.harbor.validation import (
         discover_harbor_tasks,
         prebuild_harbor_task,
     )
 
     tasks = discover_harbor_tasks(paths)
+    install_kwargs = parse_kwargs(agent_kwargs or [])
 
     async def build_all() -> tuple[int, int]:
         failures = 0
@@ -1194,6 +1211,7 @@ def prebuild_sifs(
                     force_build=force,
                     image_cache_dir=image_cache_dir,
                     agents=agents or (),
+                    agent_kwargs=install_kwargs,
                     agent_cache_dir=agent_cache_dir,
                     agent_install_timeout_sec=agent_install_timeout_sec,
                     fakeroot=fakeroot,

@@ -1,5 +1,6 @@
 import asyncio
 import sys
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -10,7 +11,7 @@ from harbor.agents.installed.base import BaseInstalledAgent
 from harbor.agents.installed.goose import Goose as UpstreamGoose
 
 from tests.test_harbor_singularity import _environment
-from ursa.integrations.harbor import agent_layers
+from ursa.integrations.harbor import UrsaHarborAgent, agent_layers
 from ursa.integrations.harbor.installed_agents import Goose
 
 pytestmark = pytest.mark.skipif(
@@ -85,7 +86,8 @@ async def test_concurrent_prebuilds_publish_once_and_reuse_complete_layer(
     pinned = await agent_layers.build_agent_layer(
         template, "goose", require_cached=True
     )
-    assert pinned.samefile(layers[0])
+    assert not pinned.samefile(layers[0])
+    assert pinned.read_bytes() == b"installed agent"
     replacement = layers[0].with_suffix(".new")
     replacement.write_bytes(b"new installation")
     replacement.replace(layers[0])
@@ -142,6 +144,18 @@ async def test_missing_layer_requires_explicit_prebuild(template, builder):
     assert not builder[1]
 
 
+async def test_runtime_mount_metadata_cannot_modify_cached_layer(
+    template, builder
+):
+    layer = await agent_layers.build_agent_layer(template, "goose")
+    snapshot = await agent_layers.build_agent_layer(
+        template, "goose", require_cached=True
+    )
+    snapshot.chmod(0o600)
+    snapshot.write_bytes(b"runtime filesystem metadata")
+    assert layer.read_bytes() == b"installed agent"
+
+
 def test_layer_identity_tracks_image_agent_version_and_fakeroot(
     template, monkeypatch
 ):
@@ -155,6 +169,9 @@ def test_layer_identity_tracks_image_agent_version_and_fakeroot(
     assert key != agent_layers._layer_key(
         template, base, UpstreamGoose, "v1.2.3"
     )
+    assert agent_layers._layer_key(
+        template, base, UrsaHarborAgent, None, "one"
+    ) != agent_layers._layer_key(template, base, UrsaHarborAgent, None, "two")
     template._fakeroot = True
     assert key != agent_layers._layer_key(template, base, UpstreamGoose, None)
     template._fakeroot = False
@@ -184,3 +201,126 @@ async def test_agent_adapter_skips_install_only_for_matching_selected_layer(
     template._agent_layer_path = None
     with pytest.raises(RuntimeError, match="not loaded"):
         await agent.install(template)
+
+
+@pytest.mark.parametrize(
+    "spec", ["ursa", "ursa.integrations.harbor:UrsaHarborAgent"]
+)
+@pytest.mark.parametrize("custom", [False, True])
+async def test_ursa_layer_caches_packages_but_prepares_each_trial_config(
+    template, builder, monkeypatch, tmp_path, spec, custom
+):
+    monkeypatch.setattr(
+        UrsaHarborAgent,
+        "_default_install_spec",
+        staticmethod(lambda: "ursa-ai==0.17.3"),
+    )
+    template._agent_kwargs = (
+        {"ursa_install_spec": "ursa-ai==0.17.3"} if custom else {}
+    )
+
+    async def packages(self, environment):
+        assert self.model_name is None
+        assert self.config_source is None
+        assert str(self.ursa_install_spec) == "ursa-ai==0.17.3"
+        environment._overlay_path.write_bytes(b"ursa installed")
+
+    install = AsyncMock()
+    monkeypatch.setattr(UrsaHarborAgent, "_install_packages", packages)
+    monkeypatch.setattr(
+        UrsaHarborAgent,
+        "_materialize_native_config",
+        lambda *a, **k: pytest.fail("prebuild must not prepare model config"),
+    )
+    layer = await agent_layers.build_agent_layer(template, spec)
+    assert layer.read_bytes() == b"ursa installed"
+    assert "install" not in builder[1]  # No BaseInstalledAgent.setup.
+    template._agent_spec = spec
+    template._agent_layer_path = await agent_layers.build_agent_layer(
+        template, spec, require_cached=True
+    )
+    for group in ("first", "second"):
+        agent = UrsaHarborAgent(
+            logs_dir=tmp_path / group, **template._agent_kwargs
+        )
+        monkeypatch.setattr(agent, "_install_packages", install)
+        monkeypatch.setattr(
+            agent,
+            "_materialize_native_config",
+            lambda **k: ({"group": group}, {"KEY": group}),
+        )
+        monkeypatch.setattr(
+            agent,
+            "exec_as_agent",
+            AsyncMock(return_value=SimpleNamespace(stdout="/workspace")),
+        )
+        upload = AsyncMock()
+        monkeypatch.setattr(agent, "_upload_native_config", upload)
+        await agent.install(template)
+        install.assert_not_awaited()
+        upload.assert_awaited_once_with(template, {"group": group})
+        assert agent._secret_env == {"KEY": group}
+        assert agent._workspace == "/workspace"
+        assert (
+            agent._remote_config_file == "/installed-agent/tmp/ursa-config.json"
+        )
+    agent.extra_packages = ("numpy",)
+    with pytest.raises(ValueError, match="does not match"):
+        await agent.install(template)
+    agent.extra_packages = ()
+    template._agent_layer_path = None
+    with pytest.raises(RuntimeError, match="not loaded"):
+        await agent.install(template)
+
+
+def test_ursa_cache_key_tracks_source_and_install_options(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    project = source / "pyproject.toml"
+    project.write_text('[project]\nname = "ursa-ai"\nversion = "1.0"\n')
+    options = {"ursa_install_spec": f"ursa-ai @ {source.as_uri()}"}
+    agent = UrsaHarborAgent(logs_dir=tmp_path, **options)
+    key = agent_layers._ursa_install_key(agent)
+    (source / ".env").write_text("SECRET=not-an-install-input")
+    assert agent_layers._ursa_install_key(agent) == key
+    # Runtime settings do not select a different installation.
+    agent.agent_import_path = "ursa.agents:SimulatorAgent"
+    agent._config = {"group": "different"}
+    assert agent_layers._ursa_install_key(agent) == key
+    for extra in (
+        {"ursa_extras": "image"},
+        {"extra_packages": "numpy==2.3.0"},
+        {"ursa_install_spec": "ursa-ai==0.17.3"},
+    ):
+        changed = UrsaHarborAgent(logs_dir=tmp_path, **(options | extra))
+        assert agent_layers._ursa_install_key(changed) != key
+    project.write_text(project.read_text().replace("1.0", "1.1"))
+    assert agent_layers._ursa_install_key(agent) != key
+
+
+def test_ursa_version_uses_pep508_install_spec():
+    with pytest.raises(ValueError, match="ursa_install_spec"):
+        agent_layers.agent_installer("ursa@0.17.3")
+
+
+def test_default_checkout_identity_accepts_symlinks_and_tracks_targets(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "checkout"
+    source.mkdir()
+    (source / "pyproject.toml").write_text('[project]\nname="ursa-ai"\n')
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    linked = docs / "guide.md"
+    linked.write_text("original")
+    (source / "docs").symlink_to(docs, target_is_directory=True)
+    monkeypatch.setattr(
+        UrsaHarborAgent,
+        "_default_install_spec",
+        staticmethod(lambda: f"ursa-ai @ {source.as_uri()}"),
+    )
+    agent = UrsaHarborAgent(logs_dir=tmp_path)
+    assert agent._build_default_install_wheel
+    key = agent_layers._ursa_install_key(agent)
+    linked.write_text("changed")
+    assert agent_layers._ursa_install_key(agent) != key

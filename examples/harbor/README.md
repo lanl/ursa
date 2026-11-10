@@ -172,22 +172,54 @@ harbor run --path benchmark/tasks/example \
 
 | Prebuild / `singularity_agent` name | Harbor agent import path |
 | --- | --- |
+| `ursa` | `ursa.integrations.harbor:UrsaHarborAgent` |
 | `goose` | `ursa.integrations.harbor.installed_agents:Goose` |
 | `claude-code` | `ursa.integrations.harbor.installed_agents:ClaudeCode` |
 | `codex` | `ursa.integrations.harbor.installed_agents:Codex` |
 
-Each trial mounts the cached installation read-only beneath its own writable
-overlay; its writable Harbor directories are seeded from that combined image.
+Each trial mounts a private sparse copy of the cached installation read-only
+beneath its own writable overlay; its writable Harbor directories are seeded
+from that combined image. Filesystems that support reflinks share the copy's
+unchanged blocks. The private copy also isolates filesystem mount metadata.
 Trial changes never update the cached layer. An absent or mismatched layer fails
 with instructions to prebuild it. The adapters retain normal Harbor installation
 when no layer is selected. The original Harbor `goose` agent unconditionally
 reinstalls, so use the adapter to benefit from the cached installation.
 Separate verifier environments retain their own images without the agent layer.
 
+For URSA, prebuild with `--agent ursa`, then add
+`--environment-kwarg singularity_agent=ursa` to your usual URSA Harbor run.
+The existing `UrsaHarborAgent` handles reuse directly. Its default install source
+is the current checkout or installed package. Each trial still prepares its own
+native configuration, model settings, and secret references; these are not cached.
+
+To customize the URSA installation, pass `--agent-kwarg` to prebuild (with one
+`--agent`). Supported options are `ursa_install_spec` (a PEP 508 requirement),
+`ursa_extras`, and `extra_packages`. Match those options in both the runtime
+agent kwargs and the environment's `singularity_agent_kwargs` JSON object:
+
+```bash
+uv run -m ursa.integrations.harbor prebuild benchmark/tasks --agent ursa \
+  --agent-kwarg 'ursa_install_spec=ursa-ai==0.17.3'
+
+harbor run --path benchmark/tasks/example \
+  --agent ursa.integrations.harbor:UrsaHarborAgent \
+  --model provider/model \
+  --agent-kwarg 'ursa_install_spec=ursa-ai==0.17.3' \
+  --env ursa.integrations.harbor.singularity:DockerfileSingularityEnvironment \
+  --environment-kwarg singularity_agent=ursa \
+  --environment-kwarg 'singularity_agent_kwargs={"ursa_install_spec":"ursa-ai==0.17.3"}'
+```
+
+URSA layers also track the package requirement, extras, additional packages,
+Python/uv versions, and local source contents. Source changes require a new
+prebuild. Use `--force` to refresh an unpinned remote requirement.
+
 Use `--agent NAME@VERSION` during prebuild and
 `--environment-kwarg singularity_agent=NAME@VERSION` with
 `--agent-kwarg version=VERSION` during the run. Version strings are forwarded to
-Harbor's installer unchanged. `--agent-install-timeout-sec` adjusts the
+Harbor's installer unchanged. For URSA, select versions through
+`ursa_install_spec` instead. `--agent-install-timeout-sec` adjusts the
 1800-second limit per installer. Prebuild honors the task's setup network policy;
 run it where installation is allowed, then reuse the layer for offline setup.
 Match any runtime fakeroot override with prebuild's `--fakeroot` or

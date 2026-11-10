@@ -245,6 +245,7 @@ def test_harbor_prebuild_command_reports_built_sifs(
             cache,
             {
                 "agents": agents or (),
+                "agent_kwargs": {},
                 "agent_cache_dir": tmp_path / "agents",
                 "agent_install_timeout_sec": 900,
                 "fakeroot": False,
@@ -303,4 +304,41 @@ async def test_prebuild_rejects_invalid_installer_before_building(
     monkeypatch.setattr(DockerfileSingularityEnvironment, "build_sifs", build)
     with pytest.raises(ValueError):
         await prebuild_harbor_task(_task(tmp_path), agents=[agent])
+    build.assert_not_awaited()
+
+
+def test_prebuild_cli_forwards_ursa_install_options(tmp_path, monkeypatch):
+    build = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "ursa.integrations.harbor.validation.prebuild_harbor_task", build
+    )
+    result = runner.invoke(
+        harbor_integration.app,
+        [
+            "prebuild",
+            str(_task(tmp_path)),
+            "--agent",
+            "ursa",
+            "--agent-kwarg",
+            "ursa_install_spec=ursa-ai==0.17.3",
+            "--agent-kwarg",
+            'extra_packages=["numpy==2.3.0"]',
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert build.call_args.kwargs["agent_kwargs"] == {
+        "ursa_install_spec": "ursa-ai==0.17.3",
+        "extra_packages": ["numpy==2.3.0"],
+    }
+
+
+async def test_prebuild_rejects_runtime_options_before_building(
+    tmp_path, monkeypatch
+):
+    build = AsyncMock()
+    monkeypatch.setattr(DockerfileSingularityEnvironment, "build_sifs", build)
+    with pytest.raises(ValueError, match="Unsupported cached install options"):
+        await prebuild_harbor_task(
+            _task(tmp_path), agents=["ursa"], agent_kwargs={"config": {}}
+        )
     build.assert_not_awaited()

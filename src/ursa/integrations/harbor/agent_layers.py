@@ -20,25 +20,139 @@ from harbor.agents.installed.base import BaseInstalledAgent
 from harbor.models.trial.config import AgentConfig
 from harbor.models.trial.paths import TrialPaths
 
+from ursa.integrations.harbor import UrsaHarborAgent
 from ursa.integrations.harbor.singularity import (
     DockerfileSingularityEnvironment,
 )
 
 
-def agent_installer(spec: str) -> tuple[type[BaseInstalledAgent], str | None]:
+def agent_installer(
+    spec: str, kwargs: dict | None = None
+) -> tuple[type[BaseInstalledAgent], str | None]:
     name, separator, version = spec.partition("@")
     if not name or (separator and not re.fullmatch(r"[\w.+-]+", version)):
         raise ValueError(
             f"Expected an agent NAME or NAME@VERSION, got {spec!r}"
         )
     agent_class = AgentFactory.get_agent_class_from_config(
-        AgentConfig(name=name)
+        AgentConfig(
+            name="ursa.integrations.harbor:UrsaHarborAgent"
+            if name == "ursa"
+            else name
+        )
     )
     if not issubclass(agent_class, BaseInstalledAgent):
         raise ValueError(
             f"Agent {name!r} has no installed-agent setup to cache"
         )
+    allowed = set()
+    if issubclass(agent_class, UrsaHarborAgent):
+        if version:
+            raise ValueError(
+                "Use --agent ursa --agent-kwarg ursa_install_spec=ursa-ai==VERSION "
+                "to select an URSA package version"
+            )
+        allowed = {"ursa_install_spec", "ursa_extras", "extra_packages"}
+    if unsupported := (kwargs or {}).keys() - allowed:
+        raise ValueError(
+            f"Unsupported cached install options for {name}: "
+            f"{', '.join(sorted(unsupported))}"
+        )
     return agent_class, version or None
+
+
+def _ursa_install_key(agent: UrsaHarborAgent) -> str:
+    """Identify package inputs, excluding model configuration and credentials."""
+    source_hash = None
+    revision = None
+    if (source := agent._install_source) is not None:
+        root = source if source.is_dir() else source.parent
+        files = [source]
+        if source.is_dir() and (source / ".git").exists():
+            paths = subprocess.check_output([
+                "git",
+                "-C",
+                str(source),
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ])
+            files = [
+                source / os.fsdecode(path)
+                for path in paths.split(b"\0")
+                if path
+            ]
+            if agent._build_default_install_wheel:
+                revision = subprocess.check_output(
+                    ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
+                ).strip()
+        digest = hashlib.sha256()
+        visited = set()
+
+        def hash_path(path):
+            relative = path.relative_to(root)
+            if agent._is_sensitive_source_path(relative):
+                return
+            if not path.exists() and not path.is_symlink():
+                return  # Deleted tracked file.
+            digest.update(str(relative).encode() + b"\0")
+            digest.update(str(path.lstat().st_mode & 0o777).encode() + b"\0")
+            if path.is_symlink():
+                # Default wheel builds accept repository symlinks, including
+                # documentation links. Track their targets without staging.
+                digest.update(os.fsencode(path.readlink()) + b"\0")
+            if path.is_dir():
+                resolved = path.resolve()
+                if resolved not in visited:
+                    visited.add(resolved)
+                    for child in sorted(path.iterdir()):
+                        hash_path(child)
+            elif path.is_file():
+                with path.open("rb") as stream:
+                    digest.update(
+                        hashlib.file_digest(stream, "sha256").digest()
+                    )
+
+        for path in sorted(files):
+            hash_path(path)
+        source_hash = digest.hexdigest()
+    identity = {
+        "spec": str(agent.ursa_install_spec),
+        "extras": sorted(agent.ursa_extras),
+        "packages": agent.extra_packages,
+        "source": source_hash,
+        "revision": revision,
+        "build_wheel": agent._build_default_install_wheel,
+        "python": agent.URSA_PYTHON_VERSION,
+        "uv": agent._UV_VERSION,
+    }
+    return hashlib.sha256(
+        json.dumps(identity, sort_keys=True).encode()
+    ).hexdigest()
+
+
+async def cached_ursa_install(agent, environment) -> bool:
+    if not isinstance(environment, DockerfileSingularityEnvironment):
+        return False
+    if environment._agent_spec is None:
+        return False
+    selected, _ = agent_installer(
+        environment._agent_spec, environment._agent_kwargs
+    )
+    if not isinstance(agent, selected) or (
+        await asyncio.to_thread(_ursa_install_key, agent)
+        != environment._agent_install_key
+    ):
+        raise ValueError(
+            "Selected install layer does not match this URSA installation; "
+            "match singularity_agent_kwargs to the agent's ursa_install_spec, "
+            "ursa_extras, and extra_packages, then prebuild it"
+        )
+    if environment._agent_layer_path is None:
+        raise RuntimeError("The selected agent install layer is not loaded")
+    return True
 
 
 class _InstallEnvironment(DockerfileSingularityEnvironment):
@@ -84,7 +198,9 @@ class _InstallEnvironment(DockerfileSingularityEnvironment):
         )
 
 
-def _layer_key(environment, base_image, agent_class, requested_version) -> str:
+def _layer_key(
+    environment, base_image, agent_class, requested_version, install_key=None
+) -> str:
     runtime = environment._instance_runtime()
     runtime_version = subprocess.check_output(
         [runtime, "--version"], text=True, timeout=10
@@ -103,6 +219,8 @@ def _layer_key(environment, base_image, agent_class, requested_version) -> str:
         "home": str(Path.home()),
         "workdir": environment._workdir,
     }
+    if install_key is not None:
+        identity["install"] = install_key
     return hashlib.sha256(
         json.dumps(identity, sort_keys=True).encode()
     ).hexdigest()
@@ -121,36 +239,61 @@ async def build_agent_layer(
         raise ValueError(
             "agent_install_timeout_sec must be positive and finite"
         )
-    agent_class, requested_version = agent_installer(spec)
-    base_image = template._sif_path or await template._build_main_sif(False)
-    key = await asyncio.to_thread(
-        _layer_key, template, base_image, agent_class, requested_version
+    agent_class, requested_version = agent_installer(
+        spec, template._agent_kwargs
     )
-    root = template._agent_cache_dir
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    layer = root / f"{key}.img"
-    async with AsyncFileLock(root / f"{key}.lock"):
-        if layer.is_file() and not force:
+    base_image = template._sif_path or await template._build_main_sif(False)
+    with tempfile.TemporaryDirectory(
+        prefix="ursa-harbor-install-"
+    ) as directory:
+        trial_paths = TrialPaths(Path(directory))
+        trial_paths.mkdir()
+        installer = agent_class(
+            logs_dir=trial_paths.agent_dir,
+            version=requested_version,
+            **template._agent_kwargs,
+        )
+        template._agent_install_key = (
+            await asyncio.to_thread(_ursa_install_key, installer)
+            if isinstance(installer, UrsaHarborAgent)
+            else None
+        )
+        key = await asyncio.to_thread(
+            _layer_key,
+            template,
+            base_image,
+            agent_class,
+            requested_version,
+            template._agent_install_key,
+        )
+        root = template._agent_cache_dir
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        layer = root / f"{key}.img"
+        async with AsyncFileLock(root / f"{key}.lock"):
+            if layer.is_file() and not force:
+                if require_cached:
+                    # Keep a private snapshot through restarts and refreshes.
+                    # fuse2fs updates ext3 mount metadata even with -o ro, so a
+                    # hardlink would still let mounts modify the shared cache.
+                    pinned = root / f".{key}-{template._sif_use_token}.img"
+                    try:
+                        await template._run(
+                            "cp",
+                            "--sparse=always",
+                            "--reflink=auto",
+                            str(layer),
+                            str(pinned),
+                        )
+                    except BaseException:
+                        pinned.unlink(missing_ok=True)
+                        raise
+                    return pinned
+                return layer
             if require_cached:
-                # Pin this inode through network-policy restarts, even if a
-                # concurrent prebuild atomically refreshes the cache entry.
-                pinned = root / f".{key}-{template._sif_use_token}.img"
-                os.link(layer, pinned)
-                return pinned
-            return layer
-        if require_cached:
-            raise FileNotFoundError(
-                f"No cached install layer for {spec!r}. Run prebuild --agent "
-                f"{spec} with the same image, cache, and fakeroot settings first."
-            )
-        with tempfile.TemporaryDirectory(
-            prefix="ursa-harbor-install-"
-        ) as directory:
-            trial_paths = TrialPaths(Path(directory))
-            trial_paths.mkdir()
-            installer = agent_class(
-                logs_dir=trial_paths.agent_dir, version=requested_version
-            )
+                raise FileNotFoundError(
+                    f"No cached install layer for {spec!r}. Run prebuild --agent "
+                    f"{spec} with the same image, cache, and fakeroot settings first."
+                )
             environment = _InstallEnvironment(
                 base_image,
                 environment_dir=template.environment_dir,
@@ -177,7 +320,10 @@ async def build_agent_layer(
                 await environment.start(force_build=False)
                 try:
                     async with asyncio.timeout(timeout_sec):
-                        await installer.setup(environment)
+                        if isinstance(installer, UrsaHarborAgent):
+                            await installer._install_packages(environment)
+                        else:
+                            await installer.setup(environment)
                 except TimeoutError as exc:
                     raise TimeoutError(
                         f"{spec} installation exceeded {timeout_sec:g}s; "

@@ -794,6 +794,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         *args,
         singularity_image_cache_dir: Path | str | None = None,
         singularity_agent: str | None = None,
+        singularity_agent_kwargs: dict | str | None = None,
         singularity_agent_cache_dir: Path | str | None = None,
         singularity_force_pull: bool = False,
         singularity_fakeroot: bool | None = None,
@@ -829,6 +830,14 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             for mount in kwargs.get("auto_mounts") or []
         } == {EnvironmentPaths.verifier_dir}
         self._agent_spec = None if verifier_only else singularity_agent
+        if isinstance(singularity_agent_kwargs, str):
+            singularity_agent_kwargs = json.loads(singularity_agent_kwargs)
+        self._agent_kwargs = (
+            {} if singularity_agent_kwargs is None else singularity_agent_kwargs
+        )
+        if not isinstance(self._agent_kwargs, dict):
+            raise ValueError("singularity_agent_kwargs must be a JSON object")
+        self._agent_install_key: str | None = None
         self._agent_cache_dir = (
             Path(
                 singularity_agent_cache_dir

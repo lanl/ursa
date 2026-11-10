@@ -177,6 +177,7 @@ async def prebuild_harbor_task(
     force_build: bool = False,
     image_cache_dir: Path | str | None = None,
     agents: Sequence[str] = (),
+    agent_kwargs: dict | None = None,
     agent_cache_dir: Path | str | None = None,
     agent_install_timeout_sec: float = 1800,
     fakeroot: bool | None = None,
@@ -194,8 +195,10 @@ async def prebuild_harbor_task(
             "agent_install_timeout_sec must be positive and finite"
         )
     installers = tuple(dict.fromkeys(agents))
+    if agent_kwargs and len(installers) != 1:
+        raise ValueError("Agent install kwargs require exactly one --agent")
     for spec in installers:
-        agent_installer(spec)
+        agent_installer(spec, agent_kwargs)
     paths: dict[Path, None] = {}
     environments = _task_environments(
         Task(task_dir), purpose="prebuild", image_cache_dir=image_cache_dir
@@ -205,6 +208,7 @@ async def prebuild_harbor_task(
             dict.fromkeys(await environment.build_sifs(force_build=force_build))
         )
     template = environments[0]
+    template._agent_kwargs = agent_kwargs or {}
     if fakeroot is not None:
         template._fakeroot = fakeroot
     if agent_cache_dir is not None:
