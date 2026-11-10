@@ -19,12 +19,12 @@ authors:
     orcid: 0009-0002-7517-3275
     affiliation: 1
 
-  - name: Michael Grosskopf
-    orcid: 0000-0002-7838-3609
-    affiliation: 1
-
   - name: Pascal Grosset
     orcid: 0000-0003-2192-3843
+    affiliation: 1
+
+  - name: Michael Grosskopf
+    orcid: 0000-0002-7838-3609
     affiliation: 1
 
   - name: Adela Habib
@@ -94,30 +94,30 @@ bibliography: paper.bib
 
 # Summary
 
-Agentic workflows, i.e. software systems that use Large language models (LLMs) [@zhao2026survey], are increasingly being used to automate complex tasks, including software engineering, information retrieval, and scientific research. These developments have created new opportunities for AI systems that assist researchers with planning, computation, analysis, and validation. Here, we present URSA (Universal Research and Scientific Agent), an open-source framework for building modular and extensible AI agents specifically for scientific workflows. URSA enables researchers to compose domain-specific agents by integrating large language models with the appropriate scientific computational tools and knowledge, supporting both general-purpose scientific reasoning and specialized research applications.
+Agentic workflows, i.e. software systems that use large language models (LLMs) [@zhao2026survey], are increasingly being used to automate complex tasks such as software engineering and information retrieval. These developments have created new opportunities for AI systems that assist scientific research. Here, we present URSA (Universal Research and Scientific Agent), an open-source framework for building modular and extensible AI agents specifically for scientific workflows. URSA enables researchers to compose domain-specific agents by integrating LLMs with the appropriate scientific computational tools, supporting both general-purpose scientific reasoning and specialized research applications.
 
 # Statement of need
 
 Scientific research increasingly requires AI systems that can integrate reasoning with external software, simulation codes, computational resources, and specialized literature [@boiko2023autonomous]. While existing agentic frameworks provide general-purpose planning and tool use, researchers often need specialized agents tailored to particular research questions.
 
-The URSA framework addresses this need through a collection of reusable core agents that implement common research capabilities such as hypothesis generation, planning, and execution. Furthermore, building on these core agents, URSA includes several specialized agents that demonstrate how the framework can be extended to research applications by integrating scientific computational tools and domain knowledge. These agents support tasks such as molecular dynamics simulations, large-scale numerical simulations, and optimization. Beyond serving as end-user applications, they also act as reference implementations that illustrate how new scientific agents can be developed by composing URSA's core reusable components. Importantly, URSA further provides multiple ways to deploy and orchestrate these agents. Researchers can interact with the framework through a command-line interface, web dashboard, Model Context Protocol (MCP), or Python API, while execution environments such as Agent Teams and Agent Symposia enable agents to coordinate or independently evaluate scientific problems.
+The URSA framework addresses this need through a collection of reusable core agents that implement common research capabilities such as hypothesis generation, planning, and execution. Furthermore, building on these core agents, URSA includes several specialized agents that demonstrate how the framework can be extended to research applications by integrating scientific computational tools and domain knowledge. Researchers can interact with the framework through a command-line interface, web dashboard, Model Context Protocol (MCP), or Python API, while execution environments enable multi-agent collaborations.
 
 # State of the field
 
-Coding agents such as Claude Code [@claude_code] and Codex [@codex] assist with software development, including code generation and debugging. Scientific assistants such as AI Scientist [@lu2024ai], Co-Scientist [@gottweis2026accelerating], SciAgents [@ghafarollahi2025sciagents], Agent Laboratory [@schmidgall2025agent], and ChemCrow [@bran2024augmenting] demonstrate the application of LLMs to research. Frameworks for constructing agents provide complementary capabilities: LangGraph [@langgraph] supports stateful graph workflows and checkpointing, AutoGen [@autogen] provides abstractions for multi-agent conversations and teams, CrewAI [@crewai] organizes agents into crews and workflows, and smolagents [@smolagents] supports agents that act through generated code or tool calls. These frameworks provide general mechanisms on which scientific applications can be built.
+Coding agents such as Claude Code [@claude_code] and Codex [@codex] assist with software development, including code generation and debugging. Scientific assistants such as AI Scientist [@lu2024ai], Co-Scientist [@gottweis2026accelerating], SciAgents [@ghafarollahi2025sciagents], Agent Laboratory [@schmidgall2025agent], and ChemCrow [@bran2024augmenting] demonstrate the application of LLMs to research. Frameworks for constructing agents provide complementary capabilities: LangGraph [@langgraph] supports stateful graph workflows and checkpointing, AutoGen [@autogen] provides abstractions for multi-agent conversations and teams, CrewAI [@crewai] organizes agents into crews and workflows, and smolagents [@smolagents] supports agents that act through generated code or tool calls. These frameworks provide general mechanisms on which scientific applications can be built. However, in building URSA, we noted that explicit control over agent execution and persistent state for scientific tasks was desirable. We therefore chose LangGraph's stateful graph abstraction over conversation-, crew-, and code-based abstractions emphasized by AutoGen, CrewAI, and smolagents, respectively.
 
 URSA builds on LangGraph by packaging reusable research agents, agents for running scientific software and simulation codes, and interfaces for configuring and running scientific workflows. Its contributions include reusable agents for hypothesis generation, planning, simulation, and optimization, together with collaboration environments such as Agent Teams and Agent Symposia. Maintaining these components in a separate package allows domain-specific dependencies, examples, and user interfaces to evolve together while reusing LangGraph's orchestration infrastructure. Researchers can thus extend these implementations for their own scientific tools and tasks.
 
 # Software design
 
-URSA uses LangGraph [@langgraph] to express agent workflows through explicit states, nodes, and transitions, and to support checkpointing. This makes stages such as planning, review, execution, and error recovery independently configurable. 
-Reusing this infrastructure reduces the orchestration code maintained within URSA and allows it to take advantage of LangGraph's state model. However this dependence on LangGraph's stateful graph-based workflows does require URSA to express state transitions and control flows within LangGraph's abstractions, potentially making it more difficult to integrate agents that do not naturally fit this model. URSA provides support for multiple LLM endpoint providers through LangChain's chat-model interface.
+URSA uses LangGraph [@langgraph] to express agent workflows through explicit states, nodes, and transitions, and to support checkpointing. This makes stages such as planning, review, execution, and error recovery independently configurable.
+Reusing this infrastructure reduces the orchestration code maintained within URSA and allows it to take advantage of LangGraph's state model. However, this dependence on LangGraph's stateful graph-based workflows does require URSA to express state transitions and control flows within LangGraph's abstractions, potentially making it more difficult to integrate agents that do not naturally fit this model. URSA provides support for multiple LLM endpoints through LangChain's chat-model interface. Examples of models and inference providers that we have used with URSA include GPT models from GPT-4 onward and o-series models through the OpenAI API, Claude models from Sonnet 3.5 onward through Amazon Bedrock, and the open-weight model gpt-oss-120b through Ollama.
 
 ## Agent Framework
 
-URSA provides reusable core agents and domain-specific agents that combine them with scientific tools and knowledge. The agents listed below illustrate these capabilities and are not an exhaustive list. Each agent has a configurable workspace for working files and command execution. Named agents maintain their persistent states in separate directories organized by group and agent name. Thread identifiers distinguish checkpointed conversations and checkpoints preserve the agent's state.
+URSA provides reusable core agents and domain-specific agents that combine them with scientific tools. The agents listed below illustrate these capabilities and are not an exhaustive list. Each agent has a configurable workspace for working files and command execution. Named agents maintain their persistent states in separate directories organized by group and agent name. Thread identifiers distinguish checkpointed conversations and checkpoints preserve the agent's state.
 
-The `run_command` tool normally asks an LLM to assess a proposed shell command before executing it. The environment variable `URSA_SAFETY_LEVEL` is used to assess safety: `default` assesses commands with explicit trust assumptions for configured executables, agent-created files, and LaTeX operations; `low` focuses on destructive commands and high-concern data extraction; `trusted` supplies a generic trust statement without the command; and `none` or `yolo` bypasses assessment. LLM screening adds inference cost and can incorrectly accept or reject commands.
+The `run_command` tool normally asks an LLM to assess a proposed shell command before executing it. On Linux and macOS, shell commands are sandboxed by default to restrict filesystem writes, while reads and network access remain enabled. The environment variable `URSA_SAFETY_LEVEL` is used to assess safety: `default` assesses commands with explicit trust assumptions for configured executables, agent-created files, and LaTeX operations; `low` focuses on destructive commands and high-concern data extraction; `trusted` supplies a generic trust statement without the command; `none` bypasses assessment while retaining sandboxing; and `yolo` disables both. LLM screening adds inference cost and can incorrectly accept or reject commands.
 
 ### Core Agents
 
@@ -131,11 +131,11 @@ Examples of core agents include:
 
 Examples of domain-specific agents include:
 
-* Simulation Agent: Coordinates two Chat Agents for documentation acquisition and simulation setup, execution, debugging, and analysis.
+* Simulation Agent: Coordinates two Chat Agents for documentation acquisition and simulation setup, execution, and debugging.
 
 * Optimization Agent: Formulates optimization problems, selects solvers, generates code, and checks results.
 
-* LAMMPS Agent: Selects interatomic potentials, generates simulation inputs, runs the Large-scale Atomic/Molecular Massively Parallel Simulator (LAMMPS) [@thompson2022lammps], and supports error recovery and analysis [@somasundaram].
+* LAMMPS Agent: Selects interatomic potentials, generates simulation inputs, runs the Large-scale Atomic/Molecular Massively Parallel Simulator (LAMMPS) [@thompson2022lammps], and supports error recovery [@somasundaram].
 
 ## User Interfaces
 
@@ -203,12 +203,12 @@ As a second example, \autoref{fig:lammps} shows atomistic calculations performed
 
 The simulation results shown in this figure were generated using the example script [`stiffness_tensor_of_hea.py`](https://github.com/lanl/ursa/blob/joss/examples/single_agent_examples/lammps_agent/stiffness_tensor_of_hea.py).
 
-![The stiffness tensor, i.e., the elastic constants calculated for the high entropy alloy Co-Cr-Fe-Mn-Ni. The atomistic calculation was performed by the LAMMPS agent.\label{fig:lammps}](figure2/new/C_ij_sym_heatmap.png){width=70%}
+![The stiffness tensor, i.e., the elastic constants calculated for the high entropy alloy Co-Cr-Fe-Mn-Ni. The atomistic calculation was performed by the LAMMPS agent. The results use a single random atomic configuration, without configuration averaging.\label{fig:lammps}](figure2/new/C_ij_sym_heatmap.png){width=70%}
 
 # AI usage disclosure
 
 This work is on AI-driven agentic workflows, so LLMs are invoked at multiple instances within URSA. For example, LLMs were involved in the generation of \autoref{fig:helios} and \autoref{fig:lammps}.
-During the development of URSA, generative AI tools such as Codex and URSA itself were used to assist with implementing specific portions of the source code, including its documentation. While all major design and architectural decisions were made by the authors, generative AI tools were used for tasks such as prototyping new features, debugging code, and writing tests. 
+During the development of URSA, generative AI tools such as Codex and URSA itself were used to assist with implementing specific portions of the source code, including its documentation. While all major design and architectural decisions were made by the authors, generative AI tools were used for tasks such as prototyping new features, debugging code, and writing tests.
 For the writing of the manuscript, including its updates during the review process, generative AI tools were used for grammar and spell checks, cutting down the length of the manuscript, and for checking consistency of the manuscript with reviewer comments. All LLM-generated text, code, and documentation were critically reviewed by the authors for accuracy.
 
 # Acknowledgements
