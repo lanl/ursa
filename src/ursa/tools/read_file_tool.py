@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Annotated
 
@@ -18,20 +19,48 @@ from ursa.util.types import (
 
 @tool
 def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
-    """Read a file from the workspace.
+    """Read a file from the workspace or the configured skills directory.
+
+    URSA_SKILLS_PATH permits reads from the specified skills directory.
+    URSA_ALLOW_UNSAFE_READS enables reads outside these permitted directories.
 
     - If filename ends with .pdf, extract text from the PDF.
     - If extracted text is very small (likely scanned), optionally run OCR to add a text layer.
     - Otherwise read as UTF-8 text.
 
     Args:
-        filename: File name relative to the workspace directory.
+        filename: Path relative to the workspace, or an absolute path within
+            the workspace or the directory specified by URSA_SKILLS_PATH.
+            Paths and symlinks resolving outside these directories are rejected
+            unless the user enables URSA_ALLOW_UNSAFE_READS.
 
     Returns:
         Extracted text content.
     """
-    full_filename = runtime.context.workspace.joinpath(filename)
+    workspace = runtime.context.workspace.resolve()
+    full_filename = workspace.joinpath(filename).resolve()
     events = ToolEvents.from_runtime("read_file", runtime)
+
+    skills_env = os.getenv("URSA_SKILLS_PATH")
+    skills_path = Path(skills_env).expanduser() if skills_env else None
+
+    if not _allow_unsafe_reads_enabled() and not (
+        full_filename.is_relative_to(workspace)
+        or (skills_path and full_filename.is_relative_to(skills_path))
+    ):
+        error = (
+            f"File path '{filename}' resolves outside workspace directory "
+            "and any configured skills directory. Files must be read within "
+            "the workspace or the directory specified by URSA_SKILLS_PATH."
+        )
+        events.emit(
+            "Failed to read file",
+            stage="read",
+            phase="error",
+            filename=filename,
+            error=error,
+        )
+        return f"Failed to read {filename}: {error}"
     with events.range(
         "read",
         "Reading file",
@@ -43,6 +72,19 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
         text = read_text_from_file(full_filename)
         span.update(artifact=file_artifact(full_filename, title="File read"))
     return text
+
+
+def _allow_unsafe_reads_enabled() -> bool:
+    """Return whether outside reads are explicitly enabled via environment.
+
+    Set URSA_ALLOW_UNSAFE_READS to one of: 1, true, yes, on.
+    """
+    return os.getenv("URSA_ALLOW_UNSAFE_READS", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 @tool

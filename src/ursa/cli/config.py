@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 from typing import Annotated, Any, Literal, Self
 
 import yaml
+from filelock import FileLock
 from jsonargparse import Namespace
 from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain.embeddings import Embeddings, init_embeddings
@@ -28,12 +29,18 @@ from pydantic import (
 
 from ursa.security import enforce_group_base_url_policy
 from ursa.util.crossplatform import system_config_path, user_config_paths
+from ursa.util.fileio import atomic_write_text
 from ursa.util.http import (
     build_httpx_async_client,
     build_httpx_client,
     httpx_verify_value,
 )
-from ursa.util.mcp import ServerParameters, _serialize_server_config
+from ursa.util.mcp import (
+    ServerParameters,
+    parse_server_parameters,
+    serialize_server_parameters,
+)
+from ursa.util.model_context import DEFAULT_SUMMARIZATION_THRESHOLD
 from ursa.util.secrets import SecretReference
 
 logger = logging.getLogger(__name__)
@@ -41,6 +48,24 @@ logger = logging.getLogger(__name__)
 LoggingLevel = Literal[
     "debug", "info", "notice", "warning", "error", "critical"
 ]
+
+_CONFIG_VALUE_ADAPTER = TypeAdapter(Any)
+_YAML_SUFFIXES = {".yaml", ".yml"}
+
+
+def _config_fallback(value: Any) -> Any:
+    return vars(value) if hasattr(value, "__dict__") else str(value)
+
+
+def config_file_value(value: Any, *, include_defaults: bool = False) -> Any:
+    """Use Pydantic's serializers at JSON/YAML configuration boundaries."""
+    return _CONFIG_VALUE_ADAPTER.dump_python(
+        value,
+        mode="json",
+        exclude_none=not include_defaults,
+        context={"include_defaults": include_defaults},
+        fallback=_config_fallback,
+    )
 
 
 def _strip_blank_optional_strings(value: Any) -> str | Any | None:
@@ -56,6 +81,13 @@ def _strip_blank_optional_strings(value: Any) -> str | Any | None:
 
 
 APIKey = SecretReference | SecretStr
+
+
+def _editable_values(model: BaseModel, *required: str) -> dict[str, Any]:
+    values = model.model_dump(mode="json", exclude_unset=True)
+    for name in required:
+        values.setdefault(name, getattr(model, name))
+    return values
 
 
 def _migrate_api_key_env(data: Any) -> Any:
@@ -406,6 +438,9 @@ class ModelConfig(BaseModel):
             return self.base_url
         return f"{self.inference_provider} - {self.base_url}"
 
+    def editable_values(self) -> dict[str, Any]:
+        return _editable_values(self, "model")
+
 
 class ChatModelConfig(ModelConfig):
     """Configuration for instantiating a chat model"""
@@ -427,8 +462,14 @@ class ChatModelConfig(ModelConfig):
         return kwargs
 
     def init_chat_model(self) -> BaseChatModel:
-        llm = init_chat_model(**self.kwargs)
+        from ursa.util.model_metadata import load_model_context
+        from ursa.util.openai_compat import with_responses_fallback
+
+        llm = with_responses_fallback(init_chat_model(**self.kwargs))
         self.check_instantiated_model(llm)
+        load_model_context(
+            llm, explicit_profile="profile" in (self.model_extra or {})
+        )
         return llm
 
     @model_validator(mode="after")
@@ -513,6 +554,11 @@ class UrsaConfig(BaseModel):
     use_web: bool = False
     """Enable web-search tools for ChatAgent and ExecutionAgent."""
 
+    tokens_before_summarize: int = Field(
+        default=DEFAULT_SUMMARIZATION_THRESHOLD, gt=0
+    )
+    """Fallback summarization threshold when the model context is unknown."""
+
     inference_providers: dict[str, InferenceProviderConfig] = Field(
         default_factory=lambda: {
             "openai": InferenceProviderConfig(
@@ -554,6 +600,15 @@ class UrsaConfig(BaseModel):
         )
         return providers
 
+    @field_validator("tokens_before_summarize", mode="before")
+    @classmethod
+    def _validate_summary_threshold(cls, value):
+        if isinstance(value, bool):
+            raise ValueError(
+                "tokens_before_summarize must be a positive integer"
+            )
+        return value
+
     @field_validator("rag_tools", mode="before")
     @classmethod
     def _normalize_rag_tools(cls, value):
@@ -589,9 +644,19 @@ class UrsaConfig(BaseModel):
     def from_file(cls, path: Path):
         return cls.model_validate(load_config_file(path))
 
+    @classmethod
+    def user_config(cls, resolve: bool = True) -> Self:
+        """Load and merge the default system and user config layers."""
+        config = cls().model_merge(*config_layers(Namespace()))
+        return config.resolve() if resolve else config
+
     def resolve(self) -> Self:
         """Return this config after applying canonical resolution."""
         return resolve_ursa_config(self)
+
+    def editable_values(self) -> dict[str, Any]:
+        _reject_literal_secrets(self)
+        return _editable_values(self)
 
     def model_merge(self, *others: dict[str, Any]) -> Self:
         """Merge higher-priority config layers and validate the result once."""
@@ -641,20 +706,32 @@ class UrsaConfig(BaseModel):
             info.context and info.context.get("include_defaults")
         )
         return {
-            server: _serialize_server_config(
+            server: serialize_server_parameters(
                 config,
-                exclude_defaults=not include_defaults,
-                exclude_none=not include_defaults,
+                exclude_defaults=False,
+                exclude_none=False,
+                exclude_unset=not include_defaults,
             )
             for server, config in mcp_servers.items()
         }
 
 
-def load_config_file(path: Path) -> dict[str, Any]:
-    """Load raw config-file data for merging before validation."""
-    loader = yaml.safe_load if path.suffix in [".yaml", ".yml"] else json.load
-    with open(path, "r") as fid:
-        data = loader(fid)
+def interpolate_mcp_server(config: ServerParameters) -> ServerParameters:
+    """Apply config-file environment interpolation to a typed MCP server."""
+    values = serialize_server_parameters(
+        config,
+        exclude_defaults=False,
+        exclude_none=False,
+        exclude_unset=False,
+    )
+    return parse_server_parameters(deep_interp_env(values))
+
+
+def load_config_file(path: Path, *, interpolate: bool = True) -> dict[str, Any]:
+    """Load config-file data, optionally expanding environment placeholders."""
+    is_yaml = path.suffix.lower() in _YAML_SUFFIXES
+    loader = yaml.safe_load if is_yaml else json.loads
+    data = loader(path.read_text())
 
     if data is None:
         data = {}
@@ -662,7 +739,36 @@ def load_config_file(path: Path) -> dict[str, Any]:
         raise ValueError(
             f"Configuration file '{path}' must contain a mapping at its root"
         )
-    return deep_interp_env(data)
+    return deep_interp_env(data) if interpolate else data
+
+
+def _reject_literal_secrets(value: Any) -> None:
+    if isinstance(value, SecretStr):
+        raise ValueError(
+            "Literal secrets cannot be saved; use an environment or keyring "
+            "secret reference"
+        )
+    if isinstance(value, BaseModel):
+        value = (*vars(value).values(), value.model_extra)
+    elif not isinstance(value, (dict, list, tuple)):
+        return
+    for item in value.values() if isinstance(value, dict) else value:
+        _reject_literal_secrets(item)
+
+
+def save_config_file(path: Path, config: UrsaConfig) -> Path:
+    """Atomically write an editable configuration with private permissions."""
+    path = path.expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with FileLock(path.with_suffix(f"{path.suffix}.lock"), mode=0o600):
+        values = config.editable_values()
+        text = (
+            yaml.safe_dump(values, sort_keys=False, allow_unicode=True)
+            if path.suffix.lower() in _YAML_SUFFIXES
+            else f"{json.dumps(values, indent=2)}\n"
+        )
+        atomic_write_text(path, text)
+    return path
 
 
 def config_path_from_namespace(cfg: Namespace) -> Path | None:
@@ -769,10 +875,8 @@ def config_layers(
 
     if not final:
         return layers
-    if env_overrides is None:
-        raise ValueError("Final config layering requires sparse env overrides")
 
-    layers.append(_ursa_config_values(env_overrides))
+    layers.append(_ursa_config_values(env_overrides or {}))
     if cli_config_path is not None and cli_config_path in paths:
         layers.append(load_config_file(cli_config_path))
     if cli_overrides is not None:

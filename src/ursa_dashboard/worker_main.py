@@ -7,12 +7,49 @@ import logging
 import os
 import sys
 import traceback
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from ursa.util.http import inject_truststore_into_ssl
 
 logger = logging.getLogger(__name__)
+
+
+def _agent_with_tools_targets(root: Any) -> list[Any]:
+    """Return tool-capable agents reachable through workflow composition.
+
+    ``BaseAgent.add_agent_node`` exposes composed children through
+    ``agent_nodes``. The attribute fallbacks retain compatibility with older
+    workflow objects while registrations migrate to the generic interface.
+    """
+    targets: list[Any] = []
+    pending = [root]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        marker = id(current)
+        if marker in seen:
+            continue
+        seen.add(marker)
+
+        # Lazy workflows buffer MCP tools for children created during a run.
+        if callable(getattr(current, "add_mcp_tools", None)):
+            targets.append(current)
+
+        children = getattr(current, "agent_nodes", None)
+        if isinstance(children, Mapping):
+            pending.extend(children.values())
+        elif isinstance(children, (list, tuple, set)):
+            pending.extend(children)
+
+        for attribute in ("executor", "execution_agent"):
+            child = getattr(current, attribute, None)
+            if child is not None:
+                pending.append(child)
+
+    return targets
+
 
 _UNSET = object()
 
@@ -98,6 +135,8 @@ def _init_llm(
     from langchain.chat_models import init_chat_model  # type: ignore
 
     from ursa.util.http import build_httpx_async_client, build_httpx_client
+    from ursa.util.model_metadata import load_model_context
+    from ursa.util.openai_compat import with_responses_fallback
 
     raw_base_url = llm_cfg.get("base_url")
     base_url = str(raw_base_url).strip() if raw_base_url is not None else None
@@ -137,7 +176,9 @@ def _init_llm(
             build_httpx_async_client(verify=True),
         )
 
-    return init_chat_model(**kwargs)
+    llm = with_responses_fallback(init_chat_model(**kwargs))
+    load_model_context(llm, explicit_profile="profile" in model_kwargs)
+    return llm
 
 
 def _init_embedding(
@@ -279,6 +320,7 @@ def main() -> int:
 
         # Late import to keep worker startup cheap.
         from ursa_dashboard.registry import REGISTRY
+        from ursa_dashboard.settings import LLMSettings
 
         if args.agent_id not in REGISTRY:
             raise ValueError(f"Unknown agent_id: {args.agent_id}")
@@ -304,6 +346,10 @@ def main() -> int:
         secrets_payload = {}
         # Ensure consistent cross-session threading.
         agent_init = dict(agent_init)
+        agent_init.setdefault(
+            "tokens_before_summarize",
+            LLMSettings.model_validate(llm_cfg).tokens_before_summarize,
+        )
         agent_init["thread_id"] = "ursa"
         agent_init.setdefault("enable_metrics", True)
         if embedding is not None:
@@ -322,32 +368,10 @@ def main() -> int:
         if mcp_enabled and isinstance(mcp_servers, dict) and mcp_servers:
 
             async def _attach_mcp_tools(agent_obj: Any) -> None:
-                from ursa.agents.base import AgentWithTools  # type: ignore
                 from ursa.util.mcp import start_mcp_client  # type: ignore
 
                 client = start_mcp_client(mcp_servers)
-
-                def _targets(root: Any) -> list[Any]:
-                    t: list[Any] = []
-                    seen: set[int] = set()
-
-                    def add(x: Any) -> None:
-                        if x is None:
-                            return
-                        ix = id(x)
-                        if ix in seen:
-                            return
-                        seen.add(ix)
-                        t.append(x)
-
-                    if isinstance(root, AgentWithTools):
-                        add(root)
-                    ex = getattr(root, "executor", None)
-                    if ex is not None and isinstance(ex, AgentWithTools):
-                        add(ex)
-                    return t
-
-                targets = _targets(agent_obj)
+                targets = _agent_with_tools_targets(agent_obj)
                 if not targets:
                     logger.warning(
                         "No compatible AgentWithTools target found; "

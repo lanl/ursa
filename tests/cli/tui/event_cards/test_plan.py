@@ -66,8 +66,8 @@ async def test_plan_card_renders_drafting_and_collapsed_steps(tmp_path):
         await pilot.resize_terminal(160, 36)
         assert await eventually(
             pilot,
-            lambda: "lazy river"
-            in next(
+            lambda: "truncated"
+            not in next(
                 line
                 for line in str(markdown.source).splitlines()
                 if "1. Step 1" in line

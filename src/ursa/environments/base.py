@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Any, Mapping
@@ -10,6 +9,7 @@ from langchain.chat_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
 
 from ursa.security import group_environments_dir, validate_group_name
+from ursa.util.agent_invocation import ainvoke_agent
 from ursa.workflows.base_workflow import BaseWorkflow, InputLike
 
 from .config import EnvironmentMemberConfig, load_object, make_llm
@@ -67,6 +67,20 @@ class BaseEnvironment(BaseWorkflow):
         return f"{self.name}_{member_name}"
 
     def build_member(self, member: EnvironmentMemberConfig) -> Any:
+        """Build a member using this environment's default workspace and name."""
+        return self._build_member(
+            member,
+            workspace=self._member_workspace(member.name),
+            agent_name=self._member_agent_name(member.name),
+        )
+
+    def _build_member(
+        self,
+        member: EnvironmentMemberConfig,
+        *,
+        workspace: Path,
+        agent_name: str | None,
+    ) -> Any:
         """Instantiate a configured member agent or nested environment.
 
         BaseAgent subclasses use ``agent_name`` for checkpoint persistence, while
@@ -77,15 +91,15 @@ class BaseEnvironment(BaseWorkflow):
         cls = load_object(member.agent)
         llm = make_llm(self.llm, member.model)
         kwargs = dict(member.config or {})
-        kwargs.setdefault("workspace", self._member_workspace(member.name))
+        kwargs.setdefault("workspace", workspace)
         kwargs.setdefault("group", self.group)
         if isinstance(cls, type) and issubclass(cls, BaseEnvironment):
             kwargs.setdefault("name", member.name)
             kwargs.setdefault("persist_members", self.persist_members)
         elif self.persist_members:
-            kwargs.setdefault(
-                "agent_name", self._member_agent_name(member.name)
-            )
+            kwargs.setdefault("agent_name", agent_name)
+        if kwargs.get("agent_name"):
+            kwargs["thread_id"] = "ursa"
         return cls(llm=llm, **kwargs)
 
     def _run_ainvoke_from_sync(
@@ -118,15 +132,7 @@ class BaseEnvironment(BaseWorkflow):
         test doubles or custom sync-only members may expose only ``invoke``; run
         those in a worker thread so async environment phases remain non-blocking.
         """
-        ainvoke = getattr(member, "ainvoke", None)
-        if callable(ainvoke):
-            result = ainvoke(prompt, **kwargs)
-            if inspect.isawaitable(result):
-                return await result
-            return result
-
-        invoke = getattr(member, "invoke")
-        return await asyncio.to_thread(invoke, prompt, **kwargs)
+        return await ainvoke_agent(member, prompt, **kwargs)
 
 
 def invocation_kwargs(config: Mapping[str, Any]) -> dict[str, Any]:

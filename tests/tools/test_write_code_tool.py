@@ -85,12 +85,11 @@ def test_write_code_records_store_entry(
     assert payload["filename"] == "sample.py"
     assert payload["path"] == str(tmp_path / "sample.py")
     assert payload["artifact"] == {
-        "content": str(tmp_path / "sample.py"),
-        "mime_type": "application/vnd.ursa.file-reference",
+        "content": "print(42)",
+        "mime_type": "text/x-python",
         "metadata": {
-            "title": "File written",
+            "title": "Written code",
             "path": str(tmp_path / "sample.py"),
-            "content_mime_type": "text/x-python",
         },
     }
     assert isinstance(payload["elapsed_ms"], float)

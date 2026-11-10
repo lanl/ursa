@@ -123,6 +123,10 @@ You can also set URSA configuration options directly:
 
 Use `ursa --help` to view supported `URSA_...` variables.
 
+For example, `URSA_TOKENS_BEFORE_SUMMARIZE=80000` changes the summarization
+fallback when the selected model's context limit is unknown. The equivalent
+YAML setting is `tokens_before_summarize: 80000`.
+
 ## Environment interpolation in config files
 
 URSA config loading supports environment interpolation in YAML values. For MCP server environment blocks, this is useful for passing secrets to subprocesses:

@@ -1,8 +1,12 @@
 # Secrets
 
 Avoid storing API keys and other credentials directly in configuration files.
-URSA can read secrets from environment variables or from the operating system's
-credential store through the Python [keyring package](https://pypi.org/project/keyring/).
+URSA can read secrets from environment variables or from a keyring. It prefers
+the platform's native keyring through the Python [keyring
+package](https://pypi.org/project/keyring/). If a native keyring operation fails,
+URSA transparently falls back to `keyring.json` alongside the
+[highest-priority user configuration
+file](./files-and-env.md#configuration-precedence).
 
 ## Store a secret in the keyring
 
@@ -52,7 +56,7 @@ mcp_servers:
     headers:
       Authorization:
         keyring: true
-        template: "Bearer %s"
+        template: Bearer %s
 ```
 
 Here, `keyring: true` uses `remote-tools`, the MCP server name, as the keyring

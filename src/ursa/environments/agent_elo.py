@@ -274,7 +274,9 @@ class AgentEloEnvironment(BaseEnvironment):
     # ------------------------------------------------------------------
 
     # Keep checking live population sizes after reproduction and on restart.
-    _validate_population_size = staticmethod(AgentEloConfig.validate_population_size)
+    _validate_population_size = staticmethod(
+        AgentEloConfig.validate_population_size
+    )
 
     @classmethod
     def from_yaml(
@@ -1240,7 +1242,7 @@ class AgentEloEnvironment(BaseEnvironment):
 
         self._rng.shuffle(losers)
 
-        losers.sort(key=lambda name: (self.players[name].rating))
+        losers.sort(key=lambda name: self.players[name].rating)
 
         return losers[: self.deaths_per_round]
 
@@ -1514,7 +1516,7 @@ class AgentEloEnvironment(BaseEnvironment):
     ) -> list[dict[str, Any]]:
         ordered = sorted(
             self.players.values(),
-            key=lambda player: (player.rating),
+            key=lambda player: player.rating,
             reverse=True,
         )
 

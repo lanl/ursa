@@ -38,7 +38,7 @@ async def test_overlapping_commands_stay_compact_and_complete_independently(
                 "tool": "run_command",
                 "phase": "start",
                 "query": query,
-                "_command_id": command_id,
+                "tool_call_id": command_id,
             })
         await pilot.pause()
 
@@ -54,7 +54,7 @@ async def test_overlapping_commands_stay_compact_and_complete_independently(
             "tool": "run_command",
             "phase": "end",
             "query": "sleep 1",
-            "_command_id": "one",
+            "tool_call_id": "one",
             "returncode": 0,
             "result": "",
         })
@@ -69,7 +69,7 @@ async def test_overlapping_commands_stay_compact_and_complete_independently(
         )
 
 
-async def test_identical_concurrent_commands_are_correlated_by_run_id(tmp_path):
+async def test_identical_commands_are_correlated_by_tool_call_id(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
@@ -81,6 +81,7 @@ async def test_identical_concurrent_commands_are_correlated_by_run_id(tmp_path):
                 {"name": "run_command"},
                 "",
                 run_id=run_id,
+                tool_call_id=run_id,
                 inputs={"query": "echo same"},
             )
         await handler.on_tool_error(RuntimeError("first failed"), run_id="one")
@@ -91,6 +92,7 @@ async def test_identical_concurrent_commands_are_correlated_by_run_id(tmp_path):
                 "stage": "safety_check",
                 "query": "echo same",
                 "safe": True,
+                "tool_call_id": "two",
             },
             run_id="child-event-run",
         )
@@ -108,6 +110,42 @@ async def test_identical_concurrent_commands_are_correlated_by_run_id(tmp_path):
         )
 
 
+async def test_command_events_share_card_by_tool_call_id(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        turn = Turn("run it", tmp_path)
+        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        handler = TextualEventHandler(app, turn)
+        await handler.on_tool_start(
+            {"name": "run_command"},
+            "",
+            run_id="tool-callback-run",
+            tool_call_id="command-call",
+            inputs={"query": "echo once"},
+        )
+        await handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "tool": "run_command",
+                "stage": "execute",
+                "phase": "start",
+                "query": "echo once",
+                "tool_call_id": "command-call",
+            },
+            run_id="custom-event-parent-run",
+        )
+        await handler.on_tool_end("once", run_id="tool-callback-run")
+        await pilot.pause()
+
+        cards = list(turn.query(RunCommandCard))
+        assert len(cards) == 1
+        assert cards[0].completed
+        assert (
+            cards[0].query_one(".command-output", Static).content.code == "once"
+        )
+
+
 async def test_command_completion_finishes_pending_safety_indicator(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
@@ -118,13 +156,13 @@ async def test_command_completion_finishes_pending_safety_indicator(tmp_path):
             "tool": "run_command",
             "phase": "start",
             "query": "uptime",
-            "_command_id": "uptime",
+            "tool_call_id": "uptime",
         })
         await turn.event({
             "tool": "run_command",
             "phase": "end",
             "query": "uptime",
-            "_command_id": "uptime",
+            "tool_call_id": "uptime",
             "result": "up 10 days",
         })
         await pilot.pause()
@@ -146,14 +184,14 @@ async def test_solitary_command_after_overlap_returns_to_detailed_layout(
                 "tool": "run_command",
                 "phase": "start",
                 "query": command_id,
-                "_command_id": command_id,
+                "tool_call_id": command_id,
             })
         for command_id in ("one", "two"):
             await turn.event({
                 "tool": "run_command",
                 "phase": "end",
                 "query": command_id,
-                "_command_id": command_id,
+                "tool_call_id": command_id,
                 "returncode": 0,
                 "result": "done",
             })
@@ -161,7 +199,7 @@ async def test_solitary_command_after_overlap_returns_to_detailed_layout(
             "tool": "run_command",
             "phase": "start",
             "query": "three",
-            "_command_id": "three",
+            "tool_call_id": "three",
         })
         await pilot.pause()
 
@@ -185,6 +223,7 @@ async def test_run_command_card_tracks_safety_and_collapses_on_result(tmp_path):
             {"name": "run_command"},
             "",
             run_id="command-1",
+            tool_call_id="command-1",
             inputs={"query": command},
         )
         await pass_safety.wait()
@@ -196,6 +235,7 @@ async def test_run_command_card_tracks_safety_and_collapses_on_result(tmp_path):
                 "message": "Command passed safety check",
                 "query": command,
                 "safe": True,
+                "tool_call_id": "command-1",
             },
         )
         await return_result.wait()
@@ -206,6 +246,7 @@ async def test_run_command_card_tracks_safety_and_collapses_on_result(tmp_path):
             {"name": "run_command"},
             "",
             run_id="command-2",
+            tool_call_id="command-2",
             inputs={"query": "echo second"},
         )
         await emit_event(
@@ -216,6 +257,7 @@ async def test_run_command_card_tracks_safety_and_collapses_on_result(tmp_path):
                 "message": "Command passed safety check",
                 "query": "echo second",
                 "safe": True,
+                "tool_call_id": "command-2",
             },
         )
         await return_second.wait()
@@ -285,6 +327,7 @@ async def test_single_command_output_preserves_top_and_bottom_until_expanded(
             {"name": "run_command"},
             "",
             run_id="long-output",
+            tool_call_id="long-output",
             inputs={"query": "generate output"},
         )
         await emit_event(
@@ -294,6 +337,7 @@ async def test_single_command_output_preserves_top_and_bottom_until_expanded(
                 "stage": "safety_check",
                 "query": "generate output",
                 "safe": True,
+                "tool_call_id": "long-output",
             },
         )
         await handler.on_tool_end(full_output, run_id="long-output")
@@ -334,6 +378,7 @@ async def test_collapsed_commands_retain_execution_outcomes(tmp_path):
                 {"name": "run_command"},
                 "",
                 run_id=run_id,
+                tool_call_id=run_id,
                 inputs={"query": query},
             )
             await emit_event(
@@ -344,6 +389,7 @@ async def test_collapsed_commands_retain_execution_outcomes(tmp_path):
                     "query": query,
                     "safe": safe,
                     "reason": "Rejected" if not safe else "Allowed",
+                    "tool_call_id": run_id,
                 },
             )
             if returncode is not None:
@@ -355,6 +401,7 @@ async def test_collapsed_commands_retain_execution_outcomes(tmp_path):
                         "phase": "end",
                         "query": query,
                         "returncode": returncode,
+                        "tool_call_id": run_id,
                     },
                 )
             await handler.on_tool_end(output, run_id=run_id)

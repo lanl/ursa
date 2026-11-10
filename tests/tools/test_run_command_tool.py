@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -50,9 +51,13 @@ def _patch_safety_result(
     return captured
 
 
+@pytest.mark.parametrize("setting, expected", [(None, 600000), ("7200", 7200)])
 def test_run_command_invokes_subprocess_in_workspace(
-    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel, setting, expected
 ):
+    monkeypatch.delenv("URSA_COMMAND_TIMEOUT_SECONDS", raising=False)
+    if setting is not None:
+        monkeypatch.setenv("URSA_COMMAND_TIMEOUT_SECONDS", setting)
     recorded = {}
     _patch_safety_result(monkeypatch, chat_model, is_safe=True)
 
@@ -61,7 +66,9 @@ def test_run_command_invokes_subprocess_in_workspace(
         recorded["kwargs"] = kwargs
         return SimpleNamespace(stdout="output", stderr="", returncode=0)
 
-    monkeypatch.setattr("ursa.tools.run_command_tool.subprocess.run", fake_run)
+    monkeypatch.setattr("ursa.sandbox.base.subprocess.run", fake_run)
+    monkeypatch.setattr("ursa.sandbox.linux.subprocess.run", fake_run)
+    monkeypatch.setattr("ursa.sandbox.mac.subprocess.run", fake_run)
 
     result, recorder = invoke_with_event_recorder(
         run_command.func,
@@ -76,8 +83,9 @@ def test_run_command_invokes_subprocess_in_workspace(
     events = recorder.events
 
     assert result == "STDOUT:\noutput\nSTDERR:\n"
-    assert recorded["kwargs"]["cwd"] == tmp_path
+    assert Path(recorded["kwargs"]["cwd"]) == tmp_path
     assert recorded["kwargs"]["shell"] is True
+    assert recorded["kwargs"]["timeout"] == expected
     assert events[0] == (
         "ursa_agent_progress",
         {
@@ -135,7 +143,19 @@ def test_run_command_truncates_output(
     _patch_safety_result(monkeypatch, chat_model, is_safe=True)
 
     monkeypatch.setattr(
-        "ursa.tools.run_command_tool.subprocess.run",
+        "ursa.sandbox.base.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            stdout=long_stdout, stderr=long_stderr
+        ),
+    )
+    monkeypatch.setattr(
+        "ursa.sandbox.linux.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            stdout=long_stdout, stderr=long_stderr
+        ),
+    )
+    monkeypatch.setattr(
+        "ursa.sandbox.mac.subprocess.run",
         lambda *args, **kwargs: SimpleNamespace(
             stdout=long_stdout, stderr=long_stderr
         ),
@@ -165,6 +185,36 @@ def test_run_command_truncates_output(
     assert len(stderr_body) < len(long_stderr)
 
 
+@pytest.mark.parametrize("setting", ["0", "-1", "invalid", "1.5", ""])
+def test_run_command_rejects_invalid_timeout(
+    monkeypatch, tmp_path, chat_model, setting
+):
+    monkeypatch.setenv("URSA_COMMAND_TIMEOUT_SECONDS", setting)
+    monkeypatch.setattr(
+        "ursa.tools.run_command_tool.subprocess.run",
+        lambda *args, **kwargs: pytest.fail("Command must not execute"),
+    )
+    result = run_command.func("echo hi", make_runtime(tmp_path, llm=chat_model))
+    assert "Invalid URSA_COMMAND_TIMEOUT_SECONDS" in result
+
+
+def test_run_command_reports_timeout(monkeypatch, tmp_path, chat_model):
+    monkeypatch.setenv("URSA_COMMAND_TIMEOUT_SECONDS", "300")
+    _patch_safety_result(monkeypatch, chat_model, is_safe=True)
+
+    def expire(query, **kwargs):
+        raise subprocess.TimeoutExpired(query, kwargs["timeout"])
+
+    monkeypatch.setattr("ursa.tools.run_command_tool.subprocess.run", expire)
+    result = invoke_with_parent_run(
+        lambda config: run_command.func(
+            "sleep 999",
+            make_runtime(tmp_path, llm=chat_model, config=config),
+        )
+    )
+    assert "Command timed out after 300 seconds" in result
+
+
 def test_run_command_handles_keyboard_interrupt(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
@@ -173,9 +223,11 @@ def test_run_command_handles_keyboard_interrupt(
     def raise_interrupt(*args, **kwargs):
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(
-        "ursa.tools.run_command_tool.subprocess.run", raise_interrupt
-    )
+    monkeypatch.setattr("ursa.sandbox.base.subprocess.run", raise_interrupt)
+
+    monkeypatch.setattr("ursa.sandbox.linux.subprocess.run", raise_interrupt)
+
+    monkeypatch.setattr("ursa.sandbox.mac.subprocess.run", raise_interrupt)
 
     result = invoke_with_parent_run(
         lambda config: run_command.func(
@@ -203,7 +255,21 @@ def test_run_command_returns_message_for_unicode_input(
         tool_call_id="unicode",
     )
     monkeypatch.setattr(
-        "ursa.tools.run_command_tool.subprocess.run",
+        "ursa.sandbox.base.subprocess.run",
+        lambda *args, **kwargs: pytest.fail(
+            "subprocess should not run for invalid input"
+        ),
+    )
+
+    monkeypatch.setattr(
+        "ursa.sandbox.linux.subprocess.run",
+        lambda *args, **kwargs: pytest.fail(
+            "subprocess should not run for invalid input"
+        ),
+    )
+
+    monkeypatch.setattr(
+        "ursa.sandbox.mac.subprocess.run",
         lambda *args, **kwargs: pytest.fail(
             "subprocess should not run for invalid input"
         ),
@@ -219,11 +285,28 @@ def test_run_command_returns_message_for_unicode_input(
 def test_run_command_blocks_commands_that_fail_safety_check(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
+    # Force the default safety prompt level so safe_codes appear in the prompt
+    # regardless of the caller's URSA_SAFETY_LEVEL environment variable.
+    monkeypatch.delenv("URSA_SAFETY_LEVEL", raising=False)
     captured = _patch_safety_result(
         monkeypatch, chat_model, is_safe=False, reason="Not safe in test"
     )
     monkeypatch.setattr(
-        "ursa.tools.run_command_tool.subprocess.run",
+        "ursa.sandbox.base.subprocess.run",
+        lambda *args, **kwargs: pytest.fail(
+            "subprocess.run should not be called for unsafe commands"
+        ),
+    )
+
+    monkeypatch.setattr(
+        "ursa.sandbox.linux.subprocess.run",
+        lambda *args, **kwargs: pytest.fail(
+            "subprocess.run should not be called for unsafe commands"
+        ),
+    )
+
+    monkeypatch.setattr(
+        "ursa.sandbox.mac.subprocess.run",
         lambda *args, **kwargs: pytest.fail(
             "subprocess.run should not be called for unsafe commands"
         ),

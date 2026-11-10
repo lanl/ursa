@@ -32,19 +32,34 @@ Potential risks include:
 
 Use a virtual machine, container, dedicated user account, or isolated environment for high-risk tasks.
 
+## Command sandbox
+
+See the [Sandboxing](../sandbox.md) for setup,
+access controls, safety settings, and troubleshooting.
+
 ## File access outside the workspace
 
 The workspace is a working directory, not a filesystem security boundary.
-`read_file` intentionally permits reading files outside it without an LLM safety
-assessment, so workflows can access existing inputs and reference files. Relative
-paths are resolved from the workspace; absolute paths, `../` paths, and symlinks
-can reach other files readable by the URSA process. File contents may be sent to
-the configured model as tool results.
+`read_file` resolves the requested path and permits reads within the workspace
+and the skills directory configured through `URSA_SKILLS_PATH`, without an
+additional LLM safety assessment. Relative paths are resolved from the workspace
+and absolute paths within either permitted directory are also accepted.
+Paths containing `../` and symlinks are rejected if they resolve outside these
+directories, unless the override below is enabled. Copy other external inputs
+into the workspace before reading them with this tool. File contents may be
+sent to the configured model as tool results.
+
+To explicitly permit outside reads, set `URSA_ALLOW_UNSAFE_READS=1` before
+launching URSA. The values `1`, `true`, `yes`, and `on` enable this override
+(case-insensitive, with surrounding whitespace ignored). Unset or any other
+value keeps reads restricted to the permitted directories. This grants `read_file` access to
+any file readable by the URSA process, including through absolute paths and
+symlinks.
 
 Although `write_code` checks that its target resolves inside the workspace,
-this does not isolate the agent: shell commands and other tools retain the host
-process's permissions. Use operating-system permissions or an isolated environment
-to restrict access to files.
+this does not isolate every tool. The command sandbox applies only to
+`run_command`. Use operating-system permissions or an isolated environment
+to restrict access across tools.
 
 ## Command screening
 
@@ -56,7 +71,8 @@ the LLM screening policy for `run_command`. Values are case-insensitive.
 | `default` (also used when unset) | Assesses the command with trust assumptions for configured executables, agent-created files, and LaTeX-related operations. The prompt also treats package installation for configured executables as safe. |
 | `low` | Asks the model to scrutinize destructive commands and flag high-concern attempts to extract sensitive information, while trusting workspace files. |
 | `trusted` | Still calls the model, but supplies only a generic statement that the agent is trusted, without the proposed command. This does not provide a command-specific assessment. |
-| `none` or `yolo` | Bypasses the LLM assessment and proceeds to command execution. |
+| `none` | Bypasses the LLM assessment; sandbox settings still apply. |
+| `yolo` | Bypasses the LLM assessment and disables sandboxing. |
 
 Unrecognized values use the default prompt. These policies are model judgments, not deterministic restrictions: they can accept unsafe
 commands or reject legitimate ones. They do not screen `read_file` or provide
@@ -64,13 +80,13 @@ filesystem or network isolation.
 
 ## Command timeout
 
-`run_command` executes through a shell with a fixed timeout of 600,000 seconds
-(approximately seven days). There is currently no configuration option for this
-timeout. A command containing an infinite loop can therefore occupy a run for a
-long time.
-
-For workloads requiring a shorter limit, use an external job scheduler or process
-supervisor with an appropriate wall-time limit.
+`run_command` executes through a shell with a default timeout of 600,000 seconds
+(approximately seven days). Set `URSA_COMMAND_TIMEOUT_SECONDS` before launching
+URSA to change this limit, for example `URSA_COMMAND_TIMEOUT_SECONDS=300` for
+five minutes.
+The value must be a positive integer number of seconds.
+When the timeout is reached, the tool returns a timeout message.
+This limit applies to subprocess execution, not the preceding LLM safety check.
 
 ## Web tools are opt in
 
@@ -117,8 +133,8 @@ MCP servers can expose powerful external tools. Only connect MCP servers that yo
 ## Protect secrets
 
 - Prefer `api_key` environment references rather than literal API keys in YAML files.
-- In the desktop dashboard, prefer **Secure system storage** so keys are kept
-  in the operating system credential manager instead of configuration files.
+- In the desktop dashboard, prefer **Keyring** so keys are kept out of
+  configuration files.
 - Do not store API keys in persistent agent names or prompts.
 - Review shared agent archives before distributing them.
 - Avoid committing project-specific config files that contain endpoint secrets.
@@ -138,7 +154,7 @@ Containers can provide partial isolation. The exact command depends on your envi
 3. avoid mounting your full home directory,
 4. run as a non-root user where practical.
 
-The repository README includes Docker and Charliecloud examples for containerized execution.
+See [Sandboxing](../sandbox.md#container-image) for container examples.
 
 ## Responsible-use checklist
 

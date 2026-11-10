@@ -28,6 +28,28 @@ Additional agents may be available depending on optional dependencies and config
 - **Deep Review Agent**: runs an iterative adversarial review with solution, critique, and competitor/stakeholder phases, then synthesizes a final answer/report.
 - **Hypothesizer Agent**: maintains a persistent Markdown hypothesis-space artifact that other agents can read from the experiences store.
 
+## Simulation agent
+
+Import `SimulatorAgent` from `ursa.agents`. With an embedding model supplied,
+its `docs_path` constructor/config option selects the RAG documentation
+folder and defaults to `../simulator_docs` for backward compatibility:
+
+```python
+from ursa.agents import SimulatorAgent
+
+agent = SimulatorAgent(
+    llm=model,
+    embedding=embedding_model,
+    workspace="simulation_workspace",
+    thread_id="simulation",
+    docs_path="/path/to/simulation/docs",
+)
+```
+
+Relative paths retain the existing RAGAgent resolution behavior (relative to
+its persistence directory, normally the workspace). In an environment member
+configuration, set this option under `config.docs_path`.
+
 ## Web and external information
 
 Web/search tools are opt-in for information-control reasons. When launching the
@@ -47,6 +69,11 @@ rely on local workspace, experience, RAG, MCP, or other explicitly configured
 tools.
 
 ## Composing agents
+
+For a fixed child stage inside a custom LangGraph, use
+[`BaseAgent.add_agent_node`][composing-agents-as-graph-nodes]. It gives the
+child an explicit input/output state boundary and a parent-owned checkpoint
+namespace.
 
 For work that benefits from multiple roles, URSA environments compose agents
 behind one `invoke(...)` interface. Use an [Agent Team][agent-teams] when one PI

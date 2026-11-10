@@ -54,6 +54,13 @@ It reports the URSA version and the running Python version and executable.
 For uv tool installations, it also reports the selected URSA extras and any
 additional packages installed in the tool environment.
 
+Run the complete health check with:
+
+```bash
+ursa self doctor
+ursa self doctor --json
+```
+
 When URSA was installed with `uv tool install`, it can update itself while
 preserving the installation recipe:
 

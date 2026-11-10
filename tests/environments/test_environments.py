@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from types import SimpleNamespace
 
+import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from ursa import security
 from ursa.environments import (
+    AgentEloEnvironment,
     AgentSymposiumConfig,
     AgentSymposiumEnvironment,
     AgentTeamConfig,
@@ -78,6 +81,15 @@ class RecordingOrganizer(RecordingMember):
         self.invocations.append(str(prompt))
         self.workspaces_seen.append(self.workspace)
         return {"final": f"organizer synthesis from {str(prompt)[:60]}"}
+
+
+class FailingMember(RecordingMember):
+    """Member that always raises, to exercise symposium fault containment."""
+
+    def invoke(self, prompt, **kwargs):
+        self.invocations.append(str(prompt))
+        self.workspaces_seen.append(self.workspace)
+        raise RuntimeError("member exploded")
 
 
 class AsyncRecordingMember(RecordingMember):
@@ -152,6 +164,73 @@ def fake_llm():
 def test_load_object_resolves_environment_short_names():
     assert load_object("AgentTeamEnvironment") is AgentTeamEnvironment
     assert load_object("AgentSymposiumEnvironment") is AgentSymposiumEnvironment
+
+
+@pytest.mark.parametrize("persist_members", [True, False])
+def test_elo_member_construction_preserves_default_names_and_workspaces(
+    tmp_path, persist_members
+):
+    env = AgentEloEnvironment(
+        llm=fake_llm(),
+        name="research",
+        workspace=tmp_path,
+        persist_members=persist_members,
+        members=[
+            {
+                "name": name,
+                "agent": "tests.environments.test_environments.RecordingMember",
+            }
+            for name in ("alpha", "beta")
+        ],
+    )
+    for name, member in env.members.items():
+        assert member.workspace == tmp_path / name
+        assert member.agent_name == (
+            f"research_{name}" if persist_members else None
+        )
+        assert member.kwargs.get("thread_id") == (
+            "ursa" if persist_members else None
+        )
+
+
+@pytest.mark.parametrize("persist_members", [True, False])
+def test_symposium_constructs_nested_team_with_inherited_settings(
+    tmp_path, persist_members
+):
+    env = AgentSymposiumEnvironment(
+        llm=fake_llm(),
+        name="research",
+        group="science",
+        workspace=tmp_path,
+        persist_members=persist_members,
+        organizer={
+            "name": "organizer",
+            "agent": "tests.environments.test_environments.RecordingOrganizer",
+        },
+        members=[
+            {
+                "name": "nested",
+                "agent": "AgentTeamEnvironment",
+                "config": {
+                    "pi": {
+                        "name": "lead",
+                        "agent": "tests.environments.test_environments.RecordingPI",
+                    },
+                    "members": [],
+                },
+            }
+        ],
+    )
+    team = env.members["nested"]
+    assert team.name == "nested"
+    assert team.workspace == tmp_path / "nested"
+    assert team.group == team.pi.group == "science"
+    assert team.persist_members is persist_members
+    assert team.pi.workspace == team.workspace
+    assert team.pi.agent_name == ("lead" if persist_members else None)
+    assert team.pi.kwargs.get("thread_id") == (
+        "ursa" if persist_members else None
+    )
 
 
 def test_environment_default_workspace_uses_group_cache(monkeypatch, tmp_path):
@@ -558,8 +637,12 @@ def test_environment_config_defaults_use_group_cache(monkeypatch, tmp_path):
 def test_team_config_resolves_inference_provider_keyring(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(
-        "keyring.get_password",
-        lambda service, username: calls.append((service, username)) or "secret",
+        "ursa.util.secrets.get_keyring",
+        lambda: SimpleNamespace(
+            get_password=lambda service, username: (
+                calls.append((service, username)) or "secret"
+            )
+        ),
     )
     path = tmp_path / "team.yaml"
     path.write_text(
@@ -594,3 +677,91 @@ def test_result_to_text_extracts_common_result_shapes():
         == "last message"
     )
     assert result_to_text("plain") == "plain"
+
+
+def test_symposium_contains_member_failure_without_aborting_run(tmp_path):
+    config = {
+        "name": "resilient_symposium",
+        "organizer": {
+            "name": "organizer",
+            "role": "synth",
+            "agent": "tests.environments.test_environments.RecordingOrganizer",
+        },
+        "members": [
+            {
+                "name": "healthy",
+                "role": "reliable solver",
+                "agent": "tests.environments.test_environments.RecordingMember",
+            },
+            {
+                "name": "broken",
+                "role": "unreliable solver",
+                "agent": "tests.environments.test_environments.FailingMember",
+            },
+        ],
+        "revision_rounds": 1,
+        "workspace": str(tmp_path),
+    }
+    symposium = AgentSymposiumEnvironment(
+        llm=fake_llm(), config=config, persist_members=False
+    )
+
+    # The run must complete even though `broken` raises in every phase.
+    result = symposium.invoke("problem with an unreliable participant")
+
+    assert set(result["initial_writeups"]) == {"healthy", "broken"}
+    # Healthy sibling work is preserved verbatim.
+    assert "saw" in result["initial_writeups"]["healthy"]
+    # The failing member's contribution is recorded as contained failure text.
+    broken_text = result["initial_writeups"]["broken"]
+    assert "failed the initial_work phase" in broken_text
+    assert "RuntimeError" in broken_text
+    # Review + revision still ran and synthesis was produced.
+    assert set(result["final_writeups"]) == {"healthy", "broken"}
+    assert "organizer synthesis" in result["final"]
+
+
+def test_symposium_failure_events_are_emitted_per_phase(tmp_path):
+    config = {
+        "name": "failure_events_symposium",
+        "organizer": {
+            "name": "organizer",
+            "role": "synth",
+            "agent": "tests.environments.test_environments.RecordingOrganizer",
+        },
+        "members": [
+            {
+                "name": "broken",
+                "role": "unreliable solver",
+                "agent": "tests.environments.test_environments.FailingMember",
+            },
+        ],
+        "revision_rounds": 1,
+        "workspace": str(tmp_path),
+    }
+    symposium = AgentSymposiumEnvironment(
+        llm=fake_llm(), config=config, persist_members=False
+    )
+    seen: list[str] = []
+
+    async def run():
+        events = symposium._events({"callbacks": []})
+        original = events.aemit
+
+        async def capture(*args, **kwargs):
+            event_type = kwargs.get("event_type")
+            if event_type:
+                seen.append(event_type)
+            return await original(*args, **kwargs)
+
+        events.aemit = capture  # type: ignore[method-assign]
+        symposium._events = lambda config: events  # type: ignore[method-assign]
+        return await symposium.ainvoke("failing task")
+
+    result = asyncio.run(run())
+
+    assert result["final"]
+    assert "initial_work_failed" in seen
+    # The symposium as a whole must NOT report failure.
+    assert "symposium_failed" not in seen
+    assert "symposium_completed" in seen
