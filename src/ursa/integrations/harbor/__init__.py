@@ -1140,7 +1140,7 @@ def prebuild_sifs(
         ),
     ] = None,
 ) -> None:
-    """Pre-build Dockerfile-backed SIF files for Harbor tasks."""
+    """Build or fetch cached SIFs for Harbor tasks and their verifiers."""
     from ursa.integrations.harbor.validation import (
         discover_harbor_tasks,
         prebuild_harbor_task,

@@ -171,7 +171,7 @@ async def prebuild_harbor_task(
     force_build: bool = False,
     image_cache_dir: Path | str | None = None,
 ) -> list[Path]:
-    """Build main, Compose-build, and separate-verifier SIFs for one task."""
+    """Build or fetch main, Compose, and separate-verifier SIFs for one task."""
     paths: dict[Path, None] = {}
     for environment in _task_environments(
         Task(task_dir), purpose="prebuild", image_cache_dir=image_cache_dir

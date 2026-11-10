@@ -134,6 +134,11 @@ uv run -m ursa.integrations.harbor validate benchmark/tasks
 uv run -m ursa.integrations.harbor prebuild benchmark/tasks
 ```
 
+Prebuild includes separate verifier environments and every Compose service:
+Dockerfile builds are built, and `image:` references are fetched as local SIFs.
+Runs reuse these files from the same cache without contacting the registry.
+Use `prebuild --force` to rebuild Dockerfiles and refresh fetched images.
+
 ### Compose and networking
 
 `environment/docker-compose.yaml` starts sidecars through

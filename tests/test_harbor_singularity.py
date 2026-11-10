@@ -614,6 +614,75 @@ async def test_marking_a_live_sif_twice_keeps_its_usage_marker(
     assert marker.read_text().splitlines() == [environment._sif_use_token]
 
 
+async def test_image_pull_cache_reuses_valid_images_and_refreshes_on_request(
+    tmp_path, monkeypatch
+):
+    environment = _environment(tmp_path)
+    environment._image_cache_dir = tmp_path / "cache"
+    pulls = []
+
+    async def run(*command):
+        if command[1] == "sif":
+            if Path(command[-1]).read_bytes() != b"valid sif":
+                raise RuntimeError("invalid SIF")
+        else:
+            assert command[1] == "pull"
+            pulls.append(command)
+            await asyncio.sleep(0.01)
+            Path(command[-2]).write_bytes(b"valid sif")
+
+    monkeypatch.setattr(environment, "_run", run)
+    first, second = await asyncio.gather(
+        environment._pull_image_sif("ubuntu:24.04", False),
+        environment._pull_image_sif("docker://ubuntu:24.04", False),
+    )
+    assert first == second and len(pulls) == 1
+    assert pulls[0][-1] == "docker://ubuntu:24.04"
+    assert await environment._pull_image_sif("ubuntu:24.04", True) == first
+    assert len(pulls) == 2 and "--disable-cache" in pulls[-1]
+
+    first.write_bytes(b"corrupt sif")
+    assert await environment._pull_image_sif("ubuntu:24.04", False) == first
+    assert len(pulls) == 3 and first.read_bytes() == b"valid sif"
+    assert await environment._pull_image_sif("ubuntu:22.04", False) != first
+    monkeypatch.setattr(harbor_singularity.platform, "machine", lambda: "other")
+    assert await environment._pull_image_sif("ubuntu:24.04", False) != first
+    assert len(pulls) == 5
+    assert not list(environment._image_cache_dir.glob("*.tmp.sif"))
+
+
+@pytest.mark.parametrize("failure", ["download", "invalid", "cancelled"])
+async def test_failed_image_refresh_preserves_cache(
+    tmp_path, monkeypatch, failure
+):
+    environment = _environment(tmp_path)
+    environment._image_cache_dir = tmp_path / "cache"
+    refreshing = False
+
+    async def run(*command):
+        if command[1] == "sif":
+            if Path(command[-1]).read_bytes() != b"valid sif":
+                raise RuntimeError("invalid SIF")
+            return
+        Path(command[-2]).write_bytes(
+            b"partial" if refreshing else b"valid sif"
+        )
+        if refreshing and failure == "download":
+            raise RuntimeError("download failed")
+        if refreshing and failure == "cancelled":
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(environment, "_run", run)
+    cached = await environment._pull_image_sif("ubuntu:24.04", False)
+    refreshing = True
+    error = asyncio.CancelledError if failure == "cancelled" else RuntimeError
+    with pytest.raises(error):
+        await environment._pull_image_sif("ubuntu:24.04", True)
+    assert cached.read_bytes() == b"valid sif"
+    assert not list(environment._image_cache_dir.glob("*.tmp.sif"))
+    assert await environment._pull_image_sif("ubuntu:24.04", False) == cached
+
+
 @pytest.mark.parametrize("scenario", ["simple", "missing", "replicas"])
 async def test_compose_conversion_assigns_each_service_a_workdir(
     tmp_path: Path, scenario: str

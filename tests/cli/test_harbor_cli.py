@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 try:
@@ -122,6 +123,78 @@ async def test_prebuild_harbor_task_builds_agent_and_verifier_sifs(
         (task / "tests", cache, True),
     ]
     assert paths == [cache / "environment.sif", cache / "tests.sif"]
+
+
+@pytest.mark.parametrize("force", [False, True])
+async def test_prebuild_includes_image_only_agent_and_verifier_services(
+    tmp_path, monkeypatch, force
+):
+    task = _task(
+        tmp_path,
+        _TASK_TOML.replace(
+            "[verifier.environment]", '[verifier.environment]\nworkdir = "/"'
+        )
+        .replace("[environment]", '[environment]\nworkdir = "/"')
+        .replace('network_mode = "no-network"', 'network_mode = "public"'),
+    )
+    cache = tmp_path / "cache"
+    for name, services in (
+        (
+            "environment",
+            {
+                "main": {"build": ".", "image": "local-agent:latest"},
+                "helper": {"image": "redis:7"},
+                "replica": {"image": "docker://redis:7"},
+            },
+        ),
+        (
+            "tests",
+            {
+                "main": {"image": "alpine:3"},
+                "replica": {"image": "docker://alpine:3"},
+                "builder": {"build": "."},
+            },
+        ),
+    ):
+        (task / name / "docker-compose.yaml").write_text(
+            yaml.safe_dump({"services": services})
+        )
+    pulls, builds = [], []
+
+    async def pull(self, image, force_build):
+        image = self._image_uri(image)
+        pulls.append((image, force_build))
+        return cache / f"{image.rsplit('/', 1)[-1].replace(':', '-')}.sif"
+
+    async def build(self, force_build, **kwargs):
+        builds.append((kwargs["context_dir"], force_build))
+        return cache / f"{self.environment_dir.name}.sif"
+
+    monkeypatch.setattr(
+        DockerfileSingularityEnvironment, "_pull_image_sif", pull
+    )
+    monkeypatch.setattr(
+        DockerfileSingularityEnvironment, "_build_dockerfile_sif", build
+    )
+    paths = await prebuild_harbor_task(
+        task, force_build=force, image_cache_dir=cache
+    )
+
+    assert set(pulls) == {
+        ("docker://redis:7", force),
+        ("docker://alpine:3", force),
+    }
+    assert len(pulls) == 2
+    assert set(builds) == {
+        (task / "environment", force),
+        (task / "tests", force),
+    }
+    assert set(paths) == {
+        cache / "environment.sif",
+        cache / "tests.sif",
+        cache / "redis-7.sif",
+        cache / "alpine-3.sif",
+    }
 
 
 def test_harbor_prebuild_command_reports_built_sifs(tmp_path, monkeypatch):

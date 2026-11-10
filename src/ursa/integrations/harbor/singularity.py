@@ -1508,6 +1508,41 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         )
         return _compose_key(identity, service)
 
+    @staticmethod
+    def _image_uri(image: str) -> str:
+        if not isinstance(image, str) or not image:
+            raise ValueError("Singularity image must be a non-empty string")
+        return image if "://" in image else f"docker://{image}"
+
+    async def _pull_image_sif(self, image: str, force_build: bool) -> Path:
+        image = self._image_uri(image)
+        digest = hashlib.sha256(
+            json.dumps([platform.machine(), image]).encode()
+        ).hexdigest()[:24]
+        output = self._image_cache_dir / f"image-{digest}.sif"
+        self._image_cache_dir.mkdir(parents=True, exist_ok=True)
+        async with AsyncFileLock(output.with_suffix(".lock")):
+            if not force_build and await self._is_valid_sif(output):
+                return output
+            temporary = output.with_suffix(".tmp.sif")
+            temporary.unlink(missing_ok=True)
+            try:
+                await self._run(
+                    self._instance_runtime(),
+                    "pull",
+                    *(["--disable-cache"] if force_build else []),
+                    str(temporary),
+                    image,
+                )
+                if not await self._is_valid_sif(temporary):
+                    raise RuntimeError(
+                        f"Pulled image is not a valid SIF: {image}"
+                    )
+                temporary.replace(output)
+            finally:
+                temporary.unlink(missing_ok=True)
+        return output
+
     def _compose_build_inputs(
         self, build: str | dict[str, Any]
     ) -> tuple[Path, Path, tuple[str, ...], str | None]:
@@ -1549,27 +1584,21 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             target=target,
         )
 
-    async def _build_main_sif(self, force_build: bool) -> Path | None:
+    async def _build_main_sif(self, force_build: bool) -> Path:
         build = self._main_compose_build_inputs()
         if build is None and self._uses_compose:
             main = self._load_compose_config()["services"]["main"]
             if "image" in main:
-                return None
+                return await self._pull_image_sif(main["image"], force_build)
         if build is None:
             return await self._build_dockerfile_sif(force_build)
         return await self._build_sif(build, force_build)
 
     async def build_sifs(self, force_build: bool = False) -> list[Path]:
-        """Build every Dockerfile-backed SIF without starting an instance.
-
-        This includes the main environment and each Compose sidecar with a
-        ``build`` definition. Compose services that specify only ``image`` are
-        left as runtime image URIs and therefore do not produce a managed SIF
-        path here.
-        """
+        """Build or pull all environment and Compose SIFs without starting them."""
         force_build = force_build or self._force_pull
         main_path = await self._build_main_sif(force_build)
-        paths = [] if main_path is None else [main_path]
+        paths = [main_path]
         if not self._uses_compose:
             return paths
 
@@ -1586,14 +1615,27 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
                 None,
             )
         seen_builds = {main_build} if main_build is not None else set()
+        main_image = compose_config["services"]["main"].get("image")
+        seen_images = (
+            {self._image_uri(main_image)}
+            if main_build is None and main_image is not None
+            else set()
+        )
         for name, service in compose_config["services"].items():
-            if name == "main" or "build" not in service:
+            if name == "main":
                 continue
-            build = self._compose_build_inputs(service["build"])
-            if build in seen_builds:
-                continue
-            seen_builds.add(build)
-            path = await self._build_sif(build, force_build)
+            if "build" in service:
+                build = self._compose_build_inputs(service["build"])
+                if build in seen_builds:
+                    continue
+                seen_builds.add(build)
+                path = await self._build_sif(build, force_build)
+            else:
+                image = self._image_uri(service["image"])
+                if image in seen_images:
+                    continue
+                seen_images.add(image)
+                path = await self._pull_image_sif(image, force_build)
             if path not in paths:
                 paths.append(path)
         return paths
@@ -1605,26 +1647,17 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         force_build: bool,
     ) -> str:
         if service_name == "main":
-            if "build" in service or "image" not in service:
-                if self._sif_path is None:
-                    raise RuntimeError("Main Singularity image is not prepared")
-                await self._mark_sif_in_use(self._sif_path)
-                return str(self._sif_path)
-        if "build" in service:
+            if self._sif_path is None:
+                raise RuntimeError("Main Singularity image is not prepared")
+            path = self._sif_path
+        elif "build" in service:
             path = await self._build_sif(
                 self._compose_build_inputs(service["build"]), force_build
             )
-            await self._mark_sif_in_use(path)
-            return str(path)
-        image = service["image"]
-        if not isinstance(image, str) or not image:
-            raise ValueError(
-                f"Docker Compose image on service {service_name!r} "
-                "must be a non-empty string"
-            )
-        if "://" not in image:
-            image = f"docker://{image}"
-        return image
+        else:
+            path = await self._pull_image_sif(service["image"], force_build)
+        await self._mark_sif_in_use(path)
+        return str(path)
 
     async def _prepare_compose_project(self, force_build: bool) -> None:
         self._compose_project_dir = Path(

@@ -395,6 +395,70 @@ async def test_compose_overlay_survives_network_transition(
         await _assert_persistent_after_isolation(env)
 
 
+async def test_prebuilt_compose_images_start_without_pulling(
+    tmp_path, ubuntu_sif, monkeypatch
+):
+    from harbor.models.task.task import Task
+
+    from ursa.integrations.harbor.validation import (
+        _task_environments,
+        prebuild_harbor_task,
+    )
+
+    _require_fakeroot(ubuntu_sif)
+    task_dir = tmp_path / "task"
+    for directory in ("environment", "tests"):
+        (task_dir / directory).mkdir(parents=True)
+        compose = 'services:\n  main:\n    image: "ubuntu:24.04"\n'
+        if directory == "environment":
+            compose += '  helper:\n    image: "ubuntu:24.04"\n'
+        (task_dir / directory / "docker-compose.yaml").write_text(compose)
+    (task_dir / "instruction.md").write_text("Inspect the environment.\n")
+    (task_dir / "task.toml").write_text(
+        '[environment]\nworkdir = "/"\nstorage_mb = 64\n'
+        '[verifier]\nenvironment_mode = "separate"\n'
+        '[verifier.environment]\nworkdir = "/"\nstorage_mb = 64\n'
+    )
+    cache = tmp_path / "cache"
+    images = await prebuild_harbor_task(task_dir, image_cache_dir=cache)
+    assert len(images) == 1 and images[0].is_file()
+    run = DockerfileSingularityEnvironment._run
+
+    async def offline(self, *command, **kwargs):
+        assert command[1] not in {"pull", "build"}
+        return await run(self, *command, **kwargs)
+
+    monkeypatch.setattr(DockerfileSingularityEnvironment, "_run", offline)
+    assert await prebuild_harbor_task(task_dir, image_cache_dir=cache) == images
+    environments = _task_environments(
+        Task(task_dir), purpose="prebuild", image_cache_dir=cache
+    )
+    assert len(environments) == 2
+    for environment in environments:
+        environment._fakeroot = True
+        environment.trial_paths.mkdir()
+        try:
+            await environment.start(force_build=False)
+            assert environment._sif_path == images[0]
+            assert (
+                "Ubuntu"
+                in (await environment.exec("cat /etc/os-release")).stdout
+            )
+            if environment.environment_dir.name == "environment":
+                assert (
+                    "Ubuntu"
+                    in (
+                        await environment.service_exec(
+                            "cat /etc/os-release", service="helper"
+                        )
+                    ).stdout
+                )
+            assert environment._sif_in_use_path(images[0]).is_file()
+        finally:
+            await _cleanup(environment)
+        assert not environment._sif_in_use_path(images[0]).exists()
+
+
 async def test_network_transition_restores_connectivity(tmp_path, ubuntu_sif):
     _require_fakeroot(ubuntu_sif)
     with _server() as port:
