@@ -1,6 +1,7 @@
 """Tests for the ``python -m ursa.integrations.harbor`` CLI."""
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 import yaml
@@ -197,7 +198,10 @@ async def test_prebuild_includes_image_only_agent_and_verifier_services(
     }
 
 
-def test_harbor_prebuild_command_reports_built_sifs(tmp_path, monkeypatch):
+@pytest.mark.parametrize("agents", [[], ["goose@v1.2.3", "codex"]])
+def test_harbor_prebuild_command_reports_built_sifs(
+    tmp_path, monkeypatch, agents
+):
     task = _task(tmp_path)
     cache = tmp_path / "sif-cache"
     observed = []
@@ -207,8 +211,9 @@ def test_harbor_prebuild_command_reports_built_sifs(tmp_path, monkeypatch):
         *,
         force_build: bool,
         image_cache_dir: Path | None,
+        **kwargs,
     ) -> list[Path]:
-        observed.append((task_dir, force_build, image_cache_dir))
+        observed.append((task_dir, force_build, image_cache_dir, kwargs))
         return [cache / "agent.sif", cache / "verifier.sif"]
 
     monkeypatch.setattr(
@@ -222,11 +227,80 @@ def test_harbor_prebuild_command_reports_built_sifs(tmp_path, monkeypatch):
             "--force",
             "--image-cache-dir",
             str(cache),
+            "--agent-cache-dir",
+            str(tmp_path / "agents"),
+            "--agent-install-timeout-sec",
+            "900",
+            "--no-fakeroot",
+            *(argument for agent in agents for argument in ("--agent", agent)),
             str(task),
         ],
     )
 
     assert result.exit_code == 0
-    assert observed == [(task, True, cache)]
+    assert observed == [
+        (
+            task,
+            True,
+            cache,
+            {
+                "agents": agents or (),
+                "agent_cache_dir": tmp_path / "agents",
+                "agent_install_timeout_sec": 900,
+                "fakeroot": False,
+            },
+        )
+    ]
     assert f"OK   {task}: 2 SIF file(s)" in result.stdout
     assert "Pre-built 2 SIF file(s) for 1 Harbor task(s)." in result.stdout
+
+
+async def test_prebuild_builds_agent_layers_after_all_task_images(
+    tmp_path, monkeypatch
+):
+    task = _task(tmp_path)
+    events = []
+
+    async def build(self, force_build=False):
+        events.append(("image", self.environment_dir.name, force_build))
+        return [tmp_path / f"{self.environment_dir.name}.sif"]
+
+    async def layer(template, spec, **kwargs):
+        assert template.environment_dir == task / "environment"
+        assert template.network_policy.network_mode == NetworkMode.PUBLIC
+        assert template._agent_cache_dir == tmp_path / "agents"
+        assert template._fakeroot is False
+        events.append(("layer", spec, kwargs))
+        return tmp_path / "layer.img"
+
+    monkeypatch.setattr(DockerfileSingularityEnvironment, "build_sifs", build)
+    monkeypatch.setattr(
+        "ursa.integrations.harbor.validation.build_agent_layer", layer
+    )
+    await prebuild_harbor_task(
+        task,
+        force_build=True,
+        agents=["goose@v1.2.3", "codex", "goose@v1.2.3"],
+        agent_cache_dir=tmp_path / "agents",
+        fakeroot=False,
+        agent_install_timeout_sec=600,
+    )
+    assert events == [
+        ("image", "environment", True),
+        ("image", "tests", True),
+        ("layer", "goose@v1.2.3", {"force": True, "timeout_sec": 600}),
+        ("layer", "codex", {"force": True, "timeout_sec": 600}),
+    ]
+
+
+@pytest.mark.parametrize(
+    "agent", ["nop", "missing-agent", "goose@", "codex@1;bad"]
+)
+async def test_prebuild_rejects_invalid_installer_before_building(
+    tmp_path, monkeypatch, agent
+):
+    build = AsyncMock()
+    monkeypatch.setattr(DockerfileSingularityEnvironment, "build_sifs", build)
+    with pytest.raises(ValueError):
+        await prebuild_harbor_task(_task(tmp_path), agents=[agent])
+    build.assert_not_awaited()

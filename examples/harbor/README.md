@@ -139,6 +139,68 @@ Dockerfile builds are built, and `image:` references are fetched as local SIFs.
 Runs reuse these files from the same cache without contacting the registry.
 Use `prebuild --force` to rebuild Dockerfiles and refresh fetched images.
 
+### Agent install layers
+
+Prebuild can cache the complete installation, including system packages and
+installed binaries, in a read-only overlay:
+
+```bash
+export URSA_HARBOR_AGENT_CACHE="/shared/$USER/ursa-agent-layers"
+uv run -m ursa.integrations.harbor prebuild benchmark/tasks \
+  --agent goose --agent claude-code --agent codex
+```
+
+Each installer runs in a fresh environment based on the task's main SIF, without
+trial mounts, model credentials, inference, or verification. Only a successfully
+installed, stopped overlay is published. Concurrent prebuilds share a lock.
+Build overlays have at least 4 GiB of sparse capacity for temporary installer
+files; this does not change the trial's writable storage setting.
+Layers are keyed by the base image contents, agent/version, Harbor/runtime
+version, fakeroot setting, host user/home, and working directory. Use the same
+per-user cache on the prebuild and compute nodes.
+
+Select a layer when starting the environment and use URSA's installed-agent
+adapter so Harbor skips installation:
+
+```bash
+harbor run --path benchmark/tasks/example \
+  --agent ursa.integrations.harbor.installed_agents:Goose \
+  --model provider/model \
+  --env ursa.integrations.harbor.singularity:DockerfileSingularityEnvironment \
+  --environment-kwarg singularity_agent=goose
+```
+
+| Prebuild / `singularity_agent` name | Harbor agent import path |
+| --- | --- |
+| `goose` | `ursa.integrations.harbor.installed_agents:Goose` |
+| `claude-code` | `ursa.integrations.harbor.installed_agents:ClaudeCode` |
+| `codex` | `ursa.integrations.harbor.installed_agents:Codex` |
+
+Each trial mounts the cached installation read-only beneath its own writable
+overlay; its writable Harbor directories are seeded from that combined image.
+Trial changes never update the cached layer. An absent or mismatched layer fails
+with instructions to prebuild it. The adapters retain normal Harbor installation
+when no layer is selected. The original Harbor `goose` agent unconditionally
+reinstalls, so use the adapter to benefit from the cached installation.
+Separate verifier environments retain their own images without the agent layer.
+
+Use `--agent NAME@VERSION` during prebuild and
+`--environment-kwarg singularity_agent=NAME@VERSION` with
+`--agent-kwarg version=VERSION` during the run. Version strings are forwarded to
+Harbor's installer unchanged. `--agent-install-timeout-sec` adjusts the
+1800-second limit per installer. Prebuild honors the task's setup network policy;
+run it where installation is allowed, then reuse the layer for offline setup.
+Match any runtime fakeroot override with prebuild's `--fakeroot` or
+`--no-fakeroot`.
+
+The default cache is `$XDG_CACHE_HOME/ursa/harbor/agents` or
+`~/.cache/ursa/harbor/agents`. Override it with `URSA_HARBOR_AGENT_CACHE`,
+prebuild's `--agent-cache-dir`, or the environment's
+`singularity_agent_cache_dir`. `prebuild --force` rebuilds both images and the
+selected install layers. Omit `--agent` to build only images. Cached layers
+persist independently of artifact retention; clear them only when no trials or
+prebuilds are running.
+
 ### Compose and networking
 
 `environment/docker-compose.yaml` starts sidecars through

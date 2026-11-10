@@ -35,6 +35,8 @@ def _environment(
     overlay: bool = False,
     workdir: str | None = "/workspace",
     fakeroot: bool | None = False,
+    agent: str | None = None,
+    separate_verifier: bool = False,
 ) -> DockerfileSingularityEnvironment:
     environment_dir = tmp_path / "environment"
     environment_dir.mkdir()
@@ -73,11 +75,34 @@ def _environment(
             NetworkPolicy(network_mode=mode) for mode in phase_network_modes
         ],
         persistent_env={},
+        auto_mounts=[
+            dict(
+                type="bind",
+                source=str(trial_paths.verifier_dir),
+                target="/logs/verifier",
+            )
+        ]
+        if separate_verifier
+        else None,
+        singularity_agent=agent,
         singularity_fakeroot=fakeroot,
         singularity_overlay=overlay,
     )
     environment._runtime_path = str(tmp_path / "fake-singularity")
     return environment
+
+
+def test_agent_layer_selection_does_not_apply_to_separate_verifiers(tmp_path):
+    agent_path = tmp_path / "agent"
+    agent_path.mkdir()
+    verifier_path = tmp_path / "verifier"
+    verifier_path.mkdir()
+    agent = _environment(agent_path, agent="goose", overlay=True)
+    verifier = _environment(
+        verifier_path, agent="goose", separate_verifier=True
+    )
+    assert agent._agent_spec == "goose"
+    assert verifier._agent_spec is None
 
 
 def _option_value(command: list[str], option: str) -> str:
@@ -748,6 +773,8 @@ async def test_prepare_compose_project_wires_runtime_workdirs(
     environment._prepare_runtime_workdir()
     environment._staging_dir = tmp_path / "staging"
     environment._staging_dir.mkdir()
+    environment._agent_layer_path = tmp_path / "agent-layer.img"
+    environment._agent_layer_path.touch()
     monkeypatch.setattr(
         harbor_singularity,
         "_host_ca_certificates_pem",
@@ -766,6 +793,7 @@ async def test_prepare_compose_project_wires_runtime_workdirs(
     await environment._prepare_compose_project(force_build=False)
 
     assert observed["fakeroot"] is (runtime == "apptainer")
+    assert observed["main_agent_layer"] == environment._agent_layer_path
     workdirs = observed["service_workdirs"]
     assert isinstance(workdirs, dict) and set(workdirs) == {"main", "helper"}
     paths = [path for values in workdirs.values() for path in values]
@@ -795,6 +823,32 @@ async def test_prepare_compose_project_wires_runtime_workdirs(
         "CURL_CA_BUNDLE": "/staging/host-ca-certificates.crt",
     }
     environment._cleanup_compose_project()
+    environment._cleanup_staging()
+
+
+async def test_agent_layer_is_read_only_during_seeding_and_below_trial_overlay(
+    tmp_path, monkeypatch
+):
+    environment = _environment(tmp_path)
+    _prepare_started_environment(environment, tmp_path)
+    environment._agent_layer_path = tmp_path / "agent-layer.img"
+    environment._agent_layer_path.touch()
+    command = environment._instance_start_command()
+    overlays = [
+        command[index + 1]
+        for index, item in enumerate(command)
+        if item == "--overlay"
+    ]
+    assert overlays == [
+        f"{environment._agent_layer_path}:ro",
+        str(environment._overlay_path),
+    ]
+    run = AsyncMock()
+    monkeypatch.setattr(environment, "_run", run)
+    await environment._seed_harbor_bind_sources()
+    seed_command = run.call_args.args
+    assert f"{environment._agent_layer_path}:ro" in seed_command
+    assert str(environment._overlay_path) not in seed_command
     environment._cleanup_staging()
 
 

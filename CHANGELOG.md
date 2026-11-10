@@ -4,6 +4,7 @@
 
 - Added Harbor 0.25 support with reusable agent/provider configuration.
 - Added artifact retention, archive, and restore commands to the Harbor CLI.
+- Cached complete Harbor agent install layers for Apptainer/Singularity runs.
 
 ## v0.17.3
 

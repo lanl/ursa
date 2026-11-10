@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+from collections.abc import Sequence
 from pathlib import Path
 
 from harbor.models.task.config import (
@@ -25,6 +27,10 @@ from harbor.trial.network_policy import (
     resolve_trial_network_plan,
 )
 
+from ursa.integrations.harbor.agent_layers import (
+    agent_installer,
+    build_agent_layer,
+)
 from ursa.integrations.harbor.singularity import (
     DockerfileSingularityEnvironment,
 )
@@ -170,14 +176,45 @@ async def prebuild_harbor_task(
     *,
     force_build: bool = False,
     image_cache_dir: Path | str | None = None,
+    agents: Sequence[str] = (),
+    agent_cache_dir: Path | str | None = None,
+    agent_install_timeout_sec: float = 1800,
+    fakeroot: bool | None = None,
 ) -> list[Path]:
-    """Build or fetch main, Compose, and separate-verifier SIFs for one task."""
-    paths: dict[Path, None] = {}
-    for environment in _task_environments(
-        Task(task_dir), purpose="prebuild", image_cache_dir=image_cache_dir
+    """Cache task/verifier SIFs and optionally build complete agent install layers.
+
+    Each NAME[@VERSION] installer runs in a fresh disposable task environment.
+    Only the completed install overlay survives; no inference or verification runs.
+    """
+    if (
+        not math.isfinite(agent_install_timeout_sec)
+        or agent_install_timeout_sec <= 0
     ):
+        raise ValueError(
+            "agent_install_timeout_sec must be positive and finite"
+        )
+    installers = tuple(dict.fromkeys(agents))
+    for spec in installers:
+        agent_installer(spec)
+    paths: dict[Path, None] = {}
+    environments = _task_environments(
+        Task(task_dir), purpose="prebuild", image_cache_dir=image_cache_dir
+    )
+    for environment in environments:
         paths.update(
             dict.fromkeys(await environment.build_sifs(force_build=force_build))
+        )
+    template = environments[0]
+    if fakeroot is not None:
+        template._fakeroot = fakeroot
+    if agent_cache_dir is not None:
+        template._agent_cache_dir = Path(agent_cache_dir).expanduser().resolve()
+    for spec in installers:
+        await build_agent_layer(
+            template,
+            spec,
+            force=force_build,
+            timeout_sec=agent_install_timeout_sec,
         )
     return list(paths)
 

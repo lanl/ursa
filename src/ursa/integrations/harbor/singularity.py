@@ -604,6 +604,7 @@ async def docker_compose_to_singularity_compose(
     main_mounts: Sequence[Mapping[str, Any]] = (),
     network_mode: NetworkMode = NetworkMode.PUBLIC,
     fakeroot: bool | None = None,
+    main_agent_layer: Path | None = None,
     main_overlay: Path | None = None,
     service_workdirs: Mapping[str, Sequence[Path]] | None = None,
 ) -> dict[str, list[str]]:
@@ -663,6 +664,8 @@ async def docker_compose_to_singularity_compose(
         start_options = ["containall", "no-home"]
         if fakeroot:
             start_options.insert(0, "fakeroot")
+        if name == "main" and main_agent_layer is not None:
+            start_options.append(f"overlay={main_agent_layer}:ro")
         if name == "main" and main_overlay is not None:
             start_options.append(f"overlay={main_overlay}")
         elif main_overlay is not None:
@@ -790,6 +793,8 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         self,
         *args,
         singularity_image_cache_dir: Path | str | None = None,
+        singularity_agent: str | None = None,
+        singularity_agent_cache_dir: Path | str | None = None,
         singularity_force_pull: bool = False,
         singularity_fakeroot: bool | None = None,
         singularity_overlay: bool = True,
@@ -816,6 +821,28 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             else self._default_image_cache_dir()
         )
         self._force_pull = singularity_force_pull
+        # Harbor 0.25 forwards environment kwargs to separate verifiers too.
+        # Their explicit auto-mount list contains only the verifier log mount;
+        # they must use their own image without an agent installation layer.
+        verifier_only = {
+            PurePosixPath(mount["target"])
+            for mount in kwargs.get("auto_mounts") or []
+        } == {EnvironmentPaths.verifier_dir}
+        self._agent_spec = None if verifier_only else singularity_agent
+        self._agent_cache_dir = (
+            Path(
+                singularity_agent_cache_dir
+                or os.environ.get("URSA_HARBOR_AGENT_CACHE")
+                or self._cache_root() / "agents"
+            )
+            .expanduser()
+            .resolve()
+        )
+        self._agent_layer_path: Path | None = None
+        if self._agent_spec is not None and not singularity_overlay:
+            raise ValueError(
+                "An agent install layer requires a writable trial overlay"
+            )
         self._fakeroot = singularity_fakeroot
         self._overlay_enabled = singularity_overlay
         self._runtime_path: str | None = None
@@ -1709,6 +1736,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             main_mounts=main_mounts,
             network_mode=self._network_policy.network_mode,
             fakeroot=self._fakeroot,
+            main_agent_layer=self._agent_layer_path,
             main_overlay=self._overlay_path,
             service_workdirs=service_workdirs,
         )
@@ -1856,6 +1884,8 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             args.extend(["--pwd", pwd])
         if self._fakeroot:
             args.append("--fakeroot")
+        if self._agent_layer_path is not None:
+            args.extend(["--overlay", f"{self._agent_layer_path}:ro"])
         if include_overlay and self._overlay_path is not None:
             args.extend(["--overlay", str(self._overlay_path)])
         if (
@@ -2305,6 +2335,14 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             self._sif_path = await self._build_main_sif(force_build)
             if self._sif_path is not None:
                 await self._mark_sif_in_use(self._sif_path)
+            if self._agent_spec is not None:
+                from ursa.integrations.harbor.agent_layers import (
+                    build_agent_layer,
+                )
+
+                self._agent_layer_path = await build_agent_layer(
+                    self, self._agent_spec, require_cached=True
+                )
             self._prepare_runtime_workdir()
             self._scratch_dir = Path(
                 tempfile.mkdtemp(prefix="ursa-harbor-singularity-")
@@ -2372,6 +2410,9 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         self._scratch_dir = None
         self._staging_dir = None
         self._overlay_path = None
+        if self._agent_layer_path is not None:
+            self._agent_layer_path.unlink(missing_ok=True)
+        self._agent_layer_path = None
         self._cleanup_runtime_workdir()
 
     async def _cleanup_runtime_resources(self) -> None:

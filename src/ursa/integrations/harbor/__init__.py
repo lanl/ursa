@@ -1130,7 +1130,10 @@ def prebuild_sifs(
     paths: TaskPaths,
     force: Annotated[
         bool,
-        typer.Option("--force", help="Rebuild SIFs already present in cache"),
+        typer.Option(
+            "--force",
+            help="Rebuild cached SIFs and selected agent install layers",
+        ),
     ] = False,
     image_cache_dir: Annotated[
         Path | None,
@@ -1139,8 +1142,37 @@ def prebuild_sifs(
             help="Override the URSA Harbor SIF cache directory",
         ),
     ] = None,
+    agents: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--agent",
+            help="Cache a complete agent install layer (NAME or NAME@VERSION); repeat for multiple agents",
+        ),
+    ] = None,
+    agent_cache_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--agent-cache-dir",
+            help="Agent install layer cache shared with later Apptainer/Singularity runs",
+        ),
+    ] = None,
+    agent_install_timeout_sec: Annotated[
+        float,
+        typer.Option(
+            "--agent-install-timeout-sec",
+            min=0.001,
+            help="Timeout per agent installation while building its cached layer",
+        ),
+    ] = 1800,
+    fakeroot: Annotated[
+        bool | None,
+        typer.Option(
+            "--fakeroot/--no-fakeroot",
+            help="Match the fakeroot setting used by later runs (default: runtime-dependent)",
+        ),
+    ] = None,
 ) -> None:
-    """Build or fetch cached SIFs for Harbor tasks and their verifiers."""
+    """Cache task/verifier images and optionally complete agent install layers."""
     from ursa.integrations.harbor.validation import (
         discover_harbor_tasks,
         prebuild_harbor_task,
@@ -1153,10 +1185,18 @@ def prebuild_sifs(
         images: set[Path] = set()
         for task in tasks:
             try:
+                if agents:
+                    typer.echo(
+                        f"INSTALL {task}: {', '.join(dict.fromkeys(agents))}"
+                    )
                 built = await prebuild_harbor_task(
                     task,
                     force_build=force,
                     image_cache_dir=image_cache_dir,
+                    agents=agents or (),
+                    agent_cache_dir=agent_cache_dir,
+                    agent_install_timeout_sec=agent_install_timeout_sec,
+                    fakeroot=fakeroot,
                 )
             except Exception as exc:
                 failures += 1
@@ -1176,6 +1216,10 @@ def prebuild_sifs(
     typer.echo(
         f"Pre-built {image_count} SIF file(s) for {len(tasks)} Harbor task(s)."
     )
+    if agents:
+        typer.echo(
+            f"Cached agent install layers: {', '.join(dict.fromkeys(agents))}."
+        )
 
 
 @app.command("runner")
