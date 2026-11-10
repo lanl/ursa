@@ -4,7 +4,7 @@ import mimetypes
 from pathlib import Path
 
 import pymupdf
-from langchain.tools import ToolRuntime
+from langchain.tools import ToolException, ToolRuntime
 from langchain_core.messages.content import (
     ImageContentBlock,
     TextContentBlock,
@@ -16,6 +16,14 @@ from ursa.agents.base import AgentContext
 from ursa.tools.read_file_tool import _validate_read_path
 
 logger = logging.getLogger(__name__)
+
+
+class ImageReadError(ToolException):
+    """A recoverable image path or image-content error from a tool call."""
+
+
+class ImageSizeError(ImageReadError, ValueError):
+    """An image exceeds the tool's input-size limit."""
 
 
 @tool
@@ -30,13 +38,17 @@ def read_image_tool(
     assert resolved_path is not None
     try:
         image_block = image_block_from_file(resolved_path)
-    except Exception as e:
+    except (ImageReadError, OSError, pymupdf.FileDataError) as exc:
         logger.exception(
             "Image read failed",
-            exc_info=e,
+            exc_info=exc,
             extra={"image_path": str(resolved_path)},
         )
-        raise
+        if isinstance(exc, ImageReadError):
+            raise
+        raise ImageReadError(
+            f"Could not read image {image_path!r}: {exc}"
+        ) from exc
 
     try:
         display_path = str(resolved_path.relative_to(workspace))
@@ -63,13 +75,14 @@ def image_block_from_file(
 ) -> ImageContentBlock:
     file_size = filename.stat().st_size
     if file_size > (max_size_mb * 1024 * 1024):
-        raise ValueError(
+        raise ImageSizeError(
             f"File too large: {file_size / 1024 / 1024:.2f}MB "
             f"(max: {max_size_mb:0.1f}MB)"
         )
 
     mime_type, _ = mimetypes.guess_type(filename)
-    assert mime_type is not None
+    if mime_type is None:
+        raise ImageReadError(f"Unsupported image type: {filename.name}")
 
     if mime_type == "image/svg+xml":
         with pymupdf.open(filename) as document:

@@ -2,7 +2,7 @@ import difflib
 import time
 from pathlib import Path
 
-from langchain.tools import ToolRuntime
+from langchain.tools import ToolException, ToolRuntime
 from langchain_core.tools import tool
 
 from ursa.agents.base import AgentContext
@@ -27,16 +27,16 @@ def _experiences_dir(runtime: ToolRuntime[AgentContext]) -> Path:
 def _validate_experience_filename(filename: str) -> str:
     name = filename.strip()
     if not name:
-        raise ValueError("Experience filename must not be empty.")
+        raise ToolException("Experience filename must not be empty.")
 
     path = Path(name)
     if path.is_absolute() or path.name != name or name in {".", ".."}:
-        raise ValueError(
+        raise ToolException(
             "Experience filename must be a simple relative file name within the experiences directory."
         )
 
     if path.suffix.lower() != ".md":
-        raise ValueError(
+        raise ToolException(
             f"Experience files, {name} , must use the .md extension."
         )
 

@@ -4,10 +4,11 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.tools import tool
 
 from tests.composite_helpers import CompositeFakeModel, request_text
-from ursa.agents import SimulatorAgent
+from ursa.agents import ChatAgent, SimulatorAgent
 from ursa.util import Checkpointer
 
 
@@ -40,6 +41,105 @@ def test_simulator_uses_documenter_and_runner_child_subgraphs(tmp_path):
 
     assert state["goal"] == "Run the simulation"
     assert state["messages"][-1].text == "final recap"
+    agent.close()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_simulator_recovers_from_invalid_experience_tool_filename(
+    tmp_path, asynchronous
+):
+    invalid_filename = "experiences/documentation.md"
+    corrected_filename = "documentation.md"
+    model = CompositeFakeModel(
+        messages=iter([
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "write_experience",
+                        "args": {
+                            "filename": invalid_filename,
+                            "content": "Documentation notes",
+                        },
+                        "id": "invalid-experience",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "write_experience",
+                        "args": {
+                            "filename": corrected_filename,
+                            "content": "Documentation notes",
+                        },
+                        "id": "corrected-experience",
+                    }
+                ],
+            ),
+            AIMessage(content="documentation recovered"),
+            AIMessage(content="simulation complete"),
+            AIMessage(content="final recap"),
+        ])
+    )
+    agent = SimulatorAgent(model, workspace=tmp_path, enable_metrics=False)
+
+    state = (
+        await agent.ainvoke("Run the simulation")
+        if asynchronous
+        else agent.invoke("Run the simulation")
+    )
+
+    errors = [
+        message
+        for message in model.plain_requests[1]
+        if isinstance(message, ToolMessage) and message.status == "error"
+    ]
+    assert len(errors) == 1
+    assert "simple relative file name" in errors[0].text
+    assert state["messages"][-1].text == "final recap"
+    assert not (
+        agent.den / "experiences" / "experiences" / "documentation.md"
+    ).exists()
+    assert (
+        agent.den / "experiences" / corrected_filename
+    ).read_text() == "Documentation notes\n"
+    if asynchronous:
+        await agent.aclose()
+    else:
+        agent.close()
+
+
+def test_chat_agent_propagates_unexpected_tool_value_error(tmp_path):
+    @tool
+    def unexpected_value_error() -> str:
+        """Raise a programming error that must not be converted to tool output."""
+        raise ValueError("unexpected tool bug")
+
+    model = CompositeFakeModel(
+        messages=iter([
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "unexpected_value_error",
+                        "args": {},
+                        "id": "unexpected-value-error",
+                    }
+                ],
+            )
+        ])
+    )
+    agent = ChatAgent(
+        model,
+        workspace=tmp_path,
+        enable_metrics=False,
+    )
+    agent.add_tool(unexpected_value_error)
+
+    with pytest.raises(ValueError, match="unexpected tool bug"):
+        agent.invoke("Trigger the tool")
     agent.close()
 
 

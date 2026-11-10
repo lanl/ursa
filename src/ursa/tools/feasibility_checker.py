@@ -1,3 +1,4 @@
+import math
 import random
 from typing import Annotated
 
@@ -5,6 +6,47 @@ import numpy as np
 import sympy as sp
 from langchain_core.tools import tool
 from sympy.parsing.sympy_parser import parse_expr, standard_transformations
+
+
+def _validate_input(
+    variable_name: list[str],
+    variable_type: list[str],
+    variable_bounds: list[list[float]],
+    samples: int,
+) -> str | None:
+    if len(variable_name) != len(variable_type) or len(variable_name) != len(
+        variable_bounds
+    ):
+        return (
+            "Error: variable_name, variable_type, and variable_bounds must "
+            "have the same length."
+        )
+    if samples < 1:
+        return "Error: samples must be at least 1."
+
+    supported_types = {"real", "continuous", "integer", "boolean", "logical"}
+    for name, variable_kind, bounds in zip(
+        variable_name, variable_type, variable_bounds
+    ):
+        if variable_kind.lower() not in supported_types:
+            return (
+                "Error: unknown variable type "
+                f"{variable_kind!r} for variable {name!r}. "
+                "Use 'real', 'integer', or 'boolean'."
+            )
+        if len(bounds) != 2:
+            return (
+                f"Error: bounds for variable {name!r} must contain [low, high]."
+            )
+        low, high = bounds
+        if not math.isfinite(low) or not math.isfinite(high):
+            return f"Error: bounds for variable {name!r} must be finite."
+        if low > high:
+            return (
+                f"Error: lower bound {low} exceeds upper bound {high} "
+                f"for variable {name!r}."
+            )
+    return None
 
 
 @tool(parse_docstring=True)
@@ -36,14 +78,16 @@ def heuristic_feasibility_check(
         A string indicating whether a feasible solution was found.
     """
 
-    symbols = sp.symbols(variable_name)
-
-    # Build a dict mapping each name to its Symbol, for parsing
-    locals_map = {name: sym for name, sym in zip(variable_name, symbols)}
+    if error := _validate_input(
+        variable_name, variable_type, variable_bounds, samples
+    ):
+        return error
 
     # Parse constraints into Sympy Boolean expressions
     parsed_constraints = []
     try:
+        symbols = sp.symbols(variable_name)
+        locals_map = {name: sym for name, sym in zip(variable_name, symbols)}
         for expr in constraints:
             parsed = parse_expr(
                 expr,
@@ -52,15 +96,15 @@ def heuristic_feasibility_check(
                 evaluate=False,
             )
             parsed_constraints.append(parsed)
+        funcs = [
+            sp.lambdify(symbols, c, modules=["math", "numpy"])
+            for c in parsed_constraints
+        ]
     except Exception as e:
         return f"Error parsing constraints: {e}"
 
     # Sampling loop
     n = len(parsed_constraints)
-    funcs = [
-        sp.lambdify(symbols, c, modules=["math", "numpy"])
-        for c in parsed_constraints
-    ]
     constraint_satisfied = np.zeros(n, dtype=int)
     for _ in range(samples):
         point = {}
@@ -73,10 +117,6 @@ def heuristic_feasibility_check(
                 value = random.uniform(low, high)
             elif typ in ("boolean", "logical"):
                 value = random.choice([False, True])
-            else:
-                raise ValueError(
-                    f"Unknown type {variable_type[i]} for variable {variable_name[i]}"
-                )
             point[sym] = value
 
         # Evaluate all constraints at this point

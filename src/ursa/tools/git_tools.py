@@ -2,7 +2,7 @@ import subprocess
 from collections.abc import Iterable
 from pathlib import Path
 
-from langchain.tools import ToolRuntime
+from langchain.tools import ToolException, ToolRuntime
 from langchain_core.tools import tool
 
 from ursa.agents.base import AgentContext
@@ -19,19 +19,21 @@ def _format_result(stdout: str | None, stderr: str | None) -> str:
 def _repo_path(
     repo_path: str | None, runtime: ToolRuntime[AgentContext]
 ) -> Path:
-    base = Path(runtime.context.workspace).absolute()
+    base = Path(runtime.context.workspace).resolve()
     if not repo_path:
         candidate = base
     else:
         candidate = Path(repo_path)
         if not candidate.is_absolute():
             candidate = base / candidate
-        candidate = candidate.absolute()
+        candidate = candidate.resolve()
 
     try:
         candidate.relative_to(base)
     except ValueError as exc:
-        raise ValueError("repo_path must resolve inside the workspace") from exc
+        raise ToolException(
+            "repo_path must resolve inside the workspace"
+        ) from exc
 
     return candidate
 
@@ -78,7 +80,7 @@ def git_status(
     repo = _repo_path(repo_path, runtime)
 
     # Warn if using workspace root without explicit repo_path
-    workspace = Path(runtime.context.workspace).absolute()
+    workspace = Path(runtime.context.workspace).resolve()
     if repo_path is None and repo == workspace:
         return (
             "WARNING: git_status called on workspace root without specifying repo_path. "
