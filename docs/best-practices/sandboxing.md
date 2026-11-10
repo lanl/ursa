@@ -40,17 +40,19 @@ access controls, safety settings, and troubleshooting.
 ## File access outside the workspace
 
 The workspace is a working directory, not a filesystem security boundary.
-`read_file` resolves the requested path and permits reads only within the
-workspace by default, without an additional LLM safety assessment. Relative paths are
-resolved from the workspace; absolute paths within it are also accepted.
-Paths containing `../` and symlinks are rejected if they resolve outside the
-workspace. Copy external inputs into the workspace before reading them with
-this tool. File contents may be sent to the configured model as tool results.
+`read_file` resolves the requested path and permits reads within the workspace
+and the skills directory configured through `URSA_SKILLS_PATH`, without an
+additional LLM safety assessment. Relative paths are resolved from the workspace
+and absolute paths within either permitted directory are also accepted.
+Paths containing `../` and symlinks are rejected if they resolve outside these
+directories, unless the override below is enabled. Copy other external inputs
+into the workspace before reading them with this tool. File contents may be
+sent to the configured model as tool results.
 
 To explicitly permit outside reads, set `URSA_ALLOW_UNSAFE_READS=1` before
 launching URSA. The values `1`, `true`, `yes`, and `on` enable this override
 (case-insensitive, with surrounding whitespace ignored). Unset or any other
-value keeps workspace restrictions enabled. This grants `read_file` access to
+value keeps reads restricted to the permitted directories. This grants `read_file` access to
 any file readable by the URSA process, including through absolute paths and
 symlinks.
 
@@ -78,9 +80,10 @@ filesystem or network isolation.
 
 ## Command timeout
 
-`run_command` executes through a shell with a default timeout of 60,000 seconds
-(one hour). Set `URSA_COMMAND_TIMEOUT_SECONDS` before launching URSA to change
-this limit, for example `URSA_COMMAND_TIMEOUT_SECONDS=300` for five minutues. 
+`run_command` executes through a shell with a default timeout of 600,000 seconds
+(approximately seven days). Set `URSA_COMMAND_TIMEOUT_SECONDS` before launching
+URSA to change this limit, for example `URSA_COMMAND_TIMEOUT_SECONDS=300` for
+five minutes.
 The value must be a positive integer number of seconds.
 When the timeout is reached, the tool returns a timeout message.
 This limit applies to subprocess execution, not the preceding LLM safety check.

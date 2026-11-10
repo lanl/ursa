@@ -19,15 +19,19 @@ from ursa.util.types import (
 
 @tool
 def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
-    """Read a file, restricted to the workspace by default.
+    """Read a file from the workspace or the configured skills directory.
+
+    URSA_SKILLS_PATH permits reads from the specified skills directory.
+    URSA_ALLOW_UNSAFE_READS enables reads outside these permitted directories.
 
     - If filename ends with .pdf, extract text from the PDF.
     - If extracted text is very small (likely scanned), optionally run OCR to add a text layer.
     - Otherwise read as UTF-8 text.
 
     Args:
-        filename: Path relative to the workspace, or an absolute path within it.
-            Paths and symlinks resolving outside the workspace are rejected
+        filename: Path relative to the workspace, or an absolute path within
+            the workspace or the directory specified by URSA_SKILLS_PATH.
+            Paths and symlinks resolving outside these directories are rejected
             unless the user enables URSA_ALLOW_UNSAFE_READS.
 
     Returns:
@@ -45,8 +49,9 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
         or (skills_path and full_filename.is_relative_to(skills_path))
     ):
         error = (
-            f"File path '{filename}' resolves outside workspace directory. "
-            "Files must be read within the workspace."
+            f"File path '{filename}' resolves outside workspace directory "
+            "and any configured skills directory. Files must be read within "
+            "the workspace or the directory specified by URSA_SKILLS_PATH."
         )
         events.emit(
             "Failed to read file",
