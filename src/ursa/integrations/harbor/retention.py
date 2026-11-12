@@ -12,6 +12,7 @@ from harbor.models.job.plugin import BaseJobPlugin
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ursa.artifacts.retention import (
+    MANIFEST,
     RetentionPlan,
     RetentionPolicy,
     plan_retention,
@@ -35,13 +36,15 @@ _PROTECTED = {
 
 class HarborRetentionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    collections: list[Literal["artifacts", "verifier"]] = Field(
+    collections: list[Literal["artifacts", "verifier", "trial"]] = Field(
         default_factory=lambda: ["artifacts"]
     )
     policy: RetentionPolicy
 
     @model_validator(mode="after")
     def protect_status(self) -> Self:
+        if "trial" in self.collections and set(self.collections) != {"trial"}:
+            raise ValueError("The trial collection must be selected on its own")
         if (
             self.policy.archive is not None
             and self.policy.archive.path == STATUS
@@ -61,15 +64,56 @@ def load_retention_config(path: Path) -> HarborRetentionConfig:
 
 
 def _scope(
-    root: Path, config: HarborRetentionConfig
+    root: Path, config: HarborRetentionConfig, *, require_finished: bool = False
 ) -> tuple[list[str], list[str]]:
     roots, protected = [], []
-    # Only recognized trial payloads are eligible. Agent logs, results, lock
-    # files and job metadata never enter the policy's matching scope.
-    for result in sorted(root.glob("*/result.json")):
-        trial = result.parent
+    trials = {result.parent for result in root.glob("*/result.json")}
+    removable_results = set()
+    whole_trial = "trial" in config.collections
+    manifest = root / MANIFEST
+    if whole_trial and (manifest.exists() or manifest.is_symlink()):
+        if manifest.is_symlink():
+            raise ValueError("Retention manifest must not be a symlink")
+        state = json.loads(manifest.read_text())
+        previous = RetentionPlan.model_validate(state["plan"])
+        if (
+            previous.root != str(root.resolve())
+            or previous.policy != config.policy
+            or previous.protected
+            or any(
+                Path(name).name != name
+                or name in {".", "..", ""}
+                or "\\" in name
+                for name in previous.roots
+            )
+        ):
+            raise ValueError("Existing retention policy/inventory differs")
+        # Cleanup can already have removed a trial's result. The recorded
+        # roots keep resumed and completed runs discoverable in that case.
+        trials.update(root / name for name in previous.roots)
+        if state["cleanup_started"]:
+            removable_results = {
+                entry.path
+                for entry in previous.entries
+                if previous.policy.removes(entry.action)
+            }
+    for trial in sorted(trials):
         if trial.is_symlink():
             raise ValueError(f"Trial directory must not be a symlink: {trial}")
+        result = trial / "result.json"
+        if require_finished:
+            if result.exists():
+                if not json.loads(result.read_text()).get("finished_at"):
+                    raise ValueError(
+                        f"Retention requires a finished trial: {trial}"
+                    )
+            elif result.relative_to(root).as_posix() not in removable_results:
+                raise ValueError(
+                    f"Retention requires a finished trial: {trial}"
+                )
+        if whole_trial:
+            roots.append(trial.relative_to(root).as_posix())
+            continue
         bases = [trial, *sorted((trial / "steps").glob("*"))]
         for base in bases:
             if base.is_symlink() or (trial / "steps").is_symlink():
@@ -111,12 +155,7 @@ def apply_job_retention(
         result = json.loads((root / "result.json").read_text())
         if not result.get("finished_at"):
             raise ValueError("Retention requires a finished Harbor job")
-        for trial in root.glob("*/result.json"):
-            if not json.loads(trial.read_text()).get("finished_at"):
-                raise ValueError(
-                    f"Retention requires a finished trial: {trial.parent}"
-                )
-        roots, protected = _scope(root, config)
+        roots, protected = _scope(root, config, require_finished=True)
         state = retain_artifacts(
             root, config.policy, roots=roots, protected=protected
         )

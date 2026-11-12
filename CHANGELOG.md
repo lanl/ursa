@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Added Harbor 0.25 support with reusable agent/provider configuration.
-- Added artifact retention, archive, and restore commands to the Harbor CLI.
+- Added artifact and whole-trial retention, archive, and restore to Harbor.
 - Cached Harbor agent installations, including URSA, for Apptainer/Singularity.
 - Made invalid experience filenames and other tool inputs recoverable by agents.
 

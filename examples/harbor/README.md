@@ -360,12 +360,7 @@ are still checked by Harbor at execution time.
 # retention.yaml
 retention:
   version: 1
-  collections: [artifacts]
-  rules:
-    - match: ["**/*.temporary"]
-      action: delete
-    - match: ["summary.json"]
-      action: keep
+  collections: [trial]
   default_action: archive
   archive:
     format: tar.xz
@@ -382,11 +377,20 @@ uv run harbor run --path benchmark/tasks/install-pytorch --agent oracle \
 
 The plugin runs after job finalization and all trial/verifier consumers finish,
 including failed trials. Cancelled, unfinalized jobs are untouched. It selects
-single-step and multi-step `artifacts` directories; add `verifier` to include
-verifier payloads. Agent logs, control files, results, collection `manifest.json`,
-rewards, and verifier `test-stdout.txt`/`test-stderr.txt` are protected.
+all files in each trial directory (the parent of `artifacts`) when
+`collections: [trial]` is selected. This includes agent logs and checkpoints,
+configuration, lock files, results, artifact manifests, verifier logs and rewards,
+and all multi-step outputs. Job-level files and retention metadata stay outside
+the archive. Select `trial` on its own.
 
-Rules use gitignore-style globs relative to each collection root. The first
+The default scope remains `collections: [artifacts]`; `[artifacts, verifier]`
+also includes verifier payloads. These narrower scopes protect collection
+manifests, rewards, and verifier test stdout/stderr, and leave other trial files
+untouched.
+
+Optional rules use gitignore-style globs relative to each selected root: the
+trial directory for `[trial]`, or each payload directory for the narrower scopes.
+For example, `agent/**` matches agent logs in trial scope. The first
 match wins; unmatched files default to `keep`. `**/*.dat` includes root and nested
 files; negative/comment patterns are rejected. Archives preserve full
 job-relative trial/step paths to avoid collisions.
@@ -396,12 +400,16 @@ hashes, then published without overwriting existing files. Only then are selecte
 originals deleted. Allow space for both sources and the archive; compression
 levels range from 0–9. A lock serializes retention writers, but other payload
 writers must have stopped. POSIX directory fsync protects publication and journals.
+With whole-trial retention and `remove_originals: true`, restore the trial before
+using Harbor commands that need its result, configuration, or logs.
 
 `retention.json` records the plan, file identities, sizes, hashes, deletions,
 link warnings, duration, and status. Reapplying a completed policy verifies it;
 interrupted compression restarts and interrupted cleanup resumes. Changed inputs,
-different policies, and unrelated archives are rejected. Each job supports one
-policy/archive. Harbor logs plugin errors without failing the job or changing
+including new trials, are rejected; whole-trial cleanup can resume even after
+trial results have been removed. Different policies
+and unrelated archives are rejected. Each job supports one policy/archive.
+Harbor logs plugin errors without failing the job or changing
 scores: require `status: complete` in `retention-status.json` to confirm retention.
 
 ### Preview, resume, and restore
