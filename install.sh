@@ -44,16 +44,20 @@ if [ -z "$uv" ]; then
     say "Downloading the uv installer..."
     curl -LsSf https://astral.sh/uv/install.sh -o "$uv_installer"
     say "uv installer path: $uv_installer"
-    printf 'Install uv? [y/N] '
-    case $input in
-    stdin) IFS= read -r answer || answer= ;;
-    tty) IFS= read -r answer </dev/tty || answer= ;;
-    *) say ""; fail "uv installation requires an interactive terminal" ;;
-    esac
-    case $answer in
-    y|Y|[yY][eE][sS]) ;;
-    *) fail "uv installation declined" ;;
-    esac
+    if [ -z "$input" ] && [ "${CI:-}" = true ]; then
+        say "No interactive terminal was found; automatically installing uv because CI=true."
+    else
+        printf 'Install uv? [y/N] '
+        case $input in
+        stdin) IFS= read -r answer || answer= ;;
+        tty) IFS= read -r answer </dev/tty || answer= ;;
+        *) say ""; fail "uv installation requires an interactive terminal" ;;
+        esac
+        case $answer in
+        y|Y|[yY][eE][sS]) ;;
+        *) fail "uv installation declined" ;;
+        esac
+    fi
     say "Installing uv..."
     sh "$uv_installer"
     directory=${UV_UNMANAGED_INSTALL:-${UV_INSTALL_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}}
