@@ -14,6 +14,12 @@ from pathlib import Path
 _disable_sbx_suggestion = """
 Consider setting the environment variable \
 URSA_SBX=0 to disable sandboxing.
+
+For windows (powershell):
+setx URSA_SBX=0
+
+For Linux/MacOS, add the following to ~/.bashrc, ~/.zshrc, or ~/.tcshrc:
+export URSA_SBX=0
 """.strip()
 
 
