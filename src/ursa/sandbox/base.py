@@ -96,6 +96,8 @@ class NoSandbox(BaseSandbox):
         return _run_process_group(
             cmd,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             shell=True,
             capture_output=True,
             timeout=self.timeout,

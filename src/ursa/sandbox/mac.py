@@ -110,6 +110,8 @@ class MacSandbox(BaseSandbox):
         return _run_process_group(
             [self.sbx_path, *self.args, "--", self.shell, "-c", cmd],
             text=True,
+            encoding="utf-8",
+            errors="replace",
             shell=False,
             capture_output=True,
             timeout=self.timeout,

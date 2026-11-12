@@ -223,6 +223,13 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
             stderr,
             runtime.context.tool_character_limit,
         )
+    except Exception as exc:  # noqa: BLE001
+        stdout, stderr = "", f"{type(exc).__name__}: {exc}"
+        stdout_fit, stderr_fit = _fit_streams_to_budget(
+            stdout,
+            stderr,
+            runtime.context.tool_character_limit,
+        )
 
     return f"STDOUT:\n{stdout_fit}\nSTDERR:\n{stderr_fit}"
 

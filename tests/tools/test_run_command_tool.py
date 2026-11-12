@@ -495,8 +495,58 @@ def test_mac_sandbox_uses_process_group_runner(monkeypatch, tmp_path):
     assert captured["command"][-3:] == [sandbox.shell, "-c", "python loop.py"]
     assert captured["kwargs"] == {
         "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
         "shell": False,
         "capture_output": True,
         "timeout": 7,
         "cwd": str(tmp_path.resolve()),
     }
+
+
+def test_run_command_replaces_undecodable_output(
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
+):
+    _patch_safety_result(monkeypatch, chat_model, is_safe=True)
+    (tmp_path / "data.bin").write_bytes(b"ok\xba\xffend")
+
+    result = invoke_with_parent_run(
+        lambda config: run_command.func(
+            "cat data.bin",
+            runtime=make_runtime(
+                tmp_path,
+                llm=chat_model,
+                tool_call_id="binary",
+                thread_id="run-thread",
+                config=config,
+            ),
+        )
+    )
+
+    assert result.startswith("STDOUT:\nok��end")
+
+
+def test_run_command_reports_subprocess_errors(
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
+):
+    _patch_safety_result(monkeypatch, chat_model, is_safe=True)
+
+    def raise_error(*args, **kwargs):
+        raise OSError("boom")
+
+    monkeypatch.setattr("ursa.sandbox.base._run_process_group", raise_error)
+
+    result = invoke_with_parent_run(
+        lambda config: run_command.func(
+            "ls",
+            runtime=make_runtime(
+                tmp_path,
+                llm=chat_model,
+                tool_call_id="oserror",
+                thread_id="run-thread",
+                config=config,
+            ),
+        )
+    )
+
+    assert "OSError: boom" in result

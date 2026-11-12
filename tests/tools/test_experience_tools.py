@@ -74,3 +74,26 @@ def test_read_experience_emits_error_event_when_read_fails(
     assert event["phase"] == "error"
     assert event["message"] == "Failed to read experience"
     assert event["error"] == "unreadable"
+
+
+def test_write_experience_append_preserves_unreadable_file(
+    tmp_path: Path,
+    chat_model: BaseChatModel,
+) -> None:
+    experiences = tmp_path / "experiences"
+    experiences.mkdir()
+    original = b"notes \xba\xff"
+    (experiences / "note.md").write_bytes(original)
+    runtime = make_runtime(tmp_path, llm=chat_model)
+    runtime.context = replace(runtime.context, den=tmp_path)
+
+    result, _ = invoke_with_event_recorder(
+        write_experience.func,
+        filename="note.md",
+        content="new entry",
+        append=True,
+        runtime=runtime,
+    )
+
+    assert result.startswith("Failed to append to note.md:")
+    assert (experiences / "note.md").read_bytes() == original
