@@ -314,6 +314,16 @@ class HITL:
         self._close_task: asyncio.Task[None] | None = None
         self._closed = False
 
+    @property
+    def card_database_path(self) -> Path:
+        """Keep the TUI journal with the named/ephemeral session checkpoint."""
+        return (
+            group_agents_dir(self.group)
+            / self.session_agent_name
+            / "db"
+            / "checkpointer.db"
+        )
+
     async def _get_checkpointer(
         self, checkpoint_path: Path
     ) -> AsyncSqliteSaver:

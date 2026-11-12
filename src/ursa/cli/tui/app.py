@@ -19,7 +19,7 @@ import yaml
 from rich.console import Console
 from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
-from textual import on
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
@@ -30,6 +30,9 @@ from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import config_file_value
 from ursa.cli.runtime import HITL
 from ursa.cli.tui.agent_info import load_agent_details
+from ursa.cli.tui.event_cards.card_store import CardStore
+from ursa.cli.tui.event_cards.card_stream import CardStream
+from ursa.cli.tui.event_cards.card_viewport import CardViewport
 from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.helpers import (
     COMMAND_CHOICES,
@@ -47,7 +50,6 @@ from ursa.cli.tui.widgets import (
     ModelSelection,
     PromptArea,
     ThemeScreen,
-    ToolMessage,
     WelcomeBanner,
 )
 from ursa.util import crossplatform
@@ -74,6 +76,84 @@ class ConversationScroll(VerticalScroll):
     def release_anchor(self) -> None:
         super().release_anchor()
         self._on_release()
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        viewport = getattr(self.app, "card_viewport", None)
+        if viewport is not None:
+            viewport.scrolled(old_value, new_value)
+
+    def _on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        at_top = self.scroll_y == 0
+        super()._on_mouse_scroll_up(event)
+        viewport = getattr(self.app, "card_viewport", None)
+        if (
+            at_top
+            and not (event.ctrl or event.shift)
+            and viewport is not None
+            and viewport.has_older
+        ):
+            self.release_anchor()
+            viewport.schedule_page(-1)
+            event.stop()
+
+    def _on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        at_bottom = self.scroll_y >= self.max_scroll_y
+        super()._on_mouse_scroll_down(event)
+        viewport = getattr(self.app, "card_viewport", None)
+        if (
+            at_bottom
+            and not (event.ctrl or event.shift)
+            and viewport is not None
+            and viewport.has_newer
+        ):
+            self.release_anchor()
+            viewport.schedule_page(1)
+            event.stop()
+
+    def _page_at_edge(self, direction: int) -> bool:
+        viewport = getattr(self.app, "card_viewport", None)
+        if viewport is None:
+            return False
+        if (direction < 0 and self.scroll_y == 0 and viewport.has_older) or (
+            direction > 0
+            and self.scroll_y >= self.max_scroll_y
+            and viewport.has_newer
+        ):
+            self.release_anchor()
+            viewport.schedule_page(direction)
+            return True
+        return False
+
+    def action_scroll_up(self) -> None:
+        if not self._page_at_edge(-1):
+            super().action_scroll_up()
+
+    def action_scroll_down(self) -> None:
+        if not self._page_at_edge(1):
+            super().action_scroll_down()
+
+    def action_page_up(self) -> None:
+        if not self._page_at_edge(-1):
+            super().action_page_up()
+
+    def action_page_down(self) -> None:
+        if not self._page_at_edge(1):
+            super().action_page_down()
+
+    def action_scroll_home(self) -> None:
+        viewport = getattr(self.app, "card_viewport", None)
+        if viewport is not None and viewport.records:
+            self.run_worker(viewport.home(), group="card-viewport")
+        else:
+            super().action_scroll_home()
+
+    def action_scroll_end(self) -> None:
+        viewport = getattr(self.app, "card_viewport", None)
+        if viewport is not None and viewport.records:
+            self.run_worker(viewport.end(), group="card-viewport")
+        else:
+            super().action_scroll_end()
 
 
 class UrsaTextualApp(App[None]):
@@ -138,7 +218,9 @@ class UrsaTextualApp(App[None]):
         self.output_tokens = 0
         self.cached_tokens = 0
         self.card_details_expanded = False
-        self.current_turn: Turn | None = None
+        self.current_turn: CardStream | None = None
+        self.card_store: CardStore | None = None
+        self.card_viewport: CardViewport | None = None
         self._hotlist_open = False
         self._hotlist_origin: tuple[str, tuple[int, int]] | None = None
         self._ui_thread_id: int | None = None
@@ -157,10 +239,52 @@ class UrsaTextualApp(App[None]):
         yield PromptArea()
         yield Static(id="status")
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self._ui_thread_id = threading.get_ident()
+        self.card_store = await asyncio.to_thread(
+            CardStore,
+            getattr(self.hitl, "card_database_path", ":memory:"),
+            getattr(self.hitl, "thread_id", "ursa"),
+        )
+        self.card_viewport = CardViewport(self, self.card_store)
+        state = await asyncio.to_thread(self.card_store.state)
+        self.card_viewport.floor = state.get("floor", 0)
+        self.card_viewport.expansion_generation = state.get(
+            "expansion_generation", 0
+        )
+        self.card_details_expanded = state.get("expanded", False)
+        if state.get("theme") in {theme.name for theme in AVAILABLE_THEMES}:
+            self.theme = state["theme"]
+        for name in (
+            "total_tokens",
+            "input_tokens",
+            "output_tokens",
+            "cached_tokens",
+        ):
+            setattr(self, name, state.get(name, 0))
+        if not state.get("follow_tail", True) and state.get("position"):
+            self.card_viewport.follow_tail = False
+            self._conversation_anchor_started = True
+            await self.card_viewport.refresh(after=state["position"] - 1)
+        else:
+            await self.card_viewport.refresh()
+        self.query_one(PromptArea).prompt_history = await asyncio.to_thread(
+            self.card_store.prompts
+        )
+        self.set_interval(0.25, self._expire_card_groups)
         self._update_status("ready")
         self.query_one(PromptArea).focus()
+
+    async def _expire_card_groups(self) -> None:
+        turn = self.current_turn
+        if (
+            not self._exit
+            and turn is not None
+            and not turn.finished
+            and turn.groups
+        ):
+            if await turn.expire():
+                self.card_viewport.request_refresh()
 
     def copy_to_clipboard(self, text: str) -> None:
         """Copy text using a platform clipboard tool, falling back to OSC52."""
@@ -179,10 +303,32 @@ class UrsaTextualApp(App[None]):
     def on_resize(self) -> None:
         self.call_after_refresh(self._resize_prompt, self.query_one(PromptArea))
         self.call_after_refresh(self._anchor_conversation_if_overflowing)
+        if self.card_viewport is not None:
+            self.card_viewport.request_refresh()
 
     async def on_unmount(self) -> None:
         """Release runtime resources on every graceful Textual shutdown."""
+        if self.card_store is not None:
+            self.card_viewport.closed = True
+            await self._save_card_state()
+            await asyncio.to_thread(self.card_store.close)
+            self.card_store = None
         await self.hitl.aclose()
+
+    async def _save_card_state(self) -> None:
+        if self.card_store is not None:
+            await asyncio.to_thread(
+                self.card_store.save_state,
+                expanded=self.card_details_expanded,
+                total_tokens=self.total_tokens,
+                input_tokens=self.input_tokens,
+                output_tokens=self.output_tokens,
+                cached_tokens=self.cached_tokens,
+                theme=self.theme,
+                follow_tail=self.card_viewport.follow_tail,
+                position=self.card_viewport.resume_position,
+                expansion_generation=self.card_viewport.expansion_generation,
+            )
 
     @property
     def is_ui_thread(self) -> bool:
@@ -218,11 +364,14 @@ class UrsaTextualApp(App[None]):
 
     async def add_turn_event(
         self,
-        turn: Turn,
+        turn: Turn | CardStream,
         data: Mapping[str, Any],
     ) -> None:
         """Add an event without disturbing a user who has scrolled up."""
         await turn.event(data)
+        if isinstance(turn, CardStream):
+            self.card_viewport.request_refresh()
+            return
         self.call_after_refresh(self._anchor_conversation_if_overflowing)
 
     def _anchor_conversation_if_overflowing(self) -> None:
@@ -254,6 +403,8 @@ class UrsaTextualApp(App[None]):
         if self._conversation_anchor_transition:
             self._conversation_anchor_transition = False
             self._conversation_anchor_generation += 1
+        if self.card_viewport is not None:
+            self.card_viewport.follow_tail = False
 
     def _finish_conversation_anchor(self, generation: int) -> None:
         """Anchor only if the initiating transition is still current."""
@@ -275,21 +426,23 @@ class UrsaTextualApp(App[None]):
     async def submit_prompt(self, event: PromptArea.Submitted) -> None:
         prompt_widget = self.query_one(PromptArea)
         prompt_widget.load_text("")
-        turn = Turn(event.text, self.hitl.workspace)
+        turn = CardStream(self.card_store, self.hitl.workspace, event.text)
+        await turn.start()
+        self.current_turn = turn
         conversation = self.query_one("#conversation", VerticalScroll)
         self._reset_conversation_auto_follow(conversation)
-        await conversation.mount(turn)
+        self.card_viewport.follow_tail = True
+        await self.card_viewport.refresh()
         self.call_after_refresh(self._anchor_conversation_if_overflowing)
-        turn.set_card_details_expanded(self.card_details_expanded)
-        self.current_turn = turn
-        self._turn_navigation_marker = turn.query_one(".events")
+        view = self.card_viewport.turns[turn.turn_id]
+        self._turn_navigation_marker = view.query_one(".events")
         self._update_status("working")
         prompt_widget.disabled = True
         self.run_worker(
             self._run_agent(turn, event.text), exclusive=True, group="agent"
         )
 
-    async def _run_agent(self, turn: Turn, prompt: str) -> None:
+    async def _run_agent(self, turn: CardStream, prompt: str) -> None:
         name, prompt = self._route_prompt(prompt)
         handler = TextualEventHandler(self, turn)
         succeeded = True
@@ -308,10 +461,15 @@ class UrsaTextualApp(App[None]):
             # workers are cancelled on removal); do not touch the tree
             # mid-teardown.
             return
-        turn.finish_activity(succeeded=succeeded)
-        await turn.add_response(response)
+        await turn.finish(response, succeeded=succeeded)
+        await self._save_card_state()
+        await self.card_viewport.refresh()
         self.call_after_refresh(self._anchor_conversation_if_overflowing)
-        self._turn_navigation_marker = list(turn.query(MessageCard))[-1]
+        view = self.card_viewport.turns.get(turn.turn_id)
+        if view is not None:
+            messages = list(view.query(MessageCard))
+            if messages:
+                self._turn_navigation_marker = messages[-1]
         prompt_widget = self.query_one(PromptArea)
         prompt_widget.disabled = False
         prompt_widget.focus()
@@ -611,22 +769,17 @@ class UrsaTextualApp(App[None]):
             else:
                 for banner in self.query(WelcomeBanner):
                     banner.refresh_config()
-                conversation = self.query_one("#conversation", VerticalScroll)
                 if previous_chat != self.hitl.config.llm_model:
-                    await conversation.mount(
-                        ToolMessage(
-                            f"Changed the chat model to {self.hitl.config.llm_model.pretty_repr()}"
-                        )
+                    await self._add_notice(
+                        f"Changed the chat model to {self.hitl.config.llm_model.pretty_repr()}"
                     )
                 if previous_embedding != self.hitl.config.emb_model:
                     embedding = self.hitl.config.emb_model
                     description = (
                         embedding.pretty_repr() if embedding else "none"
                     )
-                    await conversation.mount(
-                        ToolMessage(
-                            f"Changed the embedding model to {description}"
-                        )
+                    await self._add_notice(
+                        f"Changed the embedding model to {description}"
                     )
                 self.call_after_refresh(
                     self._anchor_conversation_if_overflowing
@@ -637,6 +790,14 @@ class UrsaTextualApp(App[None]):
                 self._update_status("ready")
 
         self.run_worker(apply(), group="model", exclusive=True)
+
+    async def _add_notice(self, content: str) -> None:
+        await asyncio.to_thread(
+            self.card_store.start_turn,
+            {"version": 1, "type": "notice", "content": content},
+            "notice",
+        )
+        await self.card_viewport.refresh()
 
     def _status_markdown(self) -> str:
         emb_model_cfg = self.hitl.config.emb_model
@@ -774,8 +935,10 @@ class UrsaTextualApp(App[None]):
 
     def action_toggle_card_details(self) -> None:
         self.card_details_expanded = not self.card_details_expanded
+        self.card_viewport.expansion_generation += 1
         for turn in self.query(Turn):
             turn.set_card_details_expanded(self.card_details_expanded)
+        self.call_after_refresh(self.card_viewport._measure)
 
     def _turn_markers(self) -> list[Widget]:
         markers: list[Widget] = []
@@ -798,12 +961,24 @@ class UrsaTextualApp(App[None]):
             index = markers.index(self._turn_navigation_marker)
         except ValueError:
             index = len(markers) if offset < 0 else -1
+        viewport = self.card_viewport
+        if index + offset < 0 and viewport.has_older:
+            viewport.conversation.run_worker(
+                self._page_turn_markers(-1), group="card-viewport"
+            )
+            return
+        if index + offset >= len(markers) and viewport.has_newer:
+            viewport.conversation.run_worker(
+                self._page_turn_markers(1), group="card-viewport"
+            )
+            return
         target_index = max(0, min(len(markers) - 1, index + offset))
         target = markers[target_index]
         self._turn_navigation_marker = target
         conversation = self.query_one("#conversation", VerticalScroll)
         if target_index == len(markers) - 1:
             conversation.anchor()
+            viewport.follow_tail = not viewport.has_newer
             return
         target_y = target.virtual_region.y
         ancestor = target.parent
@@ -817,6 +992,13 @@ class UrsaTextualApp(App[None]):
             force=True,
             release_anchor=True,
         )
+
+    async def _page_turn_markers(self, direction: int) -> None:
+        previous = self._turn_navigation_marker
+        await self.card_viewport.page(direction)
+        if previous in self._turn_markers():
+            self._turn_navigation_marker = previous
+        self._navigate_turn_markers(direction)
 
     def action_previous_turn_marker(self) -> None:
         self._navigate_turn_markers(-1)
@@ -835,6 +1017,7 @@ class UrsaTextualApp(App[None]):
             return
         conversation = self.query_one("#conversation", VerticalScroll)
         self._reset_conversation_auto_follow(conversation)
+        await self.card_viewport.clear()
         await conversation.remove_children()
         await conversation.mount(WelcomeBanner(self.hitl))
         conversation.scroll_home(animate=False)

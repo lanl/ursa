@@ -2,6 +2,8 @@
 
 """Base class for dynamically updated event cards."""
 
+from collections.abc import Callable
+
 from rich.traceback import Traceback
 from textual import events
 from textual.app import ComposeResult
@@ -19,6 +21,11 @@ class EventCard(Static):
         self.details: list[str] = []
         self.expanded = False
         self.done = False
+        # Dynamic renderers own their live state. Only an opaque reference
+        # crosses the serialization boundary (e.g. a terminal session ID).
+        self.content_ref: dict | None = None
+        self.bundle: dict | None = None
+        self.expansion_changed: Callable[[bool], None] | None = None
 
     def compose(self) -> ComposeResult:
         yield Markdown("", classes="event-summary")
@@ -62,6 +69,8 @@ class EventCard(Static):
     def on_click(self, event: events.Click) -> None:
         event.stop()
         self.set_expanded(not self.expanded)
+        if self.expansion_changed is not None:
+            self.expansion_changed(self.expanded)
 
     def refresh_content(self) -> None:
         if not self.is_mounted:

@@ -102,6 +102,12 @@ A named agent stores state so you can return to it later:
 ursa --name my-first-agent
 ```
 
+Reopening the same named agent restores its saved TUI cards, token totals,
+expanded cards, and reading position. Scrollback loads as you browse, so long
+conversations do not require keeping every card on screen. **Ctrl+L** clears the
+view without deleting the agent's history. Older sessions created before card
+persistence have no saved TUI transcript to restore.
+
 For detailed commands to list, save, copy, share, import, and delete agents, see [Persistence](../persistence/index.md).
 
 ## Useful `ursa` CLI commands

@@ -165,6 +165,8 @@ class PromptArea(TextArea):
             not self.prompt_history or self.prompt_history[-1] != text
         ):
             self.prompt_history.append(text)
+            # Submitted prompts also live in the durable session journal.
+            del self.prompt_history[:-100]
         self._history_index = None
 
     def _load_history(self, index: int) -> None:

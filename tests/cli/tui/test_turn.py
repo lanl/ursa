@@ -199,27 +199,6 @@ async def test_activity_kinds_keep_independent_cards_open(
         "SUMMARY_GROUP_GRACE_SECONDS",
         1.0,
     )
-    timers = []
-
-    class CapturedTimer:
-        def __init__(self, delay, callback):
-            self.delay = delay
-            self.callback = callback
-            self.stopped = False
-
-        def stop(self):
-            self.stopped = True
-
-        def fire(self):
-            assert not self.stopped
-            self.callback()
-
-    def capture_timer(_turn, delay, callback):
-        timer = CapturedTimer(delay, callback)
-        timers.append(timer)
-        return timer
-
-    monkeypatch.setattr(Turn, "set_timer", capture_timer)
     hitl = FakeHITL(tmp_path)
     reading_started = asyncio.Event()
     switch_to_editing = asyncio.Event()
@@ -265,15 +244,18 @@ async def test_activity_kinds_keep_independent_cards_open(
         await pilot.pause()
         reading = list(app.query(FileActivityCard))[0]
 
+        clock[0] += 0.2
         switch_to_editing.set()
         await editing_started.wait()
         await pilot.pause()
+        await eventually(pilot, lambda: len(app.query(FileActivityCard)) == 2)
         groups = list(app.query(FileActivityCard))
         assert len(groups) == 2
         editing = groups[1]
         assert not reading.done
         assert not editing.done
 
+        clock[0] += 0.2
         return_to_reading.set()
         await reading_updated.wait()
         await pilot.pause()
@@ -285,14 +267,15 @@ async def test_activity_kinds_keep_independent_cards_open(
         assert not reading.done
         assert not editing.done
 
-        old_reading_timer, editing_timer, current_reading_timer = timers
-        assert old_reading_timer.stopped
-        editing_timer.fire()
+        clock[0] = 101.21
+        await app._expire_card_groups()
         await pilot.pause()
+        await eventually(pilot, lambda: editing.done)
         assert not reading.done
         assert editing.done
 
-        current_reading_timer.fire()
+        clock[0] = 101.41
+        await app._expire_card_groups()
         await pilot.pause()
         await eventually(pilot, lambda: reading.done)
         assert reading.done
@@ -363,27 +346,6 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
         "SUMMARY_GROUP_GRACE_SECONDS",
         0.5,
     )
-    timers = []
-
-    class CapturedTimer:
-        def __init__(self, delay, callback):
-            self.delay = delay
-            self.callback = callback
-            self.stopped = False
-
-        def stop(self):
-            self.stopped = True
-
-        def fire(self):
-            assert not self.stopped
-            self.callback()
-
-    def capture_timer(_turn, delay, callback):
-        timer = CapturedTimer(delay, callback)
-        timers.append(timer)
-        return timer
-
-    monkeypatch.setattr(Turn, "set_timer", capture_timer)
     hitl = FakeHITL(tmp_path)
     first_emitted = asyncio.Event()
     emit_second = asyncio.Event()
@@ -428,6 +390,7 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
         assert list(first.files["Reading"]) == ["fileA"]
         assert not first.done
 
+        clock[0] += 0.25
         emit_second.set()
         await second_emitted.wait()
         await pilot.pause()
@@ -436,10 +399,11 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
         )
         assert list(first.files["Reading"]) == ["fileA", "fileB"]
         assert not first.done
-        assert timers[0].stopped
-        assert timers[1].delay == 0.5
-
-        timers[1].fire()
+        clock[0] = 100.6
+        await app._expire_card_groups()
+        assert not first.done  # The second member renewed the deadline.
+        clock[0] = 100.76
+        await app._expire_card_groups()
         await pilot.pause()
         await eventually(pilot, lambda: first.done)
         assert first.done
@@ -447,6 +411,7 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
         emit_third.set()
         await third_emitted.wait()
         await pilot.pause()
+        await eventually(pilot, lambda: len(app.query(FileActivityCard)) == 2)
         groups = list(app.query(FileActivityCard))
         assert len(groups) == 2
         assert groups[0] is first

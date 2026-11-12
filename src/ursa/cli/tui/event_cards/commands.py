@@ -66,6 +66,8 @@ class RunCommandCard(EventCard):
         self.execution_failed = False
         self.safety_failed = False
         self.force_compact = False
+        self.safety_status = "pending"
+        self.safety_reason = ""
         self._compact_frame = 0
         self._compact_timer = None
 
@@ -87,6 +89,7 @@ class RunCommandCard(EventCard):
             0.08, self._advance_compact_spinner, pause=True
         )
         self._update_expand_hint()
+        self.refresh_content()
 
     @property
     def FRAMES(self) -> tuple[str, ...]:
@@ -166,13 +169,14 @@ class RunCommandCard(EventCard):
         if phase == "error" or payload.get("status") == "error":
             self.execution_failed = True
         if stage == "safety_check":
-            safety = self.query_one(CommandSafetyIndicator)
             if payload.get("safe") is True:
-                safety.passed()
+                self.safety_status = "passed"
             elif payload.get("safe") is False:
+                self.safety_status = "failed"
+                self.safety_reason = str(payload.get("reason") or "")
                 self.safety_failed = True
                 self.force_compact = True
-                safety.failed(str(payload.get("reason") or "") or None)
+            self.refresh_content()
 
         output = payload.get("result")
         if output is None and stage == "execute" and phase == "end":
@@ -195,21 +199,34 @@ class RunCommandCard(EventCard):
 
     def complete(self, output: Any, *, execution_confirmed: bool) -> None:
         self.completed = True
+        if self.safety_status == "pending" and not self.safety_failed:
+            self.safety_status = (
+                "passed" if execution_confirmed else "unavailable"
+            )
+        self._full_output = self._clean_output(output)
+        if not self._full_output:
+            self.force_compact = True
+        self.refresh_content()
+
+    def refresh_content(self) -> None:
+        if not self.is_mounted:
+            return
         safety = self.query_one(CommandSafetyIndicator)
-        if safety.status == "pending" and not self.safety_failed:
-            if execution_confirmed:
-                safety.passed()
-            else:
-                safety.unavailable()
+        if self.safety_status == "passed":
+            safety.passed()
+        elif self.safety_status == "failed":
+            safety.failed(self.safety_reason or None)
+        elif self.safety_status == "unavailable":
+            safety.unavailable()
+        if not self.completed:
+            self._update_visibility()
+            return
         if self._compact_timer is not None:
             self._compact_timer.pause()
         self.query_one(".command-compact-state", Static).update(
             self._completion_icon()
         )
         self._render_command()
-        self._full_output = self._clean_output(output)
-        if not self._full_output:
-            self.force_compact = True
         self._render_output()
         self._update_visibility()
 
@@ -242,7 +259,7 @@ class RunCommandCard(EventCard):
         self._update_expand_hint()
 
     def _render_output(self) -> None:
-        if not self.completed:
+        if not self.completed or not self.is_mounted:
             return
         output = (
             self._full_output

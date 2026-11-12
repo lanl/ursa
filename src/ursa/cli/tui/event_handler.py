@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import ToolMessage
 
+from ursa.cli.tui.event_cards.card_stream import CardStream
 from ursa.cli.tui.helpers import (
     FILE_TOOLS,
     TokenUsage,
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
 class TextualEventHandler(AsyncCallbackHandler):
     """Translate LangChain callbacks into live Textual turn updates."""
 
-    def __init__(self, app: UrsaTextualApp, turn: Turn) -> None:
+    def __init__(self, app: UrsaTextualApp, turn: Turn | CardStream) -> None:
         self.app = app
         self.turn = turn
         self.tools: dict[Any, dict[str, Any]] = {}
@@ -47,8 +48,10 @@ class TextualEventHandler(AsyncCallbackHandler):
     async def _update_activity(self, message: str) -> None:
         if self.app.is_ui_thread:
             self.turn.update_activity(message)
+            if isinstance(self.turn, CardStream):
+                self.app.card_viewport.request_refresh()
         else:
-            self.app.call_from_thread(self.turn.update_activity, message)
+            self.app.call_from_thread(self._update_activity, message)
 
     async def on_custom_event(
         self,

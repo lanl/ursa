@@ -64,7 +64,7 @@ class ToolCallCard(EventCard):
 
     def on_mount(self) -> None:
         self._spinner_timer = self.set_interval(0.08, self._advance_spinner)
-        self._render_details()
+        self.refresh_content()
         self._update_expand_hint()
 
     @staticmethod
@@ -105,10 +105,18 @@ class ToolCallCard(EventCard):
         self.completed = True
         self.failed = failed
         self.done = True
+        self.refresh_content()
+
+    def refresh_content(self) -> None:
+        if not self.is_mounted:
+            return
+        if not self.completed:
+            self._render_details()
+            return
         if self._spinner_timer is not None:
             self._spinner_timer.pause()
         self.query_one(".tool-call-state", Static).update(
-            "✗" if failed else "✓"
+            "✗" if self.failed else "✓"
         )
         self.query_one(".tool-call-preview", Static).update(
             self._preview(
