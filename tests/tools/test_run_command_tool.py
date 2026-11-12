@@ -1,3 +1,4 @@
+import os
 import signal
 import subprocess
 from pathlib import Path
@@ -373,6 +374,7 @@ def test_run_command_blocks_commands_that_fail_safety_check(
     ]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group behavior")
 def test_no_sandbox_timeout_kills_command_process_group(monkeypatch, tmp_path):
     calls = {}
 
@@ -394,7 +396,6 @@ def test_no_sandbox_timeout_kills_command_process_group(monkeypatch, tmp_path):
         calls["popen"] = (args, kwargs)
         return Process()
 
-    monkeypatch.setattr("ursa.sandbox.base.os.name", "posix")
     monkeypatch.setattr("ursa.sandbox.base.subprocess.Popen", popen)
     monkeypatch.setattr(
         "ursa.sandbox.base.os.killpg",
@@ -416,6 +417,7 @@ def test_no_sandbox_timeout_kills_command_process_group(monkeypatch, tmp_path):
     assert calls["waited"] is True
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group behavior")
 def test_no_sandbox_process_group_returns_completed_process(
     monkeypatch, tmp_path
 ):
@@ -427,7 +429,6 @@ def test_no_sandbox_process_group_returns_completed_process(
             assert timeout == 5
             return "hello", ""
 
-    monkeypatch.setattr("ursa.sandbox.base.os.name", "posix")
     monkeypatch.setattr(
         "ursa.sandbox.base.subprocess.Popen", lambda *a, **k: Process()
     )
@@ -443,6 +444,32 @@ def test_no_sandbox_process_group_returns_completed_process(
     assert result.returncode == 0
     assert result.stdout == "hello"
     assert result.stderr == ""
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows subprocess behavior")
+def test_no_sandbox_windows_uses_subprocess_run(monkeypatch, tmp_path):
+    captured = {}
+    expected = SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    def run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return expected
+
+    monkeypatch.setattr("ursa.sandbox.base.subprocess.run", run)
+    result = _run_process_group(
+        "echo hello",
+        text=True,
+        shell=True,
+        capture_output=True,
+        timeout=5,
+        cwd=tmp_path,
+    )
+
+    assert result is expected
+    assert captured["command"] == "echo hello"
+    assert captured["kwargs"]["check"] is False
+    assert captured["kwargs"]["timeout"] == 5
 
 
 def test_mac_sandbox_uses_process_group_runner(monkeypatch, tmp_path):
