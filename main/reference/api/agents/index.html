@@ -6888,9 +6888,7 @@ integration capabilities while only needing to implement the core _invoke method
 
               <details class="quote">
                 <summary>Source code in <code>src/ursa/agents/base.py</code></summary>
-                <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2019">2019</a></span>
-<span class="normal"><a href="#__codelineno-0-2020">2020</a></span>
-<span class="normal"><a href="#__codelineno-0-2021">2021</a></span>
+                <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2021">2021</a></span>
 <span class="normal"><a href="#__codelineno-0-2022">2022</a></span>
 <span class="normal"><a href="#__codelineno-0-2023">2023</a></span>
 <span class="normal"><a href="#__codelineno-0-2024">2024</a></span>
@@ -7031,150 +7029,152 @@ integration capabilities while only needing to implement the core _invoke method
 <span class="normal"><a href="#__codelineno-0-2159">2159</a></span>
 <span class="normal"><a href="#__codelineno-0-2160">2160</a></span>
 <span class="normal"><a href="#__codelineno-0-2161">2161</a></span>
-<span class="normal"><a href="#__codelineno-0-2162">2162</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-2019" name="__codelineno-0-2019"></a><span class="k">class</span><span class="w"> </span><span class="nc">AgentWithTools</span><span class="p">:</span>
-<a id="__codelineno-0-2020" name="__codelineno-0-2020"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Mixin that equips an agent with LangGraph tools management.&quot;&quot;&quot;</span>
-<a id="__codelineno-0-2021" name="__codelineno-0-2021"></a>
-<a id="__codelineno-0-2022" name="__codelineno-0-2022"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
-<a id="__codelineno-0-2023" name="__codelineno-0-2023"></a>        <span class="bp">self</span><span class="p">,</span>
-<a id="__codelineno-0-2024" name="__codelineno-0-2024"></a>        <span class="o">*</span><span class="n">args</span><span class="p">,</span>
-<a id="__codelineno-0-2025" name="__codelineno-0-2025"></a>        <span class="n">tools</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">BaseTool</span><span class="p">]</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">BaseTool</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-2026" name="__codelineno-0-2026"></a>        <span class="n">safe_codes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-2027" name="__codelineno-0-2027"></a>        <span class="n">handle_tool_errors</span><span class="o">=</span><span class="n">_default_tool_error_handler</span><span class="p">,</span>
-<a id="__codelineno-0-2028" name="__codelineno-0-2028"></a>        <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
-<a id="__codelineno-0-2029" name="__codelineno-0-2029"></a>    <span class="p">):</span>
-<a id="__codelineno-0-2030" name="__codelineno-0-2030"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_tools</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">BaseTool</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
-<a id="__codelineno-0-2031" name="__codelineno-0-2031"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">safe_codes</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">safe_codes</span> <span class="ow">or</span> <span class="p">[])</span>
-<a id="__codelineno-0-2032" name="__codelineno-0-2032"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">handle_tool_errors</span> <span class="o">=</span> <span class="n">handle_tool_errors</span>
-<a id="__codelineno-0-2033" name="__codelineno-0-2033"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">tool_node</span> <span class="o">=</span> <span class="n">ToolNode</span><span class="p">([])</span>
-<a id="__codelineno-0-2034" name="__codelineno-0-2034"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_apply_tools</span><span class="p">(</span><span class="n">tools</span><span class="p">,</span> <span class="n">rebuild_graph</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-<a id="__codelineno-0-2035" name="__codelineno-0-2035"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-<a id="__codelineno-0-2036" name="__codelineno-0-2036"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">tool_llm</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">model_copy</span><span class="p">()</span>
-<a id="__codelineno-0-2037" name="__codelineno-0-2037"></a>
-<a id="__codelineno-0-2038" name="__codelineno-0-2038"></a>        <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;rag_tools&quot;</span><span class="p">,</span> <span class="p">()):</span>
-<a id="__codelineno-0-2039" name="__codelineno-0-2039"></a>            <span class="kn">from</span><span class="w"> </span><span class="nn">ursa.rag.tools</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_rag_tools</span>
-<a id="__codelineno-0-2040" name="__codelineno-0-2040"></a>
-<a id="__codelineno-0-2041" name="__codelineno-0-2041"></a>            <span class="n">rag_tools</span> <span class="o">=</span> <span class="n">build_rag_tools</span><span class="p">(</span>
-<a id="__codelineno-0-2042" name="__codelineno-0-2042"></a>                <span class="n">names</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">rag_tools</span><span class="p">,</span>
-<a id="__codelineno-0-2043" name="__codelineno-0-2043"></a>                <span class="n">group</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">rag_tool_group</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">group</span> <span class="ow">or</span> <span class="s2">&quot;default&quot;</span><span class="p">,</span>
-<a id="__codelineno-0-2044" name="__codelineno-0-2044"></a>                <span class="n">llm</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">llm</span><span class="p">,</span>
-<a id="__codelineno-0-2045" name="__codelineno-0-2045"></a>                <span class="n">embedding</span><span class="o">=</span><span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;rag_tool_embedding&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span>
-<a id="__codelineno-0-2046" name="__codelineno-0-2046"></a>                <span class="n">return_k</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">rag_tool_return_k</span><span class="p">,</span>
-<a id="__codelineno-0-2047" name="__codelineno-0-2047"></a>            <span class="p">)</span>
-<a id="__codelineno-0-2048" name="__codelineno-0-2048"></a>            <span class="k">if</span> <span class="n">rag_tools</span><span class="p">:</span>
-<a id="__codelineno-0-2049" name="__codelineno-0-2049"></a>                <span class="n">merged</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_tools</span><span class="p">)</span>
-<a id="__codelineno-0-2050" name="__codelineno-0-2050"></a>                <span class="n">merged</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="n">tool</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">tool</span> <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">rag_tools</span><span class="p">})</span>
-<a id="__codelineno-0-2051" name="__codelineno-0-2051"></a>                <span class="bp">self</span><span class="o">.</span><span class="n">_apply_tools</span><span class="p">(</span><span class="n">merged</span><span class="p">,</span> <span class="n">rebuild_graph</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-<a id="__codelineno-0-2052" name="__codelineno-0-2052"></a>
-<a id="__codelineno-0-2053" name="__codelineno-0-2053"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">__post_init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<a id="__codelineno-0-2054" name="__codelineno-0-2054"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">__post_init__</span><span class="p">()</span>
-<a id="__codelineno-0-2055" name="__codelineno-0-2055"></a>
-<a id="__codelineno-0-2056" name="__codelineno-0-2056"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">hook_storage_setup</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">store</span><span class="p">:</span> <span class="n">BaseStore</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-0-2057" name="__codelineno-0-2057"></a>        <span class="k">if</span> <span class="n">store</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-0-2058" name="__codelineno-0-2058"></a>            <span class="k">return</span>
-<a id="__codelineno-0-2059" name="__codelineno-0-2059"></a>        <span class="k">for</span> <span class="n">safe_code</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">safe_codes</span><span class="p">:</span>
-<a id="__codelineno-0-2060" name="__codelineno-0-2060"></a>            <span class="n">store</span><span class="o">.</span><span class="n">put</span><span class="p">(</span>
-<a id="__codelineno-0-2061" name="__codelineno-0-2061"></a>                <span class="p">(</span><span class="s2">&quot;workspace&quot;</span><span class="p">,</span> <span class="s2">&quot;safe_codes&quot;</span><span class="p">),</span>
-<a id="__codelineno-0-2062" name="__codelineno-0-2062"></a>                <span class="n">safe_code</span><span class="p">,</span>
-<a id="__codelineno-0-2063" name="__codelineno-0-2063"></a>                <span class="p">{},</span>
-<a id="__codelineno-0-2064" name="__codelineno-0-2064"></a>            <span class="p">)</span>
-<a id="__codelineno-0-2065" name="__codelineno-0-2065"></a>
-<a id="__codelineno-0-2066" name="__codelineno-0-2066"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">ahook_storage_setup</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">store</span><span class="p">:</span> <span class="n">BaseStore</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-0-2067" name="__codelineno-0-2067"></a>        <span class="k">if</span> <span class="n">store</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-0-2068" name="__codelineno-0-2068"></a>            <span class="k">return</span>
-<a id="__codelineno-0-2069" name="__codelineno-0-2069"></a>        <span class="k">for</span> <span class="n">safe_code</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">safe_codes</span><span class="p">:</span>
-<a id="__codelineno-0-2070" name="__codelineno-0-2070"></a>            <span class="k">await</span> <span class="n">store</span><span class="o">.</span><span class="n">aput</span><span class="p">(</span>
-<a id="__codelineno-0-2071" name="__codelineno-0-2071"></a>                <span class="p">(</span><span class="s2">&quot;workspace&quot;</span><span class="p">,</span> <span class="s2">&quot;safe_codes&quot;</span><span class="p">),</span>
-<a id="__codelineno-0-2072" name="__codelineno-0-2072"></a>                <span class="n">safe_code</span><span class="p">,</span>
-<a id="__codelineno-0-2073" name="__codelineno-0-2073"></a>                <span class="p">{},</span>
-<a id="__codelineno-0-2074" name="__codelineno-0-2074"></a>            <span class="p">)</span>
-<a id="__codelineno-0-2075" name="__codelineno-0-2075"></a>
-<a id="__codelineno-0-2076" name="__codelineno-0-2076"></a>    <span class="nd">@property</span>
-<a id="__codelineno-0-2077" name="__codelineno-0-2077"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">tools</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">BaseTool</span><span class="p">]:</span>
-<a id="__codelineno-0-2078" name="__codelineno-0-2078"></a>        <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_tools</span><span class="p">)</span>
-<a id="__codelineno-0-2079" name="__codelineno-0-2079"></a>
-<a id="__codelineno-0-2080" name="__codelineno-0-2080"></a>    <span class="nd">@tools</span><span class="o">.</span><span class="n">setter</span>
-<a id="__codelineno-0-2081" name="__codelineno-0-2081"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">tools</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tools</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">BaseTool</span><span class="p">]</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">BaseTool</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">):</span>
-<a id="__codelineno-0-2082" name="__codelineno-0-2082"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_apply_tools</span><span class="p">(</span><span class="n">tools</span><span class="p">)</span>
-<a id="__codelineno-0-2083" name="__codelineno-0-2083"></a>
-<a id="__codelineno-0-2084" name="__codelineno-0-2084"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">add_tool</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tools</span><span class="p">:</span> <span class="n">BaseTool</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">BaseTool</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-0-2085" name="__codelineno-0-2085"></a>        <span class="n">bundle</span> <span class="o">=</span> <span class="n">tools</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">tools</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="k">else</span> <span class="p">[</span><span class="n">tools</span><span class="p">]</span>
-<a id="__codelineno-0-2086" name="__codelineno-0-2086"></a>        <span class="n">merged</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_tools</span><span class="p">)</span>
-<a id="__codelineno-0-2087" name="__codelineno-0-2087"></a>        <span class="n">merged</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="n">tool</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">tool</span> <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">bundle</span><span class="p">})</span>
-<a id="__codelineno-0-2088" name="__codelineno-0-2088"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_apply_tools</span><span class="p">(</span><span class="n">merged</span><span class="p">)</span>
-<a id="__codelineno-0-2089" name="__codelineno-0-2089"></a>
-<a id="__codelineno-0-2090" name="__codelineno-0-2090"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">add_mcp_tools</span><span class="p">(</span>
-<a id="__codelineno-0-2091" name="__codelineno-0-2091"></a>        <span class="bp">self</span><span class="p">,</span>
-<a id="__codelineno-0-2092" name="__codelineno-0-2092"></a>        <span class="n">client</span><span class="p">:</span> <span class="n">MultiServerMCPClient</span><span class="p">,</span>
-<a id="__codelineno-0-2093" name="__codelineno-0-2093"></a>        <span class="n">tool_name</span><span class="p">:</span> <span class="kc">None</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-2094" name="__codelineno-0-2094"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-<a id="__codelineno-0-2095" name="__codelineno-0-2095"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Add tools from an MCP client to the agent</span>
-<a id="__codelineno-0-2096" name="__codelineno-0-2096"></a>
-<a id="__codelineno-0-2097" name="__codelineno-0-2097"></a><span class="sd">        Args:</span>
-<a id="__codelineno-0-2098" name="__codelineno-0-2098"></a><span class="sd">           client: the MCP client to add tools from</span>
-<a id="__codelineno-0-2099" name="__codelineno-0-2099"></a><span class="sd">           tool_name: if provided, only add named tools</span>
-<a id="__codelineno-0-2100" name="__codelineno-0-2100"></a>
-<a id="__codelineno-0-2101" name="__codelineno-0-2101"></a><span class="sd">        Returns:</span>
-<a id="__codelineno-0-2102" name="__codelineno-0-2102"></a><span class="sd">            MCP server names keyed by the attached tool name. Clients that do</span>
-<a id="__codelineno-0-2103" name="__codelineno-0-2103"></a><span class="sd">            not expose named connections return an empty mapping.</span>
-<a id="__codelineno-0-2104" name="__codelineno-0-2104"></a><span class="sd">        &quot;&quot;&quot;</span>
-<a id="__codelineno-0-2105" name="__codelineno-0-2105"></a>
-<a id="__codelineno-0-2106" name="__codelineno-0-2106"></a>        <span class="k">def</span><span class="w"> </span><span class="nf">discover_and_apply</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-<a id="__codelineno-0-2107" name="__codelineno-0-2107"></a>            <span class="c1"># MCP adapters perform synchronous session/schema setup around</span>
-<a id="__codelineno-0-2108" name="__codelineno-0-2108"></a>            <span class="c1"># their async I/O, and applying tools rebuilds the graph. Own one</span>
-<a id="__codelineno-0-2109" name="__codelineno-0-2109"></a>            <span class="c1"># worker boundary for the complete operation so every caller—not</span>
-<a id="__codelineno-0-2110" name="__codelineno-0-2110"></a>            <span class="c1"># only Textual—keeps its event loop responsive.</span>
-<a id="__codelineno-0-2111" name="__codelineno-0-2111"></a>            <span class="n">tools</span><span class="p">,</span> <span class="n">tool_sources</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
-<a id="__codelineno-0-2112" name="__codelineno-0-2112"></a>                <span class="n">load_mcp_tools_with_sources</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
-<a id="__codelineno-0-2113" name="__codelineno-0-2113"></a>            <span class="p">)</span>
-<a id="__codelineno-0-2114" name="__codelineno-0-2114"></a>            <span class="n">selected</span> <span class="o">=</span> <span class="n">tool_name</span>
-<a id="__codelineno-0-2115" name="__codelineno-0-2115"></a>            <span class="k">if</span> <span class="n">selected</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-0-2116" name="__codelineno-0-2116"></a>                <span class="n">selected</span> <span class="o">=</span> <span class="p">(</span>
-<a id="__codelineno-0-2117" name="__codelineno-0-2117"></a>                    <span class="n">selected</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">selected</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="k">else</span> <span class="p">[</span><span class="n">selected</span><span class="p">]</span>
-<a id="__codelineno-0-2118" name="__codelineno-0-2118"></a>                <span class="p">)</span>
-<a id="__codelineno-0-2119" name="__codelineno-0-2119"></a>                <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span><span class="n">tool</span> <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">tools</span> <span class="k">if</span> <span class="n">tool</span><span class="o">.</span><span class="n">name</span> <span class="ow">in</span> <span class="n">selected</span><span class="p">]</span>
-<a id="__codelineno-0-2120" name="__codelineno-0-2120"></a>                <span class="n">attached_names</span> <span class="o">=</span> <span class="p">{</span><span class="n">tool</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">tools</span><span class="p">}</span>
-<a id="__codelineno-0-2121" name="__codelineno-0-2121"></a>                <span class="n">tool_sources</span> <span class="o">=</span> <span class="p">{</span>
-<a id="__codelineno-0-2122" name="__codelineno-0-2122"></a>                    <span class="n">name</span><span class="p">:</span> <span class="n">server</span>
-<a id="__codelineno-0-2123" name="__codelineno-0-2123"></a>                    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">server</span> <span class="ow">in</span> <span class="n">tool_sources</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
-<a id="__codelineno-0-2124" name="__codelineno-0-2124"></a>                    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">attached_names</span>
-<a id="__codelineno-0-2125" name="__codelineno-0-2125"></a>                <span class="p">}</span>
-<a id="__codelineno-0-2126" name="__codelineno-0-2126"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">add_tool</span><span class="p">(</span><span class="n">tools</span><span class="p">)</span>
-<a id="__codelineno-0-2127" name="__codelineno-0-2127"></a>            <span class="k">return</span> <span class="n">tool_sources</span>
-<a id="__codelineno-0-2128" name="__codelineno-0-2128"></a>
-<a id="__codelineno-0-2129" name="__codelineno-0-2129"></a>        <span class="k">return</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">to_thread</span><span class="p">(</span><span class="n">discover_and_apply</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-2162">2162</a></span>
+<span class="normal"><a href="#__codelineno-0-2163">2163</a></span>
+<span class="normal"><a href="#__codelineno-0-2164">2164</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-2021" name="__codelineno-0-2021"></a><span class="k">class</span><span class="w"> </span><span class="nc">AgentWithTools</span><span class="p">:</span>
+<a id="__codelineno-0-2022" name="__codelineno-0-2022"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Mixin that equips an agent with LangGraph tools management.&quot;&quot;&quot;</span>
+<a id="__codelineno-0-2023" name="__codelineno-0-2023"></a>
+<a id="__codelineno-0-2024" name="__codelineno-0-2024"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+<a id="__codelineno-0-2025" name="__codelineno-0-2025"></a>        <span class="bp">self</span><span class="p">,</span>
+<a id="__codelineno-0-2026" name="__codelineno-0-2026"></a>        <span class="o">*</span><span class="n">args</span><span class="p">,</span>
+<a id="__codelineno-0-2027" name="__codelineno-0-2027"></a>        <span class="n">tools</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">BaseTool</span><span class="p">]</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">BaseTool</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-2028" name="__codelineno-0-2028"></a>        <span class="n">safe_codes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-2029" name="__codelineno-0-2029"></a>        <span class="n">handle_tool_errors</span><span class="o">=</span><span class="n">_default_tool_error_handler</span><span class="p">,</span>
+<a id="__codelineno-0-2030" name="__codelineno-0-2030"></a>        <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+<a id="__codelineno-0-2031" name="__codelineno-0-2031"></a>    <span class="p">):</span>
+<a id="__codelineno-0-2032" name="__codelineno-0-2032"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_tools</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">BaseTool</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+<a id="__codelineno-0-2033" name="__codelineno-0-2033"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">safe_codes</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">safe_codes</span> <span class="ow">or</span> <span class="p">[])</span>
+<a id="__codelineno-0-2034" name="__codelineno-0-2034"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">handle_tool_errors</span> <span class="o">=</span> <span class="n">handle_tool_errors</span>
+<a id="__codelineno-0-2035" name="__codelineno-0-2035"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">tool_node</span> <span class="o">=</span> <span class="n">ToolNode</span><span class="p">([])</span>
+<a id="__codelineno-0-2036" name="__codelineno-0-2036"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_apply_tools</span><span class="p">(</span><span class="n">tools</span><span class="p">,</span> <span class="n">rebuild_graph</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<a id="__codelineno-0-2037" name="__codelineno-0-2037"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+<a id="__codelineno-0-2038" name="__codelineno-0-2038"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">tool_llm</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">model_copy</span><span class="p">()</span>
+<a id="__codelineno-0-2039" name="__codelineno-0-2039"></a>
+<a id="__codelineno-0-2040" name="__codelineno-0-2040"></a>        <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;rag_tools&quot;</span><span class="p">,</span> <span class="p">()):</span>
+<a id="__codelineno-0-2041" name="__codelineno-0-2041"></a>            <span class="kn">from</span><span class="w"> </span><span class="nn">ursa.rag.tools</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_rag_tools</span>
+<a id="__codelineno-0-2042" name="__codelineno-0-2042"></a>
+<a id="__codelineno-0-2043" name="__codelineno-0-2043"></a>            <span class="n">rag_tools</span> <span class="o">=</span> <span class="n">build_rag_tools</span><span class="p">(</span>
+<a id="__codelineno-0-2044" name="__codelineno-0-2044"></a>                <span class="n">names</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">rag_tools</span><span class="p">,</span>
+<a id="__codelineno-0-2045" name="__codelineno-0-2045"></a>                <span class="n">group</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">rag_tool_group</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">group</span> <span class="ow">or</span> <span class="s2">&quot;default&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-2046" name="__codelineno-0-2046"></a>                <span class="n">llm</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">llm</span><span class="p">,</span>
+<a id="__codelineno-0-2047" name="__codelineno-0-2047"></a>                <span class="n">embedding</span><span class="o">=</span><span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;rag_tool_embedding&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span>
+<a id="__codelineno-0-2048" name="__codelineno-0-2048"></a>                <span class="n">return_k</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">rag_tool_return_k</span><span class="p">,</span>
+<a id="__codelineno-0-2049" name="__codelineno-0-2049"></a>            <span class="p">)</span>
+<a id="__codelineno-0-2050" name="__codelineno-0-2050"></a>            <span class="k">if</span> <span class="n">rag_tools</span><span class="p">:</span>
+<a id="__codelineno-0-2051" name="__codelineno-0-2051"></a>                <span class="n">merged</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_tools</span><span class="p">)</span>
+<a id="__codelineno-0-2052" name="__codelineno-0-2052"></a>                <span class="n">merged</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="n">tool</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">tool</span> <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">rag_tools</span><span class="p">})</span>
+<a id="__codelineno-0-2053" name="__codelineno-0-2053"></a>                <span class="bp">self</span><span class="o">.</span><span class="n">_apply_tools</span><span class="p">(</span><span class="n">merged</span><span class="p">,</span> <span class="n">rebuild_graph</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<a id="__codelineno-0-2054" name="__codelineno-0-2054"></a>
+<a id="__codelineno-0-2055" name="__codelineno-0-2055"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">__post_init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-0-2056" name="__codelineno-0-2056"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">__post_init__</span><span class="p">()</span>
+<a id="__codelineno-0-2057" name="__codelineno-0-2057"></a>
+<a id="__codelineno-0-2058" name="__codelineno-0-2058"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">hook_storage_setup</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">store</span><span class="p">:</span> <span class="n">BaseStore</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-2059" name="__codelineno-0-2059"></a>        <span class="k">if</span> <span class="n">store</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-2060" name="__codelineno-0-2060"></a>            <span class="k">return</span>
+<a id="__codelineno-0-2061" name="__codelineno-0-2061"></a>        <span class="k">for</span> <span class="n">safe_code</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">safe_codes</span><span class="p">:</span>
+<a id="__codelineno-0-2062" name="__codelineno-0-2062"></a>            <span class="n">store</span><span class="o">.</span><span class="n">put</span><span class="p">(</span>
+<a id="__codelineno-0-2063" name="__codelineno-0-2063"></a>                <span class="p">(</span><span class="s2">&quot;workspace&quot;</span><span class="p">,</span> <span class="s2">&quot;safe_codes&quot;</span><span class="p">),</span>
+<a id="__codelineno-0-2064" name="__codelineno-0-2064"></a>                <span class="n">safe_code</span><span class="p">,</span>
+<a id="__codelineno-0-2065" name="__codelineno-0-2065"></a>                <span class="p">{},</span>
+<a id="__codelineno-0-2066" name="__codelineno-0-2066"></a>            <span class="p">)</span>
+<a id="__codelineno-0-2067" name="__codelineno-0-2067"></a>
+<a id="__codelineno-0-2068" name="__codelineno-0-2068"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">ahook_storage_setup</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">store</span><span class="p">:</span> <span class="n">BaseStore</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-2069" name="__codelineno-0-2069"></a>        <span class="k">if</span> <span class="n">store</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-2070" name="__codelineno-0-2070"></a>            <span class="k">return</span>
+<a id="__codelineno-0-2071" name="__codelineno-0-2071"></a>        <span class="k">for</span> <span class="n">safe_code</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">safe_codes</span><span class="p">:</span>
+<a id="__codelineno-0-2072" name="__codelineno-0-2072"></a>            <span class="k">await</span> <span class="n">store</span><span class="o">.</span><span class="n">aput</span><span class="p">(</span>
+<a id="__codelineno-0-2073" name="__codelineno-0-2073"></a>                <span class="p">(</span><span class="s2">&quot;workspace&quot;</span><span class="p">,</span> <span class="s2">&quot;safe_codes&quot;</span><span class="p">),</span>
+<a id="__codelineno-0-2074" name="__codelineno-0-2074"></a>                <span class="n">safe_code</span><span class="p">,</span>
+<a id="__codelineno-0-2075" name="__codelineno-0-2075"></a>                <span class="p">{},</span>
+<a id="__codelineno-0-2076" name="__codelineno-0-2076"></a>            <span class="p">)</span>
+<a id="__codelineno-0-2077" name="__codelineno-0-2077"></a>
+<a id="__codelineno-0-2078" name="__codelineno-0-2078"></a>    <span class="nd">@property</span>
+<a id="__codelineno-0-2079" name="__codelineno-0-2079"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">tools</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">BaseTool</span><span class="p">]:</span>
+<a id="__codelineno-0-2080" name="__codelineno-0-2080"></a>        <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_tools</span><span class="p">)</span>
+<a id="__codelineno-0-2081" name="__codelineno-0-2081"></a>
+<a id="__codelineno-0-2082" name="__codelineno-0-2082"></a>    <span class="nd">@tools</span><span class="o">.</span><span class="n">setter</span>
+<a id="__codelineno-0-2083" name="__codelineno-0-2083"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">tools</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tools</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">BaseTool</span><span class="p">]</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">BaseTool</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">):</span>
+<a id="__codelineno-0-2084" name="__codelineno-0-2084"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_apply_tools</span><span class="p">(</span><span class="n">tools</span><span class="p">)</span>
+<a id="__codelineno-0-2085" name="__codelineno-0-2085"></a>
+<a id="__codelineno-0-2086" name="__codelineno-0-2086"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">add_tool</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tools</span><span class="p">:</span> <span class="n">BaseTool</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">BaseTool</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-2087" name="__codelineno-0-2087"></a>        <span class="n">bundle</span> <span class="o">=</span> <span class="n">tools</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">tools</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="k">else</span> <span class="p">[</span><span class="n">tools</span><span class="p">]</span>
+<a id="__codelineno-0-2088" name="__codelineno-0-2088"></a>        <span class="n">merged</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_tools</span><span class="p">)</span>
+<a id="__codelineno-0-2089" name="__codelineno-0-2089"></a>        <span class="n">merged</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="n">tool</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">tool</span> <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">bundle</span><span class="p">})</span>
+<a id="__codelineno-0-2090" name="__codelineno-0-2090"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_apply_tools</span><span class="p">(</span><span class="n">merged</span><span class="p">)</span>
+<a id="__codelineno-0-2091" name="__codelineno-0-2091"></a>
+<a id="__codelineno-0-2092" name="__codelineno-0-2092"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">add_mcp_tools</span><span class="p">(</span>
+<a id="__codelineno-0-2093" name="__codelineno-0-2093"></a>        <span class="bp">self</span><span class="p">,</span>
+<a id="__codelineno-0-2094" name="__codelineno-0-2094"></a>        <span class="n">client</span><span class="p">:</span> <span class="n">MultiServerMCPClient</span><span class="p">,</span>
+<a id="__codelineno-0-2095" name="__codelineno-0-2095"></a>        <span class="n">tool_name</span><span class="p">:</span> <span class="kc">None</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-2096" name="__codelineno-0-2096"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<a id="__codelineno-0-2097" name="__codelineno-0-2097"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Add tools from an MCP client to the agent</span>
+<a id="__codelineno-0-2098" name="__codelineno-0-2098"></a>
+<a id="__codelineno-0-2099" name="__codelineno-0-2099"></a><span class="sd">        Args:</span>
+<a id="__codelineno-0-2100" name="__codelineno-0-2100"></a><span class="sd">           client: the MCP client to add tools from</span>
+<a id="__codelineno-0-2101" name="__codelineno-0-2101"></a><span class="sd">           tool_name: if provided, only add named tools</span>
+<a id="__codelineno-0-2102" name="__codelineno-0-2102"></a>
+<a id="__codelineno-0-2103" name="__codelineno-0-2103"></a><span class="sd">        Returns:</span>
+<a id="__codelineno-0-2104" name="__codelineno-0-2104"></a><span class="sd">            MCP server names keyed by the attached tool name. Clients that do</span>
+<a id="__codelineno-0-2105" name="__codelineno-0-2105"></a><span class="sd">            not expose named connections return an empty mapping.</span>
+<a id="__codelineno-0-2106" name="__codelineno-0-2106"></a><span class="sd">        &quot;&quot;&quot;</span>
+<a id="__codelineno-0-2107" name="__codelineno-0-2107"></a>
+<a id="__codelineno-0-2108" name="__codelineno-0-2108"></a>        <span class="k">def</span><span class="w"> </span><span class="nf">discover_and_apply</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<a id="__codelineno-0-2109" name="__codelineno-0-2109"></a>            <span class="c1"># MCP adapters perform synchronous session/schema setup around</span>
+<a id="__codelineno-0-2110" name="__codelineno-0-2110"></a>            <span class="c1"># their async I/O, and applying tools rebuilds the graph. Own one</span>
+<a id="__codelineno-0-2111" name="__codelineno-0-2111"></a>            <span class="c1"># worker boundary for the complete operation so every caller—not</span>
+<a id="__codelineno-0-2112" name="__codelineno-0-2112"></a>            <span class="c1"># only Textual—keeps its event loop responsive.</span>
+<a id="__codelineno-0-2113" name="__codelineno-0-2113"></a>            <span class="n">tools</span><span class="p">,</span> <span class="n">tool_sources</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+<a id="__codelineno-0-2114" name="__codelineno-0-2114"></a>                <span class="n">load_mcp_tools_with_sources</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
+<a id="__codelineno-0-2115" name="__codelineno-0-2115"></a>            <span class="p">)</span>
+<a id="__codelineno-0-2116" name="__codelineno-0-2116"></a>            <span class="n">selected</span> <span class="o">=</span> <span class="n">tool_name</span>
+<a id="__codelineno-0-2117" name="__codelineno-0-2117"></a>            <span class="k">if</span> <span class="n">selected</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-2118" name="__codelineno-0-2118"></a>                <span class="n">selected</span> <span class="o">=</span> <span class="p">(</span>
+<a id="__codelineno-0-2119" name="__codelineno-0-2119"></a>                    <span class="n">selected</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">selected</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="k">else</span> <span class="p">[</span><span class="n">selected</span><span class="p">]</span>
+<a id="__codelineno-0-2120" name="__codelineno-0-2120"></a>                <span class="p">)</span>
+<a id="__codelineno-0-2121" name="__codelineno-0-2121"></a>                <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span><span class="n">tool</span> <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">tools</span> <span class="k">if</span> <span class="n">tool</span><span class="o">.</span><span class="n">name</span> <span class="ow">in</span> <span class="n">selected</span><span class="p">]</span>
+<a id="__codelineno-0-2122" name="__codelineno-0-2122"></a>                <span class="n">attached_names</span> <span class="o">=</span> <span class="p">{</span><span class="n">tool</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">tools</span><span class="p">}</span>
+<a id="__codelineno-0-2123" name="__codelineno-0-2123"></a>                <span class="n">tool_sources</span> <span class="o">=</span> <span class="p">{</span>
+<a id="__codelineno-0-2124" name="__codelineno-0-2124"></a>                    <span class="n">name</span><span class="p">:</span> <span class="n">server</span>
+<a id="__codelineno-0-2125" name="__codelineno-0-2125"></a>                    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">server</span> <span class="ow">in</span> <span class="n">tool_sources</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<a id="__codelineno-0-2126" name="__codelineno-0-2126"></a>                    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">attached_names</span>
+<a id="__codelineno-0-2127" name="__codelineno-0-2127"></a>                <span class="p">}</span>
+<a id="__codelineno-0-2128" name="__codelineno-0-2128"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">add_tool</span><span class="p">(</span><span class="n">tools</span><span class="p">)</span>
+<a id="__codelineno-0-2129" name="__codelineno-0-2129"></a>            <span class="k">return</span> <span class="n">tool_sources</span>
 <a id="__codelineno-0-2130" name="__codelineno-0-2130"></a>
-<a id="__codelineno-0-2131" name="__codelineno-0-2131"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">remove_tool</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tool_names</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-0-2132" name="__codelineno-0-2132"></a>        <span class="n">names</span> <span class="o">=</span> <span class="n">tool_names</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">tool_names</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="k">else</span> <span class="p">[</span><span class="n">tool_names</span><span class="p">]</span>
-<a id="__codelineno-0-2133" name="__codelineno-0-2133"></a>        <span class="n">trimmed</span> <span class="o">=</span> <span class="p">{</span>
-<a id="__codelineno-0-2134" name="__codelineno-0-2134"></a>            <span class="n">name</span><span class="p">:</span> <span class="n">tool</span>
-<a id="__codelineno-0-2135" name="__codelineno-0-2135"></a>            <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">tool</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tools</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
-<a id="__codelineno-0-2136" name="__codelineno-0-2136"></a>            <span class="k">if</span> <span class="n">name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">names</span>
-<a id="__codelineno-0-2137" name="__codelineno-0-2137"></a>        <span class="p">}</span>
-<a id="__codelineno-0-2138" name="__codelineno-0-2138"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_apply_tools</span><span class="p">(</span><span class="n">trimmed</span><span class="p">)</span>
-<a id="__codelineno-0-2139" name="__codelineno-0-2139"></a>
-<a id="__codelineno-0-2140" name="__codelineno-0-2140"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_apply_tools</span><span class="p">(</span>
-<a id="__codelineno-0-2141" name="__codelineno-0-2141"></a>        <span class="bp">self</span><span class="p">,</span>
-<a id="__codelineno-0-2142" name="__codelineno-0-2142"></a>        <span class="n">tools</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">BaseTool</span><span class="p">]</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">BaseTool</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-2143" name="__codelineno-0-2143"></a>        <span class="o">*</span><span class="p">,</span>
-<a id="__codelineno-0-2144" name="__codelineno-0-2144"></a>        <span class="n">rebuild_graph</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
-<a id="__codelineno-0-2145" name="__codelineno-0-2145"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-0-2146" name="__codelineno-0-2146"></a>        <span class="k">if</span> <span class="n">tools</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-0-2147" name="__codelineno-0-2147"></a>            <span class="n">mapping</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">BaseTool</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
-<a id="__codelineno-0-2148" name="__codelineno-0-2148"></a>        <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">tools</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
-<a id="__codelineno-0-2149" name="__codelineno-0-2149"></a>            <span class="n">mapping</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">tools</span><span class="p">)</span>
-<a id="__codelineno-0-2150" name="__codelineno-0-2150"></a>        <span class="k">else</span><span class="p">:</span>
-<a id="__codelineno-0-2151" name="__codelineno-0-2151"></a>            <span class="n">mapping</span> <span class="o">=</span> <span class="p">{</span><span class="n">tool</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">tool</span> <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">tools</span><span class="p">}</span>
-<a id="__codelineno-0-2152" name="__codelineno-0-2152"></a>
-<a id="__codelineno-0-2153" name="__codelineno-0-2153"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_tools</span> <span class="o">=</span> <span class="n">mapping</span>
-<a id="__codelineno-0-2154" name="__codelineno-0-2154"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">tool_node</span> <span class="o">=</span> <span class="n">ToolNode</span><span class="p">(</span>
-<a id="__codelineno-0-2155" name="__codelineno-0-2155"></a>            <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_tools</span><span class="o">.</span><span class="n">values</span><span class="p">()),</span>
-<a id="__codelineno-0-2156" name="__codelineno-0-2156"></a>            <span class="n">handle_tool_errors</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">handle_tool_errors</span><span class="p">,</span>
-<a id="__codelineno-0-2157" name="__codelineno-0-2157"></a>        <span class="p">)</span>
-<a id="__codelineno-0-2158" name="__codelineno-0-2158"></a>
-<a id="__codelineno-0-2159" name="__codelineno-0-2159"></a>        <span class="k">if</span> <span class="n">rebuild_graph</span> <span class="ow">and</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;build_graph&quot;</span><span class="p">):</span>
-<a id="__codelineno-0-2160" name="__codelineno-0-2160"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">_invalidate_compiled_graphs</span><span class="p">()</span>
-<a id="__codelineno-0-2161" name="__codelineno-0-2161"></a>            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;graph&quot;</span><span class="p">):</span>
-<a id="__codelineno-0-2162" name="__codelineno-0-2162"></a>                <span class="bp">self</span><span class="o">.</span><span class="n">build_graph</span><span class="p">()</span>
+<a id="__codelineno-0-2131" name="__codelineno-0-2131"></a>        <span class="k">return</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">to_thread</span><span class="p">(</span><span class="n">discover_and_apply</span><span class="p">)</span>
+<a id="__codelineno-0-2132" name="__codelineno-0-2132"></a>
+<a id="__codelineno-0-2133" name="__codelineno-0-2133"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">remove_tool</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tool_names</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-2134" name="__codelineno-0-2134"></a>        <span class="n">names</span> <span class="o">=</span> <span class="n">tool_names</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">tool_names</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="k">else</span> <span class="p">[</span><span class="n">tool_names</span><span class="p">]</span>
+<a id="__codelineno-0-2135" name="__codelineno-0-2135"></a>        <span class="n">trimmed</span> <span class="o">=</span> <span class="p">{</span>
+<a id="__codelineno-0-2136" name="__codelineno-0-2136"></a>            <span class="n">name</span><span class="p">:</span> <span class="n">tool</span>
+<a id="__codelineno-0-2137" name="__codelineno-0-2137"></a>            <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">tool</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tools</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<a id="__codelineno-0-2138" name="__codelineno-0-2138"></a>            <span class="k">if</span> <span class="n">name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">names</span>
+<a id="__codelineno-0-2139" name="__codelineno-0-2139"></a>        <span class="p">}</span>
+<a id="__codelineno-0-2140" name="__codelineno-0-2140"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_apply_tools</span><span class="p">(</span><span class="n">trimmed</span><span class="p">)</span>
+<a id="__codelineno-0-2141" name="__codelineno-0-2141"></a>
+<a id="__codelineno-0-2142" name="__codelineno-0-2142"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_apply_tools</span><span class="p">(</span>
+<a id="__codelineno-0-2143" name="__codelineno-0-2143"></a>        <span class="bp">self</span><span class="p">,</span>
+<a id="__codelineno-0-2144" name="__codelineno-0-2144"></a>        <span class="n">tools</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">BaseTool</span><span class="p">]</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">BaseTool</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-2145" name="__codelineno-0-2145"></a>        <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-0-2146" name="__codelineno-0-2146"></a>        <span class="n">rebuild_graph</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<a id="__codelineno-0-2147" name="__codelineno-0-2147"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-2148" name="__codelineno-0-2148"></a>        <span class="k">if</span> <span class="n">tools</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-2149" name="__codelineno-0-2149"></a>            <span class="n">mapping</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">BaseTool</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+<a id="__codelineno-0-2150" name="__codelineno-0-2150"></a>        <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">tools</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+<a id="__codelineno-0-2151" name="__codelineno-0-2151"></a>            <span class="n">mapping</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">tools</span><span class="p">)</span>
+<a id="__codelineno-0-2152" name="__codelineno-0-2152"></a>        <span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-0-2153" name="__codelineno-0-2153"></a>            <span class="n">mapping</span> <span class="o">=</span> <span class="p">{</span><span class="n">tool</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">tool</span> <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">tools</span><span class="p">}</span>
+<a id="__codelineno-0-2154" name="__codelineno-0-2154"></a>
+<a id="__codelineno-0-2155" name="__codelineno-0-2155"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_tools</span> <span class="o">=</span> <span class="n">mapping</span>
+<a id="__codelineno-0-2156" name="__codelineno-0-2156"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">tool_node</span> <span class="o">=</span> <span class="n">ToolNode</span><span class="p">(</span>
+<a id="__codelineno-0-2157" name="__codelineno-0-2157"></a>            <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_tools</span><span class="o">.</span><span class="n">values</span><span class="p">()),</span>
+<a id="__codelineno-0-2158" name="__codelineno-0-2158"></a>            <span class="n">handle_tool_errors</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">handle_tool_errors</span><span class="p">,</span>
+<a id="__codelineno-0-2159" name="__codelineno-0-2159"></a>        <span class="p">)</span>
+<a id="__codelineno-0-2160" name="__codelineno-0-2160"></a>
+<a id="__codelineno-0-2161" name="__codelineno-0-2161"></a>        <span class="k">if</span> <span class="n">rebuild_graph</span> <span class="ow">and</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;build_graph&quot;</span><span class="p">):</span>
+<a id="__codelineno-0-2162" name="__codelineno-0-2162"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">_invalidate_compiled_graphs</span><span class="p">()</span>
+<a id="__codelineno-0-2163" name="__codelineno-0-2163"></a>            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;graph&quot;</span><span class="p">):</span>
+<a id="__codelineno-0-2164" name="__codelineno-0-2164"></a>                <span class="bp">self</span><span class="o">.</span><span class="n">build_graph</span><span class="p">()</span>
 </code></pre></div></td></tr></table></div>
               </details>
 
@@ -7291,9 +7291,7 @@ integration capabilities while only needing to implement the core _invoke method
 
             <details class="quote">
               <summary>Source code in <code>src/ursa/agents/base.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2090">2090</a></span>
-<span class="normal"><a href="#__codelineno-0-2091">2091</a></span>
-<span class="normal"><a href="#__codelineno-0-2092">2092</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2092">2092</a></span>
 <span class="normal"><a href="#__codelineno-0-2093">2093</a></span>
 <span class="normal"><a href="#__codelineno-0-2094">2094</a></span>
 <span class="normal"><a href="#__codelineno-0-2095">2095</a></span>
@@ -7330,46 +7328,48 @@ integration capabilities while only needing to implement the core _invoke method
 <span class="normal"><a href="#__codelineno-0-2126">2126</a></span>
 <span class="normal"><a href="#__codelineno-0-2127">2127</a></span>
 <span class="normal"><a href="#__codelineno-0-2128">2128</a></span>
-<span class="normal"><a href="#__codelineno-0-2129">2129</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-2090" name="__codelineno-0-2090"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">add_mcp_tools</span><span class="p">(</span>
-<a id="__codelineno-0-2091" name="__codelineno-0-2091"></a>    <span class="bp">self</span><span class="p">,</span>
-<a id="__codelineno-0-2092" name="__codelineno-0-2092"></a>    <span class="n">client</span><span class="p">:</span> <span class="n">MultiServerMCPClient</span><span class="p">,</span>
-<a id="__codelineno-0-2093" name="__codelineno-0-2093"></a>    <span class="n">tool_name</span><span class="p">:</span> <span class="kc">None</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-2094" name="__codelineno-0-2094"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-<a id="__codelineno-0-2095" name="__codelineno-0-2095"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Add tools from an MCP client to the agent</span>
-<a id="__codelineno-0-2096" name="__codelineno-0-2096"></a>
-<a id="__codelineno-0-2097" name="__codelineno-0-2097"></a><span class="sd">    Args:</span>
-<a id="__codelineno-0-2098" name="__codelineno-0-2098"></a><span class="sd">       client: the MCP client to add tools from</span>
-<a id="__codelineno-0-2099" name="__codelineno-0-2099"></a><span class="sd">       tool_name: if provided, only add named tools</span>
-<a id="__codelineno-0-2100" name="__codelineno-0-2100"></a>
-<a id="__codelineno-0-2101" name="__codelineno-0-2101"></a><span class="sd">    Returns:</span>
-<a id="__codelineno-0-2102" name="__codelineno-0-2102"></a><span class="sd">        MCP server names keyed by the attached tool name. Clients that do</span>
-<a id="__codelineno-0-2103" name="__codelineno-0-2103"></a><span class="sd">        not expose named connections return an empty mapping.</span>
-<a id="__codelineno-0-2104" name="__codelineno-0-2104"></a><span class="sd">    &quot;&quot;&quot;</span>
-<a id="__codelineno-0-2105" name="__codelineno-0-2105"></a>
-<a id="__codelineno-0-2106" name="__codelineno-0-2106"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">discover_and_apply</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-<a id="__codelineno-0-2107" name="__codelineno-0-2107"></a>        <span class="c1"># MCP adapters perform synchronous session/schema setup around</span>
-<a id="__codelineno-0-2108" name="__codelineno-0-2108"></a>        <span class="c1"># their async I/O, and applying tools rebuilds the graph. Own one</span>
-<a id="__codelineno-0-2109" name="__codelineno-0-2109"></a>        <span class="c1"># worker boundary for the complete operation so every caller—not</span>
-<a id="__codelineno-0-2110" name="__codelineno-0-2110"></a>        <span class="c1"># only Textual—keeps its event loop responsive.</span>
-<a id="__codelineno-0-2111" name="__codelineno-0-2111"></a>        <span class="n">tools</span><span class="p">,</span> <span class="n">tool_sources</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
-<a id="__codelineno-0-2112" name="__codelineno-0-2112"></a>            <span class="n">load_mcp_tools_with_sources</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
-<a id="__codelineno-0-2113" name="__codelineno-0-2113"></a>        <span class="p">)</span>
-<a id="__codelineno-0-2114" name="__codelineno-0-2114"></a>        <span class="n">selected</span> <span class="o">=</span> <span class="n">tool_name</span>
-<a id="__codelineno-0-2115" name="__codelineno-0-2115"></a>        <span class="k">if</span> <span class="n">selected</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-0-2116" name="__codelineno-0-2116"></a>            <span class="n">selected</span> <span class="o">=</span> <span class="p">(</span>
-<a id="__codelineno-0-2117" name="__codelineno-0-2117"></a>                <span class="n">selected</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">selected</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="k">else</span> <span class="p">[</span><span class="n">selected</span><span class="p">]</span>
-<a id="__codelineno-0-2118" name="__codelineno-0-2118"></a>            <span class="p">)</span>
-<a id="__codelineno-0-2119" name="__codelineno-0-2119"></a>            <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span><span class="n">tool</span> <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">tools</span> <span class="k">if</span> <span class="n">tool</span><span class="o">.</span><span class="n">name</span> <span class="ow">in</span> <span class="n">selected</span><span class="p">]</span>
-<a id="__codelineno-0-2120" name="__codelineno-0-2120"></a>            <span class="n">attached_names</span> <span class="o">=</span> <span class="p">{</span><span class="n">tool</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">tools</span><span class="p">}</span>
-<a id="__codelineno-0-2121" name="__codelineno-0-2121"></a>            <span class="n">tool_sources</span> <span class="o">=</span> <span class="p">{</span>
-<a id="__codelineno-0-2122" name="__codelineno-0-2122"></a>                <span class="n">name</span><span class="p">:</span> <span class="n">server</span>
-<a id="__codelineno-0-2123" name="__codelineno-0-2123"></a>                <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">server</span> <span class="ow">in</span> <span class="n">tool_sources</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
-<a id="__codelineno-0-2124" name="__codelineno-0-2124"></a>                <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">attached_names</span>
-<a id="__codelineno-0-2125" name="__codelineno-0-2125"></a>            <span class="p">}</span>
-<a id="__codelineno-0-2126" name="__codelineno-0-2126"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">add_tool</span><span class="p">(</span><span class="n">tools</span><span class="p">)</span>
-<a id="__codelineno-0-2127" name="__codelineno-0-2127"></a>        <span class="k">return</span> <span class="n">tool_sources</span>
-<a id="__codelineno-0-2128" name="__codelineno-0-2128"></a>
-<a id="__codelineno-0-2129" name="__codelineno-0-2129"></a>    <span class="k">return</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">to_thread</span><span class="p">(</span><span class="n">discover_and_apply</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-2129">2129</a></span>
+<span class="normal"><a href="#__codelineno-0-2130">2130</a></span>
+<span class="normal"><a href="#__codelineno-0-2131">2131</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-2092" name="__codelineno-0-2092"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">add_mcp_tools</span><span class="p">(</span>
+<a id="__codelineno-0-2093" name="__codelineno-0-2093"></a>    <span class="bp">self</span><span class="p">,</span>
+<a id="__codelineno-0-2094" name="__codelineno-0-2094"></a>    <span class="n">client</span><span class="p">:</span> <span class="n">MultiServerMCPClient</span><span class="p">,</span>
+<a id="__codelineno-0-2095" name="__codelineno-0-2095"></a>    <span class="n">tool_name</span><span class="p">:</span> <span class="kc">None</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-2096" name="__codelineno-0-2096"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<a id="__codelineno-0-2097" name="__codelineno-0-2097"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Add tools from an MCP client to the agent</span>
+<a id="__codelineno-0-2098" name="__codelineno-0-2098"></a>
+<a id="__codelineno-0-2099" name="__codelineno-0-2099"></a><span class="sd">    Args:</span>
+<a id="__codelineno-0-2100" name="__codelineno-0-2100"></a><span class="sd">       client: the MCP client to add tools from</span>
+<a id="__codelineno-0-2101" name="__codelineno-0-2101"></a><span class="sd">       tool_name: if provided, only add named tools</span>
+<a id="__codelineno-0-2102" name="__codelineno-0-2102"></a>
+<a id="__codelineno-0-2103" name="__codelineno-0-2103"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-0-2104" name="__codelineno-0-2104"></a><span class="sd">        MCP server names keyed by the attached tool name. Clients that do</span>
+<a id="__codelineno-0-2105" name="__codelineno-0-2105"></a><span class="sd">        not expose named connections return an empty mapping.</span>
+<a id="__codelineno-0-2106" name="__codelineno-0-2106"></a><span class="sd">    &quot;&quot;&quot;</span>
+<a id="__codelineno-0-2107" name="__codelineno-0-2107"></a>
+<a id="__codelineno-0-2108" name="__codelineno-0-2108"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">discover_and_apply</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<a id="__codelineno-0-2109" name="__codelineno-0-2109"></a>        <span class="c1"># MCP adapters perform synchronous session/schema setup around</span>
+<a id="__codelineno-0-2110" name="__codelineno-0-2110"></a>        <span class="c1"># their async I/O, and applying tools rebuilds the graph. Own one</span>
+<a id="__codelineno-0-2111" name="__codelineno-0-2111"></a>        <span class="c1"># worker boundary for the complete operation so every caller—not</span>
+<a id="__codelineno-0-2112" name="__codelineno-0-2112"></a>        <span class="c1"># only Textual—keeps its event loop responsive.</span>
+<a id="__codelineno-0-2113" name="__codelineno-0-2113"></a>        <span class="n">tools</span><span class="p">,</span> <span class="n">tool_sources</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+<a id="__codelineno-0-2114" name="__codelineno-0-2114"></a>            <span class="n">load_mcp_tools_with_sources</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
+<a id="__codelineno-0-2115" name="__codelineno-0-2115"></a>        <span class="p">)</span>
+<a id="__codelineno-0-2116" name="__codelineno-0-2116"></a>        <span class="n">selected</span> <span class="o">=</span> <span class="n">tool_name</span>
+<a id="__codelineno-0-2117" name="__codelineno-0-2117"></a>        <span class="k">if</span> <span class="n">selected</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-2118" name="__codelineno-0-2118"></a>            <span class="n">selected</span> <span class="o">=</span> <span class="p">(</span>
+<a id="__codelineno-0-2119" name="__codelineno-0-2119"></a>                <span class="n">selected</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">selected</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="k">else</span> <span class="p">[</span><span class="n">selected</span><span class="p">]</span>
+<a id="__codelineno-0-2120" name="__codelineno-0-2120"></a>            <span class="p">)</span>
+<a id="__codelineno-0-2121" name="__codelineno-0-2121"></a>            <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span><span class="n">tool</span> <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">tools</span> <span class="k">if</span> <span class="n">tool</span><span class="o">.</span><span class="n">name</span> <span class="ow">in</span> <span class="n">selected</span><span class="p">]</span>
+<a id="__codelineno-0-2122" name="__codelineno-0-2122"></a>            <span class="n">attached_names</span> <span class="o">=</span> <span class="p">{</span><span class="n">tool</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">tools</span><span class="p">}</span>
+<a id="__codelineno-0-2123" name="__codelineno-0-2123"></a>            <span class="n">tool_sources</span> <span class="o">=</span> <span class="p">{</span>
+<a id="__codelineno-0-2124" name="__codelineno-0-2124"></a>                <span class="n">name</span><span class="p">:</span> <span class="n">server</span>
+<a id="__codelineno-0-2125" name="__codelineno-0-2125"></a>                <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">server</span> <span class="ow">in</span> <span class="n">tool_sources</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<a id="__codelineno-0-2126" name="__codelineno-0-2126"></a>                <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">attached_names</span>
+<a id="__codelineno-0-2127" name="__codelineno-0-2127"></a>            <span class="p">}</span>
+<a id="__codelineno-0-2128" name="__codelineno-0-2128"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">add_tool</span><span class="p">(</span><span class="n">tools</span><span class="p">)</span>
+<a id="__codelineno-0-2129" name="__codelineno-0-2129"></a>        <span class="k">return</span> <span class="n">tool_sources</span>
+<a id="__codelineno-0-2130" name="__codelineno-0-2130"></a>
+<a id="__codelineno-0-2131" name="__codelineno-0-2131"></a>    <span class="k">return</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">to_thread</span><span class="p">(</span><span class="n">discover_and_apply</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -23917,7 +23917,9 @@ space back into context via the existing experience tools.</p>
 <span class="normal"><a href="#__codelineno-0-337">337</a></span>
 <span class="normal"><a href="#__codelineno-0-338">338</a></span>
 <span class="normal"><a href="#__codelineno-0-339">339</a></span>
-<span class="normal"><a href="#__codelineno-0-340">340</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-310" name="__codelineno-0-310"></a><span class="nd">@tool</span>
+<span class="normal"><a href="#__codelineno-0-340">340</a></span>
+<span class="normal"><a href="#__codelineno-0-341">341</a></span>
+<span class="normal"><a href="#__codelineno-0-342">342</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-310" name="__codelineno-0-310"></a><span class="nd">@tool</span>
 <a id="__codelineno-0-311" name="__codelineno-0-311"></a><span class="k">def</span><span class="w"> </span><span class="nf">run_cmd</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">state</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">dict</span><span class="p">,</span> <span class="n">InjectedState</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <a id="__codelineno-0-312" name="__codelineno-0-312"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <a id="__codelineno-0-313" name="__codelineno-0-313"></a><span class="sd">    Run a commandline command from using the subprocess package in python</span>
@@ -23933,21 +23935,23 @@ space back into context via the existing experience tools.</p>
 <a id="__codelineno-0-323" name="__codelineno-0-323"></a>            <span class="n">stdout</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
 <a id="__codelineno-0-324" name="__codelineno-0-324"></a>            <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
 <a id="__codelineno-0-325" name="__codelineno-0-325"></a>            <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-<a id="__codelineno-0-326" name="__codelineno-0-326"></a>            <span class="n">cwd</span><span class="o">=</span><span class="n">workspace_dir</span><span class="p">,</span>
-<a id="__codelineno-0-327" name="__codelineno-0-327"></a>        <span class="p">)</span>
-<a id="__codelineno-0-328" name="__codelineno-0-328"></a>
-<a id="__codelineno-0-329" name="__codelineno-0-329"></a>        <span class="n">stdout</span><span class="p">,</span> <span class="n">stderr</span> <span class="o">=</span> <span class="n">process</span><span class="o">.</span><span class="n">communicate</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mi">60000</span><span class="p">)</span>
-<a id="__codelineno-0-330" name="__codelineno-0-330"></a>        <span class="n">LOGGER</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
-<a id="__codelineno-0-331" name="__codelineno-0-331"></a>            <span class="s2">&quot;Command finished: returncode=</span><span class="si">%s</span><span class="s2"> stdout_chars=</span><span class="si">%s</span><span class="s2"> stderr_chars=</span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span>
-<a id="__codelineno-0-332" name="__codelineno-0-332"></a>            <span class="n">process</span><span class="o">.</span><span class="n">returncode</span><span class="p">,</span>
-<a id="__codelineno-0-333" name="__codelineno-0-333"></a>            <span class="nb">len</span><span class="p">(</span><span class="n">stdout</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
-<a id="__codelineno-0-334" name="__codelineno-0-334"></a>            <span class="nb">len</span><span class="p">(</span><span class="n">stderr</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
-<a id="__codelineno-0-335" name="__codelineno-0-335"></a>        <span class="p">)</span>
-<a id="__codelineno-0-336" name="__codelineno-0-336"></a>    <span class="k">except</span> <span class="ne">KeyboardInterrupt</span><span class="p">:</span>
-<a id="__codelineno-0-337" name="__codelineno-0-337"></a>        <span class="n">LOGGER</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Keyboard interrupt while running command: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">query</span><span class="p">)</span>
-<a id="__codelineno-0-338" name="__codelineno-0-338"></a>        <span class="n">stdout</span><span class="p">,</span> <span class="n">stderr</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="s2">&quot;KeyboardInterrupt:&quot;</span>
-<a id="__codelineno-0-339" name="__codelineno-0-339"></a>
-<a id="__codelineno-0-340" name="__codelineno-0-340"></a>    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;STDOUT: </span><span class="si">{</span><span class="n">stdout</span><span class="si">}</span><span class="s2"> and STDERR: </span><span class="si">{</span><span class="n">stderr</span><span class="si">}</span><span class="s2">&quot;</span>
+<a id="__codelineno-0-326" name="__codelineno-0-326"></a>            <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-327" name="__codelineno-0-327"></a>            <span class="n">errors</span><span class="o">=</span><span class="s2">&quot;replace&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-328" name="__codelineno-0-328"></a>            <span class="n">cwd</span><span class="o">=</span><span class="n">workspace_dir</span><span class="p">,</span>
+<a id="__codelineno-0-329" name="__codelineno-0-329"></a>        <span class="p">)</span>
+<a id="__codelineno-0-330" name="__codelineno-0-330"></a>
+<a id="__codelineno-0-331" name="__codelineno-0-331"></a>        <span class="n">stdout</span><span class="p">,</span> <span class="n">stderr</span> <span class="o">=</span> <span class="n">process</span><span class="o">.</span><span class="n">communicate</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mi">60000</span><span class="p">)</span>
+<a id="__codelineno-0-332" name="__codelineno-0-332"></a>        <span class="n">LOGGER</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+<a id="__codelineno-0-333" name="__codelineno-0-333"></a>            <span class="s2">&quot;Command finished: returncode=</span><span class="si">%s</span><span class="s2"> stdout_chars=</span><span class="si">%s</span><span class="s2"> stderr_chars=</span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-334" name="__codelineno-0-334"></a>            <span class="n">process</span><span class="o">.</span><span class="n">returncode</span><span class="p">,</span>
+<a id="__codelineno-0-335" name="__codelineno-0-335"></a>            <span class="nb">len</span><span class="p">(</span><span class="n">stdout</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+<a id="__codelineno-0-336" name="__codelineno-0-336"></a>            <span class="nb">len</span><span class="p">(</span><span class="n">stderr</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+<a id="__codelineno-0-337" name="__codelineno-0-337"></a>        <span class="p">)</span>
+<a id="__codelineno-0-338" name="__codelineno-0-338"></a>    <span class="k">except</span> <span class="ne">KeyboardInterrupt</span><span class="p">:</span>
+<a id="__codelineno-0-339" name="__codelineno-0-339"></a>        <span class="n">LOGGER</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Keyboard interrupt while running command: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">query</span><span class="p">)</span>
+<a id="__codelineno-0-340" name="__codelineno-0-340"></a>        <span class="n">stdout</span><span class="p">,</span> <span class="n">stderr</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="s2">&quot;KeyboardInterrupt:&quot;</span>
+<a id="__codelineno-0-341" name="__codelineno-0-341"></a>
+<a id="__codelineno-0-342" name="__codelineno-0-342"></a>    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;STDOUT: </span><span class="si">{</span><span class="n">stdout</span><span class="si">}</span><span class="s2"> and STDERR: </span><span class="si">{</span><span class="n">stderr</span><span class="si">}</span><span class="s2">&quot;</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -24040,9 +24044,7 @@ space back into context via the existing experience tools.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/ursa/agents/optimization_agent.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-343">343</a></span>
-<span class="normal"><a href="#__codelineno-0-344">344</a></span>
-<span class="normal"><a href="#__codelineno-0-345">345</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-345">345</a></span>
 <span class="normal"><a href="#__codelineno-0-346">346</a></span>
 <span class="normal"><a href="#__codelineno-0-347">347</a></span>
 <span class="normal"><a href="#__codelineno-0-348">348</a></span>
@@ -24081,48 +24083,50 @@ space back into context via the existing experience tools.</p>
 <span class="normal"><a href="#__codelineno-0-381">381</a></span>
 <span class="normal"><a href="#__codelineno-0-382">382</a></span>
 <span class="normal"><a href="#__codelineno-0-383">383</a></span>
-<span class="normal"><a href="#__codelineno-0-384">384</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-343" name="__codelineno-0-343"></a><span class="nd">@tool</span>
-<a id="__codelineno-0-344" name="__codelineno-0-344"></a><span class="k">def</span><span class="w"> </span><span class="nf">write_code</span><span class="p">(</span>
-<a id="__codelineno-0-345" name="__codelineno-0-345"></a>    <span class="n">code</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-<a id="__codelineno-0-346" name="__codelineno-0-346"></a>    <span class="n">filename</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-<a id="__codelineno-0-347" name="__codelineno-0-347"></a>    <span class="n">state</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">dict</span><span class="p">,</span> <span class="n">InjectedState</span><span class="p">],</span>
-<a id="__codelineno-0-348" name="__codelineno-0-348"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<a id="__codelineno-0-349" name="__codelineno-0-349"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<a id="__codelineno-0-350" name="__codelineno-0-350"></a><span class="sd">    Writes python or Julia code to a file in the given workspace as requested.</span>
-<a id="__codelineno-0-351" name="__codelineno-0-351"></a>
-<a id="__codelineno-0-352" name="__codelineno-0-352"></a><span class="sd">    Args:</span>
-<a id="__codelineno-0-353" name="__codelineno-0-353"></a><span class="sd">        code: The code to write</span>
-<a id="__codelineno-0-354" name="__codelineno-0-354"></a><span class="sd">        filename: the filename with an appropriate extension for programming language (.py for python, .jl for Julia, etc.)</span>
-<a id="__codelineno-0-355" name="__codelineno-0-355"></a>
-<a id="__codelineno-0-356" name="__codelineno-0-356"></a><span class="sd">    Returns:</span>
-<a id="__codelineno-0-357" name="__codelineno-0-357"></a><span class="sd">        Execution results</span>
-<a id="__codelineno-0-358" name="__codelineno-0-358"></a><span class="sd">    &quot;&quot;&quot;</span>
-<a id="__codelineno-0-359" name="__codelineno-0-359"></a>    <span class="n">workspace_dir</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;workspace&quot;</span><span class="p">]</span>
-<a id="__codelineno-0-360" name="__codelineno-0-360"></a>    <span class="k">try</span><span class="p">:</span>
-<a id="__codelineno-0-361" name="__codelineno-0-361"></a>        <span class="n">LOGGER</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Writing file: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">filename</span><span class="p">)</span>
-<a id="__codelineno-0-362" name="__codelineno-0-362"></a>        <span class="c1"># Extract code if wrapped in markdown code blocks</span>
-<a id="__codelineno-0-363" name="__codelineno-0-363"></a>        <span class="k">if</span> <span class="s2">&quot;```&quot;</span> <span class="ow">in</span> <span class="n">code</span><span class="p">:</span>
-<a id="__codelineno-0-364" name="__codelineno-0-364"></a>            <span class="n">code_parts</span> <span class="o">=</span> <span class="n">code</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;```&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-365" name="__codelineno-0-365"></a>            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">code_parts</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">3</span><span class="p">:</span>
-<a id="__codelineno-0-366" name="__codelineno-0-366"></a>                <span class="c1"># Extract the actual code</span>
-<a id="__codelineno-0-367" name="__codelineno-0-367"></a>                <span class="k">if</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="ow">in</span> <span class="n">code_parts</span><span class="p">[</span><span class="mi">1</span><span class="p">]:</span>
-<a id="__codelineno-0-368" name="__codelineno-0-368"></a>                    <span class="n">code</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">code_parts</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)[</span><span class="mi">1</span><span class="p">:])</span>
-<a id="__codelineno-0-369" name="__codelineno-0-369"></a>                <span class="k">else</span><span class="p">:</span>
-<a id="__codelineno-0-370" name="__codelineno-0-370"></a>                    <span class="n">code</span> <span class="o">=</span> <span class="n">code_parts</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
-<a id="__codelineno-0-371" name="__codelineno-0-371"></a>
-<a id="__codelineno-0-372" name="__codelineno-0-372"></a>        <span class="c1"># Write code to a file</span>
-<a id="__codelineno-0-373" name="__codelineno-0-373"></a>        <span class="n">code_file</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">workspace_dir</span><span class="p">,</span> <span class="n">filename</span><span class="p">)</span>
-<a id="__codelineno-0-374" name="__codelineno-0-374"></a>
-<a id="__codelineno-0-375" name="__codelineno-0-375"></a>        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">code_file</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-<a id="__codelineno-0-376" name="__codelineno-0-376"></a>            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">code</span><span class="p">)</span>
-<a id="__codelineno-0-377" name="__codelineno-0-377"></a>        <span class="n">LOGGER</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;File written: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">code_file</span><span class="p">)</span>
-<a id="__codelineno-0-378" name="__codelineno-0-378"></a>
-<a id="__codelineno-0-379" name="__codelineno-0-379"></a>        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;File </span><span class="si">{</span><span class="n">filename</span><span class="si">}</span><span class="s2"> written successfully.&quot;</span>
+<span class="normal"><a href="#__codelineno-0-384">384</a></span>
+<span class="normal"><a href="#__codelineno-0-385">385</a></span>
+<span class="normal"><a href="#__codelineno-0-386">386</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-345" name="__codelineno-0-345"></a><span class="nd">@tool</span>
+<a id="__codelineno-0-346" name="__codelineno-0-346"></a><span class="k">def</span><span class="w"> </span><span class="nf">write_code</span><span class="p">(</span>
+<a id="__codelineno-0-347" name="__codelineno-0-347"></a>    <span class="n">code</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-0-348" name="__codelineno-0-348"></a>    <span class="n">filename</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-0-349" name="__codelineno-0-349"></a>    <span class="n">state</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">dict</span><span class="p">,</span> <span class="n">InjectedState</span><span class="p">],</span>
+<a id="__codelineno-0-350" name="__codelineno-0-350"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-0-351" name="__codelineno-0-351"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<a id="__codelineno-0-352" name="__codelineno-0-352"></a><span class="sd">    Writes python or Julia code to a file in the given workspace as requested.</span>
+<a id="__codelineno-0-353" name="__codelineno-0-353"></a>
+<a id="__codelineno-0-354" name="__codelineno-0-354"></a><span class="sd">    Args:</span>
+<a id="__codelineno-0-355" name="__codelineno-0-355"></a><span class="sd">        code: The code to write</span>
+<a id="__codelineno-0-356" name="__codelineno-0-356"></a><span class="sd">        filename: the filename with an appropriate extension for programming language (.py for python, .jl for Julia, etc.)</span>
+<a id="__codelineno-0-357" name="__codelineno-0-357"></a>
+<a id="__codelineno-0-358" name="__codelineno-0-358"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-0-359" name="__codelineno-0-359"></a><span class="sd">        Execution results</span>
+<a id="__codelineno-0-360" name="__codelineno-0-360"></a><span class="sd">    &quot;&quot;&quot;</span>
+<a id="__codelineno-0-361" name="__codelineno-0-361"></a>    <span class="n">workspace_dir</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;workspace&quot;</span><span class="p">]</span>
+<a id="__codelineno-0-362" name="__codelineno-0-362"></a>    <span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-0-363" name="__codelineno-0-363"></a>        <span class="n">LOGGER</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Writing file: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">filename</span><span class="p">)</span>
+<a id="__codelineno-0-364" name="__codelineno-0-364"></a>        <span class="c1"># Extract code if wrapped in markdown code blocks</span>
+<a id="__codelineno-0-365" name="__codelineno-0-365"></a>        <span class="k">if</span> <span class="s2">&quot;```&quot;</span> <span class="ow">in</span> <span class="n">code</span><span class="p">:</span>
+<a id="__codelineno-0-366" name="__codelineno-0-366"></a>            <span class="n">code_parts</span> <span class="o">=</span> <span class="n">code</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;```&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-367" name="__codelineno-0-367"></a>            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">code_parts</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">3</span><span class="p">:</span>
+<a id="__codelineno-0-368" name="__codelineno-0-368"></a>                <span class="c1"># Extract the actual code</span>
+<a id="__codelineno-0-369" name="__codelineno-0-369"></a>                <span class="k">if</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="ow">in</span> <span class="n">code_parts</span><span class="p">[</span><span class="mi">1</span><span class="p">]:</span>
+<a id="__codelineno-0-370" name="__codelineno-0-370"></a>                    <span class="n">code</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">code_parts</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)[</span><span class="mi">1</span><span class="p">:])</span>
+<a id="__codelineno-0-371" name="__codelineno-0-371"></a>                <span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-0-372" name="__codelineno-0-372"></a>                    <span class="n">code</span> <span class="o">=</span> <span class="n">code_parts</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+<a id="__codelineno-0-373" name="__codelineno-0-373"></a>
+<a id="__codelineno-0-374" name="__codelineno-0-374"></a>        <span class="c1"># Write code to a file</span>
+<a id="__codelineno-0-375" name="__codelineno-0-375"></a>        <span class="n">code_file</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">workspace_dir</span><span class="p">,</span> <span class="n">filename</span><span class="p">)</span>
+<a id="__codelineno-0-376" name="__codelineno-0-376"></a>
+<a id="__codelineno-0-377" name="__codelineno-0-377"></a>        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">code_file</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+<a id="__codelineno-0-378" name="__codelineno-0-378"></a>            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">code</span><span class="p">)</span>
+<a id="__codelineno-0-379" name="__codelineno-0-379"></a>        <span class="n">LOGGER</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;File written: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">code_file</span><span class="p">)</span>
 <a id="__codelineno-0-380" name="__codelineno-0-380"></a>
-<a id="__codelineno-0-381" name="__codelineno-0-381"></a>    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
-<a id="__codelineno-0-382" name="__codelineno-0-382"></a>        <span class="n">LOGGER</span><span class="o">.</span><span class="n">exception</span><span class="p">(</span><span class="s2">&quot;Error generating code for </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">filename</span><span class="p">)</span>
-<a id="__codelineno-0-383" name="__codelineno-0-383"></a>        <span class="c1"># Return minimal code that prints the error</span>
-<a id="__codelineno-0-384" name="__codelineno-0-384"></a>        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Failed to write </span><span class="si">{</span><span class="n">filename</span><span class="si">}</span><span class="s2"> successfully.&quot;</span>
+<a id="__codelineno-0-381" name="__codelineno-0-381"></a>        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;File </span><span class="si">{</span><span class="n">filename</span><span class="si">}</span><span class="s2"> written successfully.&quot;</span>
+<a id="__codelineno-0-382" name="__codelineno-0-382"></a>
+<a id="__codelineno-0-383" name="__codelineno-0-383"></a>    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+<a id="__codelineno-0-384" name="__codelineno-0-384"></a>        <span class="n">LOGGER</span><span class="o">.</span><span class="n">exception</span><span class="p">(</span><span class="s2">&quot;Error generating code for </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">filename</span><span class="p">)</span>
+<a id="__codelineno-0-385" name="__codelineno-0-385"></a>        <span class="c1"># Return minimal code that prints the error</span>
+<a id="__codelineno-0-386" name="__codelineno-0-386"></a>        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Failed to write </span><span class="si">{</span><span class="n">filename</span><span class="si">}</span><span class="s2"> successfully.&quot;</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
