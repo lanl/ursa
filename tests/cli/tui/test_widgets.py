@@ -1128,6 +1128,7 @@ inference_provider: openai
         await wait_for_yaml_debounce(pilot)
 
         provider = app.screen.query_one("#chat-model-provider", Select)
+        await eventually(pilot, lambda: provider.value == "future_provider")
         assert provider.value == "future_provider"
         assert (
             "Not found: future_provider",
@@ -1143,6 +1144,9 @@ inference_provider: openai
         await pilot.pause()
         await wait_for_yaml_debounce(pilot)
 
+        await eventually(
+            pilot, lambda: provider.value == "another_future_provider"
+        )
         assert provider.value == "another_future_provider"
         assert (
             "Not found: another_future_provider",
@@ -1161,6 +1165,7 @@ inference_provider: openai
         await pilot.pause()
         await wait_for_yaml_debounce(pilot)
 
+        await eventually(pilot, lambda: provider.value == "openai")
         assert provider.value == "openai"
         assert not any(
             label.startswith("Not found:") for label, _ in provider._options
@@ -2410,6 +2415,7 @@ async def test_agents_command_uses_tabs_and_collapsed_tool_details(tmp_path):
             "#plan",
             "#chat",
         ]
+        await await_dom(pilot, screen, "Collapsible", count=2)
         tools = list(screen.query(Collapsible))
         assert len(tools) == 2
         assert all(tool.collapsed for tool in tools)
