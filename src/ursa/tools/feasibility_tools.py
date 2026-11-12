@@ -80,6 +80,54 @@ def _load_scipy_linprog():
     return linprog
 
 
+_SUPPORTED_VARIABLE_TYPES = {
+    "real",
+    "float",
+    "double",
+    "continuous",
+    "integer",
+    "int",
+    "boolean",
+    "bool",
+    "logical",
+}
+
+
+def _validate_feasibility_input(
+    variable_name: list[str],
+    variable_type: list[str],
+    variable_bounds: list[list[Optional[float]]],
+) -> str | None:
+    if len(variable_name) != len(variable_type) or len(variable_name) != len(
+        variable_bounds
+    ):
+        return (
+            "Input error: variable_name, variable_type, and variable_bounds "
+            "must have the same length."
+        )
+    for name, variable_kind, bounds in zip(
+        variable_name, variable_type, variable_bounds
+    ):
+        if variable_kind.lower() not in _SUPPORTED_VARIABLE_TYPES:
+            return (
+                f"Input error: unknown variable type {variable_kind!r} for "
+                f"variable {name!r}."
+            )
+        if len(bounds) != 2:
+            return (
+                f"Input error: bounds for variable {name!r} must contain "
+                "[low, high]."
+            )
+        low, high = bounds
+        if low is not None and high is not None and low > high:
+            return (
+                f"Input error: lower bound {low} exceeds upper bound {high} "
+                f"for variable {name!r}."
+            )
+
+    return None
+
+
 # =========================
 # Parsing & classification
 # =========================
@@ -909,15 +957,32 @@ def feasibility_check_auto(
         A message indicating the chosen backend and the feasibility result. On success,
         includes an example model (assignment). On infeasibility, includes a short
         diagnostic or solver status.
-
-    Raises:
-        ValueError: If constraints cannot be parsed or an unsupported variable type is provided.
     """
-    # 1) Parse
+    # 1) Validate correlated tool inputs, then parse.
+    if error := _validate_feasibility_input(
+        variable_name,
+        variable_type,
+        variable_bounds,
+    ):
+        return error
+
     try:
         symbols, sympy_cons = _parse_constraints(constraints, variable_name)
     except Exception as e:
         return f"Parse error: {e}"
+
+    declared_symbols = set(symbols)
+    unknown_symbols = {
+        symbol
+        for expression in sympy_cons
+        for symbol in getattr(sp.sympify(expression), "free_symbols", set())
+        if symbol not in declared_symbols
+    }
+    if unknown_symbols:
+        names = ", ".join(sorted(str(symbol) for symbol in unknown_symbols))
+        return (
+            f"Input error: constraints reference undeclared variables: {names}."
+        )
 
     # 2) Heuristic (optional)
     if heuristic_enabled and heuristic_first:

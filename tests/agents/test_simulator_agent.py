@@ -4,10 +4,11 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.tools import tool
 
 from tests.composite_helpers import CompositeFakeModel, request_text
-from ursa.agents import SimulatorAgent
+from ursa.agents import ChatAgent, SimulatorAgent
 from ursa.util import Checkpointer
 
 
@@ -41,6 +42,116 @@ def test_simulator_uses_documenter_and_runner_child_subgraphs(tmp_path):
     assert state["goal"] == "Run the simulation"
     assert state["messages"][-1].text == "final recap"
     agent.close()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_simulator_recovers_from_invalid_experience_tool_filename(
+    tmp_path, asynchronous
+):
+    invalid_filename = "experiences/documentation.md"
+    corrected_filename = "documentation.md"
+    model = CompositeFakeModel(
+        messages=iter([
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "write_experience",
+                        "args": {
+                            "filename": invalid_filename,
+                            "content": "Documentation notes",
+                        },
+                        "id": "invalid-experience",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "write_experience",
+                        "args": {
+                            "filename": corrected_filename,
+                            "content": "Documentation notes",
+                        },
+                        "id": "corrected-experience",
+                    }
+                ],
+            ),
+            AIMessage(content="documentation recovered"),
+            AIMessage(content="simulation complete"),
+            AIMessage(content="final recap"),
+        ])
+    )
+    agent = SimulatorAgent(model, workspace=tmp_path, enable_metrics=False)
+
+    state = (
+        await agent.ainvoke("Run the simulation")
+        if asynchronous
+        else agent.invoke("Run the simulation")
+    )
+
+    errors = [
+        message
+        for message in model.plain_requests[1]
+        if isinstance(message, ToolMessage) and message.status == "error"
+    ]
+    assert len(errors) == 1
+    assert "simple relative file name" in errors[0].text
+    assert state["messages"][-1].text == "final recap"
+    assert not (
+        agent.den / "experiences" / "experiences" / "documentation.md"
+    ).exists()
+    assert (
+        agent.den / "experiences" / corrected_filename
+    ).read_text() == "Documentation notes\n"
+    if asynchronous:
+        await agent.aclose()
+    else:
+        agent.close()
+
+
+def test_chat_agent_recovers_from_unexpected_tool_value_error(tmp_path):
+    @tool
+    def unexpected_value_error() -> str:
+        """Raise a tool error that the agent should report and recover from."""
+        raise ValueError("unexpected tool bug")
+
+    model = CompositeFakeModel(
+        messages=iter([
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "unexpected_value_error",
+                        "args": {},
+                        "id": "unexpected-value-error",
+                    }
+                ],
+            ),
+            AIMessage(content="Recovered from the tool error"),
+        ])
+    )
+    agent = ChatAgent(
+        model,
+        workspace=tmp_path,
+        enable_metrics=False,
+    )
+    agent.add_tool(unexpected_value_error)
+
+    try:
+        state = agent.invoke("Trigger the tool")
+        errors = [
+            message
+            for message in model.plain_requests[1]
+            if isinstance(message, ToolMessage) and message.status == "error"
+        ]
+        assert len(errors) == 1
+        assert "ValueError" in errors[0].text
+        assert "unexpected tool bug" in errors[0].text
+        assert state["messages"][-1].text == "Recovered from the tool error"
+    finally:
+        agent.close()
 
 
 async def test_simulator_child_subgraphs_support_async_invocation(tmp_path):
@@ -108,30 +219,67 @@ def test_simulator_agent_import():
         ({"docs_path": Path("custom_docs")}, Path("custom_docs")),
     ],
 )
+@pytest.mark.parametrize(
+    "rag_config,expected_group,expected_k",
+    [
+        ({}, "default", 10),
+        ({"group": "science", "rag_tool_return_k": 3}, "science", 3),
+        (
+            {
+                "group": "science",
+                "rag_tool_group": "documentation",
+                "rag_tool_return_k": 7,
+            },
+            "documentation",
+            7,
+        ),
+    ],
+)
 def test_simulator_rag_documentation_path(
-    monkeypatch, tmp_path, chat_model, embedding_model, config, expected_path
+    monkeypatch,
+    tmp_path,
+    chat_model,
+    embedding_model,
+    config,
+    expected_path,
+    rag_config,
+    expected_group,
+    expected_k,
 ):
     import ursa.agents.simulator_agent as simulator
     import ursa.security as security
 
     monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "cache")
-    rag_class = Mock()
+    (security.URSA_CACHE_DIR / "science").mkdir(parents=True)
+    monkeypatch.setattr(
+        "ursa.agents.base.enforce_model_group_policy", lambda *_: None
+    )
+    rag_class = Mock(
+        return_value=Mock(
+            invoke=Mock(return_value={"summary": "documentation"})
+        )
+    )
     monkeypatch.setattr(simulator, "RAGAgent", rag_class)
 
     agent = simulator.SimulatorAgent(
         llm=chat_model,
-        embedding=embedding_model,
+        rag_tool_embedding=embedding_model,
         workspace=tmp_path,
         thread_id="simulation-test",
         checkpointer=None,
         **config,
+        **rag_config,
     )
 
     assert rag_class.call_args.kwargs["database_path"] == expected_path
     assert rag_class.call_args.kwargs["embedding"] is embedding_model
+    assert rag_class.call_args.kwargs["group"] == expected_group
+    assert rag_class.call_args.kwargs["return_k"] == expected_k
     assert agent.rag_agent is rag_class.return_value
     assert "documentation_rag" in agent.documenter.tools
     assert "documentation_rag" in agent.runner.tools
+    assert agent.doc_rag("how to run") == "documentation"
+    agent.rag_agent.invoke.assert_called_once_with(context="how to run")
     agent.close()
 
 

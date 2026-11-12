@@ -1,0 +1,19 @@
+schema_version = "1.4"
+[task]
+name = "ursa/install-parthenon"
+version = "1.0.0"
+description = "Build and install the Parthenon scientific software framework."
+authors = [{ name = "URSA Developers" }]
+keywords = ["cmake", "package-installation", "scientific-computing"]
+
+[verifier]
+timeout_sec = 1800.0
+
+[agent]
+timeout_sec = 3600.0
+
+[environment]
+network_mode = "public"
+build_timeout_sec = 600.0
+os = "linux"
+workdir = "/"

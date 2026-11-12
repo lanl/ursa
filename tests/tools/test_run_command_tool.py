@@ -1,6 +1,7 @@
 import os
 import signal
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -93,6 +94,8 @@ def test_run_command_invokes_subprocess_in_workspace(
     assert Path(recorded["kwargs"]["cwd"]) == tmp_path
     assert recorded["kwargs"]["shell"] is True
     assert recorded["kwargs"]["timeout"] == expected
+    assert recorded["kwargs"]["encoding"] == "utf-8"
+    assert recorded["kwargs"]["errors"] == "replace"
     assert events[0] == (
         "ursa_agent_progress",
         {
@@ -140,6 +143,100 @@ def test_run_command_invokes_subprocess_in_workspace(
         }
     ]
     assert isinstance(payload["elapsed_ms"], float)
+
+
+def test_run_command_replaces_invalid_utf8_output(
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
+):
+    monkeypatch.setenv("URSA_SAFETY_LEVEL", "yolo")
+    emit_invalid_utf8 = tmp_path / "emit_invalid_utf8.py"
+    emit_invalid_utf8.write_text(
+        "import sys\n"
+        "sys.stdout.buffer.write(bytes([183]))\n"
+        "sys.stderr.buffer.write(bytes([183]))\n"
+    )
+
+    result, recorder = invoke_with_event_recorder(
+        run_command.func,
+        subprocess.list2cmdline([sys.executable, str(emit_invalid_utf8)]),
+        runtime=make_runtime(
+            tmp_path,
+            llm=chat_model,
+            tool_call_id="invalid-utf8",
+            thread_id="run-thread",
+        ),
+    )
+
+    assert result == "STDOUT:\n�\nSTDERR:\n�"
+    completed = recorder.events[-1][1]
+    assert completed["phase"] == "end"
+    assert completed["returncode"] == 0
+    assert [artifact["content"] for artifact in completed["artifacts"]] == [
+        "�",
+        "�",
+    ]
+
+
+@pytest.mark.parametrize("safety_level", ["yolo", "none", " YOLO "])
+def test_run_command_bypasses_safety_check_when_disabled(
+    monkeypatch,
+    tmp_path: Path,
+    chat_model: BaseChatModel,
+    safety_level: str,
+):
+    recorded = {}
+    monkeypatch.setenv("URSA_SAFETY_LEVEL", safety_level)
+    monkeypatch.setattr(
+        "ursa.tools.run_command_tool.invoke_structured",
+        lambda *args, **kwargs: pytest.fail(
+            "disabled safety must not invoke the assessment model"
+        ),
+    )
+
+    store = InMemoryStore()
+    monkeypatch.setattr(
+        InMemoryStore,
+        "search",
+        lambda self, *args, **kwargs: pytest.fail(
+            "disabled safety must not inspect safety context"
+        ),
+    )
+
+    def fake_run(*args, **kwargs):
+        recorded["args"] = args
+        recorded["kwargs"] = kwargs
+        return SimpleNamespace(stdout="trusted output", stderr="", returncode=0)
+
+    monkeypatch.setattr("ursa.sandbox.base._run_process_group", fake_run)
+
+    result, recorder = invoke_with_event_recorder(
+        run_command.func,
+        "echo trusted",
+        runtime=make_runtime(
+            tmp_path,
+            llm=chat_model,
+            store=store,
+            thread_id="run-thread",
+            tool_call_id="bypassed",
+        ),
+    )
+
+    normalized_level = safety_level.strip().lower()
+    assert result == "STDOUT:\ntrusted output\nSTDERR:\n"
+    assert recorded["args"] == ("echo trusted",)
+    assert recorder.events[0] == (
+        "ursa_agent_progress",
+        {
+            "tool": "run_command",
+            "tool_call_id": "bypassed",
+            "stage": "safety_check",
+            "message": "Command safety check bypassed",
+            "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
+            "query": "echo trusted",
+            "safe": True,
+            "reason": f"URSA_SAFETY_LEVEL={normalized_level}",
+        },
+    )
 
 
 def test_run_command_truncates_output(

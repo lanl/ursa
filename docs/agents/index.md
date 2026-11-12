@@ -39,7 +39,7 @@ from ursa.agents import SimulatorAgent
 
 agent = SimulatorAgent(
     llm=model,
-    embedding=embedding_model,
+    rag_tool_embedding=embedding_model,
     workspace="simulation_workspace",
     thread_id="simulation",
     docs_path="/path/to/simulation/docs",
@@ -49,6 +49,9 @@ agent = SimulatorAgent(
 Relative paths retain the existing RAGAgent resolution behavior (relative to
 its persistence directory, normally the workspace). In an environment member
 configuration, set this option under `config.docs_path`.
+The inherited `rag_tool_group` selects the documentation RAG agent's group
+(defaulting to the simulator's group), and `rag_tool_return_k` sets the number
+of retrieved chunks (default `10`).
 
 ## Web and external information
 

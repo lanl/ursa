@@ -1,10 +1,24 @@
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from langchain.chat_models import BaseChatModel
+from langchain.tools import ToolException
 
 from tests.tools.utils import invoke_with_event_recorder, make_runtime
-from ursa.tools.experience_tools import read_experience, write_experience
+from ursa.tools.experience_tools import (
+    _validate_experience_filename,
+    read_experience,
+    write_experience,
+)
+
+
+@pytest.mark.parametrize(
+    "filename", ["", "/tmp/note.md", "notes/note.md", "note.txt"]
+)
+def test_invalid_experience_filename_is_a_recoverable_tool_error(filename):
+    with pytest.raises(ToolException):
+        _validate_experience_filename(filename)
 
 
 def test_write_experience_reports_path_with_symlinked_den(

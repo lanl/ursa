@@ -88,8 +88,9 @@ class State(TypedDict, total=False):
 class SimulatorAgent(BaseAgent[State]):
     """Coordinate simulation documentation and execution.
 
-    ``docs_path`` selects the RAG documentation directory when an embedding
-    model is supplied. Relative paths are resolved by RAGAgent as before.
+    ``docs_path`` selects the RAG documentation directory when
+    ``rag_tool_embedding`` is supplied. The inherited ``rag_tool_group`` and
+    ``rag_tool_return_k`` settings configure the documentation RAG agent.
     """
 
     state_type = State
@@ -97,7 +98,6 @@ class SimulatorAgent(BaseAgent[State]):
     def __init__(
         self,
         llm: BaseChatModel,
-        embedding=None,
         log_state: bool = False,
         use_web: bool = False,
         workspace: Optional[Path | str] = None,
@@ -117,7 +117,6 @@ class SimulatorAgent(BaseAgent[State]):
         self.runner_prompt = runner_prompt
         self.recap_prompt = recap_prompt
         self.log_state = log_state
-        self.embedding = embedding
         self.use_web = use_web
         self.documenter = ChatAgent(
             llm=llm,
@@ -153,11 +152,13 @@ class SimulatorAgent(BaseAgent[State]):
                 "run_arxiv_search",
             ])
 
-        if self.embedding:
+        if self.rag_tool_embedding is not None:
             self.rag_agent = RAGAgent(
                 llm=self.llm,
                 workspace=self.workspace,
-                embedding=self.embedding,
+                embedding=self.rag_tool_embedding,
+                group=self.rag_tool_group or self.group,
+                return_k=self.rag_tool_return_k,
                 thread_id="simulation_documentation_rag",
                 database_path=docs_path,
             )
@@ -196,7 +197,7 @@ class SimulatorAgent(BaseAgent[State]):
         Returns:
             summary: string summary of the information in the RAG database relevant to the query
         """
-        if self.embedding:
+        if self.rag_tool_embedding is not None:
             result = self.rag_agent.invoke(
                 context=query,
             )

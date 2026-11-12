@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from langchain.chat_models import BaseChatModel
+from langchain.tools import ToolException
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from PIL import Image, ImageDraw
 from pydantic import BaseModel
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 from tests.tools.utils import make_runtime
 from ursa.cli.config import ChatModelConfig
 from ursa.tools.read_image_tool import (
+    ImageReadError,
     image_block_from_file,
     read_image_tool,
 )
@@ -113,8 +115,39 @@ def test_image_block_from_file_rejects_large_images(tmp_path: Path):
         image_file.seek(max_image_bytes)
         image_file.write(b"\0")
 
-    with pytest.raises(ValueError, match="File too large"):
+    with pytest.raises(ValueError, match="File too large") as raised:
         image_block_from_file(target, max_size_mb=max_image_mb)
+
+    assert isinstance(raised.value, ToolException)
+
+
+def test_read_image_tool_missing_file_is_a_recoverable_tool_error(
+    tmp_path: Path, chat_model: BaseChatModel
+):
+    with pytest.raises(ImageReadError, match="Could not read image") as raised:
+        read_image_tool.func(
+            image_path="missing.png",
+            runtime=make_runtime(tmp_path, llm=chat_model),
+        )
+
+    assert isinstance(raised.value, ToolException)
+
+
+def test_read_image_tool_rejects_unsupported_extension(
+    tmp_path: Path, chat_model: BaseChatModel
+):
+    target = tmp_path / "image.unknown"
+    target.write_bytes(b"not an image")
+
+    with pytest.raises(
+        ImageReadError, match="Unsupported image type"
+    ) as raised:
+        read_image_tool.func(
+            image_path=target.name,
+            runtime=make_runtime(tmp_path, llm=chat_model),
+        )
+
+    assert isinstance(raised.value, ToolException)
 
 
 def test_read_image_tool_reads_from_runtime_workspace(
