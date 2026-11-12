@@ -59,9 +59,12 @@ class NoSandbox(BaseSandbox):
         self.timeout = timeout
 
     def execute(self, cmd: str):
+        # Decode leniently: output may be binary/non-UTF-8 (e.g. cat on a data file).
         result = subprocess.run(
             cmd,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             shell=True,
             capture_output=True,
             timeout=self.timeout,

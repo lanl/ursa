@@ -323,6 +323,8 @@ def run_cmd(query: str, state: Annotated[dict, InjectedState]) -> str:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=workspace_dir,
         )
 

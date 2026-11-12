@@ -2013,7 +2013,9 @@ def _default_tool_error_handler(e: Exception):
         return e.message
     elif isinstance(e, ToolException):
         return str(e)
-    raise e
+    # Report any other tool failure back to the model instead of aborting the
+    # whole graph run. Graph interrupts never reach this handler.
+    return f"Tool error ({type(e).__name__}): {e}"
 
 
 class AgentWithTools:
