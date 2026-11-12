@@ -111,10 +111,10 @@ async def test_simulator_recovers_from_invalid_experience_tool_filename(
         agent.close()
 
 
-def test_chat_agent_propagates_unexpected_tool_value_error(tmp_path):
+def test_chat_agent_recovers_from_unexpected_tool_value_error(tmp_path):
     @tool
     def unexpected_value_error() -> str:
-        """Raise a programming error that must not be converted to tool output."""
+        """Raise a tool error that the agent should report and recover from."""
         raise ValueError("unexpected tool bug")
 
     model = CompositeFakeModel(
@@ -128,7 +128,8 @@ def test_chat_agent_propagates_unexpected_tool_value_error(tmp_path):
                         "id": "unexpected-value-error",
                     }
                 ],
-            )
+            ),
+            AIMessage(content="Recovered from the tool error"),
         ])
     )
     agent = ChatAgent(
@@ -138,9 +139,19 @@ def test_chat_agent_propagates_unexpected_tool_value_error(tmp_path):
     )
     agent.add_tool(unexpected_value_error)
 
-    with pytest.raises(ValueError, match="unexpected tool bug"):
-        agent.invoke("Trigger the tool")
-    agent.close()
+    try:
+        state = agent.invoke("Trigger the tool")
+        errors = [
+            message
+            for message in model.plain_requests[1]
+            if isinstance(message, ToolMessage) and message.status == "error"
+        ]
+        assert len(errors) == 1
+        assert "ValueError" in errors[0].text
+        assert "unexpected tool bug" in errors[0].text
+        assert state["messages"][-1].text == "Recovered from the tool error"
+    finally:
+        agent.close()
 
 
 async def test_simulator_child_subgraphs_support_async_invocation(tmp_path):
