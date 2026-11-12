@@ -3,7 +3,6 @@
 # - flags, env vars, config:
 #     - [ ] `-s/--sandbox-mode`: workspace-write, full-access, read-only
 #     - [ ] `--safety-level`: auto (disable if sandbox is working), high, low
-# - documentation
 
 
 import os
