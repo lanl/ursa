@@ -4,7 +4,12 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from ursa.sandbox.base import BaseSandbox, SandboxError, _disable_sbx_suggestion
+from ursa.sandbox.base import (
+    BaseSandbox,
+    SandboxError,
+    _disable_sbx_suggestion,
+    _run_process_group,
+)
 
 _sandbox_exec_args_template = """
 (version 1)
@@ -102,8 +107,7 @@ class MacSandbox(BaseSandbox):
                 f"sandbox-exec not on path. {_disable_sbx_suggestion}"
             )
 
-        # Decode leniently: output may be binary/non-UTF-8 (e.g. cat on a data file).
-        result = subprocess.run(
+        return _run_process_group(
             [self.sbx_path, *self.args, "--", self.shell, "-c", cmd],
             text=True,
             encoding="utf-8",
@@ -112,6 +116,4 @@ class MacSandbox(BaseSandbox):
             capture_output=True,
             timeout=self.timeout,
             cwd=self.workspace,
-            check=False,
         )
-        return result

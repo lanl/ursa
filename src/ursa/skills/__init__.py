@@ -2,6 +2,7 @@
 # * https://agentskills.io/client-implementation/adding-skills-support
 # * https://agentskills.io/specification
 
+import os
 import re
 from pathlib import Path
 from typing import TypedDict
@@ -9,6 +10,20 @@ from typing import TypedDict
 import yaml
 
 _INVALID_SKILLS: dict[str, str] = {}
+
+
+def skill_directories() -> list[Path]:
+    """Resolved skill roots in catalog/authorization precedence order."""
+    configured = os.environ.get("URSA_SKILLS_PATH", "")
+    roots = [Path.cwd() / ".ursa" / "skills"]
+    roots.extend(
+        Path(value.strip()).expanduser()
+        for value in configured.split(os.pathsep)
+        if value.strip()
+    )
+    # Resolve symlinks before containment checks and avoid scanning duplicate
+    # roots while preserving the local-skills-first precedence.
+    return list(dict.fromkeys(root.resolve() for root in roots))
 
 
 class SkillError(Exception):
