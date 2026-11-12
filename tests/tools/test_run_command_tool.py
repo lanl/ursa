@@ -207,7 +207,7 @@ def test_run_command_bypasses_safety_check_when_disabled(
         recorded["kwargs"] = kwargs
         return SimpleNamespace(stdout="trusted output", stderr="", returncode=0)
 
-    monkeypatch.setattr("ursa.sandbox.base.subprocess.run", fake_run)
+    monkeypatch.setattr("ursa.sandbox.base._run_process_group", fake_run)
 
     result, recorder = invoke_with_event_recorder(
         run_command.func,
