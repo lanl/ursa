@@ -31,6 +31,7 @@ def _environment(
     *,
     compose: bool = False,
     network_mode: NetworkMode = NetworkMode.PUBLIC,
+    allowed_hosts: tuple[str, ...] = (),
     phase_network_modes: tuple[NetworkMode, ...] = (),
     overlay: bool = False,
     workdir: str | None = "/workspace",
@@ -70,7 +71,9 @@ def _environment(
                 read_only=False,
             )
         ],
-        network_policy=NetworkPolicy(network_mode=network_mode),
+        network_policy=NetworkPolicy(
+            network_mode=network_mode, allowed_hosts=list(allowed_hosts)
+        ),
         phase_network_policies=[
             NetworkPolicy(network_mode=mode) for mode in phase_network_modes
         ],
@@ -1098,3 +1101,166 @@ def test_instance_list_parser(output: bytes, expected: set[str] | None):
             DockerfileSingularityEnvironment._parse_instance_list(output)
             == expected
         )
+
+
+@pytest.mark.parametrize("inferred", [False, True])
+@pytest.mark.parametrize("fail_bridge", [False, True])
+async def test_allowlist_automatically_proxies_and_revokes_phase_access(
+    tmp_path, monkeypatch, inferred, fail_bridge
+):
+    from harbor.trial.network_policy import (
+        add_inference_hosts,
+        inference_endpoint_host,
+    )
+
+    offline = NetworkPolicy(network_mode=NetworkMode.NO_NETWORK)
+    policy = (
+        add_inference_hosts(
+            offline, [inference_endpoint_host("http://localhost:11434/v1")]
+        )
+        if inferred
+        else NetworkPolicy(
+            network_mode=NetworkMode.ALLOWLIST, allowed_hosts=["localhost"]
+        )
+    )
+    environment = _environment(
+        tmp_path, network_mode=NetworkMode.NO_NETWORK, overlay=True
+    )
+    _prepare_started_environment(environment, tmp_path)
+    starts = []
+    sockets = []
+
+    async def run(*command, **kwargs):
+        if "start" in command:
+            starts.append(command)
+
+    async def stop(*, warn):
+        environment._instance_started = False
+        environment._instance_start_attempted = False
+        return True
+
+    async def bridge():
+        path = Path(environment._proxy_temp.name) / "host.sock"
+        assert path.is_socket()
+        sockets.append(path)
+        if fail_bridge:
+            raise RuntimeError("bridge unavailable")
+
+    monkeypatch.setattr(environment, "_run", run)
+    monkeypatch.setattr(environment, "_stop_instance", stop)
+    monkeypatch.setattr(environment, "_start_proxy_bridge", bridge)
+    try:
+        if fail_bridge:
+            with pytest.raises(RuntimeError, match="bridge unavailable"):
+                await environment.set_network_policy(policy)
+        else:
+            await environment.set_network_policy(policy)
+            assert environment.network_policy == policy
+            await environment.set_network_policy(offline)
+        assert sockets and not sockets[0].exists()
+        assert environment.network_policy == offline
+        assert environment._proxy_stack is None
+        start = starts[0]
+        assert "--userns" in start and "--fakeroot" not in start
+        assert _option_value(start, "--network") == "none"
+        assert any(":/run/ursa-proxy:ro" in arg for arg in start)
+        assert not any(":/run/ursa-proxy:" in arg for arg in starts[-1])
+    finally:
+        directory = Path(environment._proxy_temp.name)
+        await environment.stop(True)
+        assert not directory.exists()
+
+
+@pytest.mark.parametrize("ready", [True, False])
+async def test_proxy_bridge_environment_and_startup_failure(
+    tmp_path, monkeypatch, ready
+):
+    environment = _environment(tmp_path)
+    environment._runtime_path = "/usr/bin/apptainer"
+    environment._instance_started = True
+    policy = NetworkPolicy(
+        network_mode=NetworkMode.ALLOWLIST, allowed_hosts=["localhost"]
+    )
+    await environment._prepare_network_proxy(policy)
+    process = Mock(returncode=None if ready else 1)
+    process.stdout = asyncio.StreamReader()
+    process.stdout.feed_data(b'{"port": 12345}\n' if ready else b"")
+    process.stdout.feed_eof()
+    spawn = AsyncMock(return_value=process)
+    terminate = AsyncMock()
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(environment, "_terminate_host_process", terminate)
+    try:
+        if ready:
+            await environment._start_proxy_bridge()
+            env = environment._runtime_environment({
+                "NO_PROXY": "*",
+                "http_proxy": "invalid",
+            })
+            for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+                assert env[f"APPTAINERENV_{key}"] == "http://127.0.0.1:12345"
+                assert (
+                    env[f"APPTAINERENV_{key.lower()}"]
+                    == "http://127.0.0.1:12345"
+                )
+            assert (
+                env["APPTAINERENV_NO_PROXY"]
+                == env["APPTAINERENV_no_proxy"]
+                == ""
+            )
+            process.returncode = 1
+            with pytest.raises(RuntimeError, match="bridge exited"):
+                await environment.exec("true")
+        else:
+            with pytest.raises(
+                RuntimeError, match="Could not start network proxy bridge"
+            ):
+                await environment._start_proxy_bridge()
+            assert not environment._proxy_env
+    finally:
+        directory = Path(environment._proxy_temp.name)
+        await environment._cleanup_runtime_resources()
+        terminate.assert_awaited_once_with(process)
+        assert not directory.exists()
+        assert not environment._proxy_env
+
+
+@pytest.mark.parametrize("host", ["10.0.0.0/8", "::1/128"])
+def test_allowlist_rejects_unsupported_cidrs(tmp_path, host):
+    with pytest.raises(ValueError, match="CIDR"):
+        _environment(
+            tmp_path, network_mode=NetworkMode.ALLOWLIST, allowed_hosts=(host,)
+        )
+
+
+def test_allowlist_rejects_compose_sidecars(tmp_path):
+    with pytest.raises(ValueError, match="restricted Harbor network phase"):
+        _environment(tmp_path, compose=True, network_mode=NetworkMode.ALLOWLIST)
+
+
+async def test_compose_proxy_mount_is_removed_when_policy_changes(tmp_path):
+    environment = _environment(tmp_path)
+    compose = tmp_path / "compose.yml"
+    compose.write_text(
+        "instances:\n  main:\n    start:\n      options: [containall]\n"
+    )
+    environment._compose_file = compose
+    policy = NetworkPolicy(
+        network_mode=NetworkMode.ALLOWLIST, allowed_hosts=["localhost"]
+    )
+    try:
+        await environment._prepare_network_proxy(policy)
+        environment._set_compose_network_policy(policy)
+        instance = yaml.safe_load(compose.read_text())["instances"]["main"]
+        assert instance["network"]["type"] == "none"
+        assert "userns" in instance["start"]["options"]
+        assert any(
+            ":/run/ursa-proxy:ro" in option
+            for option in instance["start"]["options"]
+        )
+        environment._set_compose_network_policy(NetworkPolicy())
+        instance = yaml.safe_load(compose.read_text())["instances"]["main"]
+        assert instance["start"]["options"] == ["containall"]
+        assert instance["network"] == {"allocate_ip": True, "enable": True}
+    finally:
+        await environment._cleanup_runtime_resources()

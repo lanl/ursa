@@ -247,33 +247,75 @@ and the [`singularity-compose` specification](https://github.com/singularityhub/
 Apptainer and SingularityCE work without a system-wide `singularity` alias;
 the host runtime needs fakeroot CNI networking.
 
-The adapter supports Harbor `public` and `no-network` policies. The
-`[environment]` policy is the setup baseline; omitted agent and verifier phase
-policies inherit it:
+The adapter supports Harbor `public`, `no-network`, and HTTP/HTTPS `allowlist`
+policies. The `[environment]` policy is the setup baseline; omitted agent and
+verifier phase policies inherit it:
 
 ```toml
 [environment]
 network_mode = "public"
 
 [agent]
-network_mode = "no-network"
+network_mode = "allowlist"
+allowed_hosts = ["api.openai.com", "*.python.org"]
 
 [verifier]
 network_mode = "no-network"
 ```
 
 Before each phase it restarts the same SIF with the requested policy, preserving
-its writable overlay and Harbor binds. `public` enables URSA web tools and
-`no-network` disables them, while Harbor remains the actual network boundary.
-Keep the overlay enabled: `singularity_overlay=false` disables phase changes.
-`no-network` is unavailable for Compose projects with sidecars, and network
-allowlists are unsupported because SingularityCE 3.6.2 cannot enforce them
-securely; see Harbor's [network-policy reference](https://docs.harborframework.com/tasks/network-policies#phases)
-and Singularity's [networking guide](https://docs.sylabs.io/guides/3.6/user-guide/networking.html).
+its writable overlay and Harbor binds. Keep the overlay enabled:
+`singularity_overlay=false` disables phase changes. Restricted policies are
+unavailable for Compose projects with sidecars.
+
+### Allowlisted networking and model access
+
+An `allowlist` policy automatically starts a host-side proxy and a loopback
+bridge inside the container. This also applies when Harbor adds a known LLM
+endpoint to a restricted agent policy, including `no-network`. No separate proxy
+flag or process is needed. Model URLs and credentials stay as configured.
+
+```text
+agent -> container loopback HTTP proxy -> bind-mounted Unix socket
+      -> host-side allowlist -> upstream HTTP/HTTPS service
+```
+
+The container runs with `--net --network none`. The integration sets uppercase
+and lowercase `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY`, with empty `NO_PROXY`
+so host-local model URLs also use the proxy. Clients must honor these settings.
+Direct network access remains unavailable. Phase changes stop the bridge and
+close existing proxy connections before applying the next policy; model access
+added for the agent does not carry into an offline verifier phase.
+
+Rules follow Harbor's host-based policy: exact DNS names, `*.example.com`
+(subdomains, excluding the apex), and IPv4/IPv6 addresses are supported, on all
+ports. CIDR ranges are rejected. Unlisted destinations receive HTTP 403 before
+DNS lookup; redirected requests are checked separately. The proxy preserves
+streaming responses and upstream errors. HTTPS uses CONNECT with client-side
+certificate verification; rules control TCP destinations, not HTTP paths, TLS
+SNI, or other services sharing an allowed destination.
+
+For an unprivileged Apptainer runner, pass `--ek singularity_fakeroot=false`.
+Restricted phases then use `--userns`, without sudo, setuid/setgid helpers,
+subordinate UID/GID ranges, or CNI configuration. The host must permit
+unprivileged user/network namespaces. The task image needs Python 3.8+ for the
+stdlib bridge; a cached URSA installation's interpreter is also supported.
+The proxy socket lives in a private directory and is removed on cleanup.
 
 Set `[environment].workdir` when a Dockerfile has a variable or inherited
 non-root `WORKDIR`, or when Compose uses an image for its `main` service; the
 adapter rejects unresolved workdirs before launch.
+
+To verify the integrated lifecycle with an existing Python-enabled SIF, run:
+
+```bash
+setpriv --no-new-privs uv run python tests/integrations/harbor_socket_proxy_smoke.py \
+  --image /path/to/agent.sif
+```
+
+The smoke test checks privilege isolation, JSON and streaming model responses,
+HTTP and certificate-verified HTTPS, denied hosts, phase changes, and cleanup.
+It uses local test servers and requires no model credentials.
 
 ## Configure other agents
 
