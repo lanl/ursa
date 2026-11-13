@@ -10,7 +10,6 @@ from ursa.agents.base import AgentContext
 from ursa.skills import skill_directories
 from ursa.tools.write_code_tool import _validate_file_path
 from ursa.util.events import ToolEvents
-from ursa.util.parse import read_text_from_file
 from ursa.util.rendering import file_artifact
 from ursa.util.types import (
     AsciiValidationError,
@@ -59,6 +58,8 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
     Returns:
         Extracted text content.
     """
+    from ursa.util.parse import read_text_from_file
+
     full_filename, error = _validate_read_path(
         filename, runtime.context.workspace
     )

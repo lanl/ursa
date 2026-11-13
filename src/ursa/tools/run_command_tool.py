@@ -118,13 +118,14 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
                 reason=safety_result.reason,
             )
             return tool_response
-        events.emit(
-            "Command passed safety check",
-            stage="safety_check",
-            query=query,
-            safe=True,
-            reason=safety_result.reason,
-        )
+
+    events.emit(
+        "Command passed safety check",
+        stage="safety_check",
+        query=query,
+        safe=True,
+        reason=safety_result.reason,
+    )
 
     try:
         with events.range(

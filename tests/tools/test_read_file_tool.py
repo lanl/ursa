@@ -82,7 +82,7 @@ def test_read_file_rejects_paths_outside_workspace(
         filename = "../secret.txt" if path_kind == "relative" else str(secret)
 
     monkeypatch.setattr(
-        "ursa.tools.read_file_tool.read_text_from_file",
+        "ursa.util.parse.read_text_from_file",
         lambda path: pytest.fail("Rejected files must not be read"),
     )
     result = invoke_with_parent_run(
@@ -145,9 +145,7 @@ def test_read_file_uses_pdf_reader(
     def fail_text_reader(path: Path) -> str:
         raise AssertionError("read_text_file should not be called for PDFs")
 
-    monkeypatch.setattr(
-        "ursa.tools.read_file_tool.read_text_from_file", fake_pdf_reader
-    )
+    monkeypatch.setattr("ursa.util.parse.read_text_from_file", fake_pdf_reader)
     monkeypatch.setattr(parse, "read_text_file", fail_text_reader)
 
     result = invoke_with_parent_run(

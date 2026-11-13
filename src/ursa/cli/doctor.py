@@ -14,7 +14,7 @@ from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, SecretStr, ValidationError
+from pydantic import SecretStr, ValidationError
 from rich.console import Console
 from rich.text import Text
 from yaml import YAMLError
@@ -251,8 +251,9 @@ def _resolve_api_key(
 def _resolve_mcp_server(
     context: DoctorContext, name: str, server: Any
 ) -> tuple[Any, tuple[str, ...]]:
-    if not isinstance(server, BaseModel):
-        return server, ()
+    from ursa.util.mcp import parse_server_parameters
+
+    server = parse_server_parameters(server)
     environment = getattr(server, "env", None)
     secrets = (
         [value for value in environment.values() if isinstance(value, str)]

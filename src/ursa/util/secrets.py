@@ -194,6 +194,13 @@ def get_keyring() -> FallbackKeyring:
     return FallbackKeyring(keyring.get_keyring())
 
 
+def unlock_keychain(config: Any) -> None:
+    """Unlock with one configured entry, or a placeholder when none exists."""
+    usernames = keyring_usernames(config)
+    username = usernames[0] if usernames else "__unlock__"
+    get_keyring().get_password(KEYRING_SERVICE, username)
+
+
 def _non_blank(value: str | None) -> str | None:
     if value is None:
         return None

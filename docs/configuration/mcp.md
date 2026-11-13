@@ -62,6 +62,11 @@ the configured secret is unavailable.
 ursa --config config.yaml
 ```
 
+The MCP SDK validates server settings when MCP is first used, usually on the
+first agent request. Imports and connections also wait until then, keeping
+the initial prompt responsive. Malformed settings are reported at that point;
+`ursa doctor` can check them before starting a conversation.
+
 ## Security notes
 
 MCP servers can expose powerful tools. Only connect MCP servers that you trust, and prefer dedicated workspaces and endpoint allowlists for sensitive workflows.

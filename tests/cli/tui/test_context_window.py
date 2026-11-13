@@ -10,11 +10,12 @@ from textual.widgets import Static
 
 from tests.cli._app_fakes import FakeHITL
 from tests.tui.utils import await_workers
-from ursa.cli.config import ChatModelConfig
+from ursa.cli.config import ChatModelConfig, UrsaConfig
+from ursa.cli.runtime import HITL
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.turn import Turn
-from ursa.cli.tui.widgets import ModelSelection
+from ursa.cli.tui.widgets import InformationScreen, ModelSelection
 from ursa.util.model_context import summarization_threshold
 
 
@@ -27,13 +28,33 @@ from ursa.util.model_context import summarization_threshold
             "8,192",
             "5,734",
         ),
-        ({}, None, "50,000"),
-        ({"profile": {"max_input_tokens": 0}}, None, "50,000"),
+        ({}, None, "12,000"),
+        ({"profile": {"max_input_tokens": 0}}, None, "12,000"),
+        (None, None, "12,000"),
     ],
 )
-async def test_context_display(tmp_path, metadata, window, threshold):
-    hitl = FakeHITL(tmp_path)
-    hitl.model = SimpleNamespace(model_name="test-model", **metadata)
+async def test_context_display(
+    tmp_path, monkeypatch, metadata, window, threshold
+):
+    def unexpected_initialization(*args, **kwargs):
+        pytest.fail("Status must not validate or initialize a model")
+
+    monkeypatch.setattr(
+        "ursa.cli.runtime.validate_model_provider", unexpected_initialization
+    )
+    monkeypatch.setattr(
+        ChatModelConfig, "init_chat_model", unexpected_initialization
+    )
+    hitl = HITL(
+        UrsaConfig(
+            workspace=tmp_path,
+            tokens_before_summarize=12000,
+            agent_config={"chat": {"tokens_before_summarize": 1000}},
+        )
+    )
+    model = SimpleNamespace(**metadata) if metadata is not None else None
+    if model is not None:
+        hitl.model = model
     app = UrsaTextualApp(hitl)
 
     async with app.run_test(size=(60, 24)) as pilot:
@@ -44,7 +65,10 @@ async def test_context_display(tmp_path, metadata, window, threshold):
         assert "default trigger" not in content.plain
         assert "0 tokens" in content.plain
         assert not content.spans
-        details = app._status_markdown()
+        await app._show_command("status")
+        assert isinstance(app.screen, InformationScreen)
+        assert hitl.initialized_model is model
+        details = app.screen.content
         if window is None:
             assert "| Context window | `Unknown` |" in details
             assert "Default summarization threshold" in details
@@ -54,12 +78,19 @@ async def test_context_display(tmp_path, metadata, window, threshold):
         else:
             assert f"| Context window | `{window} tokens` |" in details
             assert f"{threshold} tokens (70%)" in details
-        config_yaml = app._resolved_config_yaml()
-        assert yaml.safe_load(config_yaml)["tokens_before_summarize"] == int(
-            threshold.replace(",", "")
+        config_yaml = app.screen.config_yaml
+        config = yaml.safe_load(config_yaml)
+        expected = int(threshold.replace(",", ""))
+        assert config["tokens_before_summarize"] == expected
+        assert config["agent_config"]["chat"]["tokens_before_summarize"] == (
+            expected if window else 1000
         )
-        assert "Configured fallback (global): 50000 tokens" in config_yaml
-        assert hitl.config.tokens_before_summarize == 50000
+        assert "Configured fallback (global): 12000 tokens" in config_yaml
+        assert "Configured fallback (chat): 1000 tokens" in config_yaml
+        assert hitl.config.tokens_before_summarize == 12000
+        assert (
+            hitl.config.agent_config["chat"]["tokens_before_summarize"] == 1000
+        )
 
 
 async def test_model_switch_refreshes_effective_threshold(
@@ -141,39 +172,3 @@ async def test_ollama_response_refreshes_shared_context_and_display(tmp_path):
         )
         assert "Ollama /api/ps" in app._status_markdown()
         assert summarization_threshold(agent_model) == 5734
-
-
-@pytest.mark.parametrize(
-    "window,expected", [(None, "12,000"), (10000, "7,000")]
-)
-async def test_configured_fallback_in_status(tmp_path, window, expected):
-    hitl = FakeHITL(tmp_path)
-    hitl.config.tokens_before_summarize = 12000
-    hitl.model = SimpleNamespace(profile={"max_input_tokens": window})
-    app = UrsaTextualApp(hitl)
-    async with app.run_test(size=(100, 36)):
-        details = app._status_markdown()
-        assert f"{expected} tokens" in details
-        assert "50,000" not in details
-        assert yaml.safe_load(app._resolved_config_yaml())[
-            "tokens_before_summarize"
-        ] == int(expected.replace(",", ""))
-        assert hitl.config.tokens_before_summarize == 12000
-
-
-@pytest.mark.parametrize("window,expected", [(None, 12000), (128000, 89600)])
-def test_status_config_reports_effective_agent_overrides(
-    tmp_path, window, expected
-):
-    hitl = FakeHITL(tmp_path)
-    hitl.config.agent_config = {"chat": {"tokens_before_summarize": 12000}}
-    hitl.model = SimpleNamespace(profile={"max_input_tokens": window})
-    config_yaml = UrsaTextualApp(hitl)._resolved_config_yaml()
-    assert (
-        yaml.safe_load(config_yaml)["agent_config"]["chat"][
-            "tokens_before_summarize"
-        ]
-        == expected
-    )
-    assert "Configured fallback (chat): 12000 tokens" in config_yaml
-    assert hitl.config.agent_config["chat"]["tokens_before_summarize"] == 12000

@@ -29,6 +29,7 @@ def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
     # These tests exercise command handling independently of host sandbox
     # availability; sandbox backends have their own behavior.
     monkeypatch.setenv("URSA_SBX", "0")
+    monkeypatch.delenv("URSA_SAFETY_LEVEL", raising=False)
 
 
 def _patch_safety_result(

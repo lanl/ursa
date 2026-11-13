@@ -2,21 +2,96 @@ import asyncio
 import os
 import sys
 from collections.abc import Mapping
-from copy import deepcopy
 from datetime import timedelta
-from typing import Annotated, Any
+from typing import Any
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from mcp import StdioServerParameters
+from mcp import StdioServerParameters as StdioServerParameters
 from mcp.client.session_group import (
-    SseServerParameters,
-    StreamableHttpParameters,
+    ServerParameters as ServerParameters,
 )
-from pydantic import BaseModel, BeforeValidator, TypeAdapter, ValidationError
+from mcp.client.session_group import (
+    SseServerParameters as SseServerParameters,
+)
+from mcp.client.session_group import (
+    StreamableHttpParameters as StreamableHttpParameters,
+)
+from pydantic import ValidationError
 
 from ursa.util.http import build_mcp_httpx_async_client
 from ursa.util.secrets import SecretTemplate
+
+_PARAMETER_TYPES = {
+    "stdio": StdioServerParameters,
+    "streamable_http": StreamableHttpParameters,
+    "sse": SseServerParameters,
+}
+
+
+def parse_server_parameters(config: Any) -> ServerParameters:
+    """Validate file settings with the SDK, retaining supplied SDK objects."""
+    if isinstance(config, tuple(_PARAMETER_TYPES.values())):
+        return config
+    if not isinstance(config, dict):
+        raise ValueError(
+            "MCP server configuration must be a mapping or parameters"
+        )
+    payload = dict(config)
+    kind = payload.pop("transport", None)
+    if isinstance(headers := payload.get("headers"), dict):
+        payload["headers"] = {
+            name: SecretTemplate.maybe_validate(value)
+            for name, value in headers.items()
+        }
+    if kind is not None:
+        cls = _PARAMETER_TYPES.get(str(kind).replace("-", "_"))
+        if cls is None:
+            raise ValueError(f"Unsupported MCP transport {kind!r}")
+        return cls(**payload)
+    # Legacy inference prefers stdio, then HTTP, then SSE.
+    for cls in _PARAMETER_TYPES.values():
+        try:
+            return cls(**payload)
+        except ValidationError:
+            continue
+    raise ValueError("Unable to determine transport for MCP server")
+
+
+validate_server_parameters = parse_server_parameters
+
+
+def transport(config: ServerParameters) -> str:
+    config = parse_server_parameters(config)
+    return next(
+        kind
+        for kind, cls in _PARAMETER_TYPES.items()
+        if isinstance(config, cls)
+    )
+
+
+def serialize_server_parameters(
+    config: ServerParameters,
+    *,
+    exclude_defaults: bool = False,
+    exclude_none: bool = True,
+    exclude_unset: bool = False,
+):
+    config = parse_server_parameters(config)
+    values = config.model_dump(
+        exclude_defaults=exclude_defaults,
+        exclude_none=exclude_none,
+        exclude_unset=exclude_unset,
+    )
+    return {
+        "transport": transport(config),
+        **{
+            key: value.total_seconds()
+            if isinstance(value, timedelta)
+            else value
+            for key, value in values.items()
+        },
+    }
 
 
 class UrsaMCPClient(MultiServerMCPClient):
@@ -66,71 +141,12 @@ async def load_mcp_tools_with_sources(
     return tools, sources
 
 
-def validate_server_parameters(config: dict):
-    if not isinstance(config, dict):
-        return config
-    transport_hint = config.get("transport")
-    payload = {k: v for k, v in config.items() if k != "transport"}
-    if isinstance(headers := payload.get("headers"), dict):
-        payload["headers"] = {
-            name: SecretTemplate.maybe_validate(value)
-            for name, value in headers.items()
-        }
-    if transport_hint == "stdio":
-        return StdioServerParameters(**payload)
-    elif transport_hint == "sse":
-        return SseServerParameters(**payload)
-    elif transport_hint in ["streamable_http", "streamable-http"]:
-        return StreamableHttpParameters(**payload)
-    elif transport_hint is None:
-        # Let Pydantic infer (backwards compatibility)
-        for candidate in (
-            StdioServerParameters,
-            StreamableHttpParameters,
-            SseServerParameters,
-        ):
-            try:
-                return candidate(**payload)
-            except ValidationError:
-                continue
-        raise ValueError(
-            f"Unable to determine transport for MCP server '{config}'. "
-            "Provide 'transport' with one of: stdio, sse, streamable_http."
-        )
-    raise ValueError(
-        f"Unsupported MCP transport '{transport_hint}' for server '{config}'."
-    )
-
-
-ServerParameters = Annotated[
-    StdioServerParameters | SseServerParameters | StreamableHttpParameters,
-    BeforeValidator(validate_server_parameters),
-]
-_SERVER_PARAMETERS_ADAPTER = TypeAdapter(ServerParameters)
-
-
-def parse_server_parameters(config: Any) -> ServerParameters:
-    """Parse one MCP server with the canonical runtime configuration type."""
-    return _SERVER_PARAMETERS_ADAPTER.validate_python(deepcopy(config))
-
-
-def transport(sp: ServerParameters) -> str:
-    if isinstance(sp, StdioServerParameters):
-        return "stdio"
-    elif isinstance(sp, StreamableHttpParameters):
-        return "streamable_http"
-    elif isinstance(sp, SseServerParameters):
-        return "sse"
-    raise RuntimeError("Transport for {sp} is unknown")
-
-
 def start_mcp_client(
     server_configs: dict[str, ServerParameters | dict],
 ) -> UrsaMCPClient:
     client_config = {}
     for server, config in server_configs.items():
-        if not isinstance(config, BaseModel):
-            config = parse_server_parameters(config)
+        config = parse_server_parameters(config)
         connection = {
             **config.model_dump(),
             "transport": transport(config),
@@ -140,7 +156,7 @@ def start_mcp_client(
                 name: _resolve_header(value, server)
                 for name, value in headers.items()
             }
-        if isinstance(config, (SseServerParameters, StreamableHttpParameters)):
+        if connection["transport"] != "stdio":
             connection["httpx_client_factory"] = build_mcp_httpx_async_client
         client_config[server] = connection
     return UrsaMCPClient(client_config)
@@ -158,28 +174,6 @@ def _resolve_header(value, server_name: str):
             )
         return rendered
     return value
-
-
-def serialize_server_parameters(
-    config: ServerParameters,
-    *,
-    exclude_defaults: bool = True,
-    exclude_none: bool = True,
-    exclude_unset: bool = False,
-):
-    """Serialize MCP server parameters for a YAML/JSON config boundary."""
-    serialized = {
-        "transport": transport(config),
-        **config.model_dump(
-            exclude_defaults=exclude_defaults,
-            exclude_none=exclude_none,
-            exclude_unset=exclude_unset,
-        ),
-    }
-    for k, v in serialized.items():
-        if isinstance(v, timedelta):
-            serialized[k] = v.total_seconds()
-    return serialized
 
 
 # Backwards-compatible private spelling retained for downstream imports.
