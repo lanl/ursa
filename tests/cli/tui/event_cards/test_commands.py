@@ -1,14 +1,12 @@
 import asyncio
 
-from textual.containers import VerticalScroll
 from textual.widgets import Static
 
-from tests.cli._app_fakes import FakeHITL, emit_event
+from tests.cli._app_fakes import FakeHITL, emit_card, emit_event, start_turn
 from tests.tui.utils import eventually
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import CommandSafetyIndicator, RunCommandCard
 from ursa.cli.tui.event_handler import TextualEventHandler
-from ursa.cli.tui.turn import Turn
 from ursa.cli.tui.widgets import ActivityIndicator
 from ursa.util.events import DEFAULT_EVENT_NAME
 
@@ -31,15 +29,17 @@ async def test_overlapping_commands_stay_compact_and_complete_independently(
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("run both", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        turn = await start_turn(app, "run both")
         for command_id, query in (("one", "sleep 1"), ("two", "sleep 2")):
-            await turn.event({
-                "tool": "run_command",
-                "phase": "start",
-                "query": query,
-                "tool_call_id": command_id,
-            })
+            await emit_card(
+                app,
+                {
+                    "tool": "run_command",
+                    "phase": "start",
+                    "query": query,
+                    "tool_call_id": command_id,
+                },
+            )
         await pilot.pause()
 
         cards = list(turn.query(RunCommandCard))
@@ -50,14 +50,17 @@ async def test_overlapping_commands_stay_compact_and_complete_independently(
             for card in cards
         )
 
-        await turn.event({
-            "tool": "run_command",
-            "phase": "end",
-            "query": "sleep 1",
-            "tool_call_id": "one",
-            "returncode": 0,
-            "result": "",
-        })
+        await emit_card(
+            app,
+            {
+                "tool": "run_command",
+                "phase": "end",
+                "query": "sleep 1",
+                "tool_call_id": "one",
+                "returncode": 0,
+                "result": "",
+            },
+        )
         await pilot.pause()
         await eventually(pilot, lambda: cards[0].completed)
         assert cards[0].completed
@@ -73,9 +76,8 @@ async def test_identical_commands_are_correlated_by_tool_call_id(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("run both", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
+        turn = await start_turn(app, "run both")
+        handler = TextualEventHandler(app, app.current_turn)
         for run_id in ("one", "two"):
             await handler.on_tool_start(
                 {"name": "run_command"},
@@ -114,9 +116,8 @@ async def test_command_events_share_card_by_tool_call_id(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("run it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
+        turn = await start_turn(app, "run it")
+        handler = TextualEventHandler(app, app.current_turn)
         await handler.on_tool_start(
             {"name": "run_command"},
             "",
@@ -150,21 +151,26 @@ async def test_command_completion_finishes_pending_safety_indicator(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("run it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        await turn.event({
-            "tool": "run_command",
-            "phase": "start",
-            "query": "uptime",
-            "tool_call_id": "uptime",
-        })
-        await turn.event({
-            "tool": "run_command",
-            "phase": "end",
-            "query": "uptime",
-            "tool_call_id": "uptime",
-            "result": "up 10 days",
-        })
+        turn = await start_turn(app, "run it")
+        await emit_card(
+            app,
+            {
+                "tool": "run_command",
+                "phase": "start",
+                "query": "uptime",
+                "tool_call_id": "uptime",
+            },
+        )
+        await emit_card(
+            app,
+            {
+                "tool": "run_command",
+                "phase": "end",
+                "query": "uptime",
+                "tool_call_id": "uptime",
+                "result": "up 10 days",
+            },
+        )
         await pilot.pause()
 
         safety = turn.query_one(CommandSafetyIndicator)
@@ -177,30 +183,38 @@ async def test_solitary_command_after_overlap_returns_to_detailed_layout(
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("run commands", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        turn = await start_turn(app, "run commands")
         for command_id in ("one", "two"):
-            await turn.event({
+            await emit_card(
+                app,
+                {
+                    "tool": "run_command",
+                    "phase": "start",
+                    "query": command_id,
+                    "tool_call_id": command_id,
+                },
+            )
+        for command_id in ("one", "two"):
+            await emit_card(
+                app,
+                {
+                    "tool": "run_command",
+                    "phase": "end",
+                    "query": command_id,
+                    "tool_call_id": command_id,
+                    "returncode": 0,
+                    "result": "done",
+                },
+            )
+        await emit_card(
+            app,
+            {
                 "tool": "run_command",
                 "phase": "start",
-                "query": command_id,
-                "tool_call_id": command_id,
-            })
-        for command_id in ("one", "two"):
-            await turn.event({
-                "tool": "run_command",
-                "phase": "end",
-                "query": command_id,
-                "tool_call_id": command_id,
-                "returncode": 0,
-                "result": "done",
-            })
-        await turn.event({
-            "tool": "run_command",
-            "phase": "start",
-            "query": "three",
-            "tool_call_id": "three",
-        })
+                "query": "three",
+                "tool_call_id": "three",
+            },
+        )
         await pilot.pause()
 
         first, second, third = turn.query(RunCommandCard)

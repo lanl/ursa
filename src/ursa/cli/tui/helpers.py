@@ -313,3 +313,15 @@ def _reasoning_trace(chunk: Any) -> str | None:
                     if trace := " ".join(text(block).split()):
                         return trace[-500:]
     return None
+
+
+def file_outcome(payload: Mapping[str, Any]) -> tuple[str, str] | None:
+    phase = str(payload.get("phase") or "")
+    result = str(payload.get("result") or payload.get("error") or "")
+    failed = phase == "error" or payload.get("status") == "error"
+    failed = failed or result.casefold().startswith("failed")
+    if failed:
+        return "failed", result
+    if result.casefold().startswith("no changes made"):
+        return "unchanged", result
+    return None

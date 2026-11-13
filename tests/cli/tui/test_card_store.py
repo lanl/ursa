@@ -59,6 +59,7 @@ def test_monotonic_ids_reopen_and_thread_isolation(tmp_path):
     assert store.window(10)[0].position == first
     assert store.window(10)[0].id == second
     store.save_state(expanded=True)
+    store.save_view_state(first, expanded=True, generation=3)
     store.close()
     store = CardStore(path, "two")
     assert store.window(10) == []
@@ -69,6 +70,7 @@ def test_monotonic_ids_reopen_and_thread_isolation(tmp_path):
     store.close()
     store = CardStore(path, "one")
     assert store.window(10)[0].card["content_ref"] == {"id": "pty:2"}
+    assert store.window(10)[0].view_state == {"expanded": True, "generation": 3}
     assert store.state() == {"expanded": True}
     store.close()
 

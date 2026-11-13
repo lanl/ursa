@@ -30,6 +30,7 @@ from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import config_file_value
 from ursa.cli.runtime import HITL
 from ursa.cli.tui.agent_info import load_agent_details
+from ursa.cli.tui.event_cards import EventCard
 from ursa.cli.tui.event_cards.card_store import CardStore
 from ursa.cli.tui.event_cards.card_stream import CardStream
 from ursa.cli.tui.event_cards.card_viewport import CardViewport
@@ -364,15 +365,12 @@ class UrsaTextualApp(App[None]):
 
     async def add_turn_event(
         self,
-        turn: Turn | CardStream,
+        turn: CardStream,
         data: Mapping[str, Any],
     ) -> None:
         """Add an event without disturbing a user who has scrolled up."""
         await turn.event(data)
-        if isinstance(turn, CardStream):
-            self.card_viewport.request_refresh()
-            return
-        self.call_after_refresh(self._anchor_conversation_if_overflowing)
+        self.card_viewport.request_refresh()
 
     def _anchor_conversation_if_overflowing(self) -> None:
         """Smoothly reach the bottom, then follow subsequent content."""
@@ -936,8 +934,8 @@ class UrsaTextualApp(App[None]):
     def action_toggle_card_details(self) -> None:
         self.card_details_expanded = not self.card_details_expanded
         self.card_viewport.expansion_generation += 1
-        for turn in self.query(Turn):
-            turn.set_card_details_expanded(self.card_details_expanded)
+        for card in self.query(EventCard):
+            card.set_expanded(self.card_details_expanded)
         self.call_after_refresh(self.card_viewport._measure)
 
     def _turn_markers(self) -> list[Widget]:

@@ -27,11 +27,16 @@ def store(tmp_path):
     result.close()
 
 
-async def test_cards_are_durable_before_callback_returns_and_commit_defines_bundle(
-    store, tmp_path
-):
-    stream = CardStream(store, tmp_path, "read files")
+@pytest.fixture
+async def stream(store, tmp_path):
+    stream = CardStream(store, tmp_path, "test")
     await stream.start()
+    return stream
+
+
+async def test_cards_are_durable_before_callback_returns_and_commit_defines_bundle(
+    stream, store
+):
     for path in ("one", "two", "three"):
         await stream.event({"tool": "read_file", "path": path})
         # These are normalized cards, not the raw event payload.
@@ -63,10 +68,8 @@ async def test_cards_are_durable_before_callback_returns_and_commit_defines_bund
 
 
 async def test_endless_magnetic_stream_is_split_into_bounded_bundles(
-    store, tmp_path
+    stream, store
 ):
-    stream = CardStream(store, tmp_path, "read forever")
-    await stream.start()
     for i in range(BUNDLE_LIMIT * 4 + 1):
         await stream.event({"tool": "read_file", "path": str(i)})
         assert len(stream.groups) == 1
@@ -82,9 +85,7 @@ async def test_endless_magnetic_stream_is_split_into_bounded_bundles(
     )
 
 
-async def test_late_tool_and_edit_results_use_durable_identity(store, tmp_path):
-    stream = CardStream(store, tmp_path, "many tools")
-    await stream.start()
+async def test_late_tool_and_edit_results_use_durable_identity(stream, store):
     for i in range(150):
         await stream.event({
             "tool": "my_tool",
@@ -128,10 +129,8 @@ async def test_late_tool_and_edit_results_use_durable_identity(store, tmp_path):
 
 
 async def test_command_commits_and_live_reference_do_not_copy_buffer(
-    store, tmp_path
+    stream, store
 ):
-    stream = CardStream(store, tmp_path, "terminal")
-    await stream.start()
     reference = {"kind": "terminal", "id": "terminal-123"}
     await stream.event({
         "tool": "run_command",
@@ -155,9 +154,7 @@ async def test_command_commits_and_live_reference_do_not_copy_buffer(
     assert stream.commands == {}
 
 
-async def test_command_memory_contains_only_active_commands(store, tmp_path):
-    stream = CardStream(store, tmp_path, "commands")
-    await stream.start()
+async def test_command_memory_contains_only_active_commands(stream, store):
     for i in range(150):
         await stream.event({
             "tool": "run_command",
@@ -216,9 +213,7 @@ def test_all_card_types_round_trip_without_widget_runtime_state():
     assert "Unsupported" in unknown.label
 
 
-async def test_read_after_edit_is_not_suppressed(store, tmp_path):
-    stream = CardStream(store, tmp_path, "edit then check")
-    await stream.start()
+async def test_read_after_edit_is_not_suppressed(stream, store):
     await stream.event({
         "tool": "edit_code",
         "path": "same.py",
@@ -234,9 +229,7 @@ async def test_read_after_edit_is_not_suppressed(store, tmp_path):
     ]
 
 
-async def test_late_file_failure_preserves_committed_members(store, tmp_path):
-    stream = CardStream(store, tmp_path, "read")
-    await stream.start()
+async def test_late_file_failure_preserves_committed_members(stream, store):
     await stream.event({
         "tool": "read_file",
         "path": "one",
@@ -263,9 +256,7 @@ async def test_late_file_failure_preserves_committed_members(store, tmp_path):
     assert after.card["state"]["outcomes"][0][-1] == "failed read"
 
 
-async def test_finish_closes_outstanding_tools_and_commands(store, tmp_path):
-    stream = CardStream(store, tmp_path, "unfinished tools")
-    await stream.start()
+async def test_finish_closes_outstanding_tools_and_commands(stream, store):
     await stream.event({
         "tool": "run_command",
         "tool_call_id": "x",

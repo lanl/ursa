@@ -87,3 +87,22 @@ async def emit_event(handler, payload=None, **details):
         DEFAULT_EVENT_NAME,
         details if payload is None else payload,
     )
+
+
+async def start_turn(app, prompt):
+    """Start a real persisted turn without invoking a model."""
+    from ursa.cli.tui.event_cards.card_stream import CardStream
+
+    stream = CardStream(app.card_store, app.hitl.workspace, prompt)
+    await stream.start()
+    app.current_turn = stream
+    app._reset_conversation_auto_follow(app.card_viewport.conversation)
+    app.card_viewport.follow_tail = True
+    await app.card_viewport.refresh()
+    return app.card_viewport.turns[stream.turn_id]
+
+
+async def emit_card(app, payload):
+    """Wait for persistence and its viewport projection before asserting."""
+    await app.add_turn_event(app.current_turn, payload)
+    await app.card_viewport.refresh()

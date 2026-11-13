@@ -8,12 +8,12 @@ viewport. No event handler walks the conversation history.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic
 from typing import Any
 
-from ursa.cli.tui import turn as turn_module
 from ursa.cli.tui.event_cards import (
     AgentEventCard,
     ArtifactCard,
@@ -26,10 +26,19 @@ from ursa.cli.tui.event_cards import (
     SearchEventCard,
     ToolCallCard,
 )
-from ursa.cli.tui.event_cards.card_codec import decode_card, encode_card
+from ursa.cli.tui.event_cards.card_codec import (
+    decode_card,
+    encode_card,
+    finish_card,
+)
 from ursa.cli.tui.event_cards.card_store import CardStore
-from ursa.cli.tui.helpers import AGENT_LABELS, FILE_TOOLS, SEARCH_TOOLS
-from ursa.cli.tui.turn import Turn
+from ursa.cli.tui.helpers import (
+    AGENT_LABELS,
+    FILE_TOOLS,
+    SEARCH_TOOLS,
+    SUMMARY_GROUP_GRACE_SECONDS,
+    file_outcome,
+)
 from ursa.util.rendering import event_artifacts
 
 # Bound even a continually refreshed bundle. Long streams become several
@@ -55,7 +64,6 @@ class CardStream:
         self.groups: dict[str, Bundle] = {}
         self.commands: dict[str, RunCommandCard] = {}
         self.pending_tools: set[str] = set()
-        self.overlapped = False
         self.revision = 0
         self.plan: PlanCard | None = None
         self.has_edit_heading = False
@@ -91,45 +99,47 @@ class CardStream:
     def _link(self, alias: str, card: EventCard) -> None:
         self.store.link(self.turn_id, alias, card.key)
 
-    async def event(self, payload: dict[str, Any]) -> None:
-        async with self.lock:
-            await asyncio.to_thread(self._write_event, dict(payload))
+    async def _write(self, action: Callable, *args):
+        """Serialize mutations and commit them outside the UI thread."""
 
-    def _write_event(self, payload: dict[str, Any]) -> None:
-        with self.store.transaction():
-            received_at = payload.get("_received_at")
-            now = (
-                float(received_at)
-                if isinstance(received_at, (int, float))
-                else monotonic()
-            )
-            self._expire(now)
-            self._convert(payload, now)
+        def commit():
+            with self.store.transaction():
+                return action(*args)
+
+        async with self.lock:
+            return await asyncio.to_thread(commit)
+
+    async def event(self, payload: dict[str, Any]) -> None:
+        await self._write(self._event, dict(payload))
+
+    def _event(self, payload: dict[str, Any]) -> None:
+        received_at = payload.get("_received_at")
+        now = (
+            float(received_at)
+            if isinstance(received_at, (int, float))
+            else monotonic()
+        )
+        self._expire(now)
+        self._convert(payload, now)
 
     def _commit(self, kind: str) -> None:
         bundle = self.groups.pop(kind)
         bundle.card.mark_done()
-        data = encode_card(bundle.card)
-        data["bundle"] = {"members": bundle.members}
-        self.store.append(
-            self.turn_id, bundle.card.key, data, record_type="commit"
-        )
+        bundle.card.bundle = {"members": bundle.members}
+        self._save(bundle.card, record_type="commit")
 
-    def _expire(self, now: float) -> None:
-        for kind, bundle in list(self.groups.items()):
-            if now >= bundle.deadline:
-                self._commit(kind)
+    def _expire(self, now: float) -> bool:
+        expired = [
+            kind
+            for kind, bundle in self.groups.items()
+            if now >= bundle.deadline
+        ]
+        for kind in expired:
+            self._commit(kind)
+        return bool(expired)
 
     async def expire(self) -> bool:
-        async with self.lock:
-
-            def write():
-                with self.store.transaction():
-                    count = len(self.groups)
-                    self._expire(turn_module.monotonic())
-                    return count != len(self.groups)
-
-            return await asyncio.to_thread(write)
+        return await self._write(lambda: self._expire(monotonic()))
 
     def _bundle(
         self, kind: str, individual: EventCard, now: float, update
@@ -147,24 +157,17 @@ class CardStream:
         else:
             update(bundle.card)
         bundle.members.append(member_id)
-        bundle.deadline = now + turn_module.SUMMARY_GROUP_GRACE_SECONDS
+        bundle.deadline = now + SUMMARY_GROUP_GRACE_SECONDS
         self._save(bundle.card, record_type="snapshot")
 
     def _convert(self, payload: dict[str, Any], now: float) -> None:
-        activity = next(
-            (
-                payload.get(key)
-                for key in (
-                    "message",
-                    "reasoning_content",
-                    "reasoning_summary",
-                    "reasoning",
-                    "thinking",
-                    "stage",
-                )
-                if payload.get(key)
-            ),
-            None,
+        activity = (
+            payload.get("message")
+            or payload.get("reasoning_content")
+            or payload.get("reasoning_summary")
+            or payload.get("reasoning")
+            or payload.get("thinking")
+            or payload.get("stage")
         )
         if activity:
             self.update_activity(str(activity))
@@ -194,7 +197,7 @@ class CardStream:
             except ValueError:
                 path = str(candidate)
         run_id = str(payload.get("_run_id") or "")
-        outcome = Turn._file_outcome(payload)
+        outcome = file_outcome(payload)
         if tool in FILE_TOOLS and path:
             edit = None
             if tool in {"edit_code", "write_code", "write_code_with_repo"}:
@@ -334,8 +337,6 @@ class CardStream:
                     key, str(payload.get("query") or "(command unavailable)")
                 )
             )
-        if not self.commands:
-            self.overlapped = False
         self.commands[key] = card
         if isinstance(payload.get("content_ref"), dict):
             card.content_ref = payload["content_ref"]
@@ -346,13 +347,13 @@ class CardStream:
             if "artifacts" in payload:
                 payload = {**payload, "artifacts": []}
         card.update_event(payload)
-        if sum(not item.completed for item in self.commands.values()) > 1:
-            self.overlapped = True
+        overlapped = (
+            sum(not item.completed for item in self.commands.values()) > 1
+        )
         # Iteration is over concurrently active commands, never past commands.
         for command in self.commands.values():
-            command.multi_command = (
-                self.overlapped or command.completed or command.force_compact
-            )
+            if overlapped or command.completed or command.force_compact:
+                command.multi_command = True
             self._save_command(command)
         if card.completed:
             self.commands.pop(key)
@@ -361,11 +362,8 @@ class CardStream:
         member = self._save(command)
         if command.completed:
             record = self.store.find(self.turn_id, command.key)
-            data = encode_card(command)
-            data["bundle"] = {"position": record.position, "through": member}
-            self.store.append(
-                self.turn_id, command.key, data, record_type="commit"
-            )
+            command.bundle = {"position": record.position, "through": member}
+            self._save(command, record_type="commit")
 
     def _plan(self, payload: dict[str, Any]) -> None:
         stage = str(payload.get("stage"))
@@ -394,64 +392,49 @@ class CardStream:
         self.token_usage += count
 
     async def finish(self, response: str, *, succeeded: bool = True) -> None:
-        async with self.lock:
+        await self._write(self._finish, response, succeeded)
+        self.finished = True
+        self.commands.clear()
+        self.pending_tools.clear()
+        self.plan = None
 
-            def write():
-                with self.store.transaction():
-                    for kind in list(self.groups):
-                        self._commit(kind)
-                    for command in self.commands.values():
-                        command.execution_failed = True
-                        command.complete(
-                            "Interrupted before completion",
-                            execution_confirmed=False,
-                        )
-                        command.multi_command = True
-                        self._save_command(command)
-                    for key in self.pending_tools:
-                        record = self.store.find(self.turn_id, key)
-                        tool = decode_card(record.card)
-                        tool.complete(
-                            "Interrupted before completion", failed=True
-                        )
-                        self._save(tool, record_type="commit")
-                    if self.plan:
-                        self.plan.finish_pending_review(succeeded=succeeded)
-                        self._save(self.plan)
-                    self.store.append(
-                        self.turn_id,
-                        "activity",
-                        {
-                            "version": 1,
-                            "type": "activity",
-                            "tokens": self.token_usage,
-                            "elapsed": monotonic() - self.started_at,
-                        },
-                    )
-                    self.store.append(
-                        self.turn_id,
-                        "assistant",
-                        {
-                            "version": 1,
-                            "type": "message",
-                            "role": "assistant",
-                            "content": response,
-                        },
-                    )
-
-            await asyncio.to_thread(write)
-            self.finished = True
-            self.commands.clear()
-            self.pending_tools.clear()
-            self.plan = None
+    def _finish(self, response: str, succeeded: bool) -> None:
+        for kind in list(self.groups):
+            self._commit(kind)
+        for command in self.commands.values():
+            finish_card(command)
+            self._save_command(command)
+        for key in self.pending_tools:
+            record = self.store.find(self.turn_id, key)
+            tool = decode_card(record.card, interrupted=True)
+            self._save(tool, record_type="commit")
+        if self.plan:
+            finish_card(self.plan, succeeded=succeeded)
+            self._save(self.plan)
+        self.store.append(
+            self.turn_id,
+            "activity",
+            {
+                "version": 1,
+                "type": "activity",
+                "tokens": self.token_usage,
+                "elapsed": monotonic() - self.started_at,
+            },
+        )
+        self.store.append(
+            self.turn_id,
+            "assistant",
+            {
+                "version": 1,
+                "type": "message",
+                "role": "assistant",
+                "content": response,
+            },
+        )
 
     async def add_exception(self, error: BaseException, traceback: str) -> None:
-        async with self.lock:
-
-            def write():
-                with self.store.transaction():
-                    self._save(
-                        ExceptionCard(self._key("exception"), error, traceback)
-                    )
-
-            await asyncio.to_thread(write)
+        await self._write(
+            lambda: self._save(
+                ExceptionCard(self._key("exception"), error, traceback)
+            )
+        )

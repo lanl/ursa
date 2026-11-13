@@ -1,7 +1,6 @@
-from textual.containers import VerticalScroll
 from textual.widgets import Static
 
-from tests.cli._app_fakes import FakeHITL
+from tests.cli._app_fakes import FakeHITL, emit_card, start_turn
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import (
     AgentEventCard,
@@ -9,7 +8,6 @@ from ursa.cli.tui.event_cards import (
     EditCard,
     SearchEventCard,
 )
-from ursa.cli.tui.turn import Turn
 
 
 async def test_multiple_edit_rows_expand_independently_under_one_heading(
@@ -18,8 +16,7 @@ async def test_multiple_edit_rows_expand_independently_under_one_heading(
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 60)) as pilot:
-        turn = Turn("edit two files", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        turn = await start_turn(app, "edit two files")
         for event in (
             {
                 "tool": "edit_code",
@@ -33,7 +30,7 @@ async def test_multiple_edit_rows_expand_independently_under_one_heading(
                 "code": "value = 2",
             },
         ):
-            await turn.event(event)
+            await emit_card(app, event)
         await pilot.pause()
 
         first, second = turn.query(EditCard)
@@ -54,29 +51,37 @@ async def test_specialized_agent_events_and_artifacts_update_live(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("investigate", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        await turn.event({
-            "agent": "HypothesizerAgent",
-            "stage": "generate",
-            "message": "Generating hypotheses",
-        })
-        await turn.event({
-            "agent": "HypothesizerAgent",
-            "stage": "critique_result",
-            "message": "Critiqued hypotheses",
-            "preview": "The second hypothesis survives.",
-        })
-        await turn.event({
-            "agent": "HypothesizerAgent",
-            "stage": "finalize_result",
-            "message": "Finalized hypotheses",
-            "artifact": {
-                "content": "# Final hypothesis",
-                "mime_type": "text/markdown",
-                "metadata": {"title": "Hypothesis"},
+        turn = await start_turn(app, "investigate")
+        await emit_card(
+            app,
+            {
+                "agent": "HypothesizerAgent",
+                "stage": "generate",
+                "message": "Generating hypotheses",
             },
-        })
+        )
+        await emit_card(
+            app,
+            {
+                "agent": "HypothesizerAgent",
+                "stage": "critique_result",
+                "message": "Critiqued hypotheses",
+                "preview": "The second hypothesis survives.",
+            },
+        )
+        await emit_card(
+            app,
+            {
+                "agent": "HypothesizerAgent",
+                "stage": "finalize_result",
+                "message": "Finalized hypotheses",
+                "artifact": {
+                    "content": "# Final hypothesis",
+                    "mime_type": "text/markdown",
+                    "metadata": {"title": "Hypothesis"},
+                },
+            },
+        )
         await pilot.pause()
 
         agent_cards = list(turn.query(AgentEventCard))
@@ -114,26 +119,31 @@ async def test_search_and_lammps_events_render_specialized_details(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("search then simulate", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        await turn.event({
-            "tool": "run_web_search",
-            "stage": "search_result",
-            "phase": "end",
-            "message": "Web search complete",
-            "query": "ursa events",
-            "result_chars": 2048,
-        })
-        await turn.event({
-            "agent": "LammpsAgent",
-            "stage": "choose_potential",
-            "phase": "end",
-            "message": "Selected potential",
-            "potential_id": "Ni_u3.eam",
-            "chosen_index": 2,
-            "rationale": "Best match for nickel.",
-            "output_path": "runs/ni",
-        })
+        turn = await start_turn(app, "search then simulate")
+        await emit_card(
+            app,
+            {
+                "tool": "run_web_search",
+                "stage": "search_result",
+                "phase": "end",
+                "message": "Web search complete",
+                "query": "ursa events",
+                "result_chars": 2048,
+            },
+        )
+        await emit_card(
+            app,
+            {
+                "agent": "LammpsAgent",
+                "stage": "choose_potential",
+                "phase": "end",
+                "message": "Selected potential",
+                "potential_id": "Ni_u3.eam",
+                "chosen_index": 2,
+                "rationale": "Best match for nickel.",
+                "output_path": "runs/ni",
+            },
+        )
         await pilot.pause()
 
         search = turn.query_one(SearchEventCard)

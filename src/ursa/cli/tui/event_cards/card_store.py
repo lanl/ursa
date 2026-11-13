@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -23,6 +23,7 @@ class CardRecord:
     turn_id: int
     key: str
     card: dict[str, Any]
+    view_state: dict[str, Any] = field(default_factory=dict)
 
 
 class CardStore:
@@ -199,14 +200,20 @@ class CardStore:
         order = "ASC" if after is not None else "DESC"
         with self.lock:
             rows = self.connection.execute(
-                "SELECT e.id, h.position, h.turn_id, h.card_key, e.card_json "
+                "SELECT e.id, h.position, h.turn_id, h.card_key, e.card_json, "
+                "v.state_json "
                 "FROM event_card_heads h JOIN event_cards e ON e.id=h.card_id "
+                "LEFT JOIN event_card_view_state v "
+                "ON v.session=h.session AND v.position=h.position "
                 f"WHERE {where} ORDER BY h.position {order} LIMIT ?",
                 (*args, limit),
             ).fetchall()
         if after is None:
             rows.reverse()
-        return [self._record(row) for row in rows]
+        return [
+            CardRecord(*row[:4], json.loads(row[4]), json.loads(row[5] or "{}"))
+            for row in rows
+        ]
 
     def state(self) -> dict[str, Any]:
         with self.lock:
@@ -226,19 +233,6 @@ class CardStore:
                 (self.session, limit),
             ).fetchall()
         return [json.loads(row[0])["content"] for row in reversed(rows)]
-
-    def view_state(self, positions: list[int]) -> dict[int, dict[str, Any]]:
-        if not positions:
-            return {}
-        with self.lock:
-            rows = self.connection.execute(
-                "SELECT position, state_json FROM event_card_view_state "
-                "WHERE session=? AND position IN ("
-                + ",".join("?" for _ in positions)
-                + ")",
-                (self.session, *positions),
-            ).fetchall()
-        return {row[0]: json.loads(row[1]) for row in rows}
 
     def save_view_state(self, position: int, **state: Any) -> None:
         with self.transaction():

@@ -1,0 +1,105 @@
+{
+  "python": "3.11.16",
+  "platform": "Linux-7.0.0-1019-nvidia-aarch64-with-glibc2.39",
+  "terminal": [
+    100,
+    36
+  ],
+  "samples": 100,
+  "persisted": [
+    {
+      "mounted_cards": 40,
+      "dom_nodes": 422,
+      "layout_and_render": {
+        "p50_ms": 4.689,
+        "p95_ms": 5.426
+      },
+      "key_to_input_changed": {
+        "p50_ms": 1.999,
+        "p95_ms": 9.552
+      },
+      "cards_in_database": 1000,
+      "window_read": {
+        "p50_ms": 0.107,
+        "p95_ms": 0.113
+      }
+    },
+    {
+      "mounted_cards": 40,
+      "dom_nodes": 422,
+      "layout_and_render": {
+        "p50_ms": 4.641,
+        "p95_ms": 5.372
+      },
+      "key_to_input_changed": {
+        "p50_ms": 1.54,
+        "p95_ms": 9.477
+      },
+      "cards_in_database": 10000,
+      "window_read": {
+        "p50_ms": 0.11,
+        "p95_ms": 0.114
+      }
+    },
+    {
+      "mounted_cards": 40,
+      "dom_nodes": 422,
+      "layout_and_render": {
+        "p50_ms": 4.739,
+        "p95_ms": 5.456
+      },
+      "key_to_input_changed": {
+        "p50_ms": 4.866,
+        "p95_ms": 9.067
+      },
+      "cards_in_database": 100000,
+      "window_read": {
+        "p50_ms": 0.116,
+        "p95_ms": 0.121
+      }
+    },
+    {
+      "mounted_cards": 40,
+      "dom_nodes": 422,
+      "layout_and_render": {
+        "p50_ms": 4.727,
+        "p95_ms": 5.531
+      },
+      "key_to_input_changed": {
+        "p50_ms": 10.124,
+        "p95_ms": 13.254
+      },
+      "cards_in_database": 1000000,
+      "window_read": {
+        "p50_ms": 0.115,
+        "p95_ms": 0.121
+      }
+    }
+  ],
+  "live_at_largest_history": {
+    "events": 200,
+    "elapsed_s": 5.038,
+    "event_loop_lag": {
+      "p50_ms": 1.389,
+      "p95_ms": 28.305
+    },
+    "input_during_events": {
+      "p50_ms": 0.803,
+      "p95_ms": 7.686
+    },
+    "mounted_cards": 73
+  },
+  "retained_widget_baseline": {
+    "mounted_cards": 1000,
+    "dom_nodes": 10025,
+    "layout_and_render": {
+      "p50_ms": 102.342,
+      "p95_ms": 935.562
+    },
+    "key_to_input_changed": {
+      "p50_ms": 320.048,
+      "p95_ms": 904.535
+    },
+    "cards_in_conversation": 1000
+  }
+}

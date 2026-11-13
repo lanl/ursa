@@ -16,8 +16,8 @@ from ursa.cli.tui.helpers import (
     TokenUsage,
     _reasoning_trace,
     _token_usage_breakdown,
+    file_outcome,
 )
-from ursa.cli.tui.turn import Turn
 from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.model_metadata import refresh_ollama_context
 
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 class TextualEventHandler(AsyncCallbackHandler):
     """Translate LangChain callbacks into live Textual turn updates."""
 
-    def __init__(self, app: UrsaTextualApp, turn: Turn | CardStream) -> None:
+    def __init__(self, app: UrsaTextualApp, turn: CardStream) -> None:
         self.app = app
         self.turn = turn
         self.tools: dict[Any, dict[str, Any]] = {}
@@ -48,8 +48,7 @@ class TextualEventHandler(AsyncCallbackHandler):
     async def _update_activity(self, message: str) -> None:
         if self.app.is_ui_thread:
             self.turn.update_activity(message)
-            if isinstance(self.turn, CardStream):
-                self.app.card_viewport.request_refresh()
+            self.app.card_viewport.request_refresh()
         else:
             self.app.call_from_thread(self._update_activity, message)
 
@@ -137,7 +136,7 @@ class TextualEventHandler(AsyncCallbackHandler):
             data["tool_message"] = output
         else:
             data["result"] = output
-        if data.get("tool") in FILE_TOOLS and Turn._file_outcome(data) is None:
+        if data.get("tool") in FILE_TOOLS and file_outcome(data) is None:
             return
         await self._emit(data)
 
@@ -145,14 +144,6 @@ class TextualEventHandler(AsyncCallbackHandler):
         self, error: BaseException, *, run_id: Any, **_: Any
     ) -> None:
         data = self.tools.pop(run_id, {"tool": "tool"})
-        if data.get("tool") in FILE_TOOLS:
-            await self._emit({
-                **data,
-                "phase": "error",
-                "error": str(error),
-                "result": str(error),
-            })
-            return
         await self._emit({
             **data,
             "phase": "error",

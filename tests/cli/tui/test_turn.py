@@ -2,12 +2,11 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from textual.containers import VerticalScroll
 from textual.widgets import Static
 
+import ursa.cli.tui.event_cards.card_stream as stream_module
 import ursa.cli.tui.event_handler as event_handler_module
-import ursa.cli.tui.turn as turn_module
-from tests.cli._app_fakes import FakeHITL, emit_event
+from tests.cli._app_fakes import FakeHITL, emit_card, emit_event, start_turn
 from tests.tui.utils import eventually
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import EditCard, FileActivityCard, RunCommandCard
@@ -21,38 +20,39 @@ async def test_turn_spacing_is_one_row_with_or_without_events(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 40)) as pilot:
-        conversation = app.query_one("#conversation", VerticalScroll)
-
-        thinking = Turn("think about it", tmp_path)
-        await conversation.mount(thinking)
+        thinking = await start_turn(app, "think about it")
         await pilot.pause()
         thinking_user = thinking.query_one(MessageCard)
         activity = thinking.query_one(ActivityIndicator)
         assert activity.region.y - thinking_user.region.bottom == 1
 
-        no_tools = Turn("answer directly", tmp_path)
-        await conversation.mount(no_tools)
-        await no_tools.add_response("Direct answer")
-        no_tools.finish_activity()
+        no_tools = await start_turn(app, "answer directly")
+        await app.current_turn.finish("Direct answer")
+        await app.card_viewport.refresh()
 
-        with_tool = Turn("run a command", tmp_path)
-        await conversation.mount(with_tool)
-        await with_tool.event({
-            "tool": "run_command",
-            "phase": "start",
-            "query": "pwd",
-            "tool_call_id": "pwd",
-        })
-        await with_tool.event({
-            "tool": "run_command",
-            "phase": "end",
-            "query": "pwd",
-            "tool_call_id": "pwd",
-            "result": str(tmp_path),
-            "returncode": 0,
-        })
-        await with_tool.add_response("Command answer")
-        with_tool.finish_activity()
+        with_tool = await start_turn(app, "run a command")
+        await emit_card(
+            app,
+            {
+                "tool": "run_command",
+                "phase": "start",
+                "query": "pwd",
+                "tool_call_id": "pwd",
+            },
+        )
+        await emit_card(
+            app,
+            {
+                "tool": "run_command",
+                "phase": "end",
+                "query": "pwd",
+                "tool_call_id": "pwd",
+                "result": str(tmp_path),
+                "returncode": 0,
+            },
+        )
+        await app.current_turn.finish("Command answer")
+        await app.card_viewport.refresh()
         await pilot.pause()
 
         direct_messages = list(no_tools.query(MessageCard))
@@ -192,10 +192,10 @@ async def test_activity_kinds_keep_independent_cards_open(
     tmp_path, monkeypatch
 ):
     clock = [100.0]
-    monkeypatch.setattr(turn_module, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(stream_module, "monotonic", lambda: clock[0])
     monkeypatch.setattr(event_handler_module, "monotonic", lambda: clock[0])
     monkeypatch.setattr(
-        turn_module,
+        stream_module,
         "SUMMARY_GROUP_GRACE_SECONDS",
         1.0,
     )
@@ -289,7 +289,7 @@ async def test_event_group_grace_period_resets_after_each_update(
     tmp_path, monkeypatch
 ):
     clock = [100.0]
-    monkeypatch.setattr(turn_module, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(stream_module, "monotonic", lambda: clock[0])
     monkeypatch.setattr(event_handler_module, "monotonic", lambda: clock[0])
     hitl = FakeHITL(tmp_path)
 
@@ -339,10 +339,10 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
     monkeypatch,
 ):
     clock = [100.0]
-    monkeypatch.setattr(turn_module, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(stream_module, "monotonic", lambda: clock[0])
     monkeypatch.setattr(event_handler_module, "monotonic", lambda: clock[0])
     monkeypatch.setattr(
-        turn_module,
+        stream_module,
         "SUMMARY_GROUP_GRACE_SECONDS",
         0.5,
     )
@@ -425,21 +425,21 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
         assert groups[1].done
 
 
-async def test_stale_summary_timer_cannot_finalize_replacement_card(tmp_path):
+async def test_expiration_does_not_finalize_replacement_group(
+    tmp_path, monkeypatch
+):
+    clock = [100.0]
+    monkeypatch.setattr(stream_module, "monotonic", lambda: clock[0])
     app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(100, 36)):
-        turn = Turn("read", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        old = FileActivityCard("files:old")
-        replacement = FileActivityCard("files:new")
-        await turn.query_one(".events").mount(old, replacement)
-        turn._summary_cards["files:Reading"] = replacement
-
-        turn._finalize_summary("files:Reading", old)
-
-        assert not replacement.done
-        assert turn._summary_cards["files:Reading"] is replacement
+    async with app.run_test():
+        await start_turn(app, "read")
+        await emit_card(app, {"tool": "read_file", "path": "first"})
+        clock[0] += stream_module.SUMMARY_GROUP_GRACE_SECONDS
+        await emit_card(app, {"tool": "read_file", "path": "second"})
+        await app._expire_card_groups()
+        first, second = app.query(FileActivityCard)
+        assert first.done
+        assert not second.done
 
 
 async def test_parallel_read_callbacks_render_as_one_group(tmp_path):
@@ -526,9 +526,8 @@ async def test_file_failure_is_retained_on_its_activity_card(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("read it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
+        turn = await start_turn(app, "read it")
+        handler = TextualEventHandler(app, app.current_turn)
         await handler.on_tool_start(
             {"name": "read_file"},
             "",
@@ -554,9 +553,8 @@ async def test_unchanged_file_result_is_retained_on_activity_card(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("edit it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
+        turn = await start_turn(app, "edit it")
+        handler = TextualEventHandler(app, app.current_turn)
         await handler.on_tool_start(
             {"name": "edit_code"},
             "",
@@ -581,9 +579,8 @@ async def test_rich_edit_outcome_updates_existing_diff_row(tmp_path, outcome):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("edit it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
+        turn = await start_turn(app, "edit it")
+        handler = TextualEventHandler(app, app.current_turn)
         await handler.on_tool_start(
             {"name": "edit_code"},
             "",

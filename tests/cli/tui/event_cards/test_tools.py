@@ -1,22 +1,19 @@
 from langchain_core.messages import ToolMessage
-from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
-from tests.cli._app_fakes import FakeHITL
+from tests.cli._app_fakes import FakeHITL, start_turn
 from tests.tui.utils import eventually
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import ToolCallCard
 from ursa.cli.tui.event_handler import TextualEventHandler
-from ursa.cli.tui.turn import Turn
 
 
 async def test_default_tool_card_switches_from_input_to_output(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("call it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
+        turn = await start_turn(app, "call it")
+        handler = TextualEventHandler(app, app.current_turn)
         await handler.on_tool_start(
             {"name": "lookup_widget"},
             "",
@@ -68,9 +65,8 @@ async def test_default_tool_card_shows_failure_output(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 24)) as pilot:
-        turn = Turn("call it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
+        turn = await start_turn(app, "call it")
+        handler = TextualEventHandler(app, app.current_turn)
         await handler.on_tool_start(
             {"name": "lookup_widget"}, "", run_id="bad", inputs={}
         )
@@ -88,9 +84,8 @@ async def test_tool_call_preview_renders_code_brackets_as_plain_text(tmp_path):
     output = "[patch={'old_code': 'ax.set_xticklabels([labels])'}]"
 
     async with app.run_test(size=(100, 24)) as pilot:
-        turn = Turn("edit it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
+        turn = await start_turn(app, "edit it")
+        handler = TextualEventHandler(app, app.current_turn)
         await handler.on_tool_start(
             {"name": "edit_plot"}, "", run_id="code", inputs={}
         )
@@ -106,9 +101,8 @@ async def test_tool_message_prefers_structured_content_as_json(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 24)) as pilot:
-        turn = Turn("call it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
+        turn = await start_turn(app, "call it")
+        handler = TextualEventHandler(app, app.current_turn)
         await handler.on_tool_start(
             {"name": "lookup_widget"}, "", run_id="structured", inputs={}
         )
@@ -136,9 +130,8 @@ async def test_text_only_tool_message_renders_as_markdown(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 24)) as pilot:
-        turn = Turn("call it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
+        turn = await start_turn(app, "call it")
+        handler = TextualEventHandler(app, app.current_turn)
         await handler.on_tool_start(
             {"name": "lookup_widget"}, "", run_id="text", inputs={}
         )

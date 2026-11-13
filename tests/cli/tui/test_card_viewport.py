@@ -20,6 +20,11 @@ async def test_widget_window_and_layout_are_bounded_on_resume(tmp_path, count):
     hitl.card_database_path = tmp_path / "session.db"
     store = CardStore(hitl.card_database_path)
     seed_cards(store, count)
+    with store.transaction():
+        for table in ("event_cards", "event_card_heads"):
+            store.connection.execute(
+                f"UPDATE {table} SET turn_id=(position-1)/10+1"
+            )
     store.close()
     app = UrsaTextualApp(hitl)
     async with app.run_test(size=(100, 36)) as pilot:
@@ -36,6 +41,9 @@ async def test_widget_window_and_layout_are_bounded_on_resume(tmp_path, count):
         await viewport.page(1)
         await pilot.pause()
         assert viewport.records[0].position > 1
+        assert [card.key for card in app.query(EventCard)] == [
+            record.key for record in viewport.records
+        ]
         await viewport.end()
         await pilot.pause()
         assert viewport.records[-1].position == count
@@ -118,7 +126,8 @@ async def test_late_updates_while_reading_scrollback_keep_position(tmp_path):
         await pilot.pause()
         anchor = viewport._anchor()
         assert anchor is not None
-        widget, y = anchor
+        position, y = anchor
+        widget = viewport.widgets[position]
         stream = CardStream(app.card_store, tmp_path, "new activity")
         await stream.start()
         app.current_turn = stream

@@ -8,12 +8,11 @@ import yaml
 from langchain_ollama import ChatOllama
 from textual.widgets import Static
 
-from tests.cli._app_fakes import FakeHITL
+from tests.cli._app_fakes import FakeHITL, start_turn
 from tests.tui.utils import await_workers
 from ursa.cli.config import ChatModelConfig
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_handler import TextualEventHandler
-from ursa.cli.tui.turn import Turn
 from ursa.cli.tui.widgets import ModelSelection
 from ursa.util.model_context import summarization_threshold
 
@@ -121,15 +120,14 @@ async def test_ollama_response_refreshes_shared_context_and_display(tmp_path):
     agent_model = hitl.model.bind(extra_headers={})
     app = UrsaTextualApp(hitl)
     async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("hello", tmp_path)
-        await app.query_one("#conversation").mount(turn)
+        await start_turn(app, "hello")
         assert (
             yaml.safe_load(app._resolved_config_yaml())[
                 "tokens_before_summarize"
             ]
             == 50000
         )
-        await TextualEventHandler(app, turn).on_llm_end(
+        await TextualEventHandler(app, app.current_turn).on_llm_end(
             SimpleNamespace(llm_output={})
         )
         await pilot.pause()

@@ -8,7 +8,7 @@ from textual.widgets import Markdown, Static
 
 import ursa.cli.tui.app as app_module
 import ursa.util.crossplatform as crossplatform
-from tests.cli._app_fakes import FakeHITL, emit_event
+from tests.cli._app_fakes import FakeHITL, emit_event, start_turn
 from tests.tui.utils import eventually
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import EventCard, ExceptionCard, RunCommandCard
@@ -43,9 +43,9 @@ async def test_welcome_banner_starts_at_top_of_conversation(tmp_path):
 
         assert banner.region.y == conversation.content_region.y
 
-        turn = Turn("short conversation", tmp_path)
-        await conversation.mount(turn)
-        await turn.add_response("Short response")
+        await start_turn(app, "short conversation")
+        await app.current_turn.finish("Short response")
+        await app.card_viewport.refresh()
         await pilot.pause()
 
         await eventually(
@@ -105,7 +105,7 @@ async def test_prompt_submission_events_and_history(tmp_path):
         assert "output" not in status
         assert "cached" not in status
         turn = app.query_one(Turn)
-        assert turn.token_usage == 37
+        assert app.current_turn.token_usage == 37
         assert isinstance(list(turn.children)[-3], ActivityIndicator)
         assert isinstance(list(turn.children)[-2], MessageCard)
         assert list(turn.children)[-1].has_class("turn-end-marker")
@@ -452,12 +452,11 @@ async def test_new_cards_follow_bottom_without_moving_scrolled_view(tmp_path):
 
     async with app.run_test(size=(80, 20)) as pilot:
         conversation = app.query_one("#conversation", VerticalScroll)
-        turn = Turn("test", tmp_path)
-        await conversation.mount(turn)
+        await start_turn(app, "test")
 
         for index in range(12):
             await app.add_turn_event(
-                turn,
+                app.current_turn,
                 {
                     "type": "custom",
                     "tool": f"tool-{index}",
@@ -481,7 +480,7 @@ async def test_new_cards_follow_bottom_without_moving_scrolled_view(tmp_path):
         assert scrolled_position < conversation.max_scroll_y
 
         await app.add_turn_event(
-            turn,
+            app.current_turn,
             {
                 "type": "custom",
                 "tool": "one-more-tool",
@@ -498,12 +497,11 @@ async def test_user_scroll_cancels_initial_anchor_transition(tmp_path):
 
     async with app.run_test(size=(80, 20)) as pilot:
         conversation = app.query_one("#conversation", VerticalScroll)
-        turn = Turn("test", tmp_path)
-        await conversation.mount(turn)
+        await start_turn(app, "test")
 
         for index in range(12):
             await app.add_turn_event(
-                turn,
+                app.current_turn,
                 {
                     "type": "custom",
                     "tool": f"tool-{index}",
@@ -517,7 +515,9 @@ async def test_user_scroll_cancels_initial_anchor_transition(tmp_path):
         # Start a fresh transition synchronously now that overflow is known.
         # On slower CI hosts the original 150 ms animation can otherwise
         # finish during ``pilot.pause`` before the test gets to observe it.
+        conversation.scroll_home(animate=False, immediate=True)
         app._reset_conversation_auto_follow(conversation)
+        app.card_viewport.follow_tail = True
         app._anchor_conversation_if_overflowing()
         assert app._conversation_anchor_transition
         conversation.scroll_home(animate=False, immediate=True)
@@ -530,7 +530,7 @@ async def test_user_scroll_cancels_initial_anchor_transition(tmp_path):
         assert not conversation.is_anchored
         scrolled_position = conversation.scroll_y
         await app.add_turn_event(
-            turn,
+            app.current_turn,
             {
                 "type": "custom",
                 "tool": "after-interruption",

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from rich.traceback import Frame, Stack, Trace, Traceback
+from rich.traceback import Frame, Stack, Trace
 
 from ursa.cli.tui.event_cards import (
     AgentEventCard,
@@ -120,22 +120,14 @@ def decode_card(
     elif cls is ExceptionCard:
         # The durable traceback is text, never a pickled exception/object graph.
         card = ExceptionCard(key, RuntimeError(""), "")
-        card.rich_traceback = Traceback(
-            Trace(
-                stacks=[
-                    Stack(**{
-                        **stack,
-                        "frames": [Frame(**frame) for frame in stack["frames"]],
-                    })
-                    for stack in state.get("trace", [])
-                ]
-            ),
-            width=None,
-            code_width=100,
-            extra_lines=3,
-            word_wrap=True,
-            show_locals=False,
-            max_frames=1000,
+        card.rich_traceback.trace = Trace(
+            stacks=[
+                Stack(**{
+                    **stack,
+                    "frames": [Frame(**frame) for frame in stack["frames"]],
+                })
+                for stack in state.get("trace", [])
+            ]
         )
     elif cls in (AgentEventCard, SearchEventCard):
         card = cls(key, "")
@@ -143,19 +135,24 @@ def decode_card(
         card = EventCard(key, state["label"])
     apply_card(card, data)
     if interrupted:
-        if isinstance(card, RunCommandCard) and not card.completed:
-            card.execution_failed = True
-            card.complete(
-                "Interrupted before completion", execution_confirmed=False
-            )
-            card.multi_command = True
-        elif isinstance(card, ToolCallCard) and not card.completed:
-            card.complete("Interrupted before completion", failed=True)
-        elif isinstance(card, PlanCard):
-            card.finish_pending_review(succeeded=False)
-        elif not card.done:
-            card.mark_done()
+        finish_card(card)
     return card
+
+
+def finish_card(card: EventCard, *, succeeded: bool = False) -> None:
+    """Close pending work consistently on turn completion and session resume."""
+    if isinstance(card, RunCommandCard) and not card.completed:
+        card.execution_failed = True
+        card.complete(
+            "Interrupted before completion", execution_confirmed=False
+        )
+        card.multi_command = True
+    elif isinstance(card, ToolCallCard) and not card.completed:
+        card.complete("Interrupted before completion", failed=True)
+    elif isinstance(card, PlanCard):
+        card.finish_pending_review(succeeded=succeeded)
+    elif not card.done:
+        card.mark_done()
 
 
 def apply_card(card: EventCard, data: dict[str, Any]) -> None:

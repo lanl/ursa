@@ -1,11 +1,9 @@
-from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
-from tests.cli._app_fakes import FakeHITL, emit_event
+from tests.cli._app_fakes import FakeHITL, emit_card, emit_event, start_turn
 from tests.tui.utils import eventually
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import PlanCard
-from ursa.cli.tui.turn import Turn
 
 
 def plan_steps(count=7):
@@ -25,24 +23,29 @@ async def test_plan_card_renders_drafting_and_collapsed_steps(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("make a plan", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "generate",
-            "message": "Drafting plan",
-        })
+        turn = await start_turn(app, "make a plan")
+        await emit_card(
+            app,
+            {
+                "agent": "PlanningAgent",
+                "stage": "generate",
+                "message": "Drafting plan",
+            },
+        )
         await pilot.pause()
         plan = turn.query_one(PlanCard)
         assert plan.state == "drafting"
         assert plan.steps == []
 
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "generate_result",
-            "message": "Drafted plan",
-            "steps": plan_steps(),
-        })
+        await emit_card(
+            app,
+            {
+                "agent": "PlanningAgent",
+                "stage": "generate_result",
+                "message": "Drafted plan",
+                "steps": plan_steps(),
+            },
+        )
         assert await eventually(
             pilot,
             lambda: "7. Step 7" in str(plan.query_one(Markdown).source),
@@ -87,22 +90,27 @@ async def test_plan_card_tracks_revisions_approval_and_expansion(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("make a plan", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "generate_result",
-            "message": "Drafted plan",
-            "steps": plan_steps(),
-        })
+        turn = await start_turn(app, "make a plan")
+        await emit_card(
+            app,
+            {
+                "agent": "PlanningAgent",
+                "stage": "generate_result",
+                "message": "Drafted plan",
+                "steps": plan_steps(),
+            },
+        )
         plan = turn.query_one(PlanCard)
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "reflect_result",
-            "message": "Plan needs another pass",
-            "approved": False,
-            "reason": "Add a concrete validation step before implementation.",
-        })
+        await emit_card(
+            app,
+            {
+                "agent": "PlanningAgent",
+                "stage": "reflect_result",
+                "message": "Plan needs another pass",
+                "approved": False,
+                "reason": "Add a concrete validation step before implementation.",
+            },
+        )
         collapsed_source = str(plan.query_one(Markdown).source)
         assert plan.state == "revision_needed"
         assert plan.review_reason == (
@@ -110,33 +118,45 @@ async def test_plan_card_tracks_revisions_approval_and_expansion(tmp_path):
         )
         assert "concrete validation step" not in collapsed_source
 
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "generate",
-            "message": "Drafting plan",
-        })
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "generate_result",
-            "message": "Revised plan",
-            "steps": plan_steps(4),
-        })
+        await emit_card(
+            app,
+            {
+                "agent": "PlanningAgent",
+                "stage": "generate",
+                "message": "Drafting plan",
+            },
+        )
+        await emit_card(
+            app,
+            {
+                "agent": "PlanningAgent",
+                "stage": "generate_result",
+                "message": "Revised plan",
+                "steps": plan_steps(4),
+            },
+        )
         revised = list(turn.query(PlanCard))[-1]
         assert revised.revision == 2
         assert len(revised.steps) == 4
         assert revised.state == "reviewing"
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "reflect",
-            "message": "Reviewing plan",
-        })
+        await emit_card(
+            app,
+            {
+                "agent": "PlanningAgent",
+                "stage": "reflect",
+                "message": "Reviewing plan",
+            },
+        )
         assert revised.state == "reviewing"
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "reflect_result",
-            "message": "Plan approved",
-            "approved": True,
-        })
+        await emit_card(
+            app,
+            {
+                "agent": "PlanningAgent",
+                "stage": "reflect_result",
+                "message": "Plan approved",
+                "approved": True,
+            },
+        )
         await pilot.pause()
 
         plans = list(turn.query(PlanCard))
@@ -216,16 +236,19 @@ async def test_failed_agent_stops_drafting_plan_spinner(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("make a plan", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        await turn.event({
-            "agent": "PlanningAgent",
-            "stage": "generate",
-            "message": "Drafting plan",
-        })
+        turn = await start_turn(app, "make a plan")
+        await emit_card(
+            app,
+            {
+                "agent": "PlanningAgent",
+                "stage": "generate",
+                "message": "Drafting plan",
+            },
+        )
         plan = turn.query_one(PlanCard)
 
-        turn.finish_activity(succeeded=False)
+        await app.current_turn.finish("Failed", succeeded=False)
+        await app.card_viewport.refresh()
         assert await eventually(pilot, lambda: plan.state == "revision_needed")
         assert "draft completed" in plan.review_reason
         source = str(plan.query_one(Markdown).source)
