@@ -2195,6 +2195,10 @@ the configured secret is unavailable.</p>
 <h2 id="use-the-config">Use the config<a class="headerlink" href="#use-the-config" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml
 </code></pre></div>
+<p>The MCP SDK validates server settings when MCP is first used, usually on the
+first agent request. Imports and connections also wait until then, keeping
+the initial prompt responsive. Malformed settings are reported at that point;
+<code>ursa doctor</code> can check them before starting a conversation.</p>
 <h2 id="security-notes">Security notes<a class="headerlink" href="#security-notes" title="Permanent link">&para;</a></h2>
 <p>MCP servers can expose powerful tools. Only connect MCP servers that you trust, and prefer dedicated workspaces and endpoint allowlists for sensitive workflows.</p>
 <p>See <a class="autorefs autorefs-internal" href="../../best-practices/sandboxing/#sandboxing-and-information-control">Sandboxing and information control</a>.</p>
