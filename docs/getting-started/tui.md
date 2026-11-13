@@ -26,7 +26,9 @@ OpenAI works without a config file. Set the API key in your shell:
 === "Windows PowerShell"
 
     ```powershell
-    $env:OPENAI_API_KEY = "..."
+    setx OPENAI_API_KEY "..."
+
+    # Then start a new shell and confirm with `echo $env:OPENAI_API_KEY`
     ```
 
 The built-in `openai` provider supplies the model and base URL. Use a persistent
