@@ -82,7 +82,7 @@ def test_read_file_rejects_paths_outside_workspace(
         filename = "../secret.txt" if path_kind == "relative" else str(secret)
 
     monkeypatch.setattr(
-        "ursa.tools.read_file_tool.read_text_from_file",
+        "ursa.util.parse.read_text_from_file",
         lambda path: pytest.fail("Rejected files must not be read"),
     )
     result = invoke_with_parent_run(
