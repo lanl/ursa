@@ -49,7 +49,7 @@ from langchain_core.messages import (
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.message import add_messages
 from langgraph.runtime import Runtime
-from langgraph.types import Overwrite
+from langgraph.types import Command, Overwrite
 from pydantic import BaseModel, Field
 
 from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
@@ -77,6 +77,9 @@ from ursa.tools.search_tools import (
 )
 from ursa.util.structured_output import invoke_structured
 
+# Bound review/executor ping-pong without forcing tool use for text-only tasks.
+_MAX_REVIEWS_WITHOUT_TOOLS = 3
+
 
 # Classes for typing
 class ReviewAssessment(BaseModel):
@@ -102,6 +105,7 @@ class ExecutionState(TypedDict):
     symlinkdir: dict
     review: NotRequired[ReviewAssessment]
     current_user_request: NotRequired[str]
+    reviews_without_tools: NotRequired[int]
 
 
 def should_continue(state: ExecutionState) -> Literal["review", "continue"]:
@@ -124,12 +128,17 @@ def should_continue(state: ExecutionState) -> Literal["review", "continue"]:
         return "continue"
 
 
-def review_complete(state: ExecutionState) -> Literal["recap", "continue"]:
-    """Route to recap when review passes, otherwise continue execution."""
-    review = state.get("review")
+def _review_is_complete(review: Any) -> bool:
     if isinstance(review, ReviewAssessment):
-        return "recap" if review.is_complete else "continue"
-    if isinstance(review, dict) and review.get("is_complete"):
+        return bool(review.is_complete)
+    return isinstance(review, dict) and bool(review.get("is_complete"))
+
+
+def review_complete(state: ExecutionState) -> Literal["recap", "continue"]:
+    """Recap on completion or the no-tool retry bound; do not equate the two."""
+    if _review_is_complete(state.get("review")):
+        return "recap"
+    if state.get("reviews_without_tools", 0) >= _MAX_REVIEWS_WITHOUT_TOOLS:
         return "recap"
     return "continue"
 
@@ -294,11 +303,17 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         merge gives review a stable request for the current invoke instead of the
         first human message in the entire persisted conversation.
         """
-        normalized = dict(super()._normalize_inputs(inputs))
+        normalized_input = super()._normalize_inputs(inputs)
+        if isinstance(normalized_input, Command):
+            return normalized_input
+        normalized = dict(normalized_input)
         user_request = self._first_human_message_text(
             normalized.get("messages", [])
         )
         normalized["current_user_request"] = user_request
+        # A fresh invocation gets its own review budget even on a persistent
+        # thread; only no-tool ping-pong within this invocation is bounded.
+        normalized["reviews_without_tools"] = 0
         return normalized
 
     # Define the function that calls the model
@@ -331,6 +346,11 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         new_state = deepcopy(state)
         events = self.events(config)
         new_state.setdefault("symlinkdir", {})
+        reviews_without_tools = state.get("reviews_without_tools", 0)
+        if state.get("messages") and isinstance(
+            state["messages"][-1], ToolMessage
+        ):
+            reviews_without_tools = 0
 
         full_overwrite = False
 
@@ -376,7 +396,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         # 4) Invoke the LLM with the prepared message sequence.
         try:
             response = self.tool_llm.invoke(
-                messages, self.build_config(tags=["agent"])
+                messages, self.nested_config(config, tags=["agent"])
             )
             new_state["messages"].append(response)
         except Exception as e:  # noqa: BLE001
@@ -398,9 +418,14 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             return {
                 "messages": Overwrite(new_state["messages"]),
                 "symlinkdir": new_state["symlinkdir"],
+                "reviews_without_tools": reviews_without_tools,
             }
         else:
-            return {"messages": response, "symlinkdir": new_state["symlinkdir"]}
+            return {
+                "messages": response,
+                "symlinkdir": new_state["symlinkdir"],
+                "reviews_without_tools": reviews_without_tools,
+            }
 
     def _get_current_user_request(self, state: ExecutionState) -> str:
         """Return the user request for the current invoke.
@@ -449,7 +474,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             self.llm,
             ReviewAssessment,
             review_messages,
-            config=self.build_config(tags=["review"]),
+            config=self.nested_config(config, tags=["review"]),
             context="execution review assessment",
             fallback=ReviewAssessment(
                 is_complete=True,
@@ -463,14 +488,24 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         is_complete = bool(review.is_complete)
         reason = str(review.reason)
+        reviews_without_tools = new_state.get("reviews_without_tools", 0)
+        if not is_complete:
+            reviews_without_tools += 1
+        stopped = (
+            not is_complete
+            and reviews_without_tools >= _MAX_REVIEWS_WITHOUT_TOOLS
+        )
 
         events.emit(
             "Execution Review: Complete"
             if is_complete
+            else "Execution Review: Stopped (no tool progress)"
+            if stopped
             else "Execution Review: Continue",
             stage="review_work",
             approved=is_complete,
             reason=reason,
+            review_limit_reached=stopped,
         )
 
         if is_complete:
@@ -484,11 +519,15 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         feedback = HumanMessage(
             content=(
-                "Review of the current work determined that the current user "
+                "Execution stopped after repeated incomplete reviews without "
+                "intervening tool execution. Report the remaining work honestly; "
+                "do not claim completion. Latest review feedback:\n\n"
+                if stopped
+                else "Review of the current work determined that the current user "
                 "request has not yet been adequately addressed. Continue working "
                 "and specifically address the following review feedback:\n\n"
-                f"{reason}"
             )
+            + reason
         )
         return self.messages_update(
             new_state,
@@ -496,6 +535,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             full_overwrite=full_overwrite,
             extra={
                 "review": review,
+                "reviews_without_tools": reviews_without_tools,
                 "symlinkdir": new_state.get("symlinkdir", {}),
             },
         )
@@ -526,22 +566,23 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             new_state, system_prompt=self.executor_prompt
         )
 
-        # 1) Construct the summarization message list (system prompt + prior messages).
+        # 1) Keep internal recap instructions call-local. Persisting them as a
+        # user turn can put later invocations/phases into recap-only mode.
         recap_message = HumanMessage(content=self.recap_prompt)
-        new_state["messages"] = new_state["messages"] + [recap_message]
+        recap_messages = list(new_state["messages"]) + [recap_message]
 
         # 2) Invoke the LLM to generate a recap; capture content even on failure.
         try:
             response = self.llm.invoke(
-                input=new_state["messages"],
-                config=self.build_config(tags=["recap"]),
+                input=recap_messages,
+                config=self.nested_config(config, tags=["recap"]),
             )
             response_content = response.text
         except Exception:
             try:
                 response = self.tool_llm.invoke(
-                    input=new_state["messages"],
-                    config=self.build_config(tags=["recap"]),
+                    input=recap_messages,
+                    config=self.nested_config(config, tags=["recap"]),
                 )
                 response_content = response.text
             except Exception as e:
@@ -555,60 +596,70 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                     latest_message=new_state["messages"][-1].text[:2000],
                 )
 
-        if full_overwrite:
-            # 3) Optionally write state to disk for debugging/auditing.
-            new_state["messages"].append(response)
-            if self.log_state:
-                self.write_state("execution_agent.json", new_state)
-            return Overwrite(new_state)
-        else:
-            if self.log_state:
-                new_state["messages"].append(response)
-                self.write_state("execution_agent.json", new_state)
-            return {"messages": [recap_message, response]}
+        stopped_incomplete = new_state.get(
+            "reviews_without_tools", 0
+        ) >= _MAX_REVIEWS_WITHOUT_TOOLS and not _review_is_complete(
+            new_state.get("review")
+        )
+        if stopped_incomplete:
+            response = response.model_copy(
+                update={
+                    "content": (
+                        "Execution stopped after repeated incomplete reviews "
+                        "without intervening tool execution. Work remains "
+                        "incomplete.\n\n" + response.text
+                    )
+                }
+            )
 
-    def _build_graph(self):
-        """Construct and compile the agent's LangGraph state machine."""
+        if self.log_state:
+            self.write_state(
+                "execution_agent.json",
+                {**new_state, "messages": [*new_state["messages"], response]},
+            )
+        # The recap response is retained, but the instruction that requested it
+        # is not. messages_update also targets the messages channel correctly
+        # when context compaction requires a full overwrite.
+        return self.messages_update(
+            new_state, [response], full_overwrite=full_overwrite
+        )
 
-        # Keep self.llm unbound for summary/recap calls. The executor loop uses a
-        # separate tool-bound model so provider-specific tool transcripts cannot
-        # leak into summarization history.
-        self.tool_llm = self.tool_llm.bind_tools(self.tools.values())
-
-        # Register nodes:
-        # - "agent": LLM planning/execution step
-        # - "action": tool dispatch (run_command, write_code, etc.)
-        # - "review": structured completeness review before final recap
-        # - "recap": summary/finalization step
-        self.add_node(self.query_executor, "agent")
-        self.add_node(self.tool_node, "action")
-        self.add_node(self.review_work, "review")
-        self.add_node(self.recap, "recap")
-
-        # Set entrypoint: execution starts with the "agent" node.
-        self.graph.set_entry_point("agent")
-
-        # From "agent", either continue with tools or review the completed work,
-        # based on presence of tool calls in the last message.
-        self.graph.add_conditional_edges(
+    def _populate_execution_graph(self, builder) -> None:
+        """Add executor nodes and edges to ``builder`` without compiling it."""
+        builder.add_node(
             "agent",
-            self._wrap_cond(should_continue, "should_continue", "execution"),
+            self._wrap_node(self.query_executor, "agent", "executor"),
+        )
+        builder.add_node(
+            "action", self._wrap_node(self.tool_node, "action", "executor")
+        )
+        builder.add_node(
+            "review",
+            self._wrap_node(self.review_work, "review", "executor"),
+        )
+        builder.add_node(
+            "recap", self._wrap_node(self.recap, "recap", "executor")
+        )
+        builder.set_entry_point("agent")
+        builder.add_conditional_edges(
+            "agent",
+            self._wrap_cond(should_continue, "should_continue", "executor"),
             {"continue": "action", "review": "review"},
         )
-
-        # After tools run, return control to the agent for the next step.
-        self.graph.add_edge("action", "agent")
-
-        # After review, either ask the executor to continue with review feedback or
-        # finish with the recap node.
-        self.graph.add_conditional_edges(
+        builder.add_edge("action", "agent")
+        builder.add_conditional_edges(
             "review",
-            self._wrap_cond(review_complete, "review_complete", "execution"),
+            self._wrap_cond(review_complete, "review_complete", "executor"),
             {"continue": "agent", "recap": "recap"},
         )
+        builder.set_finish_point("recap")
 
-        # The graph completes at the "recap" node.
-        self.graph.set_finish_point("recap")
+    def _build_graph(self) -> None:
+        """Construct the standalone executor graph."""
+        # Always bind a fresh model copy. Graphs can be rebuilt when tools change;
+        # rebinding an already bound runnable is provider-dependent.
+        self.tool_llm = self.llm.model_copy().bind_tools(self.tools.values())
+        self._populate_execution_graph(self.graph)
 
     def format_result(self, state: ExecutionState) -> str:
         return state["messages"][-1].text

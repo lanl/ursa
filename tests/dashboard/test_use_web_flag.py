@@ -36,8 +36,29 @@ def _invoke(argv: list[str], monkeypatch) -> str | None:
     import uvicorn
 
     monkeypatch.setattr(uvicorn, "run", fake_run)
-    # Avoid opening a browser during tests.
-    monkeypatch.setattr(dashboard_main.webbrowser, "open", lambda *a, **k: None)
+
+    # Run the delayed browser task inline while the browser stub is installed.
+    # A real daemon thread can wake after monkeypatch teardown and call the
+    # restored webbrowser.open, opening a browser window during later tests.
+    class InlineThread:
+        def __init__(self, *, target, daemon):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    class ImmediateTime:
+        sleep = staticmethod(lambda _seconds: None)
+
+    class InlineThreading:
+        Thread = InlineThread
+
+    class NoBrowser:
+        open = staticmethod(lambda *_args, **_kwargs: None)
+
+    monkeypatch.setattr(dashboard_main, "time", ImmediateTime)
+    monkeypatch.setattr(dashboard_main, "threading", InlineThreading)
+    monkeypatch.setattr(dashboard_main, "webbrowser", NoBrowser)
 
     result = CliRunner().invoke(dashboard_main.app, argv)
     assert result.exit_code == 0, result.output
@@ -92,6 +113,15 @@ def test_flag_overrides_falsy_env_value(monkeypatch):
     assert str(value).strip().lower() in APP_TRUTHY
 
 
+@pytest.mark.xfail(
+    reason=(
+        "Deep Review agent removed from default dashboard list. When/if"
+        "it is added back in, this should stop failing and the xfail "
+        "can be removed."
+    ),
+    strict=True,
+    raises=AssertionError,
+)
 def test_deep_review_agent_participates_in_web_opt_in():
     """Deep Review must follow the dashboard-wide opt-in, like the CLI.
 
@@ -105,7 +135,7 @@ def test_deep_review_agent_participates_in_web_opt_in():
 
     source = re.search(
         r"web_opt_in_agent_ids = \{(.*?)\}",
-        open(app_module.__file__).read(),
+        open(app_module.__file__, encoding="utf-8").read(),
         re.S,
     )
     assert source is not None, "web_opt_in_agent_ids not found"
@@ -138,3 +168,54 @@ def test_deep_review_agent_accepts_use_web_kwarg(chat_model, tmpdir):
     assert extra, "use_web=True added no tools"
     # Web opt-in should bring in the search tools the dashboard advertises.
     assert any("search" in name for name in extra), extra
+
+
+@pytest.mark.parametrize(
+    "agent_id", ["hypothesis_symposium_agent", "hypothesis_orchestrator_agent"]
+)
+def test_hypothesis_runs_inherit_web_and_rag_defaults(
+    agent_id, tmp_path, monkeypatch
+):
+    from fastapi.testclient import TestClient
+
+    from ursa_dashboard.api_models import RunRecord
+    from ursa_dashboard.app import create_app
+    from ursa_dashboard.credentials import MemoryCredentialStore
+    from ursa_dashboard.run_manager import RunManager
+
+    async def create_run(self, **kwargs):
+        return RunRecord(run_id="settings-test", status="queued", **kwargs)
+
+    monkeypatch.setenv("URSA_DASHBOARD_USE_WEB", "1")
+    monkeypatch.setattr("ursa.security.URSA_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(
+        RunManager, "validate_credentials", lambda *a, **k: None
+    )
+    monkeypatch.setattr(RunManager, "create_run", create_run)
+    with TestClient(
+        create_app(credential_store=MemoryCredentialStore())
+    ) as client:
+        response = client.patch(
+            "/settings", json={"patch": {"tools": {"rag_tools": ["notes"]}}}
+        )
+        assert response.status_code == 200, response.text
+        response = client.post("/runs", json={"agent_id": agent_id})
+        assert response.status_code == 200, response.text
+        assert response.json()["agent_init"] == {
+            "use_web": True,
+            "rag_tools": ["notes"],
+            "rag_tool_group": "default",
+        }
+        response = client.post(
+            "/runs",
+            json={
+                "agent_id": agent_id,
+                "agent_init": {"use_web": False, "rag_tools": ["extra"]},
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["agent_init"] == {
+            "use_web": False,
+            "rag_tools": ["extra", "notes"],
+            "rag_tool_group": "default",
+        }

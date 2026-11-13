@@ -82,7 +82,8 @@ def write_experience(
     Returns:
         Confirmation message describing the write operation.
     """
-    from ursa.util.parse import read_text_from_file
+
+    from ursa.util.parse import read_text_file
 
     try:
         filename = validate_ascii(filename)
@@ -93,8 +94,12 @@ def write_experience(
     experience_file.parent.mkdir(parents=True, exist_ok=True)
 
     existing_text = ""
-    if experience_file.exists():
-        existing_text = read_text_from_file(experience_file)
+    if append and experience_file.exists():
+        # Refuse to append rather than clobber a file we cannot read back.
+        try:
+            existing_text = read_text_file(experience_file)
+        except (ValueError, OSError) as exc:
+            return f"Failed to append to {filename}: {exc}"
 
     text_to_write = content.rstrip() + "\n"
     if append and existing_text:

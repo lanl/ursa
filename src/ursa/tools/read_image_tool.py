@@ -12,6 +12,7 @@ from langchain_core.messages.content import (
 from langchain_core.tools import tool
 
 from ursa.agents.base import AgentContext
+from ursa.tools.read_file_tool import _validate_read_path
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +21,12 @@ logger = logging.getLogger(__name__)
 def read_image_tool(
     image_path: str, runtime: ToolRuntime[AgentContext]
 ) -> list[TextContentBlock | ImageContentBlock]:
-    """Read an image from disk to ingest into the workflow"""
-    workspace = runtime.context.workspace
-    resolved_path = workspace.joinpath(image_path)
+    """Read an image from the workspace or configured skills directories."""
+    workspace = runtime.context.workspace.resolve()
+    resolved_path, path_error = _validate_read_path(image_path, workspace)
+    if path_error is not None:
+        raise ValueError(path_error)
+    assert resolved_path is not None
     try:
         image_block = image_block_from_file(resolved_path)
     except Exception as e:

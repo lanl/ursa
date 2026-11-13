@@ -1,3 +1,6 @@
+import os
+import signal
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +13,8 @@ from tests.tools.utils import (
     invoke_with_parent_run,
     make_runtime,
 )
+from ursa.sandbox.base import _run_process_group
+from ursa.sandbox.mac import MacSandbox
 from ursa.tools.run_command_tool import SafetyAssessment, run_command
 
 FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
@@ -21,6 +26,9 @@ def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
         "ursa.util.events.monotonic_ns",
         lambda: FIXED_MONOTONIC_TIMESTAMP_NS,
     )
+    # These tests exercise command handling independently of host sandbox
+    # availability; sandbox backends have their own behavior.
+    monkeypatch.setenv("URSA_SBX", "0")
 
 
 def _patch_safety_result(
@@ -50,9 +58,13 @@ def _patch_safety_result(
     return captured
 
 
+@pytest.mark.parametrize("setting, expected", [(None, 600000), ("7200", 7200)])
 def test_run_command_invokes_subprocess_in_workspace(
-    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel, setting, expected
 ):
+    monkeypatch.delenv("URSA_COMMAND_TIMEOUT_SECONDS", raising=False)
+    if setting is not None:
+        monkeypatch.setenv("URSA_COMMAND_TIMEOUT_SECONDS", setting)
     recorded = {}
     _patch_safety_result(monkeypatch, chat_model, is_safe=True)
 
@@ -61,7 +73,9 @@ def test_run_command_invokes_subprocess_in_workspace(
         recorded["kwargs"] = kwargs
         return SimpleNamespace(stdout="output", stderr="", returncode=0)
 
-    monkeypatch.setattr("ursa.tools.run_command_tool.subprocess.run", fake_run)
+    monkeypatch.setattr("ursa.sandbox.base._run_process_group", fake_run)
+    monkeypatch.setattr("ursa.sandbox.linux.subprocess.run", fake_run)
+    monkeypatch.setattr("ursa.sandbox.mac.subprocess.run", fake_run)
 
     result, recorder = invoke_with_event_recorder(
         run_command.func,
@@ -76,8 +90,9 @@ def test_run_command_invokes_subprocess_in_workspace(
     events = recorder.events
 
     assert result == "STDOUT:\noutput\nSTDERR:\n"
-    assert recorded["kwargs"]["cwd"] == tmp_path
+    assert Path(recorded["kwargs"]["cwd"]) == tmp_path
     assert recorded["kwargs"]["shell"] is True
+    assert recorded["kwargs"]["timeout"] == expected
     assert events[0] == (
         "ursa_agent_progress",
         {
@@ -135,7 +150,19 @@ def test_run_command_truncates_output(
     _patch_safety_result(monkeypatch, chat_model, is_safe=True)
 
     monkeypatch.setattr(
-        "ursa.tools.run_command_tool.subprocess.run",
+        "ursa.sandbox.base._run_process_group",
+        lambda *args, **kwargs: SimpleNamespace(
+            stdout=long_stdout, stderr=long_stderr
+        ),
+    )
+    monkeypatch.setattr(
+        "ursa.sandbox.linux.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            stdout=long_stdout, stderr=long_stderr
+        ),
+    )
+    monkeypatch.setattr(
+        "ursa.sandbox.mac.subprocess.run",
         lambda *args, **kwargs: SimpleNamespace(
             stdout=long_stdout, stderr=long_stderr
         ),
@@ -165,6 +192,36 @@ def test_run_command_truncates_output(
     assert len(stderr_body) < len(long_stderr)
 
 
+@pytest.mark.parametrize("setting", ["0", "-1", "invalid", "1.5", ""])
+def test_run_command_rejects_invalid_timeout(
+    monkeypatch, tmp_path, chat_model, setting
+):
+    monkeypatch.setenv("URSA_COMMAND_TIMEOUT_SECONDS", setting)
+    monkeypatch.setattr(
+        "ursa.tools.run_command_tool.subprocess.run",
+        lambda *args, **kwargs: pytest.fail("Command must not execute"),
+    )
+    result = run_command.func("echo hi", make_runtime(tmp_path, llm=chat_model))
+    assert "Invalid URSA_COMMAND_TIMEOUT_SECONDS" in result
+
+
+def test_run_command_reports_timeout(monkeypatch, tmp_path, chat_model):
+    monkeypatch.setenv("URSA_COMMAND_TIMEOUT_SECONDS", "300")
+    _patch_safety_result(monkeypatch, chat_model, is_safe=True)
+
+    def expire(query, **kwargs):
+        raise subprocess.TimeoutExpired(query, kwargs["timeout"])
+
+    monkeypatch.setattr("ursa.sandbox.base._run_process_group", expire)
+    result = invoke_with_parent_run(
+        lambda config: run_command.func(
+            "sleep 999",
+            make_runtime(tmp_path, llm=chat_model, config=config),
+        )
+    )
+    assert "Command timed out after 300 seconds" in result
+
+
 def test_run_command_handles_keyboard_interrupt(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
@@ -173,9 +230,11 @@ def test_run_command_handles_keyboard_interrupt(
     def raise_interrupt(*args, **kwargs):
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(
-        "ursa.tools.run_command_tool.subprocess.run", raise_interrupt
-    )
+    monkeypatch.setattr("ursa.sandbox.base._run_process_group", raise_interrupt)
+
+    monkeypatch.setattr("ursa.sandbox.linux.subprocess.run", raise_interrupt)
+
+    monkeypatch.setattr("ursa.sandbox.mac.subprocess.run", raise_interrupt)
 
     result = invoke_with_parent_run(
         lambda config: run_command.func(
@@ -203,7 +262,21 @@ def test_run_command_returns_message_for_unicode_input(
         tool_call_id="unicode",
     )
     monkeypatch.setattr(
-        "ursa.tools.run_command_tool.subprocess.run",
+        "ursa.sandbox.base._run_process_group",
+        lambda *args, **kwargs: pytest.fail(
+            "subprocess should not run for invalid input"
+        ),
+    )
+
+    monkeypatch.setattr(
+        "ursa.sandbox.linux.subprocess.run",
+        lambda *args, **kwargs: pytest.fail(
+            "subprocess should not run for invalid input"
+        ),
+    )
+
+    monkeypatch.setattr(
+        "ursa.sandbox.mac.subprocess.run",
         lambda *args, **kwargs: pytest.fail(
             "subprocess should not run for invalid input"
         ),
@@ -219,11 +292,28 @@ def test_run_command_returns_message_for_unicode_input(
 def test_run_command_blocks_commands_that_fail_safety_check(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
+    # Force the default safety prompt level so safe_codes appear in the prompt
+    # regardless of the caller's URSA_SAFETY_LEVEL environment variable.
+    monkeypatch.delenv("URSA_SAFETY_LEVEL", raising=False)
     captured = _patch_safety_result(
         monkeypatch, chat_model, is_safe=False, reason="Not safe in test"
     )
     monkeypatch.setattr(
-        "ursa.tools.run_command_tool.subprocess.run",
+        "ursa.sandbox.base._run_process_group",
+        lambda *args, **kwargs: pytest.fail(
+            "subprocess.run should not be called for unsafe commands"
+        ),
+    )
+
+    monkeypatch.setattr(
+        "ursa.sandbox.linux.subprocess.run",
+        lambda *args, **kwargs: pytest.fail(
+            "subprocess.run should not be called for unsafe commands"
+        ),
+    )
+
+    monkeypatch.setattr(
+        "ursa.sandbox.mac.subprocess.run",
         lambda *args, **kwargs: pytest.fail(
             "subprocess.run should not be called for unsafe commands"
         ),
@@ -282,3 +372,181 @@ def test_run_command_blocks_commands_that_fail_safety_check(
             },
         )
     ]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group behavior")
+def test_no_sandbox_timeout_kills_command_process_group(monkeypatch, tmp_path):
+    calls = {}
+
+    class Process:
+        pid = 4321
+        returncode = -9
+
+        def communicate(self, timeout):
+            calls["timeout"] = timeout
+            raise subprocess.TimeoutExpired("loop", timeout)
+
+        def wait(self):
+            calls["waited"] = True
+
+        def kill(self):
+            pytest.fail("POSIX group kill should be used")
+
+    def popen(*args, **kwargs):
+        calls["popen"] = (args, kwargs)
+        return Process()
+
+    monkeypatch.setattr("ursa.sandbox.base.subprocess.Popen", popen)
+    monkeypatch.setattr(
+        "ursa.sandbox.base.os.killpg",
+        lambda pid, sig: calls.update(killpg=(pid, sig)),
+    )
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        _run_process_group(
+            "python loop.py",
+            text=True,
+            shell=True,
+            capture_output=True,
+            timeout=5,
+            cwd=tmp_path,
+        )
+
+    assert calls["popen"][1]["start_new_session"] is True
+    assert calls["killpg"] == (4321, signal.SIGKILL)
+    assert calls["waited"] is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group behavior")
+def test_no_sandbox_process_group_returns_completed_process(
+    monkeypatch, tmp_path
+):
+    class Process:
+        pid = 4321
+        returncode = 0
+
+        def communicate(self, timeout):
+            assert timeout == 5
+            return "hello", ""
+
+    monkeypatch.setattr(
+        "ursa.sandbox.base.subprocess.Popen", lambda *a, **k: Process()
+    )
+    result = _run_process_group(
+        "printf hello",
+        text=True,
+        shell=True,
+        capture_output=True,
+        timeout=5,
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "hello"
+    assert result.stderr == ""
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows subprocess behavior")
+def test_no_sandbox_windows_uses_subprocess_run(monkeypatch, tmp_path):
+    captured = {}
+    expected = SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    def run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return expected
+
+    monkeypatch.setattr("ursa.sandbox.base.subprocess.run", run)
+    result = _run_process_group(
+        "echo hello",
+        text=True,
+        shell=True,
+        capture_output=True,
+        timeout=5,
+        cwd=tmp_path,
+    )
+
+    assert result is expected
+    assert captured["command"] == "echo hello"
+    assert captured["kwargs"]["check"] is False
+    assert captured["kwargs"]["timeout"] == 5
+
+
+def test_mac_sandbox_uses_process_group_runner(monkeypatch, tmp_path):
+    captured = {}
+    expected = SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    def run_group(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return expected
+
+    monkeypatch.setattr(MacSandbox, "sbx_path", "/usr/bin/sandbox-exec")
+    monkeypatch.setattr("ursa.sandbox.mac._run_process_group", run_group)
+    sandbox = MacSandbox(
+        cwd=tmp_path,
+        extra_writable_paths=[],
+        timeout=7,
+    )
+
+    result = sandbox.execute("python loop.py")
+
+    assert result is expected
+    assert captured["command"][-3:] == [sandbox.shell, "-c", "python loop.py"]
+    assert captured["kwargs"] == {
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "shell": False,
+        "capture_output": True,
+        "timeout": 7,
+        "cwd": str(tmp_path.resolve()),
+    }
+
+
+def test_run_command_replaces_undecodable_output(
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
+):
+    _patch_safety_result(monkeypatch, chat_model, is_safe=True)
+    (tmp_path / "data.bin").write_bytes(b"ok\xba\xffend")
+
+    result = invoke_with_parent_run(
+        lambda config: run_command.func(
+            "cat data.bin",
+            runtime=make_runtime(
+                tmp_path,
+                llm=chat_model,
+                tool_call_id="binary",
+                thread_id="run-thread",
+                config=config,
+            ),
+        )
+    )
+
+    assert result.startswith("STDOUT:\nok��end")
+
+
+def test_run_command_reports_subprocess_errors(
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
+):
+    _patch_safety_result(monkeypatch, chat_model, is_safe=True)
+
+    def raise_error(*args, **kwargs):
+        raise OSError("boom")
+
+    monkeypatch.setattr("ursa.sandbox.base._run_process_group", raise_error)
+
+    result = invoke_with_parent_run(
+        lambda config: run_command.func(
+            "ls",
+            runtime=make_runtime(
+                tmp_path,
+                llm=chat_model,
+                tool_call_id="oserror",
+                thread_id="run-thread",
+                config=config,
+            ),
+        )
+    )
+
+    assert "OSError: boom" in result
