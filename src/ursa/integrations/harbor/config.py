@@ -189,6 +189,8 @@ class ResolvedRun:
             args.extend(("--agent-kwarg", f"{key}={rendered}"))
         for key, value in self.agent.env.items():
             args.extend(("--agent-env", f"{key}={value}"))
+        for host in self.agent.extra_allowed_hosts:
+            args.extend(("--allow-agent-host", host))
         return args
 
 
@@ -210,6 +212,7 @@ def resolve_run(
     """
     from harbor.agents.factory import AgentFactory
     from harbor.models.trial.config import AgentConfig as HarborAgentConfig
+    from harbor.trial.network_policy import inference_endpoint_host
 
     root = base_dir or Path.cwd()
     native = (
@@ -227,19 +230,22 @@ def resolve_run(
     model_provider = (provider.model_extra or {}).get(
         "model_provider", model.provider
     )
+    native_config = None
     if agent.harbor_agent == URSA_AGENT:
         connection = provider.model_dump(
             mode="json", exclude={"api_key", "base_url"}, exclude_none=True
         )
         if provider.api_key is not None:
             connection["api_key"] = {"env": agent.api_key_env}
-        native["inference_providers"] = {model.provider: connection}
+        native.setdefault("inference_providers", {})[model.provider] = (
+            connection
+        )
         if reasoning is not None:
             native.setdefault("llm_model", {})["reasoning_effort"] = reasoning
         # Validate native settings without resolving secrets or model clients.
         # Validate a copy: normalizing the layer would insert default models
         # and providers, turning implicit defaults into explicit requirements.
-        UrsaConfig.model_validate(deepcopy(native))
+        native_config = UrsaConfig.model_validate(deepcopy(native))
         template = agent.model_template or "{provider}/{model}"
     else:
         template = agent.model_template or "{model_provider}/{model}"
@@ -280,6 +286,30 @@ def resolve_run(
     harness.parse_options(
         {**options, **({"base_url": endpoint} if endpoint else {})}, agent.env
     )
+    if native_config is not None and native_config.emb_model is not None:
+        if endpoint is not None:
+            native_config.inference_providers[
+                model.provider
+            ].base_url = endpoint
+        embedding = native_config.emb_model.resolve_inference_provider(
+            native_config.inference_providers
+        )
+        if embedding_host := inference_endpoint_host(embedding.base_url):
+            # Harbor replaces automatic inference discovery when an explicit
+            # list is supplied, so retain the chat endpoint alongside embeddings.
+            chat_host = inference_endpoint_host(
+                endpoint
+                or harness.MODEL_CONNECTION.default_base_url(
+                    model_provider, agent.api_format
+                )
+            )
+            if chat_host is None:
+                raise ValueError(
+                    "Set base_url to allow chat and embedding endpoints"
+                )
+            harbor_agent.extra_allowed_hosts = list(
+                dict.fromkeys((chat_host, embedding_host))
+            )
     return ResolvedRun(
         task=(root / task).resolve(),
         agent=harbor_agent,

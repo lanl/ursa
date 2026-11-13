@@ -70,6 +70,16 @@ async def inside(args):
         )
         print("PASS: model base URL, JSON request/response", flush=True)
 
+        status, body = request(
+            "POST",
+            f"http://localhost:{args.http_port}/v1/embeddings",
+            json.dumps({"input": "embedding smoke"}),
+        )
+        assert status == 200 and json.loads(body)["data"][0]["embedding"] == [
+            1.0
+        ]
+        print("PASS: separate embedding endpoint", flush=True)
+
         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
         connection.request(
             "POST",
@@ -131,9 +141,15 @@ async def outside(args):
     from harbor.models.trial.paths import TrialPaths
     from harbor.trial.network_policy import (
         add_inference_hosts,
-        inference_endpoint_host,
     )
 
+    from ursa.cli.config import InferenceProviderConfig
+    from ursa.integrations.harbor.config import (
+        URSA_AGENT,
+        AgentConfig,
+        ModelConfig,
+        resolve_run,
+    )
     from ursa.integrations.harbor.singularity import (
         DockerfileSingularityEnvironment,
     )
@@ -155,6 +171,9 @@ async def outside(args):
             release.set()
             return web.Response(text="released")
         payload = await request.json()
+        if request.path == "/v1/embeddings":
+            assert payload["input"] == "embedding smoke"
+            return web.json_response({"data": [{"embedding": [1.0]}]})
         if not payload.get("stream"):
             return web.json_response({
                 "choices": [
@@ -227,9 +246,25 @@ async def outside(args):
             trial = TrialPaths(runtime / "trial")
             trial.mkdir()
             offline = NetworkPolicy(network_mode=NetworkMode.NO_NETWORK)
+            resolved = resolve_run(
+                task,
+                AgentConfig(
+                    harbor_agent=URSA_AGENT,
+                    native_config={
+                        "emb_model": {
+                            "model": "openai:text-embedding-3-small",
+                            "base_url": f"http://localhost:{http_port}/v1",
+                        }
+                    },
+                ),
+                ModelConfig(name="smoke", provider="openai"),
+                InferenceProviderConfig(
+                    base_url=f"http://127.0.0.1:{http_port}/v1"
+                ),
+            )
             inferred = add_inference_hosts(
                 offline,
-                [inference_endpoint_host(f"http://127.0.0.1:{http_port}/v1")],
+                resolved.agent.extra_allowed_hosts,
             )
             explicit = NetworkPolicy(
                 network_mode=NetworkMode.ALLOWLIST, allowed_hosts=["localhost"]

@@ -121,6 +121,74 @@ def test_provider_keyring_alias_stays_a_reference(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "embedding,providers,hosts",
+    [
+        (
+            {"base_url": "https://embeddings.invalid/v1"},
+            {},
+            ["127.0.0.1", "embeddings.invalid"],
+        ),
+        (
+            {"inference_provider": "embedding"},
+            {"embedding": {"base_url": "https://embeddings.invalid/v1"}},
+            ["127.0.0.1", "embeddings.invalid"],
+        ),
+        ({"inference_provider": "lab"}, {}, ["127.0.0.1"]),
+    ],
+)
+def test_ursa_chat_and_embedding_allowlist(embedding, providers, hosts):
+    agent = AgentConfig(
+        harbor_agent=URSA_AGENT,
+        native_config={
+            "emb_model": {
+                "model": "text-embedding-3-small",
+                "model_provider": "openai",
+                "api_key": {"env": "UNSET_EMBEDDING_KEY"},
+                **embedding,
+            },
+            "inference_providers": providers,
+        },
+    )
+    original = agent.model_dump()
+    result = resolve_run(
+        Path("task"),
+        agent,
+        ModelConfig(name="test", provider="lab"),
+        provider(),
+        base_url="http://127.0.0.1:8080/v1",
+    )
+    assert result.agent.extra_allowed_hosts == hosts
+    args = result.cli_args()
+    assert [
+        args[index + 1]
+        for index, flag in enumerate(args)
+        if flag == "--allow-agent-host"
+    ] == hosts
+    assert agent.model_dump() == original
+
+
+def test_ursa_embedding_allowlist_keeps_default_chat_endpoint():
+    result = resolve_run(
+        Path("task"),
+        AgentConfig(
+            harbor_agent=URSA_AGENT,
+            native_config={
+                "emb_model": {
+                    "model": "openai:text-embedding-3-small",
+                    "base_url": "https://embeddings.invalid/v1",
+                }
+            },
+        ),
+        ModelConfig(name="test", provider="openai"),
+        InferenceProviderConfig(),
+    )
+    assert result.agent.extra_allowed_hosts == [
+        "api.openai.com",
+        "embeddings.invalid",
+    ]
+
+
+@pytest.mark.parametrize(
     "settings,reasoning,match",
     [
         ({"harbor_agent": "oracle"}, "high", "does not support reasoning"),

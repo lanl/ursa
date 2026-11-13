@@ -274,6 +274,9 @@ An `allowlist` policy automatically starts a host-side proxy and a loopback
 bridge inside the container. This also applies when Harbor adds a known LLM
 endpoint to a restricted agent policy, including `no-network`. No separate proxy
 flag or process is needed. Model URLs and credentials stay as configured.
+When resolving URSA profiles with a configured embedding endpoint, `resolve_run`
+allows both chat and embedding hosts, including endpoints inherited from named
+inference providers. Its CLI arguments preserve these allowances.
 
 ```text
 agent -> container loopback HTTP proxy -> bind-mounted Unix socket
