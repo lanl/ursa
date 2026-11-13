@@ -463,6 +463,21 @@ class UrsaHarborAgent(BaseInstalledAgent):
         environment: BaseEnvironment,
         native_config: dict[str, Any],
     ) -> None:
+        from ursa.integrations.harbor.singularity import (
+            DockerfileSingularityEnvironment,
+        )
+
+        if isinstance(environment, DockerfileSingularityEnvironment):
+            models = [
+                *native_config.get("inference_providers", {}).values(),
+                native_config.get("llm_model") or {},
+                native_config.get("emb_model") or {},
+            ]
+            for model in models:
+                if url := model.get("base_url"):
+                    model["base_url"] = await environment._forward_model_url(
+                        url
+                    )
         await self._upload_config_text(
             environment,
             content=json.dumps(native_config),
@@ -477,6 +492,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
             command=f"chmod 644 {shlex.quote(self._remote_config_file)}",
             timeout_sec=30,
         )
+        self._runtime_proxy = getattr(environment, "_proxy_stack", None)
 
     @classmethod
     def _reject_environment_interpolation(
@@ -955,8 +971,11 @@ class UrsaHarborAgent(BaseInstalledAgent):
         context: AgentContext,
     ) -> None:
         use_web = self._network_use_web(environment)
-        if use_web is not None and use_web != getattr(
-            self, "_runtime_use_web", None
+        if (
+            use_web is not None
+            and use_web != getattr(self, "_runtime_use_web", None)
+        ) or getattr(environment, "_proxy_stack", None) is not getattr(
+            self, "_runtime_proxy", None
         ):
             native_config, self._secret_env = self._materialize_native_config(
                 use_web=use_web

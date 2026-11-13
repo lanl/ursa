@@ -324,3 +324,110 @@ def test_default_checkout_identity_accepts_symlinks_and_tracks_targets(
     key = agent_layers._ursa_install_key(agent)
     linked.write_text("changed")
     assert agent_layers._ursa_install_key(agent) != key
+
+
+@pytest.mark.parametrize("name", ["goose", "codex", "claude_code"])
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_installed_agent_uses_model_forward_and_restores_connection(
+    template, tmp_path, monkeypatch, name, cancel
+):
+    from ursa.integrations.harbor import installed_agents
+
+    cls = {
+        "goose": installed_agents.Goose,
+        "codex": installed_agents.Codex,
+        "claude_code": installed_agents.ClaudeCode,
+    }[name]
+    upstream_cls = {
+        "goose": installed_agents._Goose,
+        "codex": installed_agents._Codex,
+        "claude_code": installed_agents._ClaudeCode,
+    }[name]
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    provider = "anthropic" if name == "claude_code" else "openai"
+    agent = cls(
+        logs_dir=tmp_path / "logs",
+        model_name=f"{provider}/test-model",
+        base_url="http://localhost:8000/v1",
+    )
+    original = agent.model_connection.execution_base_url
+    forwarded = "http://localhost:12345/v1"
+    mapping = AsyncMock(return_value=forwarded)
+    monkeypatch.setattr(template, "_forward_model_url", mapping)
+
+    async def run(self, instruction, environment, context):
+        assert self.model_connection.execution_base_url == forwarded
+        if cancel:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(upstream_cls, "run", run)
+    if cancel:
+        with pytest.raises(asyncio.CancelledError):
+            await agent.run("test", template, None)
+    else:
+        await agent.run("test", template, None)
+    mapping.assert_awaited_once_with(original)
+    assert agent._base_url == "http://localhost:8000/v1"
+    assert agent.model_connection.execution_base_url == original
+
+
+@pytest.mark.parametrize("source", ["provider", "llm_model", "emb_model"])
+async def test_ursa_remaps_native_provider_urls_and_refreshes_each_proxy_phase(
+    template, tmp_path, monkeypatch, source
+):
+    import json
+
+    from harbor.models.agent.context import AgentContext
+
+    agent = UrsaHarborAgent(logs_dir=tmp_path / "logs")
+    agent._remote_config_file = "/installed-agent/tmp/ursa-config.json"
+    agent._workspace = "/workspace"
+    agent._runtime_group = "default"
+    agent._runtime_use_web = True
+    agent._model_env = {}
+    agent._secret_env = {}
+    upload = AsyncMock()
+    monkeypatch.setattr(agent, "_upload_config_text", upload)
+    monkeypatch.setattr(agent, "exec_as_root", AsyncMock())
+    monkeypatch.setattr(agent, "exec_as_agent", AsyncMock())
+    monkeypatch.setattr(agent, "_best_effort_root_exec", AsyncMock())
+    urls = [
+        "http://localhost:12345/v1",
+        "http://localhost:12346/v1",
+        "http://localhost:8000/v1",
+    ]
+    monkeypatch.setattr(
+        template, "_forward_model_url", AsyncMock(side_effect=urls)
+    )
+    monkeypatch.setattr(
+        agent,
+        "_materialize_native_config",
+        lambda **kw: (
+            (
+                {
+                    "inference_providers": {
+                        "openai": {"base_url": "http://localhost:8000/v1"}
+                    }
+                }
+                if source == "provider"
+                else {source: {"base_url": "http://localhost:8000/v1"}}
+            )
+            | {"mcp_servers": {"local": {"url": "http://localhost:9000/mcp"}}},
+            {},
+        ),
+    )
+    for phase, expected in zip([object(), object(), None], urls):
+        template._proxy_stack = phase
+        await agent.run("test", template, AgentContext())
+        config = json.loads(upload.await_args.kwargs["content"])
+        model = (
+            config["inference_providers"]["openai"]
+            if source == "provider"
+            else config[source]
+        )
+        assert model["base_url"] == expected
+        assert (
+            config["mcp_servers"]["local"]["url"] == "http://localhost:9000/mcp"
+        )
+    assert upload.await_count == 3

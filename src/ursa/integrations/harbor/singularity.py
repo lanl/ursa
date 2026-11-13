@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import math
 import os
@@ -30,6 +31,7 @@ from copy import deepcopy
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, cast, override
+from urllib.parse import urlsplit
 
 import archspec.cpu
 import yaml
@@ -889,6 +891,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         self._proxy_stack: AsyncExitStack | None = None
         self._proxy_process: asyncio.subprocess.Process | None = None
         self._proxy_env: dict[str, str] = {}
+        self._model_forwards: dict[tuple[str, int], int] = {}
 
     @staticmethod
     @override
@@ -2326,6 +2329,16 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         )
 
     async def _start_proxy_bridge(self) -> None:
+        port, self._proxy_process = await self._launch_proxy_bridge()
+        endpoint = f"http://127.0.0.1:{port}"
+        bypass = "localhost,localhost.,127.0.0.1,::1"
+        self._proxy_env = {"NO_PROXY": bypass, "no_proxy": bypass}
+        for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+            self._proxy_env[key] = self._proxy_env[key.lower()] = endpoint
+
+    async def _launch_proxy_bridge(
+        self, *, target: str | None = None, host: str = "127.0.0.1"
+    ) -> tuple[int, asyncio.subprocess.Process]:
         if self._proxy_stack is None:
             raise RuntimeError("Network proxy is not prepared")
         # Only the stdlib is needed. An installed URSA runtime is a fallback
@@ -2338,10 +2351,13 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             f'exec "$python" {_PROXY_CONTAINER_DIR}/bridge.py '
             f"--socket {_PROXY_CONTAINER_DIR}/host.sock --port 0"
         )
-        log = self._proxy_stack.enter_context(
-            (Path(self._proxy_temp.name) / "bridge.log").open("wb")
+        if target is not None:
+            command += " " + shlex.join(["--host", host, "--target", target])
+        log_path = (
+            Path(self._proxy_temp.name) / f"bridge-{secrets.token_hex(4)}.log"
         )
-        self._proxy_process = await asyncio.create_subprocess_exec(
+        log = self._proxy_stack.enter_context(log_path.open("wb"))
+        process = await asyncio.create_subprocess_exec(
             *self._instance_exec_prefix(cwd="/"),
             "sh",
             "-c",
@@ -2352,7 +2368,12 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             start_new_session=True,
             env=self._runtime_environment({}, merge_persistent=False),
         )
-        line = await self._proxy_process.stdout.readline()
+        self._proxy_stack.push_async_callback(
+            self._terminate_host_process, process
+        )
+        line = await asyncio.wait_for(
+            process.stdout.readline(), self._startup_timeout_sec
+        )
         try:
             port = json.loads(line)["port"]
         except (ValueError, KeyError, TypeError):
@@ -2360,31 +2381,65 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         if (
             type(port) is not int
             or not 1 <= port <= 65535
-            or self._proxy_process.returncode is not None
+            or process.returncode is not None
         ):
-            details = (Path(self._proxy_temp.name) / "bridge.log").read_text(
-                errors="replace"
-            )
+            details = log_path.read_text(errors="replace")
             raise RuntimeError(
                 f"Could not start network proxy bridge: {details.strip()}"
             )
-        endpoint = f"http://127.0.0.1:{port}"
-        # Host-local inference URLs must also traverse the proxy, rather than
-        # accidentally resolving to the container's isolated loopback.
-        self._proxy_env = {"NO_PROXY": "", "no_proxy": ""}
-        for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
-            self._proxy_env[key] = self._proxy_env[key.lower()] = endpoint
+        return port, process
+
+    async def _forward_model_url(self, url: str) -> str:
+        """Forward a host-local model through its own container loopback port."""
+        if self._proxy_stack is None:
+            return url
+        host, port = network_proxy.destination(url)
+        if host == "localhost":
+            bind_host = "127.0.0.1"
+        else:
+            try:
+                if not ipaddress.ip_address(host).is_loopback:
+                    return url
+            except ValueError:
+                return url
+            bind_host = host
+        async with self._lifecycle_lock:
+            if self._proxy_stack is None:
+                raise RuntimeError(
+                    "Network proxy stopped while preparing model access"
+                )
+            if not network_proxy.HostProxy(
+                None,
+                normalize_allowed_hosts(self._network_policy.allowed_hosts),
+            ).permits((host, port)):
+                raise ValueError(f"Model host {host!r} is not allowlisted")
+            key = (host, port)
+            authority = f"[{host}]" if ":" in host else host
+            if key not in self._model_forwards:
+                forwarded, _process = await self._launch_proxy_bridge(
+                    target=f"{authority}:{port}", host=bind_host
+                )
+                self._model_forwards[key] = forwarded
+                bypass = self._proxy_env["NO_PROXY"].split(",")
+                if host not in bypass:
+                    bypass.append(host)
+                    self._proxy_env["NO_PROXY"] = self._proxy_env[
+                        "no_proxy"
+                    ] = ",".join(bypass)
+            # Retain the hostname for HTTPS certificate verification and SNI.
+            # Only the port changes; model API paths and query strings survive.
+            parsed = urlsplit(url)
+            return parsed._replace(
+                netloc=f"{authority}:{self._model_forwards[key]}"
+            ).geturl()
 
     async def _stop_network_proxy(self) -> None:
         self._proxy_env = {}
-        process, self._proxy_process = self._proxy_process, None
+        self._model_forwards.clear()
+        self._proxy_process = None
         stack, self._proxy_stack = self._proxy_stack, None
-        try:
-            if process is not None:
-                await self._terminate_host_process(process)
-        finally:
-            if stack is not None:
-                await stack.aclose()
+        if stack is not None:
+            await stack.aclose()
 
     async def _restart_prepared_runtime(
         self, network_policy: NetworkPolicy, *, warn_stop: bool

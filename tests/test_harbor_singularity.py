@@ -1206,7 +1206,7 @@ async def test_proxy_bridge_environment_and_startup_failure(
             assert (
                 env["APPTAINERENV_NO_PROXY"]
                 == env["APPTAINERENV_no_proxy"]
-                == ""
+                == "localhost,localhost.,127.0.0.1,::1"
             )
             process.returncode = 1
             with pytest.raises(RuntimeError, match="bridge exited"):
@@ -1262,5 +1262,56 @@ async def test_compose_proxy_mount_is_removed_when_policy_changes(tmp_path):
         instance = yaml.safe_load(compose.read_text())["instances"]["main"]
         assert instance["start"]["options"] == ["containall"]
         assert instance["network"] == {"allocate_ip": True, "enable": True}
+    finally:
+        await environment._cleanup_runtime_resources()
+
+
+async def test_model_forwards_are_scoped_to_policy_and_preserve_url_identity(
+    tmp_path, monkeypatch
+):
+    environment = _environment(
+        tmp_path,
+        network_mode=NetworkMode.ALLOWLIST,
+        allowed_hosts=("localhost", "127.0.0.1", "::1"),
+    )
+    policy = environment.network_policy
+    launch = AsyncMock(
+        side_effect=[(12345, Mock()), (12346, Mock()), (12347, Mock())]
+    )
+    monkeypatch.setattr(environment, "_launch_proxy_bridge", launch)
+    try:
+        await environment._prepare_network_proxy(policy)
+        await environment._start_proxy_bridge()
+        url = "https://localhost:8000/v1?mode=test"
+        assert (
+            await environment._forward_model_url(url)
+            == "https://localhost:12346/v1?mode=test"
+        )
+        assert (
+            await environment._forward_model_url(url)
+            == "https://localhost:12346/v1?mode=test"
+        )
+        assert (
+            await environment._forward_model_url("https://[::1]:8443/v1")
+            == "https://[::1]:12347/v1"
+        )
+        assert (
+            await environment._forward_model_url("https://api.example/v1")
+            == "https://api.example/v1"
+        )
+        assert launch.await_count == 3
+        assert launch.await_args_list[1].kwargs == {
+            "target": "localhost:8000",
+            "host": "127.0.0.1",
+        }
+        assert launch.await_args_list[2].kwargs == {
+            "target": "[::1]:8443",
+            "host": "::1",
+        }
+        with pytest.raises(ValueError, match="not allowlisted"):
+            await environment._forward_model_url("http://127.0.0.2:8080/v1")
+        await environment._stop_network_proxy()
+        assert not environment._model_forwards
+        assert await environment._forward_model_url(url) == url
     finally:
         await environment._cleanup_runtime_resources()

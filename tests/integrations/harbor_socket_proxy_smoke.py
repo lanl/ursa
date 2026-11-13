@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 
 async def inside(args):
@@ -36,7 +36,7 @@ async def inside(args):
         flush=True,
     )
 
-    assert os.environ["NO_PROXY"] == os.environ["no_proxy"] == ""
+    assert "127.0.0.1" in os.environ["NO_PROXY"] == os.environ["no_proxy"]
     assert os.environ["HTTP_PROXY"] == os.environ["http_proxy"]
     port = urlsplit(os.environ["HTTP_PROXY"]).port
     origin = f"http://127.0.0.1:{args.http_port}"
@@ -70,14 +70,16 @@ async def inside(args):
         )
         print("PASS: model base URL, JSON request/response", flush=True)
 
-        status, body = request(
-            "POST",
-            f"http://localhost:{args.http_port}/v1/embeddings",
-            json.dumps({"input": "embedding smoke"}),
-        )
-        assert status == 200 and json.loads(body)["data"][0]["embedding"] == [
-            1.0
-        ]
+        with urlopen(
+            Request(
+                args.embedding_url + "/v1/embeddings",
+                data=json.dumps({"input": "embedding smoke"}).encode(),
+                headers={"Content-Type": "application/json"},
+            ),
+            timeout=10,
+        ) as response:
+            assert response.status == 200
+            assert json.load(response)["data"][0]["embedding"] == [1.0]
         print("PASS: separate embedding endpoint", flush=True)
 
         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
@@ -101,13 +103,17 @@ async def inside(args):
             "GET", f"http://127.0.0.1:{args.http_port}/allowed"
         )
         assert status == 200 and body == b"allowed"
-        with urlopen(origin + "/allowed", timeout=10) as response:
+        with urlopen(args.model_url + "/allowed", timeout=10) as response:
             assert response.read() == b"allowed"
         print(
             "PASS: automatic proxy environment and HTTP forwarding", flush=True
         )
 
         context = ssl.create_default_context(cafile="/proxy-certs/cert.pem")
+        with urlopen(
+            args.tls_model_url + "/allowed", context=context, timeout=10
+        ) as response:
+            assert response.read() == b"allowed"
         connection = http.client.HTTPSConnection(
             "127.0.0.1", port, context=context, timeout=10
         )
@@ -128,7 +134,31 @@ async def inside(args):
         assert request("CONNECT", "blocked.invalid:443")[0] == 403
         print("PASS: denied HTTP/CONNECT hosts", flush=True)
 
-    await asyncio.to_thread(checks)
+    async def local_service(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nlocal"
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(local_service, "127.0.0.1", 0)
+    async with server:
+        await asyncio.to_thread(checks)
+
+        def check_local():
+            with urlopen(
+                f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}/",
+                timeout=10,
+            ) as response:
+                assert response.read() == b"local"
+
+        await asyncio.to_thread(check_local)
+    print(
+        "PASS: host HTTP/TLS model forwards and container-local HTTP coexist",
+        flush=True,
+    )
 
 
 async def outside(args):
@@ -163,8 +193,20 @@ async def outside(args):
     )
     assert os.getuid() != 0, "Run the smoke test without sudo"
     release = asyncio.Event()
+    large_started = asyncio.Event()
 
     async def handler(request):
+        if request.path == "/large":
+            response = web.StreamResponse()
+            await response.prepare(request)
+            try:
+                for i in range(2000):
+                    await response.write(b"x" * 65536)
+                    if i == 20:
+                        large_started.set()
+            except ConnectionError:
+                pass
+            return response
         if request.path == "/allowed":
             return web.Response(text="allowed")
         if request.path == "/release-stream":
@@ -308,6 +350,7 @@ async def outside(args):
                 return result
 
             proxy_directory = None
+            stalled_client = None
             try:
                 await environment.start(False)
                 await checked(
@@ -317,6 +360,15 @@ async def outside(args):
                 await environment.set_network_policy(inferred)
                 proxy_directory = Path(environment._proxy_temp.name)
                 process = environment._proxy_process
+                model_url = await environment._forward_model_url(
+                    f"http://127.0.0.1:{http_port}"
+                )
+                tls_model_url = await environment._forward_model_url(
+                    f"https://127.0.0.1:{https_port}"
+                )
+                embedding_url = await environment._forward_model_url(
+                    f"http://localhost:{http_port}"
+                )
                 await checked(
                     shlex.join([
                         "python3",
@@ -328,6 +380,12 @@ async def outside(args):
                         str(https_port),
                         "--host-namespace",
                         os.readlink("/proc/self/ns/net"),
+                        "--model-url",
+                        model_url,
+                        "--tls-model-url",
+                        tls_model_url,
+                        "--embedding-url",
+                        embedding_url,
                     ])
                 )
                 await environment.set_network_policy(offline)
@@ -341,17 +399,38 @@ async def outside(args):
                     flush=True,
                 )
                 await environment.set_network_policy(explicit)
-                await checked(f"curl -fsS http://localhost:{http_port}/allowed")
+                await checked(
+                    f"curl --noproxy '' -fsS http://localhost:{http_port}/allowed"
+                )
                 result = await checked(
-                    f"curl -s -o /dev/null -w '%{{http_code}}' http://127.0.0.1:{http_port}/allowed"
+                    f"curl --noproxy '' -s -o /dev/null -w '%{{http_code}}' http://127.0.0.1:{http_port}/allowed"
                 )
                 assert result.stdout == "403"
                 print(
                     "\nPASS: explicit allowlist replaces inferred model hosts",
                     flush=True,
                 )
+                code = (
+                    "import socket,time; s=socket.socket(socket.AF_UNIX); "
+                    "s.connect('/run/ursa-proxy/host.sock'); "
+                    f"s.sendall(b'GET http://localhost:{http_port}/large HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n'); "
+                    "time.sleep(30)"
+                )
+                stalled_client = asyncio.create_task(
+                    environment.exec(shlex.join(["python3", "-c", code]))
+                )
+                await asyncio.wait_for(large_started.wait(), 10)
+                await asyncio.sleep(0.1)
+                await asyncio.wait_for(environment.stop(True), 8)
+                print(
+                    "PASS: shutdown completes with a stalled socket client",
+                    flush=True,
+                )
             finally:
                 release.set()
+                if stalled_client is not None:
+                    stalled_client.cancel()
+                    await asyncio.gather(stalled_client, return_exceptions=True)
                 await environment.stop(True)
             assert proxy_directory is not None and not proxy_directory.exists()
             print("PASS: container and proxy cleanup", flush=True)
@@ -368,6 +447,9 @@ def main():
     parser.add_argument("--http-port", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--https-port", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--host-namespace", help=argparse.SUPPRESS)
+    parser.add_argument("--model-url", help=argparse.SUPPRESS)
+    parser.add_argument("--tls-model-url", help=argparse.SUPPRESS)
+    parser.add_argument("--embedding-url", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not args.inside and args.image is None:
         parser.error("--image is required")

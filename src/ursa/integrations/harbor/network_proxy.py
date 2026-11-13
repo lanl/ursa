@@ -90,8 +90,13 @@ def end_to_end_headers(headers):
 
 async def close(writer):
     writer.close()
-    with contextlib.suppress(OSError):
-        await writer.wait_closed()
+    try:
+        await asyncio.wait_for(writer.wait_closed(), 1)
+    except (OSError, asyncio.TimeoutError):
+        writer.transport.abort()
+    except asyncio.CancelledError:
+        writer.transport.abort()
+        raise
 
 
 async def relay(reader, writer, peer_reader, peer_writer):
@@ -119,8 +124,8 @@ async def relay(reader, writer, peer_reader, peer_writer):
 
 
 class HostProxy:
-    def __init__(self, client, allowed_hosts):
-        self.client = client
+    def __init__(self, transport, allowed_hosts):
+        self.transport = transport
         self.allowed_hosts = allowed_hosts
         self.tasks = set()
         self.closing = False
@@ -224,13 +229,24 @@ class HostProxy:
                 await send(
                     h11.InformationalResponse(status_code=100, headers=[])
                 )
-            async with self.client.stream(
+            # Use the transport directly: client-level cookies and default
+            # headers must never become part of a forwarded request.
+            outbound = httpx.Request(
                 method,
                 target,
                 headers=end_to_end_headers(request.headers),
                 content=body(),
-                follow_redirects=False,
-            ) as response:
+                extensions={
+                    "timeout": {
+                        "connect": 10,
+                        "read": 300,
+                        "write": 300,
+                        "pool": 300,
+                    }
+                },
+            )
+            response = await self.transport.handle_async_request(outbound)
+            try:
                 response_headers = end_to_end_headers(response.headers.raw)
                 response_headers.append((b"connection", b"close"))
                 await send(
@@ -243,6 +259,8 @@ class HostProxy:
                 async for chunk in response.aiter_raw():
                     await send(h11.Data(data=chunk))
                 await send(h11.EndOfMessage())
+            finally:
+                await response.aclose()
         except (
             ValueError,
             OSError,
@@ -286,12 +304,11 @@ async def host_server(socket_path: Path, allowed_hosts):
         raise ValueError("Socket directory must be owned by you and mode 0700")
     if socket_path.exists() or socket_path.is_symlink():
         raise FileExistsError(socket_path)
-    async with httpx.AsyncClient(
+    async with httpx.AsyncHTTPTransport(
         verify=ssl.create_default_context(),
         trust_env=False,
-        timeout=httpx.Timeout(300, connect=10),
-    ) as client:
-        proxy = HostProxy(client, allowed_hosts)
+    ) as transport:
+        proxy = HostProxy(transport, allowed_hosts)
         server = await asyncio.start_unix_server(
             proxy.handle, path=socket_path, limit=65536
         )
@@ -310,7 +327,9 @@ async def host_server(socket_path: Path, allowed_hosts):
 
 
 @contextlib.asynccontextmanager
-async def bridge_server(socket_path: Path, port=0):
+async def bridge_server(
+    socket_path: Path, port=0, *, host="127.0.0.1", target=None
+):
     tasks = set()
     closing = False
 
@@ -324,8 +343,26 @@ async def bridge_server(socket_path: Path, port=0):
             peer_reader, peer_writer = await asyncio.open_unix_connection(
                 socket_path
             )
-            await relay(reader, writer, peer_reader, peer_writer)
-        except OSError:
+            try:
+                if target is not None:
+                    # Dedicated model forwards preserve TLS end to end and
+                    # avoid sending unrelated container loopback traffic out.
+                    peer_writer.write(
+                        f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n".encode()
+                    )
+                    await peer_writer.drain()
+                    headers = await asyncio.wait_for(
+                        peer_reader.readuntil(b"\r\n\r\n"), 15
+                    )
+                    if (
+                        headers.split(b"\r\n", 1)[0]
+                        != b"HTTP/1.1 200 Connection Established"
+                    ):
+                        return
+                await relay(reader, writer, peer_reader, peer_writer)
+            finally:
+                await close(peer_writer)
+        except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError):
             pass
         finally:
             try:
@@ -333,7 +370,7 @@ async def bridge_server(socket_path: Path, port=0):
             finally:
                 tasks.discard(task)
 
-    server = await asyncio.start_server(handle, "127.0.0.1", port)
+    server = await asyncio.start_server(handle, host, port)
     try:
         yield server
     finally:
@@ -349,7 +386,9 @@ async def run(args):
     asyncio.get_running_loop().add_signal_handler(
         signal.SIGTERM, asyncio.current_task().cancel
     )
-    async with bridge_server(args.socket, args.port) as server:
+    async with bridge_server(
+        args.socket, args.port, host=args.host, target=args.target
+    ) as server:
         port = server.sockets[0].getsockname()[1]
         sys.stdout.write(json.dumps({"port": port}) + "\n")
         sys.stdout.flush()
@@ -360,6 +399,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--socket", type=Path, required=True)
     parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--target")
     args = parser.parse_args()
     with contextlib.suppress(KeyboardInterrupt, asyncio.CancelledError):
         asyncio.run(run(args))

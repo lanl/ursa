@@ -273,7 +273,7 @@ unavailable for Compose projects with sidecars.
 An `allowlist` policy automatically starts a host-side proxy and a loopback
 bridge inside the container. This also applies when Harbor adds a known LLM
 endpoint to a restricted agent policy, including `no-network`. No separate proxy
-flag or process is needed. Model URLs and credentials stay as configured.
+flag or process is needed. Model credentials stay as configured.
 When resolving URSA profiles with a configured embedding endpoint, `resolve_run`
 allows both chat and embedding hosts, including endpoints inherited from named
 inference providers. Its CLI arguments preserve these allowances.
@@ -284,11 +284,20 @@ agent -> container loopback HTTP proxy -> bind-mounted Unix socket
 ```
 
 The container runs with `--net --network none`. The integration sets uppercase
-and lowercase `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY`, with empty `NO_PROXY`
-so host-local model URLs also use the proxy. Clients must honor these settings.
-Direct network access remains unavailable. Phase changes stop the bridge and
+and lowercase `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY`. `NO_PROXY` keeps
+localhost requests inside the container, so agents can test local services.
+Clients must honor these settings. Direct external network access remains
+unavailable. Phase changes stop the bridge and
 close existing proxy connections before applying the next policy; model access
 added for the agent does not carry into an offline verifier phase.
+
+For model APIs on the host's loopback interface, the URSA adapter and the Goose,
+Claude Code, and Codex adapters listed above automatically create dedicated
+forwards and substitute their ports in the runtime model URLs. Use those
+adapters even without an install cache when connecting to host-local models.
+The forwards preserve API paths, TLS certificate verification, and streaming;
+unrelated container-local services continue to work. Each phase gets fresh
+forwards under its current allowlist.
 
 Rules follow Harbor's host-based policy: exact DNS names, `*.example.com`
 (subdomains, excluding the apex), and IPv4/IPv6 addresses are supported, on all
@@ -317,7 +326,8 @@ setpriv --no-new-privs uv run python tests/integrations/harbor_socket_proxy_smok
 ```
 
 The smoke test checks privilege isolation, JSON and streaming model responses,
-HTTP and certificate-verified HTTPS, denied hosts, phase changes, and cleanup.
+HTTP and certificate-verified HTTPS, local services, denied hosts, phase changes,
+and cleanup with stalled clients.
 It uses local test servers and requires no model credentials.
 
 ## Configure other agents

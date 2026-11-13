@@ -292,3 +292,115 @@ async def test_stopping_proxy_revokes_existing_tunnel(tmp_path, stop_bridge):
         await asyncio.wait_for(disconnected.wait(), 2)
         writer.close()
         await writer.wait_closed()
+
+
+async def test_forwarding_does_not_add_cookies_or_content_negotiation(tmp_path):
+    requests = []
+
+    async def endpoint(request):
+        requests.append(dict(request.headers))
+        return web.Response(
+            text="ok", headers={"Set-Cookie": "session=first; Path=/"}
+        )
+
+    async with upstream(endpoint) as origin, proxy(tmp_path) as url:
+        for extra in (
+            "",
+            "",
+            "Cookie: session=explicit\r\nAccept-Encoding: identity\r\n",
+        ):
+            reader, writer = await asyncio.open_connection(*destination(url))
+            writer.write(
+                f"GET {origin}/ HTTP/1.1\r\nHost: localhost\r\n{extra}\r\n".encode()
+            )
+            await writer.drain()
+            assert (
+                b"200"
+                in (await asyncio.wait_for(reader.read(), 2)).split(b"\r\n", 1)[
+                    0
+                ]
+            )
+            writer.close()
+            await writer.wait_closed()
+    for request in requests[:2]:
+        assert "Cookie" not in request
+        assert "Accept-Encoding" not in request
+        assert "User-Agent" not in request
+    assert requests[2]["Cookie"] == "session=explicit"
+    assert requests[2]["Accept-Encoding"] == "identity"
+
+
+@pytest.mark.parametrize("stop_bridge", [False, True])
+async def test_shutdown_aborts_output_when_client_stops_reading(
+    tmp_path, stop_bridge
+):
+    streaming = asyncio.Event()
+
+    async def large_response(request):
+        response = web.StreamResponse()
+        await response.prepare(request)
+        try:
+            for i in range(2000):
+                await response.write(b"x" * 65536)
+                if i == 20:
+                    streaming.set()
+        except ConnectionError:
+            pass
+        return response
+
+    async with (
+        upstream(large_response) as origin,
+        AsyncExitStack() as host,
+        AsyncExitStack() as bridge,
+    ):
+        path = tmp_path / "host.sock"
+        await host.enter_async_context(host_server(path, ["127.0.0.1"]))
+        if stop_bridge:
+            listener = await bridge.enter_async_context(bridge_server(path))
+            reader, writer = await asyncio.open_connection(
+                *listener.sockets[0].getsockname(), limit=1
+            )
+        else:
+            reader, writer = await asyncio.open_unix_connection(path, limit=1)
+        try:
+            writer.write(
+                f"GET {origin}/ HTTP/1.1\r\nHost: localhost\r\n\r\n".encode()
+            )
+            await writer.drain()
+            await asyncio.wait_for(streaming.wait(), 3)
+            # Fill the peer's receive buffer, as well as StreamReader's buffer.
+            await asyncio.sleep(0.1)
+            await asyncio.wait_for(
+                (bridge if stop_bridge else host).aclose(), 3
+            )
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+
+async def test_dedicated_model_forward_preserves_stream_bytes(tmp_path):
+    async def echo(reader, writer):
+        try:
+            writer.write((await reader.read()).upper())
+            await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    peer = await asyncio.start_server(echo, "127.0.0.1", 0)
+    target = f"127.0.0.1:{peer.sockets[0].getsockname()[1]}"
+    path = tmp_path / "host.sock"
+    async with (
+        peer,
+        host_server(path, ["127.0.0.1"]),
+        bridge_server(path, target=target) as bridge,
+    ):
+        reader, writer = await asyncio.open_connection(
+            *bridge.sockets[0].getsockname()
+        )
+        writer.write(b"tls-or-http")
+        await writer.drain()
+        writer.write_eof()
+        assert await asyncio.wait_for(reader.read(), 2) == b"TLS-OR-HTTP"
+        writer.close()
+        await writer.wait_closed()

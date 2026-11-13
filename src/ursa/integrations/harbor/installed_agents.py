@@ -35,6 +35,19 @@ class _CachedInstall:
                 return
         await super().install(environment)
 
+    async def run(self, instruction, environment, context):
+        original_url = self._base_url
+        try:
+            if isinstance(environment, DockerfileSingularityEnvironment):
+                endpoint = self.model_connection.execution_base_url
+                if endpoint:
+                    forwarded = await environment._forward_model_url(endpoint)
+                    if forwarded != endpoint:
+                        self._base_url = forwarded
+            return await super().run(instruction, environment, context)
+        finally:
+            self._base_url = original_url
+
 
 class Goose(_CachedInstall, _Goose):
     pass
