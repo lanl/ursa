@@ -2,6 +2,7 @@ import os
 import platform
 import subprocess
 from pathlib import Path
+from typing import cast
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
@@ -34,6 +35,49 @@ class SafetyAssessment(BaseModel):
     reason: str = Field(description="Brief reason for the safety decision.")
 
 
+def assess_command_safety(
+    query: str, runtime: ToolRuntime[AgentContext]
+) -> SafetyAssessment:
+    """Apply URSA's configured command safety policy to *query*."""
+    prompt_level = os.getenv("URSA_SAFETY_LEVEL", "default")
+    if prompt_level.lower() in {"yolo", "none"}:
+        return SafetyAssessment(
+            is_safe=True, reason=f"User set safety level to {prompt_level}"
+        )
+    if runtime.store is not None:
+        search_results = runtime.store.search(
+            ("workspace", "file_edit"), limit=1000
+        )
+        edited_files = [item.key for item in search_results]
+        search_results = runtime.store.search(
+            ("workspace", "safe_codes"), limit=1000
+        )
+        safe_codes = [item.key for item in search_results]
+    else:
+        edited_files = []
+        safe_codes = []
+
+    return cast(
+        SafetyAssessment,
+        invoke_structured(
+            runtime.context.llm,
+            SafetyAssessment,
+            get_safety_prompt(
+                query, safe_codes, edited_files, prompt_level=prompt_level
+            ),
+            context="run_command safety assessment",
+            fallback=SafetyAssessment(
+                is_safe=False,
+                reason=(
+                    "Could not parse command safety assessment from the model. "
+                    "Command blocked."
+                ),
+            ),
+            repair=1,
+        ),
+    )
+
+
 @tool
 def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
     """Execute a shell command in the workspace and return its combined output.
@@ -54,7 +98,7 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
         "STDERR:" followed by the truncated stderr.
     """
     try:
-        query = validate_ascii(query)
+        query = cast(str, validate_ascii(query))
     except AsciiValidationError as exc:
         return ascii_validation_message("query", exc)
     try:
@@ -67,65 +111,31 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
             "number of seconds. Command was not executed."
         )
     workspace_dir = Path(runtime.context.workspace)
-    if runtime.store is not None:
-        search_results = runtime.store.search(
-            ("workspace", "file_edit"), limit=1000
-        )
-        edited_files = [item.key for item in search_results]
-    else:
-        edited_files = []
-
-    if runtime.store is not None:
-        search_results = runtime.store.search(
-            ("workspace", "safe_codes"), limit=1000
-        )
-        safe_codes = [item.key for item in search_results]
-    else:
-        safe_codes = []
-
-    prompt_level = os.getenv("URSA_SAFETY_LEVEL", "default")
-    llm = runtime.context.llm
     events = ToolEvents.from_runtime("run_command", runtime)
-    if prompt_level.lower() in {"yolo", "none"}:
-        safety_result = SafetyAssessment(
-            is_safe=True, reason=f"User set safety level to {prompt_level}"
-        )
-    else:
-        safety_result = invoke_structured(
-            llm,
-            SafetyAssessment,
-            get_safety_prompt(
-                query, safe_codes, edited_files, prompt_level=prompt_level
-            ),
-            context="run_command safety assessment",
-            fallback=SafetyAssessment(
-                is_safe=False,
-                reason=(
-                    "Could not parse command safety assessment from the model. "
-                    "Command blocked."
-                ),
-            ),
-            repair=1,
-        )
+    prompt_level = os.getenv("URSA_SAFETY_LEVEL", "default")
+    safety_result = assess_command_safety(query, runtime)
 
-        if not safety_result.is_safe:
-            tool_response = f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\nFor reason: {safety_result.reason}"
-            events.emit(
-                "Command deemed unsafe",
-                stage="safety_check",
-                query=query,
-                safe=False,
-                reason=safety_result.reason,
-            )
-            return tool_response
-
-    events.emit(
-        "Command passed safety check",
-        stage="safety_check",
-        query=query,
-        safe=True,
-        reason=safety_result.reason,
-    )
+    if not safety_result.is_safe:
+        tool_response = (
+            f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\n"
+            f"For reason: {safety_result.reason}"
+        )
+        events.emit(
+            "Command deemed unsafe",
+            stage="safety_check",
+            query=query,
+            safe=False,
+            reason=safety_result.reason,
+        )
+        return tool_response
+    if prompt_level.lower() not in {"yolo", "none"}:
+        events.emit(
+            "Command passed safety check",
+            stage="safety_check",
+            query=query,
+            safe=True,
+            reason=safety_result.reason,
+        )
 
     try:
         with events.range(

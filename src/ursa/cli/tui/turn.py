@@ -22,8 +22,10 @@ from ursa.cli.tui.event_cards import (
     PlanCard,
     RunCommandCard,
     SearchEventCard,
+    TermCard,
     ToolCallCard,
 )
+from ursa.cli.tui.event_cards.term import terminal_id
 from ursa.cli.tui.helpers import (
     AGENT_LABELS,
     FILE_TOOLS,
@@ -46,6 +48,7 @@ class Turn(Static):
         self._commands_by_tool_call_id: dict[str, RunCommandCard] = {}
         self._commands_overlapped = False
         self._tool_calls_by_id: dict[str, ToolCallCard] = {}
+        self._terms_by_id: dict[str, TermCard] = {}
         self._edits_by_id: dict[str, EditCard] = {}
         self._summary_count = 0
         self._summary_cards: dict[str, EventCard] = {}
@@ -105,6 +108,9 @@ class Turn(Static):
         new = payload.get("new_code")
         if tool == "run_command":
             await self._run_command_event(payload)
+            return
+        if tool == "term" or tool.startswith("term_"):
+            await self._term_event(payload)
             return
         artifacts = event_artifacts(payload)
         if artifacts:
@@ -309,6 +315,31 @@ class Turn(Static):
                 self._tool_calls_by_id[run_id] = card
         if phase in {"end", "error"}:
             card.update_event(payload)
+
+    async def _term_event(self, payload: Mapping[str, Any]) -> None:
+        """Route terminal events by concrete session id only."""
+        tool = str(payload.get("tool") or "term")
+        run_id = str(payload.get("_run_id") or "")
+        result = payload.get("tool_message", payload.get("result"))
+        result_id = terminal_id(result)
+        term_id = terminal_id(payload) or result_id
+
+        if term_id is None:
+            await self._default_tool_event(payload)
+            return
+
+        card = self._terms_by_id.get(term_id)
+        if card is None:
+            pending = self._tool_calls_by_id.get(run_id) if run_id else None
+            key = (
+                pending.key
+                if pending is not None and pending.tool == "term"
+                else self._next_summary_key("term")
+            )
+            card = TermCard(key, term_id)
+            await self._replace_or_mount(key, card)
+            self._terms_by_id[term_id] = card
+        card.record_call(tool, payload)
 
     def _latest_file_card(
         self, operation: str, path: str

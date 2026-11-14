@@ -11,6 +11,7 @@ _LAZY_TOOLS = {
     "write_experience": ".experience_tools",
     "download_file_tool": ".read_file_tool",
     "read_file": ".read_file_tool",
+    "get_supported_term_tools": ".term_tool",
     "run_command": ".run_command_tool",
     "list_workspace_files": ".workspace_tools",
     "edit_code": ".write_code_tool",

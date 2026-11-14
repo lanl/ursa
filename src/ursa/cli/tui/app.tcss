@@ -50,6 +50,23 @@ InformationScreen {
     background: $background 50%;
 }
 
+TermsScreen {
+    align: center middle;
+    background: $background 50%;
+}
+
+#terminal-tabs,
+#terminal-tabs TabPane,
+#terminal-tabs TerminalView {
+    height: 1fr;
+}
+
+.terminals-empty {
+    height: 1fr;
+    content-align: center middle;
+    color: $text-muted;
+}
+
 ModelScreen {
     align: center middle;
     background: $background 50%;
@@ -166,7 +183,8 @@ ModelScreen SelectCurrent {
     margin-left: 1;
 }
 
-#information {
+#information,
+#terminals {
     width: 90%;
     height: 85%;
     padding: 1 2;
@@ -174,7 +192,8 @@ ModelScreen SelectCurrent {
     background: $surface;
 }
 
-#information-title {
+#information-title,
+#terminals-title {
     height: 2;
     text-style: bold;
     color: $accent;
@@ -501,6 +520,27 @@ ModelScreen SelectCurrent {
     height: auto;
     padding: 0 1;
     background: transparent;
+}
+
+.term-card-title {
+    height: 1;
+    padding: 0 1;
+    text-style: bold;
+}
+
+.term-card-tail {
+    height: 1;
+    padding: 0 1;
+    overflow: hidden hidden;
+    text-overflow: ellipsis;
+    color: $text-muted;
+}
+
+.term-card-live {
+    height: auto;
+    min-height: 12;
+    margin: 0 1;
+    overflow: auto auto;
 }
 
 .edit-group-title {

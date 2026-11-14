@@ -684,7 +684,15 @@ async def test_slash_picker_lists_commands_and_fits_terminal(tmp_path):
         assert "agents" in screenshot
         assert [
             candidate.partition(" — ")[0] for candidate in app.screen.candidates
-        ] == ["agents", "exit", "status", "keymap", "models", "theme"]
+        ] == [
+            "agents",
+            "exit",
+            "status",
+            "terms",
+            "keymap",
+            "models",
+            "theme",
+        ]
 
 
 async def test_slash_picker_status_shows_runtime_details(tmp_path):
@@ -1477,7 +1485,7 @@ inference_provider: fast
         await pilot.pause()
         assert not editor.has_class("yaml-valid", "yaml-invalid")
         await wait_for_yaml_debounce(pilot)
-        await app.workers.wait_for_complete()
+        await await_workers(app, pilot)
 
         assert (
             app.screen.query_one("#chat-inference-provider", Select).value
@@ -2627,6 +2635,8 @@ def test_command_details_and_keymap_come_from_live_bindings(
     assert "234" in status
     assert "456" in status
     assert "test-model" in status
+    assert "| Terminal backend |" in status
+    assert "Ghostty" in status or "Process" in status
     assert "Kitty keyboard support" in keymap
     assert "not identified" in keymap
     assert "shift+⏎ / ^j" in keymap

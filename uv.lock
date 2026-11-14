@@ -3224,14 +3224,14 @@ wheels = [
 
 [[package]]
 name = "linkify-it-py"
-version = "2.1.0"
+version = "2.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "uc-micro-py" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2e/c9/06ea13676ef354f0af6169587ae292d3e2406e212876a413bf9eece4eb23/linkify_it_py-2.1.0.tar.gz", hash = "sha256:43360231720999c10e9328dc3691160e27a718e280673d444c38d7d3aaa3b98b", size = 29158, upload-time = "2026-03-01T07:48:47.683Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/3e/79f35b8c31a1881893b7e62be80b2573f06e38db47c33065749293ee1b97/linkify_it_py-2.1.1.tar.gz", hash = "sha256:a78f40fee177eb912e9d2375074108378523c38d3fde5d3ee804f465b6cfbfee", size = 30889, upload-time = "2026-08-24T17:16:57.028Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/de/88b3be5c31b22333b3ca2f6ff1de4e863d8fe45aaea7485f591970ec1d3e/linkify_it_py-2.1.0-py3-none-any.whl", hash = "sha256:0d252c1594ecba2ecedc444053db5d3a9b7ec1b0dd929c8f1d74dce89f86c05e", size = 19878, upload-time = "2026-03-01T07:48:46.098Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/3d/e34b19cd144071c583317268c4feb2c59c03ac57eef69753410c7abb11c0/linkify_it_py-2.1.1-py3-none-any.whl", hash = "sha256:8539a6b470efce90ba9b69e39b848e5b15b7ad89f7f98ca17d3532c243f987dc", size = 20532, upload-time = "2026-08-24T17:16:55.965Z" },
 ]
 
 [[package]]
@@ -5725,6 +5725,20 @@ wheels = [
 ]
 
 [[package]]
+name = "pyghostty"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cffi" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b9/93/9001ec0fc6b2708064c6c6ab8c840ff82619c6b16d45665e26c1c2eea9c0/pyghostty-0.1.4-py3-none-macosx_13_0_arm64.whl", hash = "sha256:36ab741c3906ca4d09e5f5bde0cf31aaf27fd1a3126a42b34786421cdd606ef8", size = 745867, upload-time = "2026-10-28T08:03:35.198Z" },
+    { url = "https://files.pythonhosted.org/packages/53/ee/5e3b514e3d7f2d12905ed7fac30142f7848ca2498872b30f79ca4e91278f/pyghostty-0.1.4-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:7b00aa8ead35fba7b4335c9cc33bd81066cccbeef6e5c694768cb5bcbef11161", size = 771436, upload-time = "2026-10-28T08:03:37.037Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/7f/d724d1c5dadc5ce8e029c22a42028bf1161b418e2dcb9e66460b23f32d37/pyghostty-0.1.4-py3-none-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:ea4d6366bbfb00dc445ac40c684b7a5154897dc9219ef949a490a9565eae2eba", size = 2805321, upload-time = "2026-10-28T08:03:38.681Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/5b/4f23dd7d7c53950067c57514b083f0e70ed413a098b7964ad121439e88be/pyghostty-0.1.4-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ea203580d8424a79bbad75e159494591ef3d7d3dfa43675a80f72271b72329d0", size = 2962925, upload-time = "2026-10-28T08:03:40.368Z" },
+]
+
+[[package]]
 name = "pygments"
 version = "2.19.2"
 source = { registry = "https://pypi.org/simple" }
@@ -8033,7 +8047,9 @@ dependencies = [
     { name = "mcp" },
     { name = "packaging" },
     { name = "pillow" },
+    { name = "psutil" },
     { name = "pydantic" },
+    { name = "pyghostty", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "pymupdf" },
     { name = "pymupdf4llm" },
     { name = "pyyaml" },
@@ -8138,7 +8154,9 @@ requires-dist = [
     { name = "pandas", marker = "extra == 'metric-plots'", specifier = ">=2.3.1,<3.0" },
     { name = "pillow", specifier = ">=11.3.0,<12.0" },
     { name = "pillow", marker = "extra == 'image'", specifier = ">=11.3.0,<12.0.0" },
+    { name = "psutil", specifier = ">=7.1.0,<8.0" },
     { name = "pydantic", specifier = ">=2.12.0,<3.0" },
+    { name = "pyghostty", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')", specifier = ">=0.1.4,<0.2" },
     { name = "pymupdf", specifier = ">=1.28.0,<2.0" },
     { name = "pymupdf4llm", specifier = ">=0.3.4,<1.0" },
     { name = "python-docx", marker = "extra == 'office-readers'", specifier = ">=1.2" },
