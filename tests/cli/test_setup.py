@@ -3,16 +3,25 @@ from unittest.mock import MagicMock
 
 import pytest
 import yaml
-from textual.widgets import Button, Collapsible, Select, Static, TextArea
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Collapsible,
+    Input,
+    Select,
+    Static,
+    TextArea,
+)
 
-from tests.tui.utils import eventually
+from tests.tui.utils import await_dom, await_event, await_workers, eventually
 from ursa.cli.config import InferenceProviderConfig, UrsaConfig
 from ursa.cli.doctor import CheckResult, CheckStatus
 from ursa.cli.setup import config as setup_config
 from ursa.cli.setup.config import apply_setup_defaults
+from ursa.cli.setup.entries import API_KEY_ENV, MCP_TOKEN_NONE
 from ursa.cli.setup.models import SetupModelEditor, SetupModelSelection
 from ursa.cli.setup.setup import SetupApp
-from ursa.cli.tui.widgets import FuzzySelect
+from ursa.cli.tui.widgets import FuzzySelect, HelpLabel
 from ursa.util.inference_providers import ProviderModel
 from ursa.util.secrets import SecretReference
 
@@ -98,6 +107,202 @@ def test_config_boundary(monkeypatch, tmp_path, setup_keyring):
     setup_keyring.delete_password.assert_called_once_with("ursa", "tools")
 
 
+@pytest.mark.parametrize("base_url", [None, "http://localhost:4000"])
+@pytest.mark.parametrize(
+    ("reference", "source"),
+    [
+        (None, "company"),
+        (SecretReference(keyring=True), "company"),
+        (SecretReference(keyring="shared"), "shared"),
+        (SecretReference(env="SETUP_TEST_KEY"), API_KEY_ENV),
+    ],
+)
+async def test_provider_credential_selection(
+    app, monkeypatch, setup_keyring, base_url, reference, source
+):
+    monkeypatch.setenv("SETUP_TEST_KEY", "env-secret")
+    setup_keyring.get_password.side_effect = lambda _, name: f"{name}-secret"
+    app.config.inference_providers = {
+        "company": InferenceProviderConfig(base_url=base_url, api_key=reference)
+    }
+    async with app.run_test(size=(120, 42)) as pilot:
+        app._begin_entry("provider", "company")
+        await await_workers(app, pilot)
+        editor = app.provider_tabs.active_editor()
+        credential = editor.credential
+        select = credential.query_one(Select)
+        key = credential.query_one(f"#{credential.prefix}-key", Input)
+        assert select.value == source
+        assert key.value == (
+            "SETUP_TEST_KEY" if source == API_KEY_ENV else f"{source}-secret"
+        )
+        expected = reference or SecretReference(keyring=True)
+        assert credential.values().reference == expected
+        assert credential.values().pending is None
+        assert yaml.safe_load(editor.query_one(TextArea).text)["api_key"] == (
+            expected.model_dump(exclude_none=True)
+        )
+
+        editor.query_one(".entry-name", Input).value = "renamed"
+        await eventually(
+            pilot,
+            lambda: credential.entry_name == "renamed",
+            description="the credential to follow the renamed provider",
+        )
+        await await_workers(app, pilot)
+        expected_source = "renamed" if source == "company" else source
+        assert select.value == expected_source
+        assert key.value == (
+            "SETUP_TEST_KEY"
+            if source == API_KEY_ENV
+            else f"{expected_source}-secret"
+        )
+        assert credential.values().reference == expected
+        assert credential.values().pending is None
+
+
+async def test_new_provider_selects_matching_keyring(app, setup_keyring):
+    setup_keyring.get_password.return_value = "stored-secret"
+    app.config.inference_providers.clear()
+    async with app.run_test(size=(120, 42)) as pilot:
+        app._begin_entry("provider")
+        editor = app.provider_tabs.active_editor()
+        credential = editor.credential
+        select = credential.query_one(Select)
+        name = editor.query_one(".entry-name", Input)
+        name.value = "company"
+        await eventually(
+            pilot,
+            lambda: select.value == "company",
+            description="the matching keyring entry to be selected",
+        )
+        await await_workers(app, pilot)
+        assert credential.query_one(Input).value == "stored-secret"
+        assert credential.values().reference == SecretReference(keyring=True)
+
+        select.value = MCP_TOKEN_NONE
+        await eventually(
+            pilot,
+            lambda: not credential.query_one(".credential-value").display,
+            description="the credential fields to hide for None",
+        )
+        name.value = "no-auth"
+        await eventually(
+            pilot,
+            lambda: credential.entry_name == "no-auth",
+            description="the provider rename to finish with None selected",
+        )
+        assert select.value == MCP_TOKEN_NONE
+        assert credential.values().reference is None
+
+
+@pytest.mark.parametrize(
+    ("value", "display"),
+    [
+        (None, "ENV Variable is UNSET"),
+        ("", "ENV Variable is EMPTY"),
+        (" [red]test-secret[/red] ", " [red]test-secret[/red] "),
+    ],
+)
+async def test_env_credential_preview(
+    app, monkeypatch, setup_keyring, value, display
+):
+    env_name = "SETUP_TEST_KEY"
+    if value is None:
+        monkeypatch.delenv(env_name, raising=False)
+    else:
+        monkeypatch.setenv(env_name, value)
+    monkeypatch.setenv("SETUP_OTHER_KEY", "other-secret")
+    app.config.inference_providers = {
+        "company": InferenceProviderConfig(
+            api_key=SecretReference(env=env_name)
+        )
+    }
+    async with app.run_test(size=(120, 42)) as pilot:
+        app._begin_entry("provider", "company")
+        await await_workers(app, pilot)
+        editor = app.provider_tabs.active_editor()
+        credential = editor.credential
+        name = credential.query_one(f"#{credential.prefix}-key", Input)
+        contents = credential.query_one(".credential-env-contents", Input)
+        show = credential.query_one(Checkbox)
+        assert contents.display
+        assert contents.disabled
+        assert contents.value == display
+        assert contents.password is bool(value)
+        assert contents.has_class("unset") is (value is None)
+        assert not name.password
+        assert show.display
+        assert show.disabled is (not value)
+        help_label = credential.query_one(".credential-env-label", HelpLabel)
+        assert "Read-only" in str(help_label.tooltip)
+        assert "cannot be edited" in str(help_label.tooltip)
+        assert credential.values().reference == SecretReference(env=env_name)
+        assert credential.values().pending is None
+
+        if value:
+            assert value not in app.export_screenshot()
+            await pilot.click(show)
+            await eventually(
+                pilot,
+                lambda: not contents.password,
+                description="Show to reveal the ENV contents",
+            )
+            assert contents.value == value
+            assert not name.password
+            await pilot.click(contents)
+            await pilot.press("x", "backspace")
+            assert contents.value == value
+            await pilot.click(show)
+            await eventually(
+                pilot,
+                lambda: contents.password,
+                description="the ENV contents to be masked again",
+            )
+
+        name.value = "SETUP_OTHER_KEY"
+        await eventually(
+            pilot,
+            lambda: contents.value == "other-secret",
+            description="the ENV preview to follow the variable name",
+        )
+        assert contents.password
+        assert not contents.has_class("unset")
+        assert not show.disabled
+        assert credential.values().reference == SecretReference(
+            env="SETUP_OTHER_KEY"
+        )
+        await eventually(
+            pilot,
+            lambda: yaml.safe_load(editor.query_one(TextArea).text)["api_key"]
+            == {"env": "SETUP_OTHER_KEY"},
+            description="the YAML to reference the new environment variable",
+        )
+        raw = editor.query_one(TextArea).text
+        assert "other-secret" not in raw
+        setup_keyring.set_password.assert_not_called()
+
+        source = credential.query_one(Select)
+        source.value = "company"
+        await eventually(
+            pilot,
+            lambda: not contents.display,
+            description="the ENV preview to hide for a keyring entry",
+        )
+        await await_workers(app, pilot)
+        assert contents.value == ""
+        assert not help_label.display
+        assert name.password
+        assert not name.disabled
+        assert show.display
+        source.value = MCP_TOKEN_NONE
+        await eventually(
+            pilot,
+            lambda: not credential.query_one(".credential-value").display,
+            description="the credential fields to hide for None",
+        )
+
+
 @pytest.mark.parametrize("kind", ["provider", "mcp"])
 async def test_page_validation_checks_all_transactionally(
     monkeypatch, app, kind
@@ -163,7 +368,7 @@ async def test_page_validation_checks_all_transactionally(
     )
     async with app.run_test(size=(120, 42)) as pilot:
         app._begin_entry(kind, names[0])
-        await app.workers.wait_for_complete()
+        await await_workers(app, pilot)
         if kind == "provider":
             app.query_one("#provider-add", Button).press()
             await eventually(
@@ -172,10 +377,14 @@ async def test_page_validation_checks_all_transactionally(
                     app.provider_tabs.active_editor() is not None
                     and app.provider_tabs.active_editor().raw_name() == ""
                 ),
+                description="the new provider editor to become active",
             )
             app.query_one("#provider-remove", Button).press()
-            await eventually(
-                pilot, lambda: len(app.provider_tabs.editors()) == len(names)
+            await await_dom(
+                pilot,
+                app.provider_tabs,
+                ".entry-draft-editor",
+                count=len(names),
             )
         broken = getattr(app, f"{kind}_tabs").editors()[1]
         assert not await app._validate_entry_page(kind)
@@ -211,9 +420,9 @@ async def test_non_mcp_endpoint_is_a_validation_error(monkeypatch, app):
             name, CheckStatus.ERROR, message
         ),
     )
-    async with app.run_test(size=(120, 42)):
+    async with app.run_test(size=(120, 42)) as pilot:
         app._begin_entry("mcp", "not-mcp")
-        await app.workers.wait_for_complete()
+        await await_workers(app, pilot)
         assert not await app._validate_entry_page("mcp")
         editor = app.mcp_tabs.editors()[0]
         assert message in str(query(editor, ".draft-message", Static).content)
@@ -241,11 +450,14 @@ async def test_model_page_validates_both_models(monkeypatch, app):
     )
     async with app.run_test(size=(120, 42)) as pilot:
         app._show("models")
-        await app.workers.wait_for_complete()
+        await await_dom(pilot, app, "SetupModelEditor")
+        await await_workers(app, pilot)
         editor = app.query_one(SetupModelEditor)
         models = query(editor, "#setup-chat-model-select", FuzzySelect)
         await eventually(
-            pilot, lambda: "catalog-model" in dict(models._options).values()
+            pilot,
+            lambda: "catalog-model" in dict(models._options).values(),
+            description="the provider model catalog to load",
         )
         assert "openai" in {
             value
@@ -262,7 +474,11 @@ async def test_model_page_validates_both_models(monkeypatch, app):
             "inference_provider: vectors\n"
         )
         editor.submit()
-        await eventually(pilot, lambda: app.page == "mcp")
+        await eventually(
+            pilot,
+            lambda: app.page == "mcp",
+            description="model validation to advance to the MCP page",
+        )
     assert checked == [
         ("chat-model", "chat", "pending-secret"),
         ("embedding-model", "vectors", "pending-secret"),
@@ -284,10 +500,16 @@ async def test_back_cancels_model_validation(monkeypatch, app):
         app.page = "models"
         app._models_selected(SetupModelSelection(app.config.llm_model, None))
         worker = next(w for w in app.workers if w.group == "model-check")
-        await eventually(pilot, started.is_set)
+        await await_event(
+            pilot, started, description="model validation to start"
+        )
         await app.action_back()
         release.set()
-        await eventually(pilot, lambda: worker not in app.workers)
+        await eventually(
+            pilot,
+            lambda: worker not in app.workers,
+            description="the model validation worker to be cancelled",
+        )
     assert app.page == "provider" and not app.models_valid
 
 
@@ -321,6 +543,11 @@ async def test_doctor_recheck_continue_and_stale_state(monkeypatch, app):
         await eventually(
             pilot,
             lambda: title.title == "URSA Doctor — 0 warning(s), 0 error(s)",
+            description="the doctor recheck result to appear",
         )
         app.query_one("#review-continue", Button).press()
-        await eventually(pilot, lambda: app.page == "done")
+        await eventually(
+            pilot,
+            lambda: app.page == "done",
+            description="Continue to advance to the done page",
+        )
