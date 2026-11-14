@@ -70,6 +70,10 @@ class ToolEventCard(EventCard):
     def _render_card(self) -> None:
         raise NotImplementedError
 
+    def refresh_content(self) -> None:
+        if self.is_mounted:
+            self._render_card()
+
     def _advance_spinner(self) -> None:
         if (
             not self.is_mounted
@@ -88,6 +92,7 @@ class ToolEventCard(EventCard):
         self.done = True
         if self._spinner_timer is not None:
             self._spinner_timer.pause()
+        self.refresh_content()
 
     def update_event(self, payload: Mapping[str, Any]) -> None:
         phase = str(payload.get("phase") or "")
@@ -180,17 +185,18 @@ class ToolCallCard(ToolEventCard):
         else:
             self.output = output
         super().complete(output, failed=failed)
-        self.query_one(".tool-call-state", Static).update(
-            "✗" if failed else "✓"
-        )
-        self.query_one(".tool-call-preview", Static).update(
-            self._preview(
-                self.structured_output
-                if self.has_structured_output
-                else self.output
+        if self.is_mounted:
+            self.query_one(".tool-call-state", Static).update(
+                "✗" if failed else "✓"
             )
-        )
-        self._render_card()
+            self.query_one(".tool-call-preview", Static).update(
+                self._preview(
+                    self.structured_output
+                    if self.has_structured_output
+                    else self.output
+                )
+            )
+            self._render_card()
 
     def set_expanded(self, expanded: bool) -> None:
         self.expanded = expanded

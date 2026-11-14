@@ -44,17 +44,19 @@ from ursa.util.rendering import event_artifacts
 class Turn(Static):
     def __init__(
         self,
-        prompt: str,
-        workspace: Path,
+        prompt: str = "",
+        workspace: Path | None = None,
         *,
         agent_path: str | None = None,
         progress_only: bool = False,
+        history_shell: bool = False,
     ) -> None:
         super().__init__(classes="turn")
         self.prompt = prompt
-        self.workspace = Path(workspace).resolve()
+        self.workspace = Path(workspace or Path.cwd()).resolve()
         self.agent_path = agent_path
         self.progress_only = progress_only
+        self.history_shell = history_shell
         self.activity_finished = False
         self.delegated_message_id: str | None = None
         self.cards: dict[str, EventCard] = {}
@@ -84,7 +86,7 @@ class Turn(Static):
         self.card_details_expanded = False
 
     def compose(self) -> ComposeResult:
-        if not self.progress_only:
+        if not self.progress_only and not self.history_shell:
             yield MessageCard("user", self.prompt)
         yield Vertical(classes="events hidden")
         activity = ActivityIndicator()

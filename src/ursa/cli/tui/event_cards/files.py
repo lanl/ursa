@@ -107,6 +107,7 @@ class EditCard(EventCard):
         self.show_heading = show_heading
         self.additions, self.deletions, self.diff = self._diff(old, new)
         self.expanded = False
+        self.outcome: tuple[str, str] | None = None
 
     def compose(self) -> ComposeResult:
         if self.show_heading:
@@ -148,6 +149,8 @@ class EditCard(EventCard):
     def refresh_content(self) -> None:
         if not self.is_mounted:
             return
+        if self.outcome:
+            self.set_outcome(*self.outcome)
         diff = self.query_one(".edit-diff", Static)
         if not self.expanded:
             diff.add_class("hidden")
@@ -163,6 +166,9 @@ class EditCard(EventCard):
         )
 
     def set_outcome(self, state: str, detail: str) -> None:
+        self.outcome = (state, detail)
+        if not self.is_mounted:
+            return
         outcome = self.query_one(".edit-outcome", Static)
         icon = "✖" if state == "failed" else "⚠"
         style = "red" if state == "failed" else "yellow"

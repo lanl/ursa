@@ -44,9 +44,18 @@ class FakeHITL:
         self.inference_provider = "openai"
         self.embedding_inference_provider = "openai"
         self.closed = False
+        self.calls = []
 
     async def aclose(self):
         self.closed = True
+
+    @property
+    def active_agent_path(self):
+        return None
+
+    async def run_agent(self, name, prompt, callbacks=None):
+        self.calls.append((name, prompt))
+        return "Finished"
 
     @property
     def initialized_model(self):
