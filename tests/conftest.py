@@ -1,11 +1,16 @@
+from types import SimpleNamespace
+
 import pytest
 from dotenv import load_dotenv
 from langchain_core.embeddings import FakeEmbeddings
-from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import BaseModel
 
+from tests.agents.utils import (
+    ToolReadyFakeChatModel,
+    message_stream,
+    message_with_usage,
+)
 from ursa.util.has_extra import has_extra
 
 
@@ -26,9 +31,17 @@ def _load_dotenv():
     load_dotenv()
 
 
-def _message_stream(content: str):
-    while True:
-        yield AIMessage(content=content)
+@pytest.fixture
+def fake_keyring(monkeypatch):
+    """Install a password lookup without accessing the system keyring."""
+
+    def install(get_password):
+        monkeypatch.setattr(
+            "ursa.util.secrets.get_keyring",
+            lambda: SimpleNamespace(get_password=get_password),
+        )
+
+    return install
 
 
 def _fake_structured(schema):
@@ -56,14 +69,12 @@ def _fake_structured(schema):
     return {key: "stub" for key in annotations}
 
 
-class FakeChatModel(GenericFakeChatModel):
+class FakeChatModel(ToolReadyFakeChatModel):
     @property
     def model_name(self) -> str:
         return "fake-chat"
 
-    @property
-    def model(self) -> str:
-        return "fake-chat"
+    model = model_name
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         text = " ".join(
@@ -76,30 +87,16 @@ class FakeChatModel(GenericFakeChatModel):
         else:
             content = "ok"
 
-        message = AIMessage(
-            content=content,
-            usage_metadata={
-                "input_tokens": 1,
-                "output_tokens": 1,
-                "total_tokens": 2,
-            },
-        )
+        message = message_with_usage(content=content)
         return ChatResult(generations=[ChatGeneration(message=message)])
-
-    def bind_tools(self, tools, **kwargs):
-        return self
 
     def with_structured_output(self, schema, **kwargs):
         output = _fake_structured(schema)
 
-        class _Runner:
-            def invoke(self, messages):
-                return output
+        async def ainvoke(messages):
+            return output
 
-            async def ainvoke(self, messages):
-                return output
-
-        return _Runner()
+        return SimpleNamespace(invoke=lambda messages: output, ainvoke=ainvoke)
 
 
 class FakeEmbeddingModel(FakeEmbeddings):
@@ -107,9 +104,7 @@ class FakeEmbeddingModel(FakeEmbeddings):
     def model_name(self) -> str:
         return "fake-embeddings"
 
-    @property
-    def model(self) -> str:
-        return "fake-embeddings"
+    model = model_name
 
 
 @pytest.fixture(autouse=True)
@@ -118,7 +113,7 @@ def _stub_model_init(monkeypatch, request):
         return
 
     def fake_init_chat_model(*args, **kwargs):
-        return FakeChatModel(messages=_message_stream("ok"))
+        return FakeChatModel(messages=message_stream("ok"))
 
     def fake_init_embeddings(*args, **kwargs):
         return FakeEmbeddingModel(size=12)
@@ -138,7 +133,7 @@ def _stub_model_init(monkeypatch, request):
 
 @pytest.fixture(scope="function")
 def chat_model():
-    model = FakeChatModel(messages=_message_stream("ok"))
+    model = FakeChatModel(messages=message_stream("ok"))
     model._testing_only_kwargs = {
         "model": "fake:chat",
         "max_tokens": 3000,

@@ -70,14 +70,9 @@ class HypothesizerGraphMixin:
 
     def _normalize_inputs(self, inputs) -> HypothesizerState:
         if isinstance(inputs, str):
-            return HypothesizerState(
-                query=inputs,
-                new_information=inputs,
-                experience_filename=self.experience_filename,
-                revision_history=[],
-            )
-
-        state = dict(cast(dict[str, Any], inputs))
+            state = {"query": inputs}
+        else:
+            state = dict(cast(dict[str, Any], inputs))
         if "query" not in state and "question" in state:
             state["query"] = state["question"]
         if "new_information" not in state:
@@ -170,21 +165,9 @@ class HypothesizerGraphMixin:
             return ""
         if isinstance(content, str):
             raw_text = content.strip()
-            if (
-                raw_text.startswith(("[", "{"))
-                and "'type'" in raw_text
-                and "'text'" in raw_text
-            ):
-                try:
-                    parsed = ast.literal_eval(raw_text)
-                except (SyntaxError, ValueError):
-                    return cls._clean_markdown_text(raw_text)
-                parsed_text = cls._response_text(parsed)
-                return parsed_text or cls._clean_markdown_text(raw_text)
-            if (
-                raw_text.startswith(("[", "{"))
-                and '"type"' in raw_text
-                and '"text"' in raw_text
+            if raw_text.startswith(("[", "{")) and (
+                ("'type'" in raw_text and "'text'" in raw_text)
+                or ('"type"' in raw_text and '"text"' in raw_text)
             ):
                 try:
                     parsed = ast.literal_eval(raw_text)

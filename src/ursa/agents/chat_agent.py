@@ -19,6 +19,7 @@ from ursa.tools import (
     write_code,
     write_experience,
 )
+from ursa.tools.agent_tools import build_agent_tools
 from ursa.tools.read_image_tool import read_image_tool
 
 
@@ -69,14 +70,8 @@ def should_continue(state: ChatState) -> Literal["finish", "continue"]:
         A literal "finish" if the last message has no tool calls,
         otherwise "continue".
     """
-    messages = state["messages"]
-    last_message = messages[-1]
-    # If there is no tool call, then we finish
-    if not last_message.tool_calls:
-        return "finish"
-    # Otherwise if there is, we continue
-    else:
-        return "continue"
+    last_message = state["messages"][-1]
+    return "continue" if last_message.tool_calls else "finish"
 
 
 class ChatAgent(AgentWithTools, BasicChatAgent):
@@ -91,6 +86,7 @@ class ChatAgent(AgentWithTools, BasicChatAgent):
         **kwargs,
     ):
         default_tools = [
+            *build_agent_tools(self),
             run_command,
             write_code,
             edit_code,
@@ -118,7 +114,7 @@ class ChatAgent(AgentWithTools, BasicChatAgent):
 
     def _build_graph(self):
         # Bind tools to llm and context summarizer
-        self.llm = self.llm.bind_tools(self.tools.values())
+        self.llm = self.llm.bind_tools(list(self.tools.values()))
 
         self.add_node(self._response_node, "respond")
         self.add_node(self.tool_node, "tool_node")

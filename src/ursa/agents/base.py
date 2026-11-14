@@ -25,7 +25,8 @@ import re
 import sqlite3
 import weakref
 from abc import ABC, abstractmethod
-from contextvars import ContextVar
+from contextlib import contextmanager
+from contextvars import Context, ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import cached_property
@@ -45,6 +46,7 @@ from typing import (
 )
 from uuid import uuid4
 
+from filelock import AsyncFileLock, FileLock
 from langchain.chat_models import BaseChatModel
 from langchain.embeddings import Embeddings
 from langchain.tools import BaseTool, ToolException
@@ -74,6 +76,18 @@ from langgraph.store.sqlite import SqliteStore
 from langgraph.store.sqlite.aio import AsyncSqliteStore
 from langgraph.types import Command, Overwrite
 
+from ursa.messaging import (
+    AgentMessage as AgentMessage,
+)
+from ursa.messaging import (
+    AsyncMessageMixin,
+)
+from ursa.messaging import (
+    InputLike as MessageInput,
+)
+from ursa.messaging import (
+    SubagentLimitError as SubagentLimitError,
+)
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
 )
@@ -103,7 +117,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-InputLike = str | Mapping[str, Any] | Command
+InputLike = MessageInput | Command
 TState = TypeVar("TState", bound=Mapping[str, Any])
 TChildState = TypeVar("TChildState", bound=Mapping[str, Any])
 _SyncCloseState = tuple[set[int], set[int]]
@@ -113,6 +127,8 @@ _SYNC_CLOSE_STATE: ContextVar[_SyncCloseState | None] = ContextVar(
 _ASYNC_CLOSE_STATE: ContextVar[_SyncCloseState | None] = ContextVar(
     "ursa_async_close_state", default=None
 )
+
+_INVOKE_DEPTH: ContextVar[int] = ContextVar("ursa_invoke_depth", default=0)
 
 try:
     URSA_VERSION = importlib.metadata.version("ursa-ai")
@@ -230,7 +246,7 @@ class UnregisteredAgentStateWarning(UserWarning):
     """A BaseAgent subclass declares a typed state it never registers."""
 
 
-class BaseAgent(Generic[TState], ABC):
+class BaseAgent(AsyncMessageMixin, Generic[TState], ABC):
     """Abstract base class for all agent implementations in the Ursa framework.
 
     BaseAgent provides a standardized foundation for building LLM-powered agents with
@@ -269,9 +285,6 @@ class BaseAgent(Generic[TState], ABC):
     ```
     """
 
-    # This will be shared across all BaseAgent instances.
-    _invoke_depth: int = 0
-
     _TELEMETRY_KW = {
         "raw_debug",
         "save_json",
@@ -306,6 +319,10 @@ class BaseAgent(Generic[TState], ABC):
         rag_tool_group: str | None = None,
         rag_tool_embedding: Embeddings | None = None,
         rag_tool_return_k: int = 10,
+        subagent_llm: BaseChatModel | None = None,
+        subagent_embedding: Embeddings | None = None,
+        subagent_max_agents: int | None = 32,
+        subagent_max_depth: int | None = 3,
     ):
         """Initializes the base agent with a language model and optional configurations.
 
@@ -319,12 +336,32 @@ class BaseAgent(Generic[TState], ABC):
             autosave_metrics: Whether to automatically save metrics to disk.
             thread_id: Unique identifier for this agent instance. Generated if not
                        provided.
+            subagent_llm: Optional model override inherited by all subagents.
+            subagent_embedding: Optional embedding override for subagent RAG.
+            subagent_max_agents: Maximum children in the whole hierarchy. Zero
+                disables subagents and None removes the count limit.
+            subagent_max_depth: Maximum depth below the root. Zero disables
+                subagents and None removes the depth limit.
         """
-        llm = llm.bind(
-            extra_headers={
-                "User-Agent": f"ursa/{URSA_VERSION}",
-                "x-ursa-user-agent": f"ursa/{URSA_VERSION}",
-            }
+        headers = {
+            "User-Agent": f"ursa/{URSA_VERSION}",
+            "x-ursa-user-agent": f"ursa/{URSA_VERSION}",
+        }
+        root_llm = llm
+        llm = llm.bind(extra_headers=headers)
+        if subagent_llm is None or subagent_llm is root_llm:
+            subagent_llm = llm
+        else:
+            subagent_llm = subagent_llm.bind(extra_headers=headers)
+        super().__init__(
+            subagent_llm=subagent_llm,
+            subagent_embedding=(
+                subagent_embedding
+                if subagent_embedding is not None
+                else rag_tool_embedding
+            ),
+            subagent_max_agents=subagent_max_agents,
+            subagent_max_depth=subagent_max_depth,
         )
         if otel_metrics is not None:
             import warnings
@@ -354,6 +391,7 @@ class BaseAgent(Generic[TState], ABC):
         self.rag_tool_embedding = rag_tool_embedding
         self.rag_tool_return_k = rag_tool_return_k
         enforce_model_group_policy(self.llm, self.group)
+        enforce_model_group_policy(self._subagent_llm, self.group)
         if (
             not group_root_dir(self.group).exists()
             and self.group != DEFAULT_GROUP_NAME
@@ -372,24 +410,20 @@ class BaseAgent(Generic[TState], ABC):
         self._async_storage: BaseStore | None = None
         self._async_compiled_graph: CompiledStateGraph | None = None
         self._checkpoint_retention_enabled = False
-        persist_agent = (agent_name is not None) or set_checkpointer
-        if persist_agent:
-            if set_checkpointer:
-                if set_name:
-                    logger.warning(
-                        "Both checkpointer and den persistence are set. "
-                        "Using checkpointer; only use one in the future."
-                    )
-                self.den = self.workspace
-            else:
-                den_name = Path(self.group) / "agents" / agent_name
-                self.den = group_agents_dir(self.group) / agent_name
-                if not self.den.exists():
-                    logger.info("Agent created: %s", den_name)
-                self.checkpointer = Checkpointer.from_workspace(self.den)
-                self._checkpoint_retention_enabled = True
+        if set_checkpointer and set_name:
+            logger.warning(
+                "Both checkpointer and den persistence are set. "
+                "Using checkpointer; only use one in the future."
+            )
+        if agent_name is not None and not set_checkpointer:
+            den_name = Path(self.group) / "agents" / agent_name
+            self.den = group_agents_dir(self.group) / agent_name
+            if not self.den.exists():
+                logger.info("Agent created: %s", den_name)
+            self.checkpointer = Checkpointer.from_workspace(self.den)
+            self._checkpoint_retention_enabled = True
         else:
-            # Keep current behavior if the user is not persisting.
+            # Explicit checkpointers and unnamed agents use the workspace.
             self.den = self.workspace
         # A generated default, as the docstring above promises. A constant here
         # means two agents that share a checkpoint store share one thread, so
@@ -430,15 +464,8 @@ class BaseAgent(Generic[TState], ABC):
     @staticmethod
     def _dedupe_callbacks(callbacks: list[Any]) -> list[Any]:
         """Preserve callback order while removing duplicate handler instances."""
-        deduped: list[Any] = []
-        seen: set[int] = set()
-        for callback in callbacks:
-            marker = id(callback)
-            if marker in seen:
-                continue
-            deduped.append(callback)
-            seen.add(marker)
-        return deduped
+        by_identity = {id(callback): callback for callback in callbacks}
+        return list(by_identity.values())
 
     def events(self, config: RunnableConfig | None = None) -> AgentEvents:
         """Return a helper for emitting structured agent progress events."""
@@ -609,15 +636,9 @@ class BaseAgent(Generic[TState], ABC):
         if model_name:
             base["metadata"]["model"] = model_name
 
-        # Handle configurable dictionary overrides by merging with base configurable
-        if "configurable" in overrides and isinstance(
-            overrides["configurable"], dict
-        ):
-            base["configurable"].update(overrides.pop("configurable"))
-
-        # Handle metadata dictionary overrides by merging with base metadata
-        if "metadata" in overrides and isinstance(overrides["metadata"], dict):
-            base["metadata"].update(overrides.pop("metadata"))
+        for name in ("configurable", "metadata"):
+            if name in overrides and isinstance(overrides[name], dict):
+                base[name].update(overrides.pop(name))
 
         # Merge tags from caller-provided overrides, avoid duplicates
         if "tags" in overrides and isinstance(overrides["tags"], list):
@@ -661,9 +682,25 @@ class BaseAgent(Generic[TState], ABC):
             ]
         return self.build_config(**overrides)
 
-    def _invoke_engine(
+    @contextmanager
+    def _telemetry_run(self, **render_options: Any):
+        """Track one outer invocation, including generators closed early."""
+        depth = _INVOKE_DEPTH.get() + 1
+        token = _INVOKE_DEPTH.set(depth)
+        try:
+            if depth == 1:
+                self.telemetry.begin_run(
+                    agent=self.name, thread_id=self.thread_id
+                )
+            yield
+        finally:
+            _INVOKE_DEPTH.reset(token)
+            if depth == 1:
+                self.telemetry.render(**render_options)
+
+    @contextmanager
+    def _invocation_context(
         self,
-        invoke_method,
         inputs: Optional[InputLike] = None,
         raw_debug: bool = False,
         save_json: Optional[bool] = None,
@@ -676,127 +713,57 @@ class BaseAgent(Generic[TState], ABC):
         config: Optional[dict] = None,
         **kwargs: Any,
     ):
-        BaseAgent._invoke_depth += 1
         invoke_config = dict(config or {})
+        with self._telemetry_run(
+            raw=raw_debug,
+            save_json=save_json,
+            save_otel=save_otel,
+            filepath=metrics_path,
+            otel_endpoint=otel_endpoint,
+            otel_headers=otel_headers,
+            save_raw_snapshot=save_raw_snapshot,
+            save_raw_records=save_raw_records,
+        ):
+            # Input keywords are allowed only when no positional input exists.
+            kw_inputs: dict[str, Any] = {}
+            control_kwargs: dict[str, Any] = {}
+            for key, value in kwargs.items():
+                if key in self._TELEMETRY_KW or key in self._CONTROL_KW:
+                    control_kwargs[key] = value
+                elif inputs is None:
+                    kw_inputs[key] = value
+                else:
+                    raise TypeError(
+                        f"Unexpected keyword argument '{key}'. "
+                        "Pass inputs as a single mapping or omit the positional "
+                        "inputs and pass them as keyword arguments."
+                    )
+            normalized = self._normalize_inputs(
+                kw_inputs if inputs is None else inputs
+            )
+            yield normalized, invoke_config, control_kwargs
 
-        try:
-            # Start telemetry tracking for the top-level invocation
-            if BaseAgent._invoke_depth == 1:
-                self.telemetry.begin_run(
-                    agent=self.name, thread_id=self.thread_id
-                )
+    def _invoke_engine(self, invoke_method, *args: Any, **kwargs: Any):
+        with self._invocation_context(*args, **kwargs) as (
+            inputs,
+            config,
+            controls,
+        ):
+            return invoke_method(inputs, **config, **controls)
 
-            # Handle the case where inputs are provided as keyword arguments
-            if inputs is None:
-                # Separate kwargs into input parameters and control parameters
-                kw_inputs: dict[str, Any] = {}
-                control_kwargs: dict[str, Any] = {}
-                for k, v in kwargs.items():
-                    if k in self._TELEMETRY_KW or k in self._CONTROL_KW:
-                        control_kwargs[k] = v
-                    else:
-                        kw_inputs[k] = v
-                inputs = kw_inputs
+    def _message_context(self) -> Context:
+        context = super()._message_context()
+        context.run(_INVOKE_DEPTH.set, 0)
+        return context
 
-                # Only control kwargs remain for further processing
-                kwargs = control_kwargs
-
-            # Handle the case where inputs are provided as a positional argument
-            else:
-                # Ensure no ambiguous keyword arguments are present
-                for k in kwargs.keys():
-                    if not (k in self._TELEMETRY_KW or k in self._CONTROL_KW):
-                        raise TypeError(
-                            f"Unexpected keyword argument '{k}'. "
-                            "Pass inputs as a single mapping or omit the positional "
-                            "inputs and pass them as keyword arguments."
-                        )
-
-            # Allow subclasses to normalize or transform the input format
-            normalized = self._normalize_inputs(inputs)
-
-            # Delegate to the subclass implementation with the normalized inputs
-            # and any control parameters
-            return invoke_method(normalized, **invoke_config, **kwargs)
-
-        finally:
-            # Clean up the invocation depth tracking
-            BaseAgent._invoke_depth -= 1
-
-            # For the top-level invocation, finalize telemetry and generate outputs
-            if BaseAgent._invoke_depth == 0:
-                self.telemetry.render(
-                    raw=raw_debug,
-                    save_json=save_json,
-                    save_otel=save_otel,
-                    filepath=metrics_path,
-                    otel_endpoint=otel_endpoint,
-                    otel_headers=otel_headers,
-                    save_raw_snapshot=save_raw_snapshot,
-                    save_raw_records=save_raw_records,
-                )
-
-    async def _ainvoke_engine(
-        self,
-        invoke_method,
-        inputs: Optional[InputLike] = None,
-        raw_debug: bool = False,
-        save_json: Optional[bool] = None,
-        save_otel: Optional[bool] = None,
-        metrics_path: Optional[str] = None,
-        otel_endpoint: Optional[str] = None,
-        otel_headers: Optional[str] = None,
-        save_raw_snapshot: Optional[bool] = None,
-        save_raw_records: Optional[bool] = None,
-        config: Optional[dict] = None,
-        **kwargs: Any,
-    ):
-        BaseAgent._invoke_depth += 1
-        invoke_config = dict(config or {})
-
-        try:
-            if BaseAgent._invoke_depth == 1:
-                self.telemetry.begin_run(
-                    agent=self.name, thread_id=self.thread_id
-                )
-
-            if inputs is None:
-                kw_inputs: dict[str, Any] = {}
-                control_kwargs: dict[str, Any] = {}
-                for k, v in kwargs.items():
-                    if k in self._TELEMETRY_KW or k in self._CONTROL_KW:
-                        control_kwargs[k] = v
-                    else:
-                        kw_inputs[k] = v
-                inputs = kw_inputs
-                kwargs = control_kwargs
-            else:
-                for k in kwargs.keys():
-                    if not (k in self._TELEMETRY_KW or k in self._CONTROL_KW):
-                        raise TypeError(
-                            f"Unexpected keyword argument '{k}'. "
-                            "Pass inputs as a single mapping or omit the "
-                            "positional inputs and pass them as keyword "
-                            "arguments."
-                        )
-
-            normalized = self._normalize_inputs(inputs)
-            return await invoke_method(normalized, **invoke_config, **kwargs)
-
-        finally:
-            BaseAgent._invoke_depth -= 1
-
-            if BaseAgent._invoke_depth == 0:
-                self.telemetry.render(
-                    raw=raw_debug,
-                    save_json=save_json,
-                    save_otel=save_otel,
-                    filepath=metrics_path,
-                    otel_endpoint=otel_endpoint,
-                    otel_headers=otel_headers,
-                    save_raw_snapshot=save_raw_snapshot,
-                    save_raw_records=save_raw_records,
-                )
+    async def _ainvoke_engine(self, invoke_method, *args: Any, **kwargs: Any):
+        async with self._async_invocation():
+            with self._invocation_context(*args, **kwargs) as (
+                inputs,
+                config,
+                controls,
+            ):
+                return await invoke_method(inputs, **config, **controls)
 
     # NOTE: The `invoke` method uses the PEP 570 `/,*` notation to explicitly state which
     # arguments can and cannot be passed as positional or keyword arguments.
@@ -1286,16 +1253,13 @@ class BaseAgent(Generic[TState], ABC):
         update = dict(extra or {})
         if full_overwrite:
             messages = list(state.get("messages") or [])
-            if message_update is None:
-                update["messages"] = Overwrite(messages)
-            else:
+            if message_update is not None:
                 if isinstance(message_update, list):
                     messages.extend(message_update)
                 else:
                     messages.append(message_update)
-                update["messages"] = Overwrite(messages)
-        else:
-            update["messages"] = message_update
+            message_update = Overwrite(messages)
+        update["messages"] = message_update
         return update
 
     def _normalize_inputs(
@@ -1409,7 +1373,11 @@ class BaseAgent(Generic[TState], ABC):
             store_path, check_same_thread=False, isolation_level=None
         )
         store = SqliteStore(conn)
-        store.setup()
+        # Hierarchy members share this store across processes. LangGraph's
+        # migration check and insert are separate statements, so concurrent
+        # first-use can otherwise insert the same migration version twice.
+        with FileLock(f"{store_path}.setup.lock", mode=0o600):
+            store.setup()
         self._setup_storage_tree(store)
         return store
 
@@ -1421,7 +1389,8 @@ class BaseAgent(Generic[TState], ABC):
             store_path = self.den / "graph_store.sqlite"
             conn = await aiosqlite.connect(store_path, isolation_level=None)
             store = AsyncSqliteStore(conn)
-            await store.setup()
+            async with AsyncFileLock(f"{store_path}.setup.lock", mode=0o600):
+                await store.setup()
             await self._asetup_storage_tree(store)
             self._async_storage = store
         return self._async_storage
@@ -1574,23 +1543,8 @@ class BaseAgent(Generic[TState], ABC):
         """Hook for subclasses to wrap or modify the compiled graph."""
         return graph_app
 
-    def _tool_is_async_only(self, tool: Any) -> bool:
-        """Return True for tools that can only be invoked asynchronously.
-
-        MCP tools are commonly exposed as StructuredTool instances with a
-        coroutine implementation but no synchronous function implementation.
-        Those raise errors like:
-
-            "StructuredTool does not support sync invocation."
-
-        when called via `.invoke()`.
-        """
-
-        func = getattr(tool, "func", None)
-        coroutine = getattr(tool, "coroutine", None)
-        return func is None and coroutine is not None
-
     def _has_async_only_tools(self) -> bool:
+        """Detect tools, such as MCP StructuredTools, requiring async dispatch."""
         tools_obj = getattr(self, "tools", None)
         if tools_obj:
             try:
@@ -1599,7 +1553,11 @@ class BaseAgent(Generic[TState], ABC):
                     if isinstance(tools_obj, dict)
                     else tools_obj
                 )
-                if any(self._tool_is_async_only(t) for t in tool_iter):
+                if any(
+                    getattr(t, "func", None) is None
+                    and getattr(t, "coroutine", None) is not None
+                    for t in tool_iter
+                ):
                     return True
             except Exception:
                 pass
@@ -1676,16 +1634,7 @@ class BaseAgent(Generic[TState], ABC):
                 config.get("configurable", {}).get("thread_id", self.thread_id)
             )
             result = prune_sqlite_checkpoints(checkpointer, thread_id)
-            if result.pruned:
-                logger.info(
-                    "Pruned %d checkpoints and %d writes for thread %s "
-                    "(%d -> %d bytes)",
-                    result.checkpoints_deleted,
-                    result.writes_deleted,
-                    thread_id,
-                    result.size_before,
-                    result.size_after,
-                )
+            self._log_checkpoint_pruning(result, thread_id)
         except Exception:
             # Retention is maintenance. It must not convert a successful agent
             # result into a failed invocation.
@@ -1708,18 +1657,22 @@ class BaseAgent(Generic[TState], ABC):
                 config.get("configurable", {}).get("thread_id", self.thread_id)
             )
             result = await aprune_sqlite_checkpoints(checkpointer, thread_id)
-            if result.pruned:
-                logger.info(
-                    "Pruned %d checkpoints and %d writes for thread %s "
-                    "(%d -> %d bytes)",
-                    result.checkpoints_deleted,
-                    result.writes_deleted,
-                    thread_id,
-                    result.size_before,
-                    result.size_after,
-                )
+            self._log_checkpoint_pruning(result, thread_id)
         except Exception:
             logger.warning("Checkpoint pruning failed", exc_info=True)
+
+    @staticmethod
+    def _log_checkpoint_pruning(result, thread_id: str) -> None:
+        if result.pruned:
+            logger.info(
+                "Pruned %d checkpoints and %d writes for thread %s "
+                "(%d -> %d bytes)",
+                result.checkpoints_deleted,
+                result.writes_deleted,
+                thread_id,
+                result.size_before,
+                result.size_after,
+            )
 
     def __call__(self, inputs: InputLike, /, **kwargs: Any) -> Any:
         """Specify calling behavior for class instance."""
@@ -1833,35 +1786,17 @@ class BaseAgent(Generic[TState], ABC):
             This method tracks invocation depth to properly handle nested agent calls
             and ensure telemetry is only rendered once at the top level.
         """
-        # Track invocation depth to handle nested agent calls
-        BaseAgent._invoke_depth += 1
-
-        try:
-            # Start telemetry tracking for top-level invocations only
-            if BaseAgent._invoke_depth == 1:
-                self.telemetry.begin_run(
-                    agent=self.name, thread_id=self.thread_id
-                )
-
-            # Normalize inputs and delegate to the actual streaming implementation
+        with self._telemetry_run(
+            raw=raw_debug,
+            save_json=save_json,
+            save_otel=save_otel,
+            filepath=metrics_path,
+            save_raw_snapshot=save_raw_snapshot,
+            save_raw_records=save_raw_records,
+        ):
             normalized = self._normalize_inputs(inputs)
             stream_config = dict(config or {})
             yield from self._stream(normalized, **stream_config, **kwargs)
-
-        finally:
-            # Decrement invocation depth when exiting
-            BaseAgent._invoke_depth -= 1
-
-            # Render telemetry data only for top-level invocations
-            if BaseAgent._invoke_depth == 0:
-                self.telemetry.render(
-                    raw=raw_debug,
-                    save_json=save_json,
-                    save_otel=save_otel,
-                    filepath=metrics_path,
-                    save_raw_snapshot=save_raw_snapshot,
-                    save_raw_records=save_raw_records,
-                )
 
     def _default_node_tags(
         self, name: str, extra: Sequence[str] | None = None
@@ -1964,23 +1899,8 @@ class BaseAgent(Generic[TState], ABC):
         Returns:
             A configured RunnableLambda with routing-specific metadata.
         """
-        # Use the first extra tag as namespace, or fall back to agent name in snake_case
-        ns = extra_tags[0] if extra_tags else _to_snake(self.name)
-
-        # Create and return a configured RunnableLambda for routing
         return RunnableLambda(fn).with_config(
-            run_name="node",
-            tags=[
-                self.name,
-                "graph",
-                f"route:{name}",
-                *extra_tags,
-            ],
-            metadata={
-                "langgraph_node": f"route:{name}",
-                "ursa_ns": ns,
-                "ursa_agent": self.name,
-            },
+            **self._node_cfg(f"route:{name}", *extra_tags)
         )
 
     def _named(self, runnable: Any, name: str, *extra_tags: str):
@@ -1996,19 +1916,9 @@ class BaseAgent(Generic[TState], ABC):
         Returns:
             A configured runnable with the specified name and agent metadata.
         """
-        # Use the first extra tag as namespace, or fall back to agent name in snake_case
-        ns = extra_tags[0] if extra_tags else _to_snake(self.name)
-
-        # Apply configuration and return the configured runnable
-        return runnable.with_config(
-            run_name=name,
-            tags=[self.name, "graph", name, *extra_tags],
-            metadata={
-                "langgraph_node": name,
-                "ursa_ns": ns,
-                "ursa_agent": self.name,
-            },
-        )
+        config = self._node_cfg(name, *extra_tags)
+        config["run_name"] = name
+        return runnable.with_config(**config)
 
 
 def _default_tool_error_handler(e: Exception):

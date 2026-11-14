@@ -1,0 +1,115 @@
+"""Importable child-process fixtures for runtime tests."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import sys
+from types import SimpleNamespace
+from typing import Any
+
+from ursa.runtime import AgentContext, AgentMessage
+
+
+class StatefulAsyncAgent:
+    def __init__(self, config: dict[str, Any], context: AgentContext) -> None:
+        self.config = config
+        self.context = context
+        self.state: dict[str, Any] = {"calls": 0, "received": []}
+
+    async def ainvoke(self, inputs: Any, config=None) -> Any:
+        self.state["calls"] += 1
+        if isinstance(inputs, dict) and "announce" in inputs:
+            await self.context.send_message(str(inputs["announce"]), "started")
+        if isinstance(inputs, dict) and "sleep" in inputs:
+            await asyncio.sleep(float(inputs["sleep"]))
+        if isinstance(inputs, dict) and "send" in inputs:
+            await self.context.send_message(
+                str(inputs["send"]), inputs.get("payload")
+            )
+        callbacks = list((config or {}).get("callbacks") or ())
+        for callback in callbacks:
+            await callback.on_custom_event(
+                "test", {"calls": self.state["calls"]}, run_id="run"
+            )
+        return {
+            "calls": self.state["calls"],
+            "label": self.config.get("label"),
+            "pid": os.getpid(),
+        }
+
+    async def on_message(self, message: AgentMessage) -> None:
+        if self.config.get("raise_on_message"):
+            raise RuntimeError("message handler failed")
+        self.state["received"].append({
+            "sender": message.sender,
+            "payload": message.payload,
+        })
+
+    async def received(self) -> list[dict[str, Any]]:
+        return list(self.state["received"])
+
+
+def stateful_factory(
+    config: dict[str, Any], context: AgentContext
+) -> StatefulAsyncAgent:
+    return StatefulAsyncAgent(config, context)
+
+
+class OutputAgent:
+    async def ainvoke(self, inputs: Any, config=None) -> str:
+        del inputs, config
+        print("agent stdout marker")
+        print("agent stderr marker", file=sys.stderr)
+        logging.getLogger("tests.runtime.output").warning("agent log marker")
+        return "ok"
+
+
+def output_factory(
+    config: dict[str, Any], context: AgentContext
+) -> OutputAgent:
+    del config, context
+    print("agent factory marker")
+    return OutputAgent()
+
+
+def tool_describing_factory(config: dict[str, Any], context: AgentContext):
+    """Expose a real URSA tool through the production metadata adapter."""
+    del config
+    from ursa.runtime.agent_runtime import _UrsaProcessAgent
+    from ursa.tools.run_command_tool import run_command
+
+    return _UrsaProcessAgent(
+        SimpleNamespace(tools={"run_command": run_command}),
+        context,
+        "root",
+    )
+
+
+async def runtime_request(runtime, sender, action, *, callbacks=(), **payload):
+    """Exercise the host's request boundary without repeating its wire format."""
+    return await runtime._handle_runtime_request(
+        sender, action, payload, callbacks
+    )
+
+
+def set_hierarchy(runtime, paths):
+    """Install a hierarchy for host-only tests without launching processes."""
+    root = next(identity for identity, path in paths.items() if path == "root")
+    runtime._runtime_paths.update(paths)
+    runtime._runtime_roots.update(dict.fromkeys(paths, root))
+    runtime._hierarchies[root] = {
+        path: identity for identity, path in paths.items()
+    }
+
+
+async def spawn_managed(runtime, path, message, agent_type=None):
+    """Spawn through a real process RPC and verify its exact acknowledgement."""
+    hierarchy = runtime._hierarchies[runtime.agents["chat"].runtime_id]
+    parent, _, name = path.rpartition("/")
+    result = await runtime._manager.call(
+        hierarchy[parent], "spawn_subagent", name, message, agent_type
+    )
+    assert result == (path, f"Message queued for {path}.")
+    return hierarchy[path]

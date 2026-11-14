@@ -1,10 +1,30 @@
+import pytest
+
 import ursa.util.crossplatform as crossplatform
 
 
-def test_kitty_keyboard_support_uses_terminal_identity(monkeypatch):
+@pytest.fixture
+def clipboard_discovery(monkeypatch):
+    for name in ("URSA_CLIPBOARD", "SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"):
+        monkeypatch.delenv(name, raising=False)
+
+    def configure(platform, executables):
+        monkeypatch.setattr(crossplatform.sys, "platform", platform)
+        monkeypatch.setattr(crossplatform.shutil, "which", executables.get)
+
+    return configure
+
+
+@pytest.mark.parametrize(
+    "variable, value",
+    [("TERM_PROGRAM", "ghostty"), ("ALACRITTY_WINDOW_ID", "42")],
+)
+def test_kitty_keyboard_support_uses_terminal_identity(
+    monkeypatch, variable, value
+):
     monkeypatch.delenv("TMUX", raising=False)
     monkeypatch.delenv("ZELLIJ", raising=False)
-    monkeypatch.setenv("TERM_PROGRAM", "ghostty")
+    monkeypatch.setenv(variable, value)
 
     assert crossplatform.expects_kitty_keyboard()
 
@@ -23,14 +43,6 @@ def test_kitty_keyboard_support_falls_back_to_terminfo_name(monkeypatch):
     for name in crossplatform.KITTY_KEYBOARD_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("TERM", "xterm-kitty")
-
-    assert crossplatform.expects_kitty_keyboard()
-
-
-def test_kitty_keyboard_support_uses_vendor_session_identity(monkeypatch):
-    monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.delenv("ZELLIJ", raising=False)
-    monkeypatch.setenv("ALACRITTY_WINDOW_ID", "42")
 
     assert crossplatform.expects_kitty_keyboard()
 
@@ -94,66 +106,32 @@ def test_platform_clipboard_uses_env_override(monkeypatch):
     ]
 
 
-def test_platform_clipboard_prefers_macos_pbcopy(monkeypatch):
-    monkeypatch.delenv("URSA_CLIPBOARD", raising=False)
-    monkeypatch.delenv("SSH_CONNECTION", raising=False)
-    monkeypatch.delenv("SSH_CLIENT", raising=False)
-    monkeypatch.delenv("SSH_TTY", raising=False)
-    monkeypatch.setattr(crossplatform.sys, "platform", "darwin")
-    monkeypatch.setattr(
-        crossplatform.shutil,
-        "which",
-        lambda name: "/usr/bin/pbcopy" if name == "pbcopy" else None,
-    )
+def test_platform_clipboard_prefers_macos_pbcopy(clipboard_discovery):
+    clipboard_discovery("darwin", {"pbcopy": "/usr/bin/pbcopy"})
 
     assert crossplatform.platform_clipboard() == ["pbcopy"]
 
 
-def test_platform_clipboard_prefers_windows_clip(monkeypatch):
-    monkeypatch.delenv("URSA_CLIPBOARD", raising=False)
-    monkeypatch.delenv("SSH_CONNECTION", raising=False)
-    monkeypatch.delenv("SSH_CLIENT", raising=False)
-    monkeypatch.delenv("SSH_TTY", raising=False)
-    monkeypatch.setattr(crossplatform.sys, "platform", "win32")
-    monkeypatch.setattr(
-        crossplatform.shutil,
-        "which",
-        lambda name: "C:/Windows/System32/clip.exe" if name == "clip" else None,
-    )
+def test_platform_clipboard_prefers_windows_clip(clipboard_discovery):
+    clipboard_discovery("win32", {"clip": "C:/Windows/System32/clip.exe"})
 
     assert crossplatform.platform_clipboard() == ["clip"]
 
 
-def test_platform_clipboard_prefers_wayland(monkeypatch):
-    monkeypatch.delenv("URSA_CLIPBOARD", raising=False)
-    monkeypatch.delenv("SSH_CONNECTION", raising=False)
-    monkeypatch.delenv("SSH_CLIENT", raising=False)
-    monkeypatch.delenv("SSH_TTY", raising=False)
-    monkeypatch.setattr(crossplatform.sys, "platform", "linux")
+def test_platform_clipboard_prefers_wayland(monkeypatch, clipboard_discovery):
+    clipboard_discovery("linux", {"wl-copy": "/usr/bin/wl-copy"})
     monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
     monkeypatch.delenv("DISPLAY", raising=False)
-    monkeypatch.setattr(
-        crossplatform.shutil,
-        "which",
-        lambda name: "/usr/bin/wl-copy" if name == "wl-copy" else None,
-    )
 
     assert crossplatform.platform_clipboard() == ["wl-copy"]
 
 
-def test_platform_clipboard_prefers_xclip_then_xsel(monkeypatch):
-    monkeypatch.delenv("URSA_CLIPBOARD", raising=False)
-    monkeypatch.delenv("SSH_CONNECTION", raising=False)
-    monkeypatch.delenv("SSH_CLIENT", raising=False)
-    monkeypatch.delenv("SSH_TTY", raising=False)
-    monkeypatch.setattr(crossplatform.sys, "platform", "linux")
+def test_platform_clipboard_prefers_xclip_then_xsel(
+    monkeypatch, clipboard_discovery
+):
+    clipboard_discovery("linux", {"xclip": "/usr/bin/xclip"})
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     monkeypatch.setenv("DISPLAY", ":0")
-    monkeypatch.setattr(
-        crossplatform.shutil,
-        "which",
-        lambda name: "/usr/bin/xclip" if name == "xclip" else None,
-    )
 
     assert crossplatform.platform_clipboard() == [
         "xclip",
@@ -161,11 +139,7 @@ def test_platform_clipboard_prefers_xclip_then_xsel(monkeypatch):
         "clipboard",
     ]
 
-    monkeypatch.setattr(
-        crossplatform.shutil,
-        "which",
-        lambda name: "/usr/bin/xsel" if name == "xsel" else None,
-    )
+    clipboard_discovery("linux", {"xsel": "/usr/bin/xsel"})
 
     assert crossplatform.platform_clipboard() == [
         "xsel",
@@ -174,15 +148,12 @@ def test_platform_clipboard_prefers_xclip_then_xsel(monkeypatch):
     ]
 
 
-def test_platform_clipboard_returns_none_when_unavailable(monkeypatch):
-    monkeypatch.delenv("URSA_CLIPBOARD", raising=False)
-    monkeypatch.delenv("SSH_CONNECTION", raising=False)
-    monkeypatch.delenv("SSH_CLIENT", raising=False)
-    monkeypatch.delenv("SSH_TTY", raising=False)
-    monkeypatch.setattr(crossplatform.sys, "platform", "linux")
+def test_platform_clipboard_returns_none_when_unavailable(
+    monkeypatch, clipboard_discovery
+):
+    clipboard_discovery("linux", {})
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     monkeypatch.delenv("DISPLAY", raising=False)
-    monkeypatch.setattr(crossplatform.shutil, "which", lambda name: None)
 
     assert crossplatform.platform_clipboard() is None
 

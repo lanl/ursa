@@ -4,6 +4,9 @@ from pathlib import Path
 import pytest
 from langchain.chat_models import BaseChatModel
 
+from tests.event_fixtures import (
+    fixed_monotonic_timestamp as fixed_monotonic_timestamp,
+)
 from tests.tools.utils import (
     invoke_with_event_recorder,
     invoke_with_parent_run,
@@ -11,16 +14,6 @@ from tests.tools.utils import (
 )
 from ursa.tools.read_file_tool import download_file_tool, read_file
 from ursa.util import parse
-
-FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
-
-
-@pytest.fixture(autouse=True)
-def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "ursa.util.events.monotonic_ns",
-        lambda: FIXED_MONOTONIC_TIMESTAMP_NS,
-    )
 
 
 @pytest.mark.parametrize("absolute", [False, True])

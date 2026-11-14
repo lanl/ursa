@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from ursa.cli.callbacks import HITLLogEventHandler
+import pytest
+
+from ursa.cli.callbacks import AgentLogEventHandler
 from ursa_dashboard import registry
 from ursa_dashboard.adapters import (
     BaseAgentInProcessAdapter,
@@ -20,85 +22,87 @@ def _run_context(tmp_path: Path) -> RunContext:
     )
 
 
-def test_base_agent_adapter_attaches_cli_callback_handler(tmp_path: Path):
-    captured: dict[str, object] = {}
+@pytest.fixture(params=[BaseAgentInProcessAdapter, DirectInvokeAdapter])
+def adapter_factory(request):
+    def create(agent):
+        options = (
+            {"supports_streaming": False}
+            if request.param is BaseAgentInProcessAdapter
+            else {}
+        )
+        return request.param(lambda _workspace, _inputs: agent, **options)
 
-    class FakeAgent:
-        def invoke(self, inputs, config=None):
-            captured["inputs"] = inputs
-            captured["config"] = config
-            return {"text": "done"}
-
-        def format_result(self, result):
-            return result["text"]
-
-    adapter = BaseAgentInProcessAdapter(
-        lambda _workspace, _inputs: FakeAgent(),
-        supports_streaming=False,
-    )
-
-    result = adapter.invoke(
-        ctx=_run_context(tmp_path),
-        inputs="hello",
-        sink=SimpleNamespace(emit=lambda event: None),
-    )
-
-    assert result == "done"
-    assert captured["inputs"] == "hello"
-    config = captured["config"]
-    assert isinstance(config, dict)
-    callbacks = config["callbacks"]
-    assert len(callbacks) == 1
-    assert isinstance(callbacks[0], HITLLogEventHandler)
-    assert callbacks[0].workspace == tmp_path.resolve()
+    return create
 
 
-def test_direct_invoke_adapter_skips_config_for_simple_agents(tmp_path: Path):
-    captured: dict[str, object] = {}
-
-    class FakeDemoAgent:
-        def invoke(self, inputs):
-            captured["inputs"] = inputs
-            return "done"
-
-    adapter = DirectInvokeAdapter(lambda _workspace, _inputs: FakeDemoAgent())
-
-    result = adapter.invoke(
-        ctx=_run_context(tmp_path),
-        inputs="hello",
-        sink=SimpleNamespace(emit=lambda event: None),
-    )
-
-    assert result == "done"
-    assert captured == {"inputs": "hello"}
-
-
-def test_direct_invoke_adapter_attaches_cli_handler_when_supported(
-    tmp_path: Path,
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("formatted", [False, True])
+def test_adapters_attach_cli_callbacks_and_format_results(
+    tmp_path, adapter_factory, asynchronous, formatted
 ):
-    captured: dict[str, object] = {}
+    captured = {}
+    lifecycle = []
 
-    class FakeWorkflow:
-        def invoke(self, inputs, *, config=None):
-            captured["inputs"] = inputs
-            captured["config"] = config
-            return "done"
+    def invoke(inputs, *, config=None):
+        captured.update(inputs=inputs, config=config)
+        return {"text": "done"} if formatted else "done"
 
-    adapter = DirectInvokeAdapter(lambda _workspace, _inputs: FakeWorkflow())
+    async def ainvoke(inputs, *, config=None):
+        return invoke(inputs, config=config)
 
-    result = adapter.invoke(
-        ctx=_run_context(tmp_path),
-        inputs="hello",
-        sink=SimpleNamespace(emit=lambda event: None),
+    async def aclose():
+        lifecycle.append("aclose")
+
+    async def setup(_agent, ctx, inputs):
+        assert ctx.workspace_dir == tmp_path and inputs == "hello"
+        lifecycle.append("setup")
+
+    agent = SimpleNamespace(
+        invoke=invoke, aclose=aclose, close=lambda: lifecycle.append("close")
+    )
+    if asynchronous:
+        agent.ainvoke = ainvoke
+    if formatted:
+        agent.format_result = lambda result: result["text"]
+    adapter = adapter_factory(agent)
+    adapter.set_setup_hook(setup)
+    assert (
+        adapter.invoke(ctx=_run_context(tmp_path), inputs="hello", sink=None)
+        == "done"
+    )
+    assert captured["inputs"] == "hello"
+    assert isinstance(captured["config"], dict)
+    callbacks = captured["config"]["callbacks"]
+    assert len(callbacks) == 1
+    assert isinstance(callbacks[0], AgentLogEventHandler)
+    assert callbacks[0].workspace == tmp_path.resolve()
+    assert lifecycle == (
+        ["setup", "aclose", "close"] if asynchronous else ["setup"]
     )
 
-    assert result == "done"
-    assert captured["inputs"] == "hello"
-    config = captured["config"]
-    assert isinstance(config, dict)
-    callbacks = config["callbacks"]
-    assert len(callbacks) == 1
-    assert isinstance(callbacks[0], HITLLogEventHandler)
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_adapters_skip_config_for_simple_agents(
+    tmp_path, adapter_factory, asynchronous
+):
+    captured = {}
+
+    def invoke(inputs):
+        captured["inputs"] = inputs
+        return "done"
+
+    async def ainvoke(inputs):
+        return invoke(inputs)
+
+    agent = SimpleNamespace(invoke=invoke)
+    if asynchronous:
+        agent.ainvoke = ainvoke
+    adapter = adapter_factory(agent)
+    assert (
+        adapter.invoke(ctx=_run_context(tmp_path), inputs="hello", sink=None)
+        == "done"
+    )
+    assert captured == {"inputs": "hello"}
 
 
 def test_planning_execution_registry_uses_one_base_agent_runtime(

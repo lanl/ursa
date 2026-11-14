@@ -15,6 +15,7 @@ from .credentials import (
     CredentialKind,
     CredentialStore,
     KeyringCredentialStore,
+    _remove_worker_secrets,
     assert_no_raw_api_key,
     credential_id,
     resolve_api_key,
@@ -239,6 +240,9 @@ class RunManager:
         paths = self._run_paths(agent_id=agent_id, run_id=run_id)
         ensure_dirs(paths)
 
+        def relative_path(path: Path) -> str:
+            return str(path.relative_to(self.dashboard_root)).replace("\\", "/")
+
         rec: dict[str, Any] = {
             "run_id": run_id,
             "agent_id": agent_id,
@@ -253,29 +257,15 @@ class RunManager:
             "agent_init": agent_init,
             "llm": llm,
             "runner": runner,
-            "run_dir": str(
-                paths.run_dir.relative_to(self.dashboard_root)
-            ).replace("\\", "/"),
+            "run_dir": relative_path(paths.run_dir),
             "logs": {
-                "stdout": str(
-                    paths.stdout_path.relative_to(self.dashboard_root)
-                ).replace("\\", "/"),
-                "stderr": str(
-                    paths.stderr_path.relative_to(self.dashboard_root)
-                ).replace("\\", "/"),
-                "events": str(
-                    paths.events_path.relative_to(self.dashboard_root)
-                ).replace("\\", "/"),
+                "stdout": relative_path(paths.stdout_path),
+                "stderr": relative_path(paths.stderr_path),
+                "events": relative_path(paths.events_path),
             },
             "artifacts": {
-                "dir": str(
-                    paths.artifacts_dir.relative_to(self.dashboard_root)
-                ).replace("\\", "/"),
-                "manifest": str(
-                    paths.artifacts_manifest_path.relative_to(
-                        self.dashboard_root
-                    )
-                ).replace("\\", "/"),
+                "dir": relative_path(paths.artifacts_dir),
+                "manifest": relative_path(paths.artifacts_manifest_path),
             },
             "result": None,
             "error": None,
@@ -471,24 +461,7 @@ class RunManager:
             env_name = str(config.get("api_key_env") or "").strip()
             if env_name:
                 sensitive_names.add(env_name)
-        secret_markers = (
-            "api_key",
-            "apikey",
-            "access_token",
-            "refresh_token",
-            "secret",
-            "password",
-            "credential",
-            "bearer",
-        )
-        for name in list(env):
-            lowered = name.lower()
-            if (
-                name in sensitive_names
-                or any(marker in lowered for marker in secret_markers)
-                or lowered.endswith("_token")
-            ):
-                env.pop(name, None)
+        _remove_worker_secrets(env, sensitive_names)
 
         env["PYTHONUNBUFFERED"] = "1"
         existing_pp = env.get("PYTHONPATH")
@@ -589,8 +562,6 @@ class RunManager:
                 if rec.get("status") == "cancelled":
                     continue
                 await self._execute_run(run_id)
-            except asyncio.CancelledError:
-                raise
             except Exception:
                 # Best-effort: mark failed.
                 try:
@@ -634,27 +605,15 @@ class RunManager:
             return
 
         # Write config JSON blobs for the worker.
-        params_json = paths.run_dir / "params.json"
-        agent_init_json = paths.run_dir / "agent_init.json"
-        llm_json = paths.run_dir / "llm.json"
-        embedding_json = paths.run_dir / "embedding.json"
-        mcp_json = paths.run_dir / "mcp.json"
+        config_paths = {
+            name: paths.run_dir / f"{name}.json"
+            for name in ("params", "agent_init", "llm", "embedding", "mcp")
+        }
         output_json = paths.run_dir / "output.json"
-        params_json.write_text(
-            json.dumps(rec.get("params") or {}, indent=2), encoding="utf-8"
-        )
-        agent_init_json.write_text(
-            json.dumps(rec.get("agent_init") or {}, indent=2), encoding="utf-8"
-        )
-        llm_json.write_text(
-            json.dumps(rec.get("llm") or {}, indent=2), encoding="utf-8"
-        )
-        embedding_json.write_text(
-            json.dumps(rec.get("embedding") or {}, indent=2), encoding="utf-8"
-        )
-        mcp_json.write_text(
-            json.dumps(rec.get("mcp") or {}, indent=2), encoding="utf-8"
-        )
+        for name, path in config_paths.items():
+            path.write_text(
+                json.dumps(rec.get(name) or {}, indent=2), encoding="utf-8"
+            )
 
         timeout = None
         runner_cfg = rec.get("runner") or {}
@@ -690,15 +649,15 @@ class RunManager:
             "--workspace-dir",
             str(agent_workspace_dir),
             "--params-json",
-            str(params_json),
+            str(config_paths["params"]),
             "--agent-init-json",
-            str(agent_init_json),
+            str(config_paths["agent_init"]),
             "--llm-json",
-            str(llm_json),
+            str(config_paths["llm"]),
             "--embedding-json",
-            str(embedding_json),
+            str(config_paths["embedding"]),
             "--mcp-json",
-            str(mcp_json),
+            str(config_paths["mcp"]),
             "--output-json",
             str(output_json),
             "--secrets-stdin",
@@ -790,26 +749,19 @@ class RunManager:
             )
 
         # Stream stdout/stderr
-        stdout_task = asyncio.create_task(
-            self._drain_stream(
-                run_id=run_id,
-                agent_id=agent_id,
-                stream_name="stdout",
-                stream=proc.stdout,
-                log_path=paths.stdout_path,
-                cap_bytes=self.config.stdout_cap_bytes,
+        stream_tasks = [
+            asyncio.create_task(
+                self._drain_stream(
+                    run_id=run_id,
+                    agent_id=agent_id,
+                    stream_name=name,
+                    stream=getattr(proc, name),
+                    log_path=getattr(paths, f"{name}_path"),
+                    cap_bytes=getattr(self.config, f"{name}_cap_bytes"),
+                )
             )
-        )
-        stderr_task = asyncio.create_task(
-            self._drain_stream(
-                run_id=run_id,
-                agent_id=agent_id,
-                stream_name="stderr",
-                stream=proc.stderr,
-                log_path=paths.stderr_path,
-                cap_bytes=self.config.stderr_cap_bytes,
-            )
-        )
+            for name in ("stdout", "stderr")
+        ]
 
         try:
             if timeout:
@@ -835,9 +787,7 @@ class RunManager:
                 await proc.wait()
         finally:
             # Ensure streams drained
-            await asyncio.gather(
-                stdout_task, stderr_task, return_exceptions=True
-            )
+            await asyncio.gather(*stream_tasks, return_exceptions=True)
 
         rc = proc.returncode
 

@@ -45,7 +45,6 @@ Tool usage from a ``ToolRuntime``:
 
 from __future__ import annotations
 
-import inspect
 import json
 import logging
 from dataclasses import dataclass, field
@@ -61,6 +60,7 @@ from langchain_core.callbacks.manager import (
 )
 from langchain_core.runnables import RunnableConfig
 
+from ursa.util.async_utils import maybe_await
 from ursa.util.rendering import EventConsoleFormatter, event_artifacts
 
 DEFAULT_EVENT_NAME = "ursa_agent_progress"
@@ -184,26 +184,18 @@ class EventLoggingHandler(BaseCallbackHandler):
 
     def _format_message(self, name: str, data: dict[str, Any]) -> str:
         parts = [f"event={json.dumps(name)}"]
-        for key in ("agent", "tool", "name", "stage", "phase", "message"):
+        summary_keys = ("agent", "tool", "name", "stage", "phase", "message")
+        for key in summary_keys:
             value = data.get(key)
             if value in (None, ""):
                 continue
             parts.append(f"{key}={json.dumps(str(value), ensure_ascii=False)}")
 
+        excluded_keys = {*summary_keys, "artifact", "artifacts"}
         extras = {
             key: value
             for key, value in data.items()
-            if key
-            not in {
-                "agent",
-                "artifact",
-                "artifacts",
-                "tool",
-                "name",
-                "stage",
-                "phase",
-                "message",
-            }
+            if key not in excluded_keys
         }
         artifacts = event_artifacts(data)
         if artifacts:
@@ -533,9 +525,7 @@ class EnvironmentEvents(ProgressEvents):
             handler = getattr(callback, "on_custom_event", None)
             if handler is None:
                 continue
-            result = handler(self.event_name, body, run_id=run_id)
-            if inspect.isawaitable(result):
-                await result
+            await maybe_await(handler(self.event_name, body, run_id=run_id))
 
 
 class ToolEvents(ProgressEvents):
@@ -725,35 +715,23 @@ class EventRange:
         return payload
 
     def _emit_terminal(self, exc: BaseException | None) -> None:
-        payload = self._terminal_payload()
-        if exc is None:
-            self.events.emit(
-                self.done_message or self.start_message,
-                stage=self.stage,
-                phase="end",
-                **payload,
-            )
-            return
-        self.events.emit(
-            self.error_message or self.start_message,
-            stage=self.stage,
-            phase="error",
-            error_type=type(exc).__name__,
-            error=str(exc),
-            **payload,
-        )
+        self._dispatch_terminal("emit", exc)
 
     async def _aemit_terminal(self, exc: BaseException | None) -> None:
+        await self._dispatch_terminal("aemit", exc)
+
+    def _dispatch_terminal(self, method: str, exc: BaseException | None) -> Any:
+        """Dispatch the same terminal fields to a sync or async event sink."""
         payload = self._terminal_payload()
+        emit = getattr(self.events, method)
         if exc is None:
-            await self.events.aemit(
+            return emit(
                 self.done_message or self.start_message,
                 stage=self.stage,
                 phase="end",
                 **payload,
             )
-            return
-        await self.events.aemit(
+        return emit(
             self.error_message or self.start_message,
             stage=self.stage,
             phase="error",

@@ -38,6 +38,7 @@ from .credentials import (
     CredentialConfigurationError,
     CredentialStore,
     _config_api_key_env,
+    _remove_worker_secrets,
     assert_no_credential_metadata,
     assert_no_raw_api_key,
     resolve_api_key,
@@ -52,25 +53,6 @@ EnvironmentType = Literal[
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
 _ENV_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _ENV_VAR_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_ALLOWED_SHORT_CLASSES = {
-    "ArxivAgent",
-    "ChatAgent",
-    "DeepReviewAgent",
-    "DSIAgent",
-    "ExecutionAgent",
-    "GitAgent",
-    "GitGoAgent",
-    "HypothesizerAgent",
-    "LammpsAgent",
-    "MaterialsProjectAgent",
-    "OSTIAgent",
-    "PlanningAgent",
-    "PromptingAgent",
-    "RAGAgent",
-    "RecallAgent",
-    "WebSearchAgent",
-    "AgentTeamEnvironment",
-}
 _ALLOWED_CLASS_PATHS = {
     "ursa.agents.acquisition_agents.ArxivAgent",
     "ursa.agents.acquisition_agents.OSTIAgent",
@@ -89,6 +71,9 @@ _ALLOWED_CLASS_PATHS = {
     "ursa.agents.rag_agent.RAGAgent",
     "ursa.agents.recall_agent.RecallAgent",
     "ursa.environments.agent_team.AgentTeamEnvironment",
+}
+_ALLOWED_SHORT_CLASSES = {
+    path.rsplit(".", 1)[-1] for path in _ALLOWED_CLASS_PATHS
 }
 
 
@@ -199,22 +184,17 @@ def _validate_config_mapping(
     assert_no_raw_api_key(data, context="environment config")
     try:
         if environment_type == "agent_team":
-            config = AgentTeamConfig.from_mapping(data)
-
-            lead = config.pi
-            lead_label = "PI"
-
+            config_type, lead_field, lead_label = AgentTeamConfig, "pi", "PI"
         elif environment_type == "agent_symposium":
-            config = AgentSymposiumConfig.from_mapping(data)
-
-            lead = config.organizer
-            lead_label = "Organizer"
-
+            config_type, lead_field, lead_label = (
+                AgentSymposiumConfig,
+                "organizer",
+                "Organizer",
+            )
         else:
-            config = AgentEloConfig.from_mapping(data)
-
-            lead = None
-            lead_label = None
+            config_type, lead_field, lead_label = AgentEloConfig, None, None
+        config = config_type.from_mapping(data)
+        lead = getattr(config, lead_field) if lead_field is not None else None
 
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Invalid environment configuration: {exc}") from exc
@@ -405,31 +385,24 @@ class EnvironmentRunManager:
         name = launch.config.name
 
         if launch.environment_type == "agent_team":
-            definition_path = (
-                team_cache_dir(
-                    self.group,
-                    name,
-                )
-                / "team.yaml"
-            )
-
+            cache_dir = team_cache_dir
+            config_type = AgentTeamConfig
+            save_config = save_team_config
+            filename = "team.yaml"
+            class_name = "AgentTeamEnvironment"
         elif launch.environment_type == "agent_symposium":
-            definition_path = (
-                symposium_cache_dir(
-                    self.group,
-                    name,
-                )
-                / "symposium.yaml"
-            )
-
+            cache_dir = symposium_cache_dir
+            config_type = AgentSymposiumConfig
+            save_config = save_symposium_config
+            filename = "symposium.yaml"
+            class_name = "AgentSymposiumEnvironment"
         else:
-            definition_path = (
-                elo_cache_dir(
-                    self.group,
-                    name,
-                )
-                / "elo.yaml"
-            )
+            cache_dir = elo_cache_dir
+            config_type = AgentEloConfig
+            save_config = save_elo_config
+            filename = "elo.yaml"
+            class_name = "AgentEloEnvironment"
+        definition_path = cache_dir(self.group, name) / filename
 
         definition_matches = False
         if definition_path.exists():
@@ -440,51 +413,14 @@ class EnvironmentRunManager:
                 if isinstance(existing, Mapping):
                     existing_mapping = dict(existing)
                     existing_mapping["group"] = self.group
-                    if launch.environment_type == "agent_team":
-                        existing_config = AgentTeamConfig.from_mapping(
-                            existing_mapping
-                        )
-
-                    elif launch.environment_type == "agent_symposium":
-                        existing_config = AgentSymposiumConfig.from_mapping(
-                            existing_mapping
-                        )
-
-                    else:
-                        existing_config = AgentEloConfig.from_mapping(
-                            existing_mapping
-                        )
+                    existing_config = config_type.from_mapping(existing_mapping)
                     definition_matches = (
                         _plain(existing_config) == launch.config_mapping
                     )
             if not replace_existing and not definition_matches:
                 raise EnvironmentDefinitionExistsError(definition_path)
-        if launch.environment_type == "agent_team":
-            if replace_existing or not definition_path.exists():
-                save_team_config(
-                    launch.config,
-                    definition_path,
-                )
-
-            class_name = "AgentTeamEnvironment"
-
-        elif launch.environment_type == "agent_symposium":
-            if replace_existing or not definition_path.exists():
-                save_symposium_config(
-                    launch.config,
-                    definition_path,
-                )
-
-            class_name = "AgentSymposiumEnvironment"
-
-        else:
-            if replace_existing or not definition_path.exists():
-                save_elo_config(
-                    launch.config,
-                    definition_path,
-                )
-
-            class_name = "AgentEloEnvironment"
+        if replace_existing or not definition_path.exists():
+            save_config(launch.config, definition_path)
 
         effective_run_id = (
             _validate_simple_name(run_id, label="Run ID")
@@ -619,8 +555,6 @@ class EnvironmentRunManager:
                 if manifest.get("status") == "cancelled":
                     continue
                 await self._execute(run_id)
-            except asyncio.CancelledError:
-                raise
             except Exception as exc:
                 with contextlib.suppress(Exception):
                     self._update_manifest(
@@ -747,20 +681,16 @@ class EnvironmentRunManager:
             self._update_manifest(
                 run_id, {"status": "running", "runtime": {"pid": proc.pid}}
             )
-        stdout_task = asyncio.create_task(
-            self._drain(
-                proc.stdout,
-                paths.logs_dir / "stdout.log",
-                self.config.stdout_cap_bytes,
+        stream_tasks = [
+            asyncio.create_task(
+                self._drain(
+                    getattr(proc, name),
+                    paths.logs_dir / f"{name}.log",
+                    getattr(self.config, f"{name}_cap_bytes"),
+                )
             )
-        )
-        stderr_task = asyncio.create_task(
-            self._drain(
-                proc.stderr,
-                paths.logs_dir / "stderr.log",
-                self.config.stderr_cap_bytes,
-            )
-        )
+            for name in ("stdout", "stderr")
+        ]
         timeout = (launch.get("runner") or {}).get("timeout_seconds")
         timed_out = False
         try:
@@ -778,9 +708,7 @@ class EnvironmentRunManager:
                 proc.kill()
                 await proc.wait()
         finally:
-            await asyncio.gather(
-                stdout_task, stderr_task, return_exceptions=True
-            )
+            await asyncio.gather(*stream_tasks, return_exceptions=True)
         inflight = self._inflight.pop(run_id, None)
         if inflight and inflight.cancel_requested:
             self._update_manifest(
@@ -810,22 +738,7 @@ class EnvironmentRunManager:
     @staticmethod
     def _worker_environment(launch: Mapping[str, Any]) -> dict[str, str]:
         env = dict(os.environ)
-        secret_markers = (
-            "api_key",
-            "apikey",
-            "access_token",
-            "refresh_token",
-            "secret",
-            "password",
-            "credential",
-            "bearer",
-        )
-        for name in list(env):
-            lowered = name.lower()
-            if any(
-                marker in lowered for marker in secret_markers
-            ) or lowered.endswith("_token"):
-                env.pop(name, None)
+        _remove_worker_secrets(env)
         env["PYTHONUNBUFFERED"] = "1"
         project_root = str(Path(__file__).resolve().parent.parent)
         existing = env.get("PYTHONPATH")

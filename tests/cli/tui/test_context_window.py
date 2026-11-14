@@ -10,8 +10,7 @@ from textual.widgets import Static
 
 from tests.cli._app_fakes import FakeHITL
 from tests.tui.utils import await_workers
-from ursa.cli.config import ChatModelConfig, UrsaConfig
-from ursa.cli.runtime import HITL
+from ursa.cli.config import ChatModelConfig
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.turn import Turn
@@ -40,21 +39,13 @@ async def test_context_display(
         pytest.fail("Status must not validate or initialize a model")
 
     monkeypatch.setattr(
-        "ursa.cli.runtime.validate_model_provider", unexpected_initialization
-    )
-    monkeypatch.setattr(
         ChatModelConfig, "init_chat_model", unexpected_initialization
     )
-    hitl = HITL(
-        UrsaConfig(
-            workspace=tmp_path,
-            tokens_before_summarize=12000,
-            agent_config={"chat": {"tokens_before_summarize": 1000}},
-        )
-    )
+    hitl = FakeHITL(tmp_path)
+    hitl.config.tokens_before_summarize = 12000
+    hitl.config.agent_config = {"chat": {"tokens_before_summarize": 1000}}
     model = SimpleNamespace(**metadata) if metadata is not None else None
-    if model is not None:
-        hitl.model = model
+    hitl.model = model
     app = UrsaTextualApp(hitl)
 
     async with app.run_test(size=(60, 24)) as pilot:

@@ -1,12 +1,19 @@
 import logging
+from contextlib import AsyncExitStack, nullcontext
 from io import StringIO
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
-from langchain.tools import ToolRuntime
 
-from ursa.agents.base import AgentContext
+from tests.event_fixtures import (
+    FIXED_MONOTONIC_TIMESTAMP_NS,
+)
+from tests.event_fixtures import (
+    fixed_monotonic_timestamp as fixed_monotonic_timestamp,
+)
+from tests.tools.utils import make_runtime
 from ursa.util.events import (
     AgentEvents,
     EnvironmentEvents,
@@ -20,30 +27,44 @@ from ursa.util.rendering import (
     file_artifact,
 )
 
-FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
+
+@pytest.fixture
+def dispatch(monkeypatch):
+    mock = Mock()
+    monkeypatch.setattr("ursa.util.events.dispatch_custom_event", mock)
+    return mock
 
 
-@pytest.fixture(autouse=True)
-def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "ursa.util.events.monotonic_ns",
-        lambda: FIXED_MONOTONIC_TIMESTAMP_NS,
+@pytest.fixture
+def log_record():
+    return logging.LogRecord(
+        name="ursa.util.events",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="raw event message",
+        args=(),
+        exc_info=None,
     )
 
 
-def test_emit_dispatches_structured_payload(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[str, dict, dict]] = []
+@pytest.fixture
+def tool_runtime():
+    def create(agent_name, metadata, call_id):
+        return make_runtime(
+            workspace=Path("workspace"),
+            llm=None,
+            den=Path("workspace"),
+            agent_name=agent_name,
+            limit=30000,
+            config={"metadata": metadata},
+            tool_call_id=call_id,
+        )
 
-    def fake_dispatch(event_name: str, payload: dict, config: dict) -> None:
-        calls.append((event_name, payload, config))
+    return create
 
-    monkeypatch.setattr(
-        "ursa.util.events.dispatch_custom_event",
-        fake_dispatch,
-    )
 
+def test_emit_dispatches_structured_payload(dispatch) -> None:
     config = {"metadata": {"thread_id": "thread-1"}}
     events = AgentEvents(agent="planner", config=config)
     payload = events.emit(
@@ -59,39 +80,19 @@ def test_emit_dispatches_structured_payload(
         "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
         "step_count": 2,
     }
-    assert calls == [("ursa_agent_progress", payload, config)]
-
-
-def test_emit_is_noop_without_config(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    called = False
-
-    def fake_dispatch(*args, **kwargs) -> None:
-        nonlocal called
-        called = True
-
-    monkeypatch.setattr(
-        "ursa.util.events.dispatch_custom_event",
-        fake_dispatch,
+    dispatch.assert_called_once_with(
+        "ursa_agent_progress", payload, config=config
     )
 
+
+def test_emit_is_noop_without_config(dispatch) -> None:
     events = AgentEvents(agent="planner", config=None)
     assert events.emit("Drafting plan", stage="generate") is None
-    assert called is False
+    dispatch.assert_not_called()
 
 
-def test_emit_propagates_dispatch_errors(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fake_dispatch(*args, **kwargs) -> None:
-        raise RuntimeError("dispatch failed")
-
-    monkeypatch.setattr(
-        "ursa.util.events.dispatch_custom_event",
-        fake_dispatch,
-    )
-
+def test_emit_propagates_dispatch_errors(dispatch) -> None:
+    dispatch.side_effect = RuntimeError("dispatch failed")
     with pytest.raises(RuntimeError, match="dispatch failed"):
         AgentEvents(
             agent="planner",
@@ -124,51 +125,28 @@ def test_event_logging_handler_logs_structured_payload(
     ]
 
 
-def test_configure_event_logging_sets_console_handler(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+@pytest.mark.parametrize("rich", [True, False])
+def test_configure_event_logging_sets_console_handler(monkeypatch, rich):
     root_logger = logging.getLogger()
-    original_handlers = list(root_logger.handlers)
-    original_level = root_logger.level
     ursa_logger = logging.getLogger("ursa")
-    original_ursa_level = ursa_logger.level
+    original_levels = root_logger.level, ursa_logger.level
     monkeypatch.setattr(root_logger, "handlers", [])
-
     try:
-        configure_event_logging()
+        if rich:
+            configure_event_logging()
+        else:
+            configure_event_logging(rich=False)
 
         assert len(root_logger.handlers) == 1
-        assert isinstance(
-            root_logger.handlers[0].formatter, EventConsoleFormatter
-        )
+        formatter = root_logger.handlers[0].formatter
+        assert isinstance(formatter, EventConsoleFormatter)
+        assert formatter.render_artifacts is rich
         assert root_logger.level == logging.WARNING
         assert ursa_logger.level == logging.INFO
     finally:
-        root_logger.handlers = original_handlers
-        root_logger.setLevel(original_level)
-        ursa_logger.setLevel(original_ursa_level)
-
-
-def test_configure_event_logging_can_disable_rich_artifacts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    root_logger = logging.getLogger()
-    original_handlers = list(root_logger.handlers)
-    original_level = root_logger.level
-    ursa_logger = logging.getLogger("ursa")
-    original_ursa_level = ursa_logger.level
-    monkeypatch.setattr(root_logger, "handlers", [])
-
-    try:
-        configure_event_logging(rich=False)
-
-        formatter = root_logger.handlers[0].formatter
-        assert isinstance(formatter, EventConsoleFormatter)
-        assert formatter.render_artifacts is False
-    finally:
-        root_logger.handlers = original_handlers
-        root_logger.setLevel(original_level)
-        ursa_logger.setLevel(original_ursa_level)
+        # setLevel also clears logging's enabled-level cache.
+        root_logger.setLevel(original_levels[0])
+        ursa_logger.setLevel(original_levels[1])
 
 
 def test_event_console_formatter_renders_readable_event() -> None:
@@ -204,78 +182,44 @@ def test_event_console_formatter_renders_readable_event() -> None:
         logger.propagate = True
 
 
-def test_event_console_formatter_renders_mime_artifact() -> None:
-    formatter = EventConsoleFormatter()
-    record = logging.LogRecord(
-        name="ursa.util.events",
-        level=logging.INFO,
-        pathname=__file__,
-        lineno=1,
-        msg="raw event message",
-        args=(),
-        exc_info=None,
-    )
-    record.ursa_event_payload = {
-        "tool": "edit_code",
-        "stage": "edit",
-        "phase": "end",
-        "message": "File updated",
-        "artifact": event_artifact(
-            "--- app.py\n+++ app.py\n-old\n+new",
-            "text/x-diff",
-            metadata={"title": "Edit diff", "path": "app.py"},
-        ),
-    }
-
-    rendered = formatter.format(record)
-
-    assert "[ursa] edit_code edit/end: File updated" in rendered
-    assert "Edit diff" in rendered
-    assert "-old" in rendered
-    assert "+new" in rendered
-
-
-def test_event_console_formatter_can_omit_mime_artifact() -> None:
-    formatter = EventConsoleFormatter(render_artifacts=False)
-    record = logging.LogRecord(
-        name="ursa.util.events",
-        level=logging.INFO,
-        pathname=__file__,
-        lineno=1,
-        msg="raw event message",
-        args=(),
-        exc_info=None,
-    )
-    record.ursa_event_payload = {
-        "tool": "edit_code",
-        "stage": "edit",
-        "phase": "end",
-        "message": "File updated",
-        "artifact": event_artifact(
-            "--- app.py\n+++ app.py\n-old\n+new",
-            "text/x-diff",
-            metadata={"title": "Edit diff", "path": "app.py"},
-        ),
-    }
-
-    rendered = formatter.format(record)
-
-    assert rendered == "[ursa] edit_code edit/end: File updated"
-
-
-def test_event_console_formatter_renders_multiple_artifacts_side_by_side() -> (
-    None
+@pytest.mark.parametrize("render_artifacts", [True, False])
+def test_event_console_formatter_renders_mime_artifact(
+    log_record, render_artifacts
 ):
-    formatter = EventConsoleFormatter(force_terminal=False)
-    record = logging.LogRecord(
-        name="ursa.util.events",
-        level=logging.INFO,
-        pathname=__file__,
-        lineno=1,
-        msg="raw event message",
-        args=(),
-        exc_info=None,
+    formatter = (
+        EventConsoleFormatter()
+        if render_artifacts
+        else EventConsoleFormatter(render_artifacts=False)
     )
+    record = log_record
+    record.ursa_event_payload = {
+        "tool": "edit_code",
+        "stage": "edit",
+        "phase": "end",
+        "message": "File updated",
+        "artifact": event_artifact(
+            "--- app.py\n+++ app.py\n-old\n+new",
+            "text/x-diff",
+            metadata={"title": "Edit diff", "path": "app.py"},
+        ),
+    }
+
+    rendered = formatter.format(record)
+
+    if render_artifacts:
+        assert "[ursa] edit_code edit/end: File updated" in rendered
+        assert "Edit diff" in rendered
+        assert "-old" in rendered
+        assert "+new" in rendered
+    else:
+        assert rendered == "[ursa] edit_code edit/end: File updated"
+
+
+def test_event_console_formatter_renders_multiple_artifacts_side_by_side(
+    log_record,
+) -> None:
+    formatter = EventConsoleFormatter(force_terminal=False)
+    record = log_record
     record.ursa_event_payload = {
         "tool": "run_command",
         "stage": "execute",
@@ -306,17 +250,11 @@ def test_event_console_formatter_renders_multiple_artifacts_side_by_side() -> (
     )
 
 
-def test_event_console_formatter_renders_structured_json_content() -> None:
+def test_event_console_formatter_renders_structured_json_content(
+    log_record,
+) -> None:
     formatter = EventConsoleFormatter()
-    record = logging.LogRecord(
-        name="ursa.util.events",
-        level=logging.INFO,
-        pathname=__file__,
-        lineno=1,
-        msg="raw event message",
-        args=(),
-        exc_info=None,
-    )
+    record = log_record
     record.ursa_event_payload = {
         "tool": "inspect",
         "stage": "result",
@@ -335,20 +273,12 @@ def test_event_console_formatter_renders_structured_json_content() -> None:
 
 
 def test_event_console_formatter_renders_referenced_file_contents(
-    tmp_path: Path,
+    tmp_path: Path, log_record
 ) -> None:
     target = tmp_path / "example.py"
     target.write_text("print('highlight me')\n", encoding="utf-8")
     formatter = EventConsoleFormatter()
-    record = logging.LogRecord(
-        name="ursa.util.events",
-        level=logging.INFO,
-        pathname=__file__,
-        lineno=1,
-        msg="raw event message",
-        args=(),
-        exc_info=None,
-    )
+    record = log_record
     record.ursa_event_payload = {
         "tool": "read_file",
         "stage": "read",
@@ -363,19 +293,7 @@ def test_event_console_formatter_renders_referenced_file_contents(
     assert "print('highlight me')" in rendered
 
 
-def test_environment_events_include_environment_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[str, dict, dict]] = []
-
-    def fake_dispatch(event_name: str, payload: dict, config: dict) -> None:
-        calls.append((event_name, payload, config))
-
-    monkeypatch.setattr(
-        "ursa.util.events.dispatch_custom_event",
-        fake_dispatch,
-    )
-
+def test_environment_events_include_environment_metadata(dispatch) -> None:
     config = {"metadata": {"thread_id": "thread-env"}}
     events = EnvironmentEvents(
         environment="team",
@@ -396,36 +314,15 @@ def test_environment_events_include_environment_metadata(
         "path": ["team"],
         "phase": "start",
     }
-    assert calls == [("ursa_agent_progress", payload, config)]
+    dispatch.assert_called_once_with(
+        "ursa_agent_progress", payload, config=config
+    )
 
 
 def test_tool_events_emit_tool_payload_from_runtime(
-    monkeypatch: pytest.MonkeyPatch,
+    dispatch, tool_runtime
 ) -> None:
-    calls: list[tuple[str, dict, dict]] = []
-
-    def fake_dispatch(event_name: str, payload: dict, config: dict) -> None:
-        calls.append((event_name, payload, config))
-
-    monkeypatch.setattr(
-        "ursa.util.events.dispatch_custom_event",
-        fake_dispatch,
-    )
-
-    runtime = ToolRuntime(
-        state={},
-        context=AgentContext(
-            llm=None,
-            workspace=Path("workspace"),
-            den=Path("workspace"),
-            agent_name=None,
-            group="default",
-        ),
-        config={"metadata": {"thread_id": "thread-9"}},
-        stream_writer=lambda _: None,
-        tool_call_id="tool-call-9",
-        store=None,
-    )
+    runtime = tool_runtime(None, {"thread_id": "thread-9"}, "tool-call-9")
 
     events = ToolEvents.from_runtime("write_code", runtime)
     payload = events.emit(
@@ -442,35 +339,16 @@ def test_tool_events_emit_tool_payload_from_runtime(
         "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
         "path": "workspace/sample.py",
     }
-    assert calls == [("ursa_agent_progress", payload, runtime.config)]
+    dispatch.assert_called_once_with(
+        "ursa_agent_progress", payload, config=runtime.config
+    )
 
 
 def test_tool_events_include_owner_from_named_agent_context(
-    monkeypatch: pytest.MonkeyPatch,
+    dispatch, tool_runtime
 ) -> None:
-    calls: list[tuple[str, dict, dict]] = []
-
-    def fake_dispatch(event_name: str, payload: dict, config: dict) -> None:
-        calls.append((event_name, payload, config))
-
-    monkeypatch.setattr(
-        "ursa.util.events.dispatch_custom_event",
-        fake_dispatch,
-    )
-
-    runtime = ToolRuntime(
-        state={},
-        context=AgentContext(
-            llm=None,
-            workspace=Path("workspace"),
-            den=Path("workspace"),
-            agent_name="dummy_bot_3000",
-            group="default",
-        ),
-        config={"metadata": {"thread_id": "thread-10"}},
-        stream_writer=lambda _: None,
-        tool_call_id="tool-call-10",
-        store=None,
+    runtime = tool_runtime(
+        "dummy_bot_3000", {"thread_id": "thread-10"}, "tool-call-10"
     )
 
     events = ToolEvents.from_runtime("write_code", runtime)
@@ -483,43 +361,24 @@ def test_tool_events_include_owner_from_named_agent_context(
     assert payload["tool"] == "write_code"
     assert payload["agent"] == "dummy_bot_3000"
     assert payload["tool_call_id"] == "tool-call-10"
-    assert calls == [("ursa_agent_progress", payload, runtime.config)]
+    dispatch.assert_called_once_with(
+        "ursa_agent_progress", payload, config=runtime.config
+    )
 
 
 def test_tool_events_include_owner_payload_from_runtime_metadata(
-    monkeypatch: pytest.MonkeyPatch,
+    dispatch, tool_runtime
 ) -> None:
-    calls: list[tuple[str, dict, dict]] = []
-
-    def fake_dispatch(event_name: str, payload: dict, config: dict) -> None:
-        calls.append((event_name, payload, config))
-
-    monkeypatch.setattr(
-        "ursa.util.events.dispatch_custom_event",
-        fake_dispatch,
-    )
-
-    runtime = ToolRuntime(
-        state={},
-        context=AgentContext(
-            llm=None,
-            workspace=Path("workspace"),
-            den=Path("workspace"),
-            agent_name="fallback_agent",
-            group="default",
-        ),
-        config={
-            "metadata": {
-                "environment_id": "team",
-                "environment_member": "analyst",
-                "environment_member_id": "team.analyst",
-                "environment_member_role": "analysis",
-                "environment_member_path": ["team", "analyst"],
-            }
+    runtime = tool_runtime(
+        "fallback_agent",
+        {
+            "environment_id": "team",
+            "environment_member": "analyst",
+            "environment_member_id": "team.analyst",
+            "environment_member_role": "analysis",
+            "environment_member_path": ["team", "analyst"],
         },
-        stream_writer=lambda _: None,
-        tool_call_id="tool-call-10",
-        store=None,
+        "tool-call-10",
     )
 
     events = ToolEvents.from_runtime("run_web_search", runtime)
@@ -534,108 +393,79 @@ def test_tool_events_include_owner_payload_from_runtime_metadata(
     assert payload["environment_member_id"] == "team.analyst"
     assert payload["environment_member_role"] == "analysis"
     assert payload["environment_member_path"] == ["team", "analyst"]
-    assert calls == [("ursa_agent_progress", payload, runtime.config)]
-
-
-def test_range_emits_start_and_end(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[dict] = []
-
-    def fake_dispatch(event_name: str, payload: dict, config: dict) -> None:
-        assert event_name == "ursa_agent_progress"
-        assert config == {"callbacks": []}
-        calls.append(payload)
-
-    monkeypatch.setattr(
-        "ursa.util.events.dispatch_custom_event",
-        fake_dispatch,
+    dispatch.assert_called_once_with(
+        "ursa_agent_progress", payload, config=runtime.config
     )
 
-    events = AgentEvents(agent="planner", config={"callbacks": []})
-    with events.range(
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("failure", [False, True])
+async def test_range_emits_start_and_terminal_payload(
+    monkeypatch, asynchronous, failure
+):
+    dispatch = AsyncMock() if asynchronous else Mock()
+    method = (
+        "adispatch_custom_event" if asynchronous else "dispatch_custom_event"
+    )
+    monkeypatch.setattr(f"ursa.util.events.{method}", dispatch)
+    config = {"callbacks": []}
+    events = AgentEvents(agent="planner", config=config)
+    iteration = 2 if failure else 1
+    steps = 1 if failure else 3
+    span = events.range(
         "generate",
         "Drafting plan",
         done="Plan ready",
-        iteration=1,
-    ) as span:
-        span.update(step_count=3)
+        error="Plan failed",
+        iteration=iteration,
+    )
+    with (
+        pytest.raises(RuntimeError, match="boom") if failure else nullcontext()
+    ):
+        async with AsyncExitStack() as stack:
+            if asynchronous:
+                await stack.enter_async_context(span)
+            else:
+                stack.enter_context(span)
+            span.update(step_count=steps)
+            if failure:
+                raise RuntimeError("boom")
 
-    assert calls[0] == {
+    assert len(dispatch.call_args_list) == 2
+    if asynchronous:
+        assert dispatch.await_count == 2
+    for call in dispatch.call_args_list:
+        assert call.args[0] == "ursa_agent_progress"
+        assert call.kwargs == {"config": config}
+    start, end = (call.args[1] for call in dispatch.call_args_list)
+    assert start == {
         "agent": "planner",
         "stage": "generate",
         "message": "Drafting plan",
         "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
         "phase": "start",
-        "iteration": 1,
+        "iteration": iteration,
     }
-    assert calls[1]["agent"] == "planner"
-    assert calls[1]["stage"] == "generate"
-    assert calls[1]["message"] == "Plan ready"
-    assert calls[1]["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS
-    assert calls[1]["phase"] == "end"
-    assert calls[1]["iteration"] == 1
-    assert calls[1]["step_count"] == 3
-    assert isinstance(calls[1]["elapsed_ms"], float)
+    assert end["agent"] == "planner"
+    assert end["stage"] == "generate"
+    assert end["message"] == ("Plan failed" if failure else "Plan ready")
+    assert end["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS
+    assert end["phase"] == ("error" if failure else "end")
+    assert end["iteration"] == iteration
+    assert end["step_count"] == steps
+    assert isinstance(end["elapsed_ms"], float)
+    if failure:
+        assert end["error_type"] == "RuntimeError"
+        assert end["error"] == "boom"
 
 
-def test_range_emits_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[dict] = []
-
-    def fake_dispatch(event_name: str, payload: dict, config: dict) -> None:
-        assert event_name == "ursa_agent_progress"
-        assert config == {"callbacks": []}
-        calls.append(payload)
-
-    monkeypatch.setattr(
-        "ursa.util.events.dispatch_custom_event",
-        fake_dispatch,
-    )
-
-    events = AgentEvents(agent="planner", config={"callbacks": []})
-    with (
-        pytest.raises(RuntimeError, match="boom"),
-        events.range(
-            "generate",
-            "Drafting plan",
-            error="Plan failed",
-            iteration=2,
-        ) as span,
-    ):
-        span.update(step_count=1)
-        raise RuntimeError("boom")
-
-    assert calls[0]["phase"] == "start"
-    assert calls[0]["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS
-    assert calls[1]["phase"] == "error"
-    assert calls[1]["message"] == "Plan failed"
-    assert calls[1]["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS
-    assert calls[1]["error_type"] == "RuntimeError"
-    assert calls[1]["error"] == "boom"
-    assert calls[1]["iteration"] == 2
-    assert calls[1]["step_count"] == 1
-
-
-@pytest.mark.asyncio
 async def test_aemit_dispatches_and_async_range_works(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[dict] = []
-
-    async def fake_dispatch(
-        event_name: str,
-        payload: dict,
-        config: dict,
-    ) -> None:
-        assert event_name == "ursa_agent_progress"
-        assert config == {"callbacks": []}
-        calls.append(payload)
-
+    dispatch = AsyncMock(return_value=None)
     monkeypatch.setattr(
         "ursa.util.events.adispatch_custom_event",
-        fake_dispatch,
+        dispatch,
     )
 
     events = AgentEvents(agent="acquisition", config={"callbacks": []})
@@ -660,6 +490,11 @@ async def test_aemit_dispatches_and_async_range_works(
     ) as span:
         span.update(query="cooling load")
 
+    assert dispatch.await_count == dispatch.call_count == 3
+    for call in dispatch.await_args_list:
+        assert call.args[0] == "ursa_agent_progress"
+        assert call.kwargs == {"config": {"callbacks": []}}
+    calls = [call.args[1] for call in dispatch.await_args_list]
     assert calls[0] == payload
     assert calls[1]["phase"] == "start"
     assert calls[1]["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS

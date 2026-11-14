@@ -29,7 +29,7 @@ from ursa.util.health import (
     probe_mcp_server,
     run_probe_with_deadline,
 )
-from ursa.util.secrets import SecretReference, SecretTemplate
+from ursa.util.secrets import SecretReference
 
 _FAILURES = (Exception, SystemExit, asyncio.CancelledError)
 
@@ -222,16 +222,19 @@ def _resolve_secret(
     if cached is not None:
         return cached
     try:
-        value = SecretReference.get_secret_value(reference, default_username)
-        if value is None:
+        raw_reference = reference.model_copy(update={"template": "%s"})
+        raw_value = SecretReference.get_secret_value(
+            raw_reference, default_username
+        )
+        if raw_value is None:
             raise ValueError(
                 f"Secret source {source[0]} '{source[1]}' is not set"
             )
     except _FAILURES as exc:
         context.credentials[source] = exc
         raise
-    context.credentials[source] = value
-    return value
+    context.credentials[source] = raw_value
+    return reference.template % raw_value
 
 
 def _resolve_api_key(
@@ -265,11 +268,11 @@ def _resolve_mcp_server(
         return server, tuple(secrets)
     resolved = dict(headers)
     for header, value in headers.items():
-        reference = SecretTemplate.maybe_validate(value)
-        if isinstance(reference, SecretTemplate):
-            secret = _resolve_secret(context, reference, name)
-            resolved[header] = rendered = reference.template % secret
-            secrets.extend((secret, rendered))
+        reference = SecretReference.maybe_validate(value)
+        if isinstance(reference, SecretReference):
+            rendered = _resolve_secret(context, reference, name)
+            resolved[header] = rendered
+            secrets.append(rendered)
         elif isinstance(value, str):
             secrets.append(value)
     return server.model_copy(update={"headers": resolved}), tuple(secrets)

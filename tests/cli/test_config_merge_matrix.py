@@ -6,6 +6,12 @@ from pydantic import SecretStr
 from ursa.cli.config import UrsaConfig
 from ursa.util.secrets import SecretReference
 
+
+def shared_provider(**settings):
+    """Build a sparse config layer for the shared test provider."""
+    return {"inference_providers": {"shared": settings}}
+
+
 MERGE_CASES = [
     pytest.param(
         {
@@ -31,54 +37,29 @@ MERGE_CASES = [
         id="mappings-recurse-and-scalars-replace",
     ),
     pytest.param(
-        {
-            "inference_providers": {
-                "shared": {
-                    "base_url": "https://models.example/v1",
-                    "timeout": 10,
-                    "client_options": {"a": 1},
-                }
-            }
-        },
-        {
-            "inference_providers": {
-                "shared": {
-                    "ssl_verify": False,
-                    "timeout": 20,
-                    "client_options": {"b": 2},
-                }
-            }
-        },
-        {
-            "inference_providers": {
-                "shared": {
-                    "base_url": "https://models.example/v1",
-                    "ssl_verify": False,
-                    "timeout": 20,
-                    "client_options": {"a": 1, "b": 2},
-                }
-            }
-        },
+        shared_provider(
+            base_url="https://models.example/v1",
+            timeout=10,
+            client_options={"a": 1},
+        ),
+        shared_provider(ssl_verify=False, timeout=20, client_options={"b": 2}),
+        shared_provider(
+            base_url="https://models.example/v1",
+            ssl_verify=False,
+            timeout=20,
+            client_options={"a": 1, "b": 2},
+        ),
         id="provider-settings-merge-recursively",
     ),
     pytest.param(
-        {
-            "inference_providers": {
-                "shared": {
-                    "base_url": "https://models.example/v1",
-                    "api_key": {"env": "SHARED_API_KEY"},
-                }
-            }
-        },
-        {"inference_providers": {"shared": {"api_key": {"keyring": True}}}},
-        {
-            "inference_providers": {
-                "shared": {
-                    "base_url": "https://models.example/v1",
-                    "api_key": {"keyring": True},
-                }
-            }
-        },
+        shared_provider(
+            base_url="https://models.example/v1",
+            api_key={"env": "SHARED_API_KEY"},
+        ),
+        shared_provider(api_key={"keyring": True}),
+        shared_provider(
+            base_url="https://models.example/v1", api_key={"keyring": True}
+        ),
         id="secret-references-replace-atomically",
     ),
     pytest.param(
@@ -158,12 +139,8 @@ def test_incomplete_optional_model_fails_after_all_layers():
 def test_legacy_provider_api_key_env_wins_over_lower_api_key():
     with pytest.warns(DeprecationWarning, match="api_key_env is deprecated"):
         result = UrsaConfig().model_merge(
-            {
-                "inference_providers": {
-                    "shared": {"api_key": {"keyring": "old"}}
-                }
-            },
-            {"inference_providers": {"shared": {"api_key_env": "NEW_API_KEY"}}},
+            shared_provider(api_key={"keyring": "old"}),
+            shared_provider(api_key_env="NEW_API_KEY"),
         )
 
     assert result.inference_providers["shared"].api_key == SecretReference(
@@ -174,12 +151,8 @@ def test_legacy_provider_api_key_env_wins_over_lower_api_key():
 def test_invalid_higher_priority_secret_does_not_inherit_lower_source():
     with pytest.raises(ValueError, match="exactly one source"):
         UrsaConfig().model_merge(
-            {
-                "inference_providers": {
-                    "shared": {"api_key": {"env": "OLD_API_KEY"}}
-                }
-            },
-            {"inference_providers": {"shared": {"api_key": {}}}},
+            shared_provider(api_key={"env": "OLD_API_KEY"}),
+            shared_provider(api_key={}),
         )
 
 
@@ -220,6 +193,71 @@ def test_partial_default_provider_update_is_inherited_by_default_model():
     assert resolved.llm_model.ssl_verify is False
 
 
+def test_subagent_config_layers_merge_limits_and_model_options():
+    merged = UrsaConfig().model_merge(
+        {
+            "subagents": {
+                "max_agents": 8,
+                "llm_model": {
+                    "model": "openai:gpt-5-mini",
+                    "max_completion_tokens": 512,
+                },
+            }
+        },
+        {
+            "subagents": {
+                "max_depth": 2,
+                "llm_model": {"max_completion_tokens": 1024},
+            }
+        },
+    )
+
+    assert merged.subagents.max_agents == 8
+    assert merged.subagents.max_depth == 2
+    assert merged.subagents.llm_model is not None
+    assert merged.subagents.llm_model.model == "gpt-5-mini"
+    assert merged.subagents.llm_model.max_completion_tokens == 1024
+
+
+def test_subagent_null_limit_overrides_a_finite_limit():
+    merged = UrsaConfig().model_merge(
+        {"subagents": {"max_agents": 4, "max_depth": 2}},
+        {"subagents": {"max_agents": None, "max_depth": None}},
+    )
+
+    assert merged.subagents.max_agents is None
+    assert merged.subagents.max_depth is None
+
+
+def test_subagent_models_resolve_named_inference_providers():
+    config = UrsaConfig(
+        inference_providers={
+            "children": {"base_url": "https://children.example/v1"}
+        },
+        subagents={
+            "llm_model": {
+                "model": "openai:child-chat",
+                "inference_provider": "children",
+            },
+            "embedding_model": {
+                "model": "openai:child-embedding",
+                "inference_provider": "children",
+            },
+        },
+    )
+
+    resolved = config.resolve()
+
+    assert resolved.subagents.llm_model is not None
+    assert resolved.subagents.llm_model.base_url == (
+        "https://children.example/v1"
+    )
+    assert resolved.subagents.embedding_model is not None
+    assert resolved.subagents.embedding_model.base_url == (
+        "https://children.example/v1"
+    )
+
+
 def test_ollama_provider_base_url_reaches_runtime_model():
     """Test for Issue #358, fixed in PR#352"""
 
@@ -243,12 +281,8 @@ def test_ollama_provider_base_url_reaches_runtime_model():
 
 def test_literal_secret_replaces_secret_reference():
     result = UrsaConfig().model_merge(
-        {
-            "inference_providers": {
-                "shared": {"api_key": {"env": "SHARED_API_KEY"}}
-            }
-        },
-        {"inference_providers": {"shared": {"api_key": "literal"}}},
+        shared_provider(api_key={"env": "SHARED_API_KEY"}),
+        shared_provider(api_key="literal"),
     )
 
     api_key = result.inference_providers["shared"].api_key

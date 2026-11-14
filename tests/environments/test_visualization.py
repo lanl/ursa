@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
+from tests.environments.test_environments import Message, fake_llm
 from ursa import security
 from ursa.environments import (
     AgentSymposiumEnvironment,
@@ -20,20 +20,6 @@ from ursa.environments.visualization import (
     read_environment_run_events,
     read_environment_run_manifest,
 )
-
-
-class Message:
-    def __init__(self, text: str):
-        self.text = text
-
-
-class ToolCapableFakeChatModel(FakeListChatModel):
-    def bind_tools(self, tools, *, tool_choice=None, **kwargs):
-        return self
-
-
-def fake_llm():
-    return ToolCapableFakeChatModel(responses=["unused"])
 
 
 class VisualMember:
@@ -135,7 +121,6 @@ def test_run_with_visualization_records_team_delegation_and_forwards_config(
     assert metadata["agent_id"] == "visual_team.analyst"
 
 
-@pytest.mark.asyncio
 async def test_arun_with_visualization_records_symposium_events(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

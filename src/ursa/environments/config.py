@@ -80,8 +80,8 @@ def _inference_providers(
 
 
 @dataclass(frozen=True)
-class AgentTeamConfig:
-    """YAML-loadable configuration for an Agent Team environment."""
+class _MemberEnvironmentConfig:
+    """Shared settings and member loading for teams and symposia."""
 
     name: str
     group: str = "default"
@@ -89,6 +89,29 @@ class AgentTeamConfig:
     inference_providers: dict[str, InferenceProviderConfig] = field(
         default_factory=dict
     )
+
+    @classmethod
+    def _from_mapping(cls, data: Mapping[str, Any], leader: str) -> Self:
+        raw = dict(data)
+        providers = _inference_providers(raw.get("inference_providers") or {})
+        raw["inference_providers"] = providers
+        group = str(raw.get("group") or "default")
+        if leader in raw and isinstance(raw[leader], Mapping):
+            raw[leader] = EnvironmentMemberConfig.from_mapping(
+                raw[leader], providers, group
+            )
+        if "members" in raw:
+            raw["members"] = [
+                EnvironmentMemberConfig.from_mapping(member, providers, group)
+                for member in raw["members"]
+            ]
+        return cls(**raw)
+
+
+@dataclass(frozen=True)
+class AgentTeamConfig(_MemberEnvironmentConfig):
+    """YAML-loadable configuration for an Agent Team environment."""
+
     pi: EnvironmentMemberConfig = field(
         default_factory=lambda: EnvironmentMemberConfig(
             name="pi", role="Principal investigator", agent="ExecutionAgent"
@@ -100,32 +123,13 @@ class AgentTeamConfig:
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "AgentTeamConfig":
-        raw = dict(data)
-        providers = _inference_providers(raw.get("inference_providers") or {})
-        raw["inference_providers"] = providers
-        group = str(raw.get("group") or "default")
-        if "pi" in raw and isinstance(raw["pi"], Mapping):
-            raw["pi"] = EnvironmentMemberConfig.from_mapping(
-                raw["pi"], providers, group
-            )
-        if "members" in raw:
-            raw["members"] = [
-                EnvironmentMemberConfig.from_mapping(member, providers, group)
-                for member in raw["members"]
-            ]
-        return cls(**raw)
+        return cls._from_mapping(data, "pi")
 
 
 @dataclass(frozen=True)
-class AgentSymposiumConfig:
+class AgentSymposiumConfig(_MemberEnvironmentConfig):
     """YAML-loadable configuration for an Agent Symposium environment."""
 
-    name: str
-    group: str = "default"
-    description: str | None = None
-    inference_providers: dict[str, InferenceProviderConfig] = field(
-        default_factory=dict
-    )
     organizer: EnvironmentMemberConfig = field(
         default_factory=lambda: EnvironmentMemberConfig(
             name="organizer", role="Symposium organizer", agent="ChatAgent"
@@ -138,20 +142,7 @@ class AgentSymposiumConfig:
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "AgentSymposiumConfig":
-        raw = dict(data)
-        providers = _inference_providers(raw.get("inference_providers") or {})
-        raw["inference_providers"] = providers
-        group = str(raw.get("group") or "default")
-        if "organizer" in raw and isinstance(raw["organizer"], Mapping):
-            raw["organizer"] = EnvironmentMemberConfig.from_mapping(
-                raw["organizer"], providers, group
-            )
-        if "members" in raw:
-            raw["members"] = [
-                EnvironmentMemberConfig.from_mapping(member, providers, group)
-                for member in raw["members"]
-            ]
-        return cls(**raw)
+        return cls._from_mapping(data, "organizer")
 
 
 class AgentEloConfig(BaseModel):
@@ -344,6 +335,16 @@ def symposium_cache_dir(group: str, name: str) -> Path:
     return group_environments_dir(group) / "agent_symposia" / name
 
 
+def _save_environment_config(config: Any, target: Path) -> Path:
+    """Persist an environment using the common YAML representation."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        yaml.safe_dump(_dataclass_to_plain(config), sort_keys=False),
+        encoding="utf-8",
+    )
+    return target
+
+
 def save_team_config(
     config: AgentTeamConfig, path: str | Path | None = None
 ) -> Path:
@@ -353,12 +354,7 @@ def save_team_config(
         if path
         else team_cache_dir(config.group, config.name) / "team.yaml"
     )
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        yaml.safe_dump(_dataclass_to_plain(config), sort_keys=False),
-        encoding="utf-8",
-    )
-    return target
+    return _save_environment_config(config, target)
 
 
 def save_symposium_config(
@@ -370,12 +366,7 @@ def save_symposium_config(
         if path
         else symposium_cache_dir(config.group, config.name) / "symposium.yaml"
     )
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        yaml.safe_dump(_dataclass_to_plain(config), sort_keys=False),
-        encoding="utf-8",
-    )
-    return target
+    return _save_environment_config(config, target)
 
 
 def _dataclass_to_plain(value: Any) -> Any:
@@ -460,17 +451,4 @@ def save_elo_config(
         / "elo.yaml"
     )
 
-    target.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    target.write_text(
-        yaml.safe_dump(
-            _dataclass_to_plain(config),
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
-
-    return target
+    return _save_environment_config(config, target)

@@ -25,6 +25,7 @@ from pydantic import (
     model_validator,
 )
 
+from ursa.runtime.config import RuntimeConfig
 from ursa.security import enforce_group_base_url_policy
 from ursa.util.crossplatform import system_config_path, user_config_paths
 from ursa.util.fileio import atomic_write_text
@@ -70,8 +71,6 @@ def _strip_blank_optional_strings(value: Any) -> str | Any | None:
     """Normalize blank strings to ``None`` after stripping whitespace.
     Non-string values are returned unchanged.
     """
-    if value is None:
-        return None
     if not isinstance(value, str):
         return value
     value = value.strip()
@@ -79,6 +78,9 @@ def _strip_blank_optional_strings(value: Any) -> str | Any | None:
 
 
 APIKey = SecretReference | SecretStr
+StrippedOptionalString = Annotated[
+    str | None, AfterValidator(_strip_blank_optional_strings)
+]
 
 
 def _editable_values(model: BaseModel, *required: str) -> dict[str, Any]:
@@ -112,9 +114,7 @@ class InferenceProviderConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    base_url: Annotated[
-        str | None, AfterValidator(_strip_blank_optional_strings)
-    ] = None
+    base_url: StrippedOptionalString = None
     """Base URL for model API access"""
 
     api_key: APIKey | None = None
@@ -133,9 +133,7 @@ class InferenceProviderConfig(BaseModel):
             and self.api_key.keyring is True
         ):
             return self.model_copy(
-                update={
-                    "api_key": self.api_key.model_copy(update={"keyring": name})
-                }
+                update={"api_key": self.api_key.bind_keyring_name(name)}
             )
         return self.model_copy()
 
@@ -160,21 +158,15 @@ class ModelConfig(BaseModel):
     model: str
     """Model name."""
 
-    model_provider: Annotated[
-        str | None, AfterValidator(_strip_blank_optional_strings)
-    ] = None
+    model_provider: StrippedOptionalString = None
     """LangChain model provider."""
 
-    base_url: Annotated[
-        str | None, AfterValidator(_strip_blank_optional_strings)
-    ] = None
+    base_url: StrippedOptionalString = None
     """Base URL for model API access"""
 
     api_key: APIKey | None = None
 
-    inference_provider: Annotated[
-        str | None, AfterValidator(_strip_blank_optional_strings)
-    ] = None
+    inference_provider: StrippedOptionalString = None
     """Optional named inference provider to inherit shared settings from."""
 
     ssl_verify: bool = True
@@ -258,42 +250,26 @@ class ModelConfig(BaseModel):
     def _parse_model_and_provider(
         self, known_providers: dict[str, tuple]
     ) -> Self:
-        """Internal helper to parse `model` and `model_provider` into coherent entries.
+        """Infer known provider prefixes unless a provider is explicitly set.
 
-        Parse `model` and `model_provider` into coherent entries.
-        - Splits model = `model_provider:model` -> `model_provider`, `model`
-        - Drops model_provider prefix from model iff matching model_provider is set
-        - Leaves unrecognized model_providers alone -> May error at runtime
-
-        Matches the langchain.chat_models._parse_model implementation
-        - Dropped model_provider normalization, as unclear how that would trigger
+        Strip a prefix matching the selected provider; retain unknown prefixes
+        in the model name. Unlike LangChain, preserve provider spelling.
         """
         model = self.model
         model_provider = self.model_provider
         model_provider_is_explicit = "model_provider" in self.model_fields_set
         inferred_model_provider = False
+        prefix, separator, name = model.partition(":")
 
-        # Model specified as `model_provider:model`
         if (
             not model_provider_is_explicit
-            and ":" in model
-            and model.split(":", maxsplit=1)[0] in known_providers
+            and separator
+            and prefix in known_providers
         ):
-            # model = `known_model_provider:model` to:
-            # model = `model` and model_provider = known_model_provider
-            model_provider, model = model.split(":", maxsplit=1)
+            model_provider, model = prefix, name
             inferred_model_provider = True
-
-        # Model provider specified and model is `model_provider:model`
-        elif (
-            model_provider
-            and ":" in model
-            and model.split(":", maxsplit=1)[0] == model_provider
-        ):
-            # model = `model_provider:model` and matches explicit
-            # model_provider. Remove `model_provider` prefix from
-            # model
-            model = model.split(":", maxsplit=1)[1]
+        elif model_provider and separator and prefix == model_provider:
+            model = name
 
         if not model_provider and not self.inference_provider:
             # Enhanced error message with suggestions
@@ -340,12 +316,7 @@ class ModelConfig(BaseModel):
             for name in provider_config.model_fields_set
         }
         provider_values.update(deepcopy(provider_config.model_extra or {}))
-        model_values = {
-            name: deepcopy(getattr(self, name))
-            for name in self.model_fields_set
-            if name in type(self).model_fields
-        }
-        model_values.update(deepcopy(self.model_extra or {}))
+        model_values = _sparse_model_values(self)
 
         values = {
             **provider_values,
@@ -511,6 +482,53 @@ class EmbModelConfig(ModelConfig):
         return self._parse_model_and_provider(_BUILTIN_PROVIDERS)
 
 
+class SubagentsConfig(BaseModel):
+    """Limits and optional model overrides for dynamic subagents."""
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    max_agents: int | None = Field(default=32, ge=0)
+    """Maximum total subagents; zero disables and null is unlimited."""
+
+    max_depth: int | None = Field(default=3, ge=0)
+    """Maximum depth below the root; zero disables and null is unlimited."""
+
+    llm_model: ChatModelConfig | None = None
+    """Subagent chat model; null inherits the root chat model."""
+
+    embedding_model: EmbModelConfig | None = None
+    """Subagent embedding model; null inherits the root embedding model."""
+
+    @field_validator("max_agents", "max_depth", mode="before")
+    @classmethod
+    def _reject_boolean_limits(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("subagent limits must be non-negative integers")
+        return value
+
+    def model_merge(self, other: Self | dict[str, Any]) -> Self:
+        """Merge a sparse higher-priority subagent configuration."""
+        if isinstance(other, SubagentsConfig):
+            updates = {
+                name: deepcopy(getattr(other, name))
+                for name in other.model_fields_set
+            }
+            fields_set = self.model_fields_set | other.model_fields_set
+        else:
+            updates = deepcopy(other)
+            fields_set = self.model_fields_set | set(updates)
+
+        merged = {
+            name: deepcopy(getattr(self, name))
+            for name in type(self).model_fields
+        }
+        for name, value in updates.items():
+            merged[name] = _merge_config_values(merged.get(name), value)
+        result = type(self).model_validate(merged)
+        result.__pydantic_fields_set__ = fields_set
+        return result
+
+
 def _sparse_model_values(model: BaseModel) -> dict[str, Any]:
     """Return explicitly set model values without serializing nested models."""
     values = {
@@ -587,6 +605,12 @@ class UrsaConfig(BaseModel):
     emb_model: EmbModelConfig | None = None
     """Default Embedding model"""
 
+    subagents: SubagentsConfig = Field(default_factory=SubagentsConfig)
+    """Dynamic subagent limits and optional model overrides."""
+
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    """Agent execution backend, worker limits and optional cluster launcher."""
+
     rag_tools: list[str] = Field(default_factory=list)
     """Persisted RAG agent names to bind as tools."""
 
@@ -643,8 +667,16 @@ class UrsaConfig(BaseModel):
     @model_validator(mode="after")
     def _check_inference_providers(self):
         """Ensure every model references a defined, validated provider."""
-        for field_name in ("llm_model", "emb_model"):
-            model = getattr(self, field_name)
+        models = (
+            ("llm_model", self.llm_model),
+            ("emb_model", self.emb_model),
+            ("subagents.llm_model", self.subagents.llm_model),
+            (
+                "subagents.embedding_model",
+                self.subagents.embedding_model,
+            ),
+        )
+        for field_name, model in models:
             if model is None or model.inference_provider is None:
                 continue
             if model.inference_provider not in self.inference_providers:
@@ -843,16 +875,13 @@ def config_search_paths(cfg: Namespace, level: str = "final") -> list[Path]:
     ]
 
 
-def _namespace_values(value: Namespace | dict[str, Any]) -> dict[str, Any]:
-    return value.as_dict() if isinstance(value, Namespace) else value
-
-
 def _ursa_config_values(
     value: Namespace | dict[str, Any],
 ) -> dict[str, Any]:
+    values = value.as_dict() if isinstance(value, Namespace) else value
     return {
         key: item
-        for key, item in _namespace_values(value).items()
+        for key, item in values.items()
         if key in UrsaConfig.model_fields
     }
 
@@ -925,12 +954,6 @@ def dict_diff(
             nested = dict_diff(ref_value, value)
             if nested:
                 diff[key] = nested
-        elif isinstance(value, list) and isinstance(ref_value, list):
-            if value != ref_value:
-                diff[key] = value
-        elif isinstance(value, tuple) and isinstance(ref_value, tuple):
-            if value != ref_value:
-                diff[key] = value
         elif ref_value is missing or value != ref_value:
             diff[key] = value
     return diff
@@ -956,10 +979,7 @@ def deep_interp_env(x: dict[str, Any] | str | Any):
     """Interpolate all environment variables in stored keys"""
     if isinstance(x, dict):
         return {k: deep_interp_env(v) for k, v in x.items()}
-    elif isinstance(x, str):
-        return interpolate_env(x)
-    else:
-        return x
+    return interpolate_env(x) if isinstance(x, str) else x
 
 
 def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
@@ -982,13 +1002,64 @@ def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
         for name, provider in resolved.inference_providers.items()
     }
 
-    for field_name in ("llm_model", "emb_model"):
-        model = getattr(resolved, field_name)
+    models = (
+        (resolved, "llm_model"),
+        (resolved, "emb_model"),
+        (resolved.subagents, "llm_model"),
+        (resolved.subagents, "embedding_model"),
+    )
+    for owner, field_name in models:
+        model = getattr(owner, field_name)
         if model is None:
             continue
         model = model.resolve_inference_provider(resolved.inference_providers)
+        if (
+            isinstance(model.api_key, SecretReference)
+            and model.api_key.keyring is True
+        ):
+            keyring_name = model.inference_provider or model.model_provider
+            if keyring_name is None:
+                raise ValueError(
+                    f"{field_name}.api_key uses keyring=true but the model "
+                    "does not identify an inference or model provider"
+                )
+            model = model.model_copy(
+                update={
+                    "api_key": model.api_key.bind_keyring_name(keyring_name)
+                }
+            )
         enforce_group_base_url_policy(model.base_url, resolved.group)
-        setattr(resolved, field_name, model)
+        setattr(owner, field_name, model)
+
+    for server_name, server in tuple(resolved.mcp_servers.items()):
+        if isinstance(server, BaseModel):
+            headers = getattr(server, "headers", None)
+        elif isinstance(server, dict):
+            headers = server.get("headers")
+        else:
+            continue
+        if not isinstance(headers, dict) or not headers:
+            continue
+
+        resolved_headers = {}
+        for name, value in headers.items():
+            if isinstance(value, dict):
+                value = SecretReference.maybe_validate(value)
+            if isinstance(value, SecretReference):
+                value = value.bind_keyring_name(server_name)
+            resolved_headers[name] = value
+
+        if resolved_headers == headers:
+            continue
+        if isinstance(server, BaseModel):
+            resolved.mcp_servers[server_name] = server.model_copy(
+                update={"headers": resolved_headers}
+            )
+        else:
+            resolved.mcp_servers[server_name] = {
+                **server,
+                "headers": resolved_headers,
+            }
 
     if str(resolved.workspace) == "tmp":
         if resolved._temp_workspace is not None:

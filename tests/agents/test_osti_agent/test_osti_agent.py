@@ -1,35 +1,11 @@
-import pytest
+import json
+
+from bs4 import BeautifulSoup
+from requests import Response
 
 from ursa.agents.acquisition_agents import OSTIAgent
 
 
-class DummyResponse:
-    def __init__(self, payload, url):
-        self._payload = payload
-        self.url = url
-        self.headers = {}
-
-    def json(self):
-        return self._payload
-
-    def raise_for_status(self):
-        return None
-
-
-class FakeSoup:
-    def __init__(self, text: str):
-        self._text = text
-
-    def get_text(self, separator: str = " ", strip: bool = False):
-        if strip:
-            return self._text.strip()
-        return self._text
-
-    def __str__(self):
-        return f"<html><body>{self._text}</body></html>"
-
-
-@pytest.mark.asyncio
 async def test_osti_agent_ainvoke_returns_summary(
     chat_model, tmpdir, monkeypatch
 ):
@@ -48,7 +24,11 @@ async def test_osti_agent_ainvoke_returns_summary(
         assert url == api_base
         params = kwargs.get("params") or {}
         assert params.get("q") == query
-        return DummyResponse({"records": [hit]}, url)
+        response = Response()
+        response.status_code = 200
+        response.url = url
+        response._content = json.dumps({"records": [hit]}).encode()
+        return response
 
     def fake_resolve_pdf(record, *args, **kwargs):
         assert record["osti_id"] == hit["osti_id"]
@@ -56,8 +36,10 @@ async def test_osti_agent_ainvoke_returns_summary(
 
     def fake_get_soup(url, *args, **kwargs):
         assert url == landing_url
-        return FakeSoup(
-            "OSTI document discussing superconductors and energy grids."
+        return BeautifulSoup(
+            "<html><body>OSTI document discussing superconductors and energy "
+            "grids.</body></html>",
+            "html.parser",
         )
 
     monkeypatch.setattr(

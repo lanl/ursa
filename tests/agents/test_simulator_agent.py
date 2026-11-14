@@ -57,7 +57,7 @@ async def test_simulator_child_subgraphs_support_async_invocation(tmp_path):
     await agent.aclose()
 
 
-def test_simulator_child_transcripts_are_isolated_across_persistent_runs(
+async def test_simulator_child_transcripts_are_isolated_across_persistent_runs(
     tmp_path,
 ):
     model = CompositeFakeModel(
@@ -73,13 +73,13 @@ def test_simulator_child_transcripts_are_isolated_across_persistent_runs(
     agent = SimulatorAgent(
         model,
         workspace=tmp_path,
-        checkpointer=Checkpointer.from_workspace(tmp_path),
+        checkpointer=await Checkpointer.async_from_workspace(tmp_path),
         enable_metrics=False,
     )
     config = {"configurable": {"thread_id": "simulator-thread"}}
 
-    agent.invoke("First simulation", config=config)
-    agent.invoke("Second simulation", config=config)
+    await agent.ainvoke("First simulation", config=config)
+    await agent.ainvoke("Second simulation", config=config)
 
     second_documenter_request = request_text(model.plain_requests[3])
     second_runner_request = request_text(model.plain_requests[4])
@@ -87,6 +87,7 @@ def test_simulator_child_transcripts_are_isolated_across_persistent_runs(
     assert second_documenter_request.count("Second simulation") == 1
     assert "First simulation" not in second_runner_request
     assert second_runner_request.count("Second simulation") == 1
+    await agent.aclose()
     agent.close()
 
 

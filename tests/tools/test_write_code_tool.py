@@ -5,30 +5,21 @@ import pytest
 from langchain.chat_models import BaseChatModel
 from langgraph.store.memory import InMemoryStore
 
+from tests.event_fixtures import (
+    FIXED_MONOTONIC_TIMESTAMP_NS,
+)
+from tests.event_fixtures import (
+    fixed_monotonic_timestamp as fixed_monotonic_timestamp,
+)
+from tests.event_fixtures import (
+    stub_event_dispatch as stub_event_dispatch,
+)
 from tests.tools.utils import make_runtime
 from ursa.tools.write_code_tool import (
     edit_code,
     write_code,
     write_code_with_repo,
 )
-
-FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
-
-
-@pytest.fixture(autouse=True)
-def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "ursa.util.events.monotonic_ns",
-        lambda: FIXED_MONOTONIC_TIMESTAMP_NS,
-    )
-
-
-@pytest.fixture(autouse=True)
-def stub_event_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "ursa.util.events.dispatch_custom_event",
-        lambda *args, **kwargs: None,
-    )
 
 
 def test_write_code_records_store_entry(
@@ -155,29 +146,38 @@ def test_edit_code_updates_file_and_records(
     assert "+print('bye')" in artifact["content"]
 
 
-def test_edit_code_noop_when_old_code_missing(
-    tmp_path: Path, chat_model: BaseChatModel
+@pytest.mark.parametrize(
+    "file_exists", [True, False], ids=["missing-old-code", "missing-file"]
+)
+def test_edit_code_requires_an_existing_file_and_matching_code(
+    tmp_path: Path, chat_model: BaseChatModel, file_exists
 ):
-    target = tmp_path / "script.py"
-    target.write_text("print('hello')\n", encoding="utf-8")
+    filename = "script.py" if file_exists else "missing.py"
+    if file_exists:
+        target = tmp_path / "script.py"
+        target.write_text("print('hello')\n", encoding="utf-8")
     store = InMemoryStore()
     runtime = make_runtime(
         tmp_path,
         llm=chat_model,
         store=store,
-        tool_call_id="tc-miss",
+        tool_call_id="tc-miss" if file_exists else "tc-missing",
     )
 
     result = edit_code.func(
-        old_code="print('world')",
+        old_code="print('world')" if file_exists else "print('hello')",
         new_code="print('bye')",
-        filename="script.py",
+        filename=filename,
         runtime=runtime,
     )
 
-    assert "No changes made" in result
-    assert target.read_text(encoding="utf-8") == "print('hello')\n"
-    assert store.get(("workspace", "file_edit"), "script.py") is None
+    expected = (
+        "No changes made" if file_exists else "Failed: missing.py not found"
+    )
+    assert expected in result
+    if file_exists:
+        assert target.read_text(encoding="utf-8") == "print('hello')\n"
+    assert store.get(("workspace", "file_edit"), filename) is None
 
 
 def test_write_code_with_repo_records_store_entry(
@@ -206,23 +206,3 @@ def test_write_code_with_repo_records_store_entry(
     assert item is not None
     assert item.value["tool_call_id"] == "tc-2"
     assert item.value["thread_id"] == "thread-2"
-
-
-def test_edit_code_missing_file(tmp_path: Path, chat_model: BaseChatModel):
-    store = InMemoryStore()
-    runtime = make_runtime(
-        tmp_path,
-        llm=chat_model,
-        store=store,
-        tool_call_id="tc-missing",
-    )
-
-    result = edit_code.func(
-        old_code="print('hello')",
-        new_code="print('bye')",
-        filename="missing.py",
-        runtime=runtime,
-    )
-
-    assert "Failed: missing.py not found" in result
-    assert store.get(("workspace", "file_edit"), "missing.py") is None

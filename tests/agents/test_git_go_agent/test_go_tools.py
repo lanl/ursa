@@ -25,11 +25,11 @@ from ursa.agents.base import AgentContext
 
 
 @pytest.fixture
-def mock_runtime():
+def mock_runtime(go_repo):
     """Create a mock ToolRuntime with AgentContext."""
     runtime = MagicMock()
     context = MagicMock(spec=AgentContext)
-    context.workspace = Path("/tmp/workspace")
+    context.workspace = go_repo.parent
     runtime.context = context
     runtime.store = None
     return runtime
@@ -60,232 +60,106 @@ def go_repo(tmpdir):
     return repo_dir
 
 
-class TestGoTools:
-    """Test suite for Go tooling functions."""
+@pytest.fixture
+def mock_run():
+    with patch("ursa.tools.go_tools.subprocess.run") as run:
+        yield run
 
-    def test_go_build_success(self, mock_runtime, go_repo):
-        """Test successful go build execution."""
-        mock_runtime.context.workspace = go_repo.parent
 
-        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0, stdout="", stderr=""
-            )
+@pytest.mark.parametrize(
+    "tool,options,stdout,required,forbidden",
+    [
+        (go_build, {}, "", ["go", "build", "./..."], []),
+        (go_test, {"verbose": True}, "ok\n", ["-v"], []),
+        (go_test, {"verbose": False}, "", [], ["-v"]),
+        (go_vet, {}, "", ["go", "vet"], []),
+        (go_mod_tidy, {}, "", ["go", "mod", "tidy"], []),
+    ],
+    ids=["build", "test-verbose", "test-quiet", "vet", "mod-tidy"],
+)
+def test_go_tool_success(
+    mock_runtime, go_repo, mock_run, tool, options, stdout, required, forbidden
+):
+    mock_run.return_value = MagicMock(returncode=0, stdout=stdout, stderr="")
 
-            result = go_build.func(mock_runtime, repo_path=str(go_repo.name))
+    result = tool.func(mock_runtime, repo_path=str(go_repo.name), **options)
 
-            assert "STDOUT:" in result
-            mock_run.assert_called_once()
-            args = mock_run.call_args[0][0]
-            assert "go" in args
-            assert "build" in args
-            assert "./..." in args
+    assert "STDOUT:" in result
+    if stdout:
+        assert stdout in result
+    mock_run.assert_called_once()
+    args = mock_run.call_args[0][0]
+    assert set(required) <= set(args)
+    assert not set(forbidden) & set(args)
 
-    def test_go_test_with_verbose(self, mock_runtime, go_repo):
-        """Test go test with verbose flag."""
-        mock_runtime.context.workspace = go_repo.parent
 
-        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0, stdout="ok\n", stderr=""
-            )
+@pytest.mark.parametrize(
+    "tool,command,seconds,extra_message",
+    [(go_build, "build", 300, "5 minutes"), (go_test, "test", 600, None)],
+    ids=["build", "test"],
+)
+def test_go_tool_timeout(
+    mock_runtime, go_repo, mock_run, tool, command, seconds, extra_message
+):
+    mock_run.side_effect = subprocess.TimeoutExpired(
+        ["go", command, "./..."], seconds
+    )
 
-            result = go_test.func(
-                mock_runtime, repo_path=str(go_repo.name), verbose=True
-            )
+    result = tool.func(mock_runtime, repo_path=str(go_repo.name))
 
-            assert "STDOUT:" in result
-            assert "ok\n" in result
-            mock_run.assert_called_once()
-            args = mock_run.call_args[0][0]
-            assert "-v" in args
+    assert "timed out" in result.lower()
+    assert str(seconds) in result
+    if extra_message is not None:
+        assert extra_message in result
 
-    def test_go_test_without_verbose(self, mock_runtime, go_repo):
-        """Test go test without verbose flag."""
-        mock_runtime.context.workspace = go_repo.parent
 
-        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0, stdout="", stderr=""
-            )
+def test_golangci_lint_not_installed(mock_runtime, go_repo, mock_run):
+    mock_run.side_effect = FileNotFoundError()
 
-            result = go_test.func(
-                mock_runtime, repo_path=str(go_repo.name), verbose=False
-            )
+    result = golangci_lint.func(mock_runtime, repo_path=str(go_repo.name))
 
-            assert "STDOUT:" in result
-            mock_run.assert_called_once()
-            args = mock_run.call_args[0][0]
-            assert "-v" not in args
+    assert "not installed" in result.lower()
+    assert "go install" in result.lower()
 
-    def test_go_vet_success(self, mock_runtime, go_repo):
-        """Test successful go vet execution."""
-        mock_runtime.context.workspace = go_repo.parent
 
-        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0, stdout="", stderr=""
-            )
-
-            result = go_vet.func(mock_runtime, repo_path=str(go_repo.name))
-
-            assert "STDOUT:" in result
-            mock_run.assert_called_once()
-            args = mock_run.call_args[0][0]
-            assert "go" in args
-            assert "vet" in args
-
-    def test_go_mod_tidy_success(self, mock_runtime, go_repo):
-        """Test successful go mod tidy execution."""
-        mock_runtime.context.workspace = go_repo.parent
-
-        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0, stdout="", stderr=""
-            )
-
-            result = go_mod_tidy.func(mock_runtime, repo_path=str(go_repo.name))
-
-            assert "STDOUT:" in result
-            mock_run.assert_called_once()
-            args = mock_run.call_args[0][0]
-            assert "go" in args
-            assert "mod" in args
-            assert "tidy" in args
-
-    def test_go_build_timeout(self, mock_runtime, go_repo):
-        """Test go build timeout handling."""
-        mock_runtime.context.workspace = go_repo.parent
-
-        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
-            mock_run.side_effect = subprocess.TimeoutExpired(
-                ["go", "build", "./..."], 300
-            )
-
-            result = go_build.func(mock_runtime, repo_path=str(go_repo.name))
-
-            assert "timed out" in result.lower()
-            assert "300" in result
-            assert "5 minutes" in result
-
-    def test_go_test_timeout(self, mock_runtime, go_repo):
-        """Test go test timeout handling."""
-        mock_runtime.context.workspace = go_repo.parent
-
-        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
-            mock_run.side_effect = subprocess.TimeoutExpired(
-                ["go", "test", "./..."], 600
-            )
-
-            result = go_test.func(mock_runtime, repo_path=str(go_repo.name))
-
-            assert "timed out" in result.lower()
-            assert "600" in result
-
-    def test_golangci_lint_not_installed(self, mock_runtime, go_repo):
-        """Test golangci_lint when linter is not installed."""
-        mock_runtime.context.workspace = go_repo.parent
-
-        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
-            mock_run.side_effect = FileNotFoundError()
-
-            result = golangci_lint.func(
-                mock_runtime, repo_path=str(go_repo.name)
-            )
-
-            assert "not installed" in result.lower()
-            assert "go install" in result.lower()
-
-    def test_golangci_lint_with_config(self, mock_runtime, go_repo):
-        """Test golangci_lint detects and uses .golangci.yml."""
-        # Create .golangci.yml in the repo
-        config_file = go_repo / ".golangci.yml"
+@pytest.mark.parametrize("has_config", [True, False])
+def test_golangci_lint_config(mock_runtime, go_repo, mock_run, has_config):
+    config_file = go_repo / ".golangci.yml"
+    if has_config:
         config_file.write_text("linters:\n  enable:\n    - gofmt\n")
+    # First call checks the version; the second performs the linting.
+    mock_run.side_effect = [
+        MagicMock(
+            returncode=0, stdout="golangci-lint version 1.0.0\n", stderr=""
+        ),
+        MagicMock(returncode=0, stdout="", stderr=""),
+    ]
 
-        mock_runtime.context.workspace = go_repo.parent
+    result = golangci_lint.func(mock_runtime, repo_path=str(go_repo.name))
 
-        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
-            # First call for version check, second for actual linting
-            mock_run.side_effect = [
-                MagicMock(
-                    returncode=0,
-                    stdout="golangci-lint version 1.0.0\n",
-                    stderr="",
-                ),
-                MagicMock(returncode=0, stdout="", stderr=""),
-            ]
-
-            result = golangci_lint.func(
-                mock_runtime, repo_path=str(go_repo.name)
-            )
-
-            assert "STDOUT:" in result
-            # Verify the second call used the config file
-            second_call_args = mock_run.call_args_list[1][0][0]
-            assert "--config" in second_call_args
-            assert str(
-                config_file
-            ) in second_call_args or ".golangci.yml" in str(second_call_args)
-
-    def test_golangci_lint_without_config(self, mock_runtime, go_repo):
-        """Test golangci_lint runs without config file."""
-        mock_runtime.context.workspace = go_repo.parent
-
-        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
-            # First call for version check, second for actual linting
-            mock_run.side_effect = [
-                MagicMock(
-                    returncode=0,
-                    stdout="golangci-lint version 1.0.0\n",
-                    stderr="",
-                ),
-                MagicMock(returncode=0, stdout="", stderr=""),
-            ]
-
-            result = golangci_lint.func(
-                mock_runtime, repo_path=str(go_repo.name)
-            )
-
-            assert "STDOUT:" in result
-            # Verify the second call did not use a config file
-            second_call_args = mock_run.call_args_list[1][0][0]
-            assert "--config" not in second_call_args
+    assert "STDOUT:" in result
+    second_call_args = mock_run.call_args_list[1][0][0]
+    if has_config:
+        assert "--config" in second_call_args
+        assert str(config_file) in second_call_args or ".golangci.yml" in str(
+            second_call_args
+        )
+    else:
+        assert "--config" not in second_call_args
 
 
-class TestGoToolsErrorHandling:
-    """Test error handling in Go tools."""
+@pytest.mark.parametrize(
+    "tool,error,expected",
+    [
+        (go_build, "Some error", "Error running go build"),
+        (go_test, "Some error", "Error running go test"),
+        (golangci_lint, "Version check failed", "Error checking golangci-lint"),
+    ],
+    ids=["build", "test", "linter-version"],
+)
+def test_go_tool_error(mock_runtime, go_repo, mock_run, tool, error, expected):
+    mock_run.side_effect = Exception(error)
 
-    def test_go_build_general_error(self, mock_runtime, go_repo):
-        """Test go build general exception handling."""
-        mock_runtime.context.workspace = go_repo.parent
+    result = tool.func(mock_runtime, repo_path=str(go_repo.name))
 
-        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
-            mock_run.side_effect = Exception("Some error")
-
-            result = go_build.func(mock_runtime, repo_path=str(go_repo.name))
-
-            assert "Error running go build" in result
-
-    def test_go_test_general_error(self, mock_runtime, go_repo):
-        """Test go test general exception handling."""
-        mock_runtime.context.workspace = go_repo.parent
-
-        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
-            mock_run.side_effect = Exception("Some error")
-
-            result = go_test.func(mock_runtime, repo_path=str(go_repo.name))
-
-            assert "Error running go test" in result
-
-    def test_golangci_lint_version_check_error(self, mock_runtime, go_repo):
-        """Test golangci_lint version check failure."""
-        mock_runtime.context.workspace = go_repo.parent
-
-        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
-            mock_run.side_effect = Exception("Version check failed")
-
-            result = golangci_lint.func(
-                mock_runtime, repo_path=str(go_repo.name)
-            )
-
-            assert "Error checking golangci-lint" in result
+    assert expected in result

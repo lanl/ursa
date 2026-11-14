@@ -164,18 +164,11 @@ class SessionRollup:
 
         # aggregate tables
         tables = payload.get("tables") or {}
-        for row in tables.get("runnable") or []:
-            self.runnable_by_name[row["name"]].add(
-                row["count"], row["total_s"], row["max_ms"]
-            )
-        for row in tables.get("tool") or []:
-            self.tool_by_name[row["name"]].add(
-                row["count"], row["total_s"], row["max_ms"]
-            )
-        for row in tables.get("llm") or []:
-            self.llm_by_name[row["name"]].add(
-                row["count"], row["total_s"], row["max_ms"]
-            )
+        for kind in ("runnable", "tool", "llm"):
+            for row in tables.get(kind) or []:
+                getattr(self, f"{kind}_by_name")[row["name"]].add(
+                    row["count"], row["total_s"], row["max_ms"]
+                )
 
         # recompute llm/tool totals from buckets
         self.llm_total_s = (
@@ -271,21 +264,8 @@ def render_session_summary(thread_id: str):
         header_style="bold",
         padding=COL_PAD,
     )
-    t_cost.add_column(
-        "Model",
-        style="cyan",
-        no_wrap=True,
-        width=NAME_W,
-        min_width=NAME_W,
-        max_width=NAME_W,
-    )
-    t_cost.add_column(
-        "Cost",
-        justify="right",
-        width=TOTAL_W,
-        min_width=TOTAL_W,
-        max_width=TOTAL_W,
-    )
+    _add_fixed_column(t_cost, "Model", NAME_W, style="cyan", no_wrap=True)
+    _add_fixed_column(t_cost, "Cost", TOTAL_W, justify="right")
     if rollup.cost_by_model_usd:
         for model, amt in sorted(
             rollup.cost_by_model_usd.items(), key=lambda kv: kv[1], reverse=True
@@ -367,8 +347,24 @@ class _Agg:
 # ---------------------------------
 
 
-class PerToolTimer(BaseCallbackHandler):
-    """Times each tool call via callbacks; robust to decorator order."""
+def _serialized_name(serialized: dict):
+    """Read the shared name/id shapes used by LangChain callbacks."""
+    name = serialized.get("name")
+    if not name:
+        sid = serialized.get("id")
+        if isinstance(sid, dict):
+            name = sid.get("name") or sid.get("id")
+        elif isinstance(sid, (list, tuple)):
+            name = "/".join(map(str, sid))
+        elif sid is not None:
+            name = str(sid)
+    return name
+
+
+class _TimerCallback(BaseCallbackHandler):
+    """Shared naming and duration recording for tool and graph callbacks."""
+
+    _fallback_name: str
 
     def __init__(self, agg: _Agg | None = None):
         self.agg = agg or _Agg()
@@ -377,63 +373,41 @@ class PerToolTimer(BaseCallbackHandler):
     def _name(self, serialized) -> str:
         # serialized can be None, dict, str, or contain nested ids
         if isinstance(serialized, dict):
-            name = serialized.get("name")
-            if not name:
-                sid = serialized.get("id")
-                if isinstance(sid, dict):
-                    name = sid.get("name") or sid.get("id")
-                elif isinstance(sid, (list, tuple)):
-                    name = "/".join(map(str, sid))
-                elif sid is not None:
-                    name = str(sid)
-            return name or "unknown_tool"
+            return _serialized_name(serialized) or self._fallback_name
         if isinstance(serialized, str):
             return serialized
-        return "unknown_tool"
+        return self._fallback_name
+
+    def _finish(self, run_id, succeeded: bool) -> None:
+        name, t0 = self._starts.pop(
+            run_id, (self._fallback_name, time.perf_counter())
+        )
+        self.agg.add(name, (time.perf_counter() - t0) * 1000.0, succeeded)
+
+
+class PerToolTimer(_TimerCallback):
+    """Times each tool call via callbacks; robust to decorator order."""
+
+    _fallback_name = "unknown_tool"
 
     def on_tool_start(self, serialized, input_str, *, run_id, **kwargs):
         name = self._name(serialized)
         self._starts[run_id] = (name, time.perf_counter())
 
     def on_tool_end(self, output, *, run_id, **kwargs):
-        name, t0 = self._starts.pop(
-            run_id, ("unknown_tool", time.perf_counter())
-        )
-        self.agg.add(name, (time.perf_counter() - t0) * 1000.0, True)
+        self._finish(run_id, True)
 
     def on_tool_error(self, error, *, run_id, **kwargs):
-        name, t0 = self._starts.pop(
-            run_id, ("unknown_tool", time.perf_counter())
-        )
-        self.agg.add(name, (time.perf_counter() - t0) * 1000.0, False)
+        self._finish(run_id, False)
 
 
-class PerRunnableTimer(BaseCallbackHandler):
+class PerRunnableTimer(_TimerCallback):
     """
     Times LangChain/LangGraph runnables (chains, graphs, nodes). You’ll usually
     see node names in `serialized.get('name')` or `serialized.get('id')`.
     """
 
-    def __init__(self, agg: _Agg | None = None):
-        self.agg = agg or _Agg()
-        self._starts: dict[Any, tuple[str, float]] = {}
-
-    def _name(self, serialized) -> str:
-        # serialized can be None, dict, str, or contain nested ids
-        if isinstance(serialized, dict):
-            name = serialized.get("name")
-            if not name:
-                sid = serialized.get("id")
-                if isinstance(sid, dict):
-                    name = sid.get("name") or sid.get("id")
-                elif isinstance(sid, (list, tuple)):
-                    name = "/".join(map(str, sid))
-                elif sid is not None:
-                    name = str(sid)
-            return name or "runnable"
-        if isinstance(serialized, str):
-            return serialized
-        return "runnable"
+    _fallback_name = "runnable"
 
     # Chains/graphs/nodes map onto these events:
     def on_chain_start(
@@ -489,19 +463,15 @@ class PerRunnableTimer(BaseCallbackHandler):
         self._starts[run_id] = (name, time.perf_counter())
 
     def on_chain_end(self, outputs, *, run_id, **kwargs):
-        name, t0 = self._starts.pop(run_id, ("runnable", time.perf_counter()))
-        self.agg.add(name, (time.perf_counter() - t0) * 1000.0, True)
+        self._finish(run_id, True)
 
     def on_chain_error(self, error, *, run_id, **kwargs):
-        name, t0 = self._starts.pop(run_id, ("runnable", time.perf_counter()))
-        self.agg.add(name, (time.perf_counter() - t0) * 1000.0, False)
+        self._finish(run_id, False)
 
 
 def _to_int(x, default=0):
     try:
-        if isinstance(x, (int,)):
-            return int(x)
-        if isinstance(x, float):
+        if isinstance(x, (int, float)):
             return int(x)
         if isinstance(x, str):
             # handles "340" or "340.0"
@@ -604,16 +574,7 @@ class PerLLMTimer(BaseCallbackHandler):
         if model:
             return f"llm:{model}"
         if isinstance(serialized, dict):
-            name = serialized.get("name")
-            if not name:
-                sid = serialized.get("id")
-                if isinstance(sid, dict):
-                    name = sid.get("name") or sid.get("id")
-                elif isinstance(sid, (list, tuple)):
-                    name = "/".join(map(str, sid))
-                elif sid is not None:
-                    name = str(sid)
-            return f"llm:{name or 'unknown'}"
+            return f"llm:{_serialized_name(serialized) or 'unknown'}"
         if isinstance(serialized, str):
             return f"llm:{serialized}"
         if tags:
@@ -739,14 +700,10 @@ class PerLLMTimer(BaseCallbackHandler):
                 # The selected source can now carry these counts too, so
                 # take the strongest signal overall instead of adding the
                 # side-channel copy on top of it.
-                roll["reasoning_tokens"] = max(
-                    roll["reasoning_tokens"],
-                    max(e["reasoning_tokens"] for e in extras_candidates),
-                )
-                roll["cached_tokens"] = max(
-                    roll["cached_tokens"],
-                    max(e["cached_tokens"] for e in extras_candidates),
-                )
+                for field in ("reasoning_tokens", "cached_tokens"):
+                    roll[field] = max(
+                        roll[field], max(e[field] for e in extras_candidates)
+                    )
 
             # Final consistency guards
             if roll["prompt_tokens"] == 0 and roll["input_tokens"] > 0:
@@ -768,42 +725,31 @@ class PerLLMTimer(BaseCallbackHandler):
 
         return out
 
-    def on_llm_end(self, response, *, run_id, **kwargs):
+    def _finish(self, run_id, value, succeeded: bool) -> None:
+        """Record timing and the outcome of one completed LLM call."""
         name, t0, tags, metadata, wall_t0 = self._starts.pop(
             run_id, ("llm:unknown", time.perf_counter(), [], {}, time.time())
         )
         ms = (time.perf_counter() - t0) * 1000.0
         wall_t1 = time.time()
-        self.agg.add(name, ms, True)
-        metrics = self._extract_metrics(response)
+        self.agg.add(name, ms, succeeded)
+        metrics = self._extract_metrics(value) if succeeded else None
         self.samples.append({
             "name": name,
             "ms": ms,
-            "ok": True,
+            "ok": succeeded,
             "tags": tags,
             "metadata": metadata,
-            "metrics": metrics,
+            "metrics": metrics if succeeded else {"error": repr(value)},
             "t_start": wall_t0,
             "t_end": wall_t1,
         })
 
+    def on_llm_end(self, response, *, run_id, **kwargs):
+        self._finish(run_id, response, True)
+
     def on_llm_error(self, error, *, run_id, **kwargs):
-        name, t0, tags, metadata, wall_t0 = self._starts.pop(
-            run_id, ("llm:unknown", time.perf_counter(), [], {}, time.time())
-        )
-        ms = (time.perf_counter() - t0) * 1000.0
-        wall_t1 = time.time()
-        self.agg.add(name, ms, False)
-        self.samples.append({
-            "name": name,
-            "ms": ms,
-            "ok": False,
-            "tags": tags,
-            "metadata": metadata,
-            "metrics": {"error": repr(error)},
-            "t_start": wall_t0,
-            "t_end": wall_t1,
-        })
+        self._finish(run_id, error, False)
 
 
 def _coerce_usage(obj) -> dict:
@@ -848,35 +794,30 @@ def _coerce_usage(obj) -> dict:
 
         # Common nested details
         try:
-            ctd = getattr(obj, "completion_tokens_details", None)
-            if ctd is not None:
-                dd = {}
-                for k in (
+            for name, keys in {
+                "completion_tokens_details": (
                     "reasoning_tokens",
                     "accepted_prediction_tokens",
                     "rejected_prediction_tokens",
                     "audio_tokens",
                     "text_tokens",
-                ):
-                    val = getattr(ctd, k, None)
-                    if isinstance(val, (int, float)):
-                        dd[k] = int(val)
-                if dd:
-                    d["completion_tokens_details"] = dd
-            ptd = getattr(obj, "prompt_tokens_details", None)
-            if ptd is not None:
-                dd = {}
-                for k in (
+                ),
+                "prompt_tokens_details": (
                     "cached_tokens",
                     "audio_tokens",
                     "image_tokens",
                     "text_tokens",
-                ):
-                    val = getattr(ptd, k, None)
-                    if isinstance(val, (int, float)):
-                        dd[k] = int(val)
-                if dd:
-                    d["prompt_tokens_details"] = dd
+                ),
+            }.items():
+                details = getattr(obj, name, None)
+                if details is not None:
+                    dd = {}
+                    for key in keys:
+                        val = getattr(details, key, None)
+                        if isinstance(val, (int, float)):
+                            dd[key] = int(val)
+                    if dd:
+                        d[name] = dd
         except Exception:
             pass
 
@@ -943,6 +884,13 @@ def _parse_iso(timestamp: str | None):
         return None
 
 
+def _add_fixed_column(table: Table, label: str, width: int, **options) -> None:
+    """Keep timing and cost columns aligned at their configured widths."""
+    table.add_column(
+        label, **options, width=width, min_width=width, max_width=width
+    )
+
+
 def _mk_table(
     title: str, rows: list[tuple[str, int, float, float, float]]
 ) -> Table:
@@ -958,43 +906,16 @@ def _mk_table(
     )
 
     # lock all column widths so every table renders identically
-    t.add_column(
-        "Name",
-        style="cyan",
-        no_wrap=True,
-        overflow="ellipsis",
-        width=NAME_W,
-        min_width=NAME_W,
-        max_width=NAME_W,
+    _add_fixed_column(
+        t, "Name", NAME_W, style="cyan", no_wrap=True, overflow="ellipsis"
     )
-    t.add_column(
-        "Count",
-        justify="right",
-        width=COUNT_W,
-        min_width=COUNT_W,
-        max_width=COUNT_W,
-    )
-    t.add_column(
-        "Total(s)",
-        justify="right",
-        width=TOTAL_W,
-        min_width=TOTAL_W,
-        max_width=TOTAL_W,
-    )
-    t.add_column(
-        "Avg(ms)",
-        justify="right",
-        width=AVG_W,
-        min_width=AVG_W,
-        max_width=AVG_W,
-    )
-    t.add_column(
-        "Max(ms)",
-        justify="right",
-        width=MAX_W,
-        min_width=MAX_W,
-        max_width=MAX_W,
-    )
+    for label, width in (
+        ("Count", COUNT_W),
+        ("Total(s)", TOTAL_W),
+        ("Avg(ms)", AVG_W),
+        ("Max(ms)", MAX_W),
+    ):
+        _add_fixed_column(t, label, width, justify="right")
 
     if not rows:
         t.add_row("—", "0", f"{0.00:,.2f}", f"{0:,.0f}", f"{0:,.0f}")
@@ -1015,48 +936,6 @@ def _mk_table(
             f"{max_ms:,.0f}",
         )
     return t
-
-
-def _truncate_pad(s: str, width: int) -> str:
-    s = str(s)
-    if len(s) <= width:
-        return s.ljust(width)
-    if width <= 3:
-        return s[:width]
-    return s[: width - 3] + "..."
-
-
-def _plain_table(rows):
-    header = (
-        f"{'Name':<{NAME_W}} | "
-        f"{'Count':>{COUNT_W}} | "
-        f"{'Total(s)':>{TOTAL_W}} | "
-        f"{'Avg(ms)':>{AVG_W}} | "
-        f"{'Max(ms)':>{MAX_W}}"
-    )
-    lines = [header]
-
-    if not rows:
-        lines.append(
-            f"{'—':<{NAME_W}} | "
-            f"{0:>{COUNT_W}d} | "
-            f"{0.00:>{TOTAL_W},.2f} | "
-            f"{0:>{AVG_W},.0f} | "
-            f"{0:>{MAX_W},.0f}"
-        )
-        return "\n".join(lines)
-
-    for n, c, ts, am, mm in rows:
-        name = _truncate_pad(n, NAME_W)
-        lines.append(
-            f"{name} | "
-            f"{c:>{COUNT_W}d} | "
-            f"{ts:>{TOTAL_W},.2f} | "
-            f"{am:>{AVG_W},.0f} | "
-            f"{mm:>{MAX_W},.0f}"
-        )
-
-    return "\n".join(lines)
 
 
 @dataclass
@@ -1114,27 +993,16 @@ class Telemetry:
                 return repr(d)
 
         return {
-            "runnable": {
+            name: {
                 "_starts": _stringify_keys(
-                    getattr(self.runnable, "_starts", {})
+                    getattr(getattr(self, name), "_starts", {})
                 ),
-                "agg": _as_dict(getattr(self.runnable, "agg", {})),
+                "agg": _as_dict(getattr(getattr(self, name), "agg", {})),
                 "buckets": list(
-                    getattr(self.runnable.agg, "buckets", lambda: [])()
+                    getattr(getattr(self, name).agg, "buckets", lambda: [])()
                 ),
-            },
-            "tool": {
-                "_starts": _stringify_keys(getattr(self.tool, "_starts", {})),
-                "agg": _as_dict(getattr(self.tool, "agg", {})),
-                "buckets": list(
-                    getattr(self.tool.agg, "buckets", lambda: [])()
-                ),
-            },
-            "llm": {
-                "_starts": _stringify_keys(getattr(self.llm, "_starts", {})),
-                "agg": _as_dict(getattr(self.llm, "agg", {})),
-                "buckets": list(getattr(self.llm.agg, "buckets", lambda: [])()),
-            },
+            }
+            for name in ("runnable", "tool", "llm")
         }
 
     def _records_struct(self) -> dict:
@@ -1555,17 +1423,15 @@ class Telemetry:
             saved_otel = self._save_otel(payload, otel_endpoint, otel_headers)
 
         # --- Build header & attribution lines (markup-aware) ---
-        header_lines = []
-        header_lines.append(
+        header_lines = [
             f"[bold magenta]{agent_label}[/] [dim]•[/] thread [bold]{thread_id}[/] [dim]•[/] run [bold]{run_id}[/]"
-        )
+        ]
         if start_dt and end_dt:
             header_lines.append(
                 f"[dim]{started_at} → {ended_at}[/dim]   [bold]wall[/]: {wall_secs:,.2f}s"
             )
 
-        attrib_lines = []
-        attrib_lines.append("[bold]Attribution[/]")
+        attrib_lines = ["[bold]Attribution[/]"]
         if wall_secs is not None:
             attrib_lines.append(
                 f"  Total run (wall): [bold]{wall_secs:,.2f}s[/]"

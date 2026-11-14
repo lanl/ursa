@@ -5,13 +5,18 @@ be non-empty and must not end on an assistant turn, or providers without
 assistant-message prefill support reject it with a 400.
 """
 
+from types import SimpleNamespace
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from tests.agents.utils import (
+    FakeDoc,
     RecordingChatModel,
-    ScriptedRecordingChatModel,
     assert_requests_provider_valid,
+    patch_materials_client,
+    simple_plan,
+    tool_call_message,
 )
 from tests.conftest import extraskip
 from ursa.agents.acquisition_agents import (
@@ -29,51 +34,21 @@ from ursa.agents.rag_agent import RAGAgent
 from ursa.agents.recall_agent import RecallAgent
 
 
-class StubMemory:
-    def __init__(self, memories):
-        self._memories = memories
-
-    def retrieve(self, query):
-        return self._memories
-
-
-def _plan_factory(schema):
-    return schema(
-        steps=[
-            {
-                "name": "Add numbers",
-                "description": "Add 1 and 2.",
-                "requires_code": False,
-                "expected_outputs": ["sum"],
-                "success_criteria": ["sum equals 3"],
-            }
-        ]
-    )
-
-
-async def test_basic_chat_agent_role_sequences(tmpdir):
+@pytest.mark.parametrize(
+    ("agent_class", "prompt"),
+    [
+        (BasicChatAgent, "What is URSA?"),
+        (ChatAgent, "What is URSA?"),
+        (PromptingAgent, "Refine this prompt: hello"),
+    ],
+)
+async def test_chat_and_prompting_agent_role_sequences(
+    tmpdir, agent_class, prompt
+):
     llm = RecordingChatModel()
-    agent = BasicChatAgent(llm=llm, workspace=tmpdir)
+    agent = agent_class(llm=llm, workspace=tmpdir)
 
-    await agent.ainvoke(agent.format_query("What is URSA?"))
-
-    assert_requests_provider_valid(llm.calls)
-
-
-async def test_chat_agent_role_sequences(tmpdir):
-    llm = RecordingChatModel()
-    agent = ChatAgent(llm=llm, workspace=tmpdir)
-
-    await agent.ainvoke(agent.format_query("What is URSA?"))
-
-    assert_requests_provider_valid(llm.calls)
-
-
-async def test_prompting_agent_role_sequences(tmpdir):
-    llm = RecordingChatModel()
-    agent = PromptingAgent(llm=llm, workspace=tmpdir)
-
-    await agent.ainvoke(agent.format_query("Refine this prompt: hello"))
+    await agent.ainvoke(agent.format_query(prompt))
 
     assert_requests_provider_valid(llm.calls)
 
@@ -107,9 +82,10 @@ async def test_rag_agent_role_sequences(embedding_model, monkeypatch, tmp_path):
 
 async def test_recall_agent_role_sequences(tmpdir):
     llm = RecordingChatModel()
+    memories = ["remembered detail one", "remembered detail two"]
     agent = RecallAgent(
         llm=llm,
-        memory=StubMemory(["remembered detail one", "remembered detail two"]),
+        memory=SimpleNamespace(retrieve=lambda query: memories),
         workspace=tmpdir,
     )
 
@@ -139,44 +115,37 @@ async def test_dsi_agent_role_sequences(tmp_path):
     assert_requests_provider_valid(llm.calls)
 
 
-def _tool_call_script(tool_name, args):
-    return [
-        AIMessage(
-            content="",
-            tool_calls=[{"name": tool_name, "args": args, "id": "call_1"}],
-        )
-    ]
-
-
-async def test_chat_agent_tool_loop_role_sequences(tmpdir):
-    llm = ScriptedRecordingChatModel(
-        script=_tool_call_script("read_file", {"filename": "notes.txt"})
-    )
-    agent = ChatAgent(llm=llm, workspace=tmpdir)
-
-    await agent.ainvoke(agent.format_query("Read my notes."))
-
-    assert_requests_provider_valid(llm.calls)
-    assert any(call[-1].type == "tool" for call in llm.calls), (
-        "expected a post-tool re-entry request ending on a tool message"
-    )
-
-
-async def test_execution_agent_tool_loop_role_sequences(tmpdir):
-    llm = ScriptedRecordingChatModel(
-        script=_tool_call_script("read_file", {"filename": "notes.txt"}),
-        structured_factory=lambda schema: schema(
+@pytest.mark.parametrize(
+    ("agent_class", "prompt", "uses_tool"),
+    [
+        (ChatAgent, "Read my notes.", True),
+        (ExecutionAgent, "read the notes file", True),
+        (ExecutionAgent, "say hello", False),
+    ],
+)
+async def test_tool_agent_role_sequences(
+    tmpdir, agent_class, prompt, uses_tool
+):
+    options = {}
+    if uses_tool:
+        options["script"] = [
+            tool_call_message("read_file", {"filename": "notes.txt"}, "call_1")
+        ]
+    if agent_class is ExecutionAgent:
+        options["structured_factory"] = lambda schema: schema(
             is_complete=True, reason="Work complete."
-        ),
-    )
-    agent = ExecutionAgent(llm=llm, workspace=tmpdir)
+        )
+    llm = RecordingChatModel(**options)
+    agent = agent_class(llm=llm, workspace=tmpdir)
 
-    await agent.ainvoke("read the notes file")
+    inputs = agent.format_query(prompt) if agent_class is ChatAgent else prompt
+    await agent.ainvoke(inputs)
 
     assert_requests_provider_valid(llm.calls)
-    assert any(call[-1].type == "tool" for call in llm.calls), (
-        "expected a post-tool re-entry request ending on a tool message"
-    )
+    if uses_tool:
+        assert any(call[-1].type == "tool" for call in llm.calls), (
+            "expected a post-tool re-entry request ending on a tool message"
+        )
 
 
 def _optimization_factory(schema):
@@ -248,34 +217,11 @@ async def test_materials_project_agent_role_sequences(tmpdir, monkeypatch):
     pytest.importorskip("mp_api")
     from ursa.agents.mp_agent import MaterialsProjectAgent
 
-    class FakeDoc:
-        def __init__(self, material_id, metadata):
-            self.material_id = material_id
-            self._metadata = metadata
-
-        def dict(self):
-            return self._metadata
-
     class FakeSummary:
         def search(self, **kwargs):
             return [FakeDoc("mp-001", {"formula": "GaInO3", "band_gap": 1.8})]
 
-    class FakeMaterials:
-        def __init__(self):
-            self.summary = FakeSummary()
-
-    class FakeMPRester:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def __enter__(self):
-            self.materials = FakeMaterials()
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    monkeypatch.setattr("ursa.agents.mp_agent.MPRester", FakeMPRester)
+    patch_materials_client(monkeypatch, FakeSummary)
 
     llm = RecordingChatModel()
     agent = MaterialsProjectAgent(
@@ -295,7 +241,7 @@ async def test_materials_project_agent_role_sequences(tmpdir, monkeypatch):
 
 
 async def test_planning_agent_role_sequences(tmpdir):
-    llm = RecordingChatModel(structured_factory=_plan_factory)
+    llm = RecordingChatModel(structured_factory=simple_plan)
     agent = PlanningAgent(llm=llm, workspace=tmpdir)
 
     await agent.ainvoke({"messages": [HumanMessage(content="make a plan")]})
@@ -347,16 +293,3 @@ def test_invariant_rejects_mid_conversation_system_messages():
 
     with pytest.raises(AssertionError, match="after the leading"):
         assert_requests_provider_valid([mid_list_system])
-
-
-async def test_execution_agent_role_sequences(tmpdir):
-    llm = RecordingChatModel(
-        structured_factory=lambda schema: schema(
-            is_complete=True, reason="Work complete."
-        )
-    )
-    agent = ExecutionAgent(llm=llm, workspace=tmpdir)
-
-    await agent.ainvoke("say hello")
-
-    assert_requests_provider_valid(llm.calls)

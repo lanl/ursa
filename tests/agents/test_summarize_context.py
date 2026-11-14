@@ -6,11 +6,6 @@ for messages_to_keep=0 and for the tool-tail absorption edge case, with
 the summary landing as framed human-role context.
 """
 
-from collections.abc import Iterator
-
-from langchain_core.language_models.fake_chat_models import (
-    GenericFakeChatModel,
-)
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -18,38 +13,13 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+from tests.agents.utils import recording_model, tool_call_message
 from ursa.agents.chat_agent import ChatAgent
-
-
-def _message_stream(content: str) -> Iterator[AIMessage]:
-    while True:
-        yield AIMessage(
-            content=content,
-            usage_metadata={
-                "input_tokens": 1,
-                "output_tokens": 1,
-                "total_tokens": 2,
-            },
-        )
-
-
-def _recording_model(log: list) -> GenericFakeChatModel:
-    class _Recorder(GenericFakeChatModel):
-        def bind_tools(self, tools, **kwargs):
-            return self
-
-        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-            log.append(list(messages))
-            return super()._generate(
-                messages, stop=stop, run_manager=run_manager, **kwargs
-            )
-
-    return _Recorder(messages=_message_stream("summary of the chat"))
 
 
 def _agent(log: list, keep: int, workspace) -> ChatAgent:
     return ChatAgent(
-        llm=_recording_model(log),
+        llm=recording_model(log, "summary of the chat"),
         workspace=workspace,
         tokens_before_summarize=1,
         messages_to_keep=keep,
@@ -60,7 +30,7 @@ def _long(text: str) -> str:
     return text + " filler" * 50
 
 
-def test_keep_zero_state_does_not_end_on_assistant(tmp_path):
+def test_keep_zero_summary_is_framed_human_context(tmp_path):
     log: list = []
     agent = _agent(log, keep=0, workspace=tmp_path)
     state = {
@@ -79,23 +49,6 @@ def test_keep_zero_state_does_not_end_on_assistant(tmp_path):
         "messages_to_keep=0 must not leave the history ending on the "
         "assistant summary (the request shape Claude 4.6+ rejects)"
     )
-
-
-def test_summary_lands_as_framed_human_message(tmp_path):
-    log: list = []
-    agent = _agent(log, keep=0, workspace=tmp_path)
-    state = {
-        "messages": [
-            SystemMessage("sys prompt"),
-            HumanMessage(_long("first question")),
-            AIMessage(_long("first answer")),
-            HumanMessage(_long("second question")),
-        ]
-    }
-
-    new_state, changed = agent._summarize_context(state)
-
-    assert changed is True
     summary_message = new_state["messages"][1]
     assert isinstance(summary_message, HumanMessage), (
         "the summary must land as human-role context"
@@ -117,16 +70,12 @@ def test_absorbed_tool_tail_still_ends_human(tmp_path):
         "messages": [
             SystemMessage("sys prompt"),
             HumanMessage(_long("question")),
-            AIMessage(
-                _long("calling a tool"),
-                tool_calls=[
-                    {
-                        "name": "some_tool",
-                        "args": {},
-                        "id": "call-1",
-                        "type": "tool_call",
-                    }
-                ],
+            tool_call_message(
+                "some_tool",
+                {},
+                "call-1",
+                content=_long("calling a tool"),
+                type="tool_call",
             ),
             ToolMessage(content=_long("tool output"), tool_call_id="call-1"),
         ]

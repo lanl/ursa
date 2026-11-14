@@ -1,5 +1,7 @@
 """Pure helpers and constants shared by the Textual CLI."""
 
+from __future__ import annotations
+
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -7,7 +9,7 @@ from typing import Any
 
 from rich.cells import cell_len, chop_cells  # noqa: TID251
 
-from ursa.cli.runtime import HITL
+from ursa.runtime import AgentRuntime
 
 SUMMARY_GROUP_GRACE_SECONDS = 3.0
 FILE_TOOLS = {
@@ -39,6 +41,8 @@ AGENT_LABELS = {
 COMMAND_CHOICES = {
     "agents": "Configured agents, descriptions, options, and tools",
     "exit": "Quit URSA gracefully",
+    "coordination": "Live messages and subagent hierarchy",
+    "subagents": "Switch to an agent in the active hierarchy",
     "status": "Tokens, models, endpoints, group, and MCP servers",
     "terms": "View managed terminal sessions",
     "keymap": "Complete keyboard map",
@@ -78,27 +82,12 @@ def _truncate_middle(text: str, width: int) -> str:
     return f"{prefix} _… truncated …_ {suffix}"
 
 
-def _inference_provider(value: str | None) -> str:
-    """Return a concise inference-provider label."""
-    return value or "default"
-
-
-def _embedding_name(hitl: HITL) -> str:
-    embedding = getattr(hitl, "embedding", None)
-    if embedding is None:
-        return "none"
-    for attribute in ("model_name", "model"):
-        if value := getattr(embedding, attribute, None):
-            return str(value)
-    return type(embedding).__name__
-
-
-def _route_prompt(hitl: HITL, prompt: str) -> tuple[str, str]:
+def _route_prompt(runtime: AgentRuntime, prompt: str) -> tuple[str, str]:
     """Route a leading ``#agent`` macro, defaulting to chat."""
     match = re.match(
         r"^#(?P<name>\S+)(?:\s(?P<prompt>.*))?$", prompt, re.DOTALL
     )
-    if match and match["name"] in hitl.agents:
+    if match and match["name"] in runtime.agents:
         return match["name"], match["prompt"] or ""
     return "chat", prompt
 
@@ -157,6 +146,31 @@ class TokenUsage:
     cached_tokens: int = 0
     total_tokens: int = 0
 
+    @property
+    def uncached_input_tokens(self) -> int:
+        """Input tokens billed as new rather than served from cache."""
+        return max(self.input_tokens - self.cached_tokens, 0)
+
+    def __add__(self, other: TokenUsage) -> TokenUsage:
+        if not isinstance(other, TokenUsage):
+            return NotImplemented
+        return TokenUsage(
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            cached_tokens=self.cached_tokens + other.cached_tokens,
+            total_tokens=self.total_tokens + other.total_tokens,
+        )
+
+    def __sub__(self, other: TokenUsage) -> TokenUsage:
+        if not isinstance(other, TokenUsage):
+            return NotImplemented
+        return TokenUsage(
+            input_tokens=self.input_tokens - other.input_tokens,
+            output_tokens=self.output_tokens - other.output_tokens,
+            cached_tokens=self.cached_tokens - other.cached_tokens,
+            total_tokens=self.total_tokens - other.total_tokens,
+        )
+
 
 def _token_usage_breakdown(value: Any) -> TokenUsage:
     """Extract token counts from common LangChain/provider response shapes."""
@@ -168,27 +182,22 @@ def _token_usage_breakdown(value: Any) -> TokenUsage:
             item if isinstance(item, int) and not isinstance(item, bool) else 0
         )
 
+    def maximum(item: Mapping[str, Any], *keys: str) -> int:
+        return max(count(item.get(key)) for key in keys)
+
     def mapping_usage(item: Mapping[str, Any]) -> TokenUsage:
-        input_tokens = max(
-            count(item.get(key))
-            for key in ("input_tokens", "prompt_tokens", "input_token_count")
+        input_tokens = maximum(
+            item, "input_tokens", "prompt_tokens", "input_token_count"
         )
-        output_tokens = max(
-            count(item.get(key))
-            for key in (
-                "output_tokens",
-                "completion_tokens",
-                "output_token_count",
-            )
+        output_tokens = maximum(
+            item, "output_tokens", "completion_tokens", "output_token_count"
         )
-        cached_tokens = max(
-            count(item.get(key))
-            for key in (
-                "cached_tokens",
-                "cached_input_tokens",
-                "cache_read_input_tokens",
-                "prompt_cache_hits",
-            )
+        cached_tokens = maximum(
+            item,
+            "cached_tokens",
+            "cached_input_tokens",
+            "cache_read_input_tokens",
+            "prompt_cache_hits",
         )
         for details_key in (
             "input_token_details",
@@ -199,12 +208,10 @@ def _token_usage_breakdown(value: Any) -> TokenUsage:
             if isinstance(details, Mapping):
                 cached_tokens = max(
                     cached_tokens,
-                    count(details.get("cached_tokens")),
-                    count(details.get("cache_read")),
+                    maximum(details, "cached_tokens", "cache_read"),
                 )
         total_tokens = max(
-            count(item.get("total_tokens")),
-            count(item.get("total_token_count")),
+            maximum(item, "total_tokens", "total_token_count"),
             input_tokens + output_tokens,
         )
         return TokenUsage(
@@ -255,11 +262,6 @@ def _token_usage_breakdown(value: Any) -> TokenUsage:
         max(usage.cached_tokens for usage in candidates),
         best.total_tokens,
     )
-
-
-def _token_usage(value: Any) -> int:
-    """Extract total token usage from common LangChain response shapes."""
-    return _token_usage_breakdown(value).total_tokens
 
 
 def _reasoning_trace(chunk: Any) -> str | None:

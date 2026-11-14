@@ -1,25 +1,18 @@
-from textual.containers import VerticalScroll
 from textual.widgets import Static
 
-from tests.cli._app_fakes import FakeHITL
-from ursa.cli.tui.app import UrsaTextualApp
+from tests.cli._app_helpers import static_text
 from ursa.cli.tui.event_cards import (
     AgentEventCard,
     ArtifactCard,
     EditCard,
     SearchEventCard,
 )
-from ursa.cli.tui.turn import Turn
 
 
 async def test_multiple_edit_rows_expand_independently_under_one_heading(
-    tmp_path,
+    event_turn,
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(100, 60)) as pilot:
-        turn = Turn("edit two files", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+    async with event_turn("edit two files", size=(100, 60)) as (pilot, turn):
         for event in (
             {
                 "tool": "edit_code",
@@ -38,8 +31,8 @@ async def test_multiple_edit_rows_expand_independently_under_one_heading(
 
         first, second = turn.query(EditCard)
         assert len(turn.query(".edit-group-title")) == 1
-        assert "one.py" in str(first.query_one(".edit-title", Static).content)
-        assert "two.py" in str(second.query_one(".edit-title", Static).content)
+        assert "one.py" in static_text(first, ".edit-title")
+        assert "two.py" in static_text(second, ".edit-title")
         first.scroll_visible(animate=False)
         await pilot.pause()
         assert await pilot.click(first.query_one(".edit-header"))
@@ -50,12 +43,8 @@ async def test_multiple_edit_rows_expand_independently_under_one_heading(
         assert "+value = 2" in expanded
 
 
-async def test_specialized_agent_events_and_artifacts_update_live(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("investigate", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+async def test_specialized_agent_events_and_artifacts_update_live(event_turn):
+    async with event_turn("investigate", size=(100, 36)) as (pilot, turn):
         await turn.event({
             "agent": "HypothesizerAgent",
             "stage": "generate",
@@ -87,10 +76,7 @@ async def test_specialized_agent_events_and_artifacts_update_live(tmp_path):
 
         artifact = turn.query_one(ArtifactCard)
         for card in turn.query(".event-card"):
-            assert (
-                str(card.query_one(".event-expand-hint", Static).content)
-                == "Click to expand"
-            )
+            assert static_text(card, ".event-expand-hint") == "Click to expand"
         artifact.mark_done()
 
         class Click:
@@ -105,17 +91,15 @@ async def test_specialized_agent_events_and_artifacts_update_live(tmp_path):
         assert artifact.done
         assert artifact.expanded
         assert (
-            str(artifact.query_one(".event-expand-hint", Static).content)
-            == "Click to collapse"
+            static_text(artifact, ".event-expand-hint") == "Click to collapse"
         )
 
 
-async def test_search_and_lammps_events_render_specialized_details(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("search then simulate", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+async def test_search_and_lammps_events_render_specialized_details(event_turn):
+    async with event_turn("search then simulate", size=(100, 36)) as (
+        pilot,
+        turn,
+    ):
         await turn.event({
             "tool": "run_web_search",
             "stage": "search_result",

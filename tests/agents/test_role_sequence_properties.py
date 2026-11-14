@@ -18,6 +18,7 @@ healthy space.
 """
 
 import tempfile
+from contextlib import closing
 
 import pytest
 
@@ -61,10 +62,8 @@ def test_property_shapes_without_summarization(history):
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as workspace:
         llm = RecordingChatModel()
         agent = BasicChatAgent(llm=llm, workspace=workspace)
-        try:
+        with closing(agent):
             agent.invoke({"messages": list(history)})
-        finally:
-            agent.close()
 
         assert_requests_provider_valid(llm.calls)
 
@@ -83,10 +82,8 @@ def test_property_summarization_healthy_space(history, messages_to_keep):
             tokens_before_summarize=1,
             messages_to_keep=messages_to_keep,
         )
-        try:
+        with closing(agent):
             agent.invoke({"messages": list(history)})
-        finally:
-            agent.close()
 
         assert_requests_provider_valid(llm.calls)
 
@@ -112,52 +109,35 @@ async def test_summarization_runs_on_non_tool_agents(tmp_path):
     assert_requests_provider_valid(llm.calls)
 
 
-async def test_messages_to_keep_zero_stays_provider_valid(tmp_path):
-    # Regression guard for upstream #296: the post-summarization state was
-    # [first message, assistant summary], ending on an assistant turn. The
-    # summary now lands as a human-role message, so the next request stays
-    # provider-valid even when messages_to_keep=0.
+@pytest.mark.parametrize(
+    "messages_to_keep", [0, 1], ids=["keep-none", "keep-tool-tail"]
+)
+async def test_summarized_tails_stay_provider_valid(tmp_path, messages_to_keep):
+    # Regression guards for upstream #296: an assistant-role summary formerly
+    # left an invalid request when keeping no messages or when the kept tool
+    # tail's calls had been summarized away. Both cases need a human summary.
     llm = RecordingChatModel()
     agent = ChatAgent(
         llm=llm,
         workspace=tmp_path,
         tokens_before_summarize=1,
-        messages_to_keep=0,
+        messages_to_keep=messages_to_keep,
     )
-
-    await agent.ainvoke({
-        "messages": [
-            HumanMessage(f"q {_PAD}"),
-            AIMessage(f"a {_PAD}"),
-            HumanMessage("latest question"),
-        ]
-    })
-
-    assert_requests_provider_valid(llm.calls)
-
-
-async def test_tool_tail_summarization_stays_provider_valid(tmp_path):
-    # Regression guard for upstream #296: a kept tool tail whose calls were
-    # summarized away used to be folded into the summary block, leaving the
-    # conversation ending on the assistant summary. The human-role summary
-    # keeps the request provider-valid even with a nonzero messages_to_keep.
-    llm = RecordingChatModel()
-    agent = ChatAgent(
-        llm=llm,
-        workspace=tmp_path,
-        tokens_before_summarize=1,
-        messages_to_keep=1,
-    )
-
-    await agent.ainvoke({
-        "messages": [
-            HumanMessage(f"q {_PAD}"),
+    history = [HumanMessage(f"q {_PAD}")]
+    if messages_to_keep:
+        history.extend([
             AIMessage(
                 f"calling {_PAD}",
                 tool_calls=[{"name": "read_file", "args": {}, "id": "call_1"}],
             ),
             ToolMessage("tool output", tool_call_id="call_1"),
-        ]
-    })
+        ])
+    else:
+        history.extend([
+            AIMessage(f"a {_PAD}"),
+            HumanMessage("latest question"),
+        ])
+
+    await agent.ainvoke({"messages": history})
 
     assert_requests_provider_valid(llm.calls)

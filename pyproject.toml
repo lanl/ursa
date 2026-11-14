@@ -151,6 +151,7 @@ ursa_dashboard = ["logo/logo.png"]
 asyncio_mode = "auto"
 addopts = "--numprocesses auto --dist worksteal"
 markers = [
+    "process_integration: exercises real multiprocessing",
     "real_llm: test intentionally initializes a real chat or embedding model and may make network calls",
     "slow: test is comparatively slow and may be omitted from quick local runs",
 ]

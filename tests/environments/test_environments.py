@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from types import SimpleNamespace
 
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
@@ -161,6 +160,22 @@ def fake_llm():
     return ToolCapableFakeChatModel(responses=["unused"])
 
 
+def make_team(*, persist_members=False, **kwargs):
+    return AgentTeamEnvironment(
+        llm=fake_llm(), persist_members=persist_members, **kwargs
+    )
+
+
+def member_config(name, role, agent=RecordingMember, **options):
+    """Configure a test worker through the same import path used in YAML."""
+    return {
+        "name": name,
+        "role": role,
+        "agent": f"{agent.__module__}.{agent.__name__}",
+        **options,
+    }
+
+
 def test_load_object_resolves_environment_short_names():
     assert load_object("AgentTeamEnvironment") is AgentTeamEnvironment
     assert load_object("AgentSymposiumEnvironment") is AgentSymposiumEnvironment
@@ -237,8 +252,7 @@ def test_environment_default_workspace_uses_group_cache(monkeypatch, tmp_path):
     cache_root = tmp_path / "ursa"
     monkeypatch.setattr(security, "URSA_CACHE_DIR", cache_root)
 
-    team = AgentTeamEnvironment(
-        llm=fake_llm(),
+    team = make_team(
         name="workspace_team",
         group="science",
         pi={
@@ -273,23 +287,11 @@ def test_team_pi_receives_member_delegation_tool_and_invokes_member(
     caplog.set_level(logging.INFO, logger="ursa.environments.agent_team")
     config = {
         "name": "team_test",
-        "pi": {
-            "name": "pi",
-            "role": "lead",
-            "agent": "tests.environments.test_environments.RecordingPI",
-        },
-        "members": [
-            {
-                "name": "analyst",
-                "role": "analysis",
-                "agent": "tests.environments.test_environments.RecordingMember",
-            }
-        ],
+        "pi": member_config("pi", "lead", RecordingPI),
+        "members": [member_config("analyst", "analysis")],
         "workspace": str(tmp_path),
     }
-    team = AgentTeamEnvironment(
-        llm=fake_llm(), config=config, persist_members=True
-    )
+    team = make_team(config=config, persist_members=True)
 
     result = team.invoke("solve the user problem")
 
@@ -312,35 +314,18 @@ def test_team_pi_receives_member_delegation_tool_and_invokes_member(
 
 
 def test_team_default_pi_is_execution_agent():
-    team = AgentTeamEnvironment(
-        llm=fake_llm(),
-        name="default_pi_team",
-        members=[],
-        persist_members=False,
-    )
+    team = make_team(name="default_pi_team", members=[])
     assert team.config.pi.agent == "ExecutionAgent"
 
 
 async def test_team_ainvoke_uses_async_pi_and_async_delegation_tool(tmp_path):
     config = {
         "name": "async_team_test",
-        "pi": {
-            "name": "pi",
-            "role": "lead",
-            "agent": "tests.environments.test_environments.AsyncRecordingPI",
-        },
-        "members": [
-            {
-                "name": "analyst",
-                "role": "analysis",
-                "agent": "tests.environments.test_environments.AsyncRecordingMember",
-            }
-        ],
+        "pi": member_config("pi", "lead", AsyncRecordingPI),
+        "members": [member_config("analyst", "analysis", AsyncRecordingMember)],
         "workspace": str(tmp_path),
     }
-    team = AgentTeamEnvironment(
-        llm=fake_llm(), config=config, persist_members=False
-    )
+    team = make_team(config=config)
 
     result = await team.ainvoke("solve asynchronously")
 
@@ -356,23 +341,11 @@ async def test_team_ainvoke_uses_async_pi_and_async_delegation_tool(tmp_path):
 def test_team_invoke_preserves_sync_api_via_async_implementation(tmp_path):
     config = {
         "name": "sync_wrapper_team_test",
-        "pi": {
-            "name": "pi",
-            "role": "lead",
-            "agent": "tests.environments.test_environments.AsyncRecordingPI",
-        },
-        "members": [
-            {
-                "name": "analyst",
-                "role": "analysis",
-                "agent": "tests.environments.test_environments.AsyncRecordingMember",
-            }
-        ],
+        "pi": member_config("pi", "lead", AsyncRecordingPI),
+        "members": [member_config("analyst", "analysis", AsyncRecordingMember)],
         "workspace": str(tmp_path),
     }
-    team = AgentTeamEnvironment(
-        llm=fake_llm(), config=config, persist_members=False
-    )
+    team = make_team(config=config)
 
     result = team.invoke("sync caller using async internals")
 
@@ -381,41 +354,22 @@ def test_team_invoke_preserves_sync_api_via_async_implementation(tmp_path):
 
 
 async def test_team_invoke_from_running_loop_raises_clear_error(tmp_path):
-    team = AgentTeamEnvironment(
-        llm=fake_llm(),
-        name="running_loop_team_test",
-        members=[],
-        persist_members=False,
-        workspace=tmp_path,
+    team = make_team(
+        name="running_loop_team_test", members=[], workspace=tmp_path
     )
 
-    try:
+    with pytest.raises(RuntimeError) as exc:
         team.invoke("called from async context")
-    except RuntimeError as exc:
-        assert "await environment.ainvoke" in str(exc)
-    else:  # pragma: no cover
-        raise AssertionError("Expected .invoke() to reject running event loop")
+    assert "await environment.ainvoke" in str(exc.value)
 
 
 def test_symposium_runs_independent_review_revision_and_synthesis(tmp_path):
     config = {
         "name": "symposium_test",
-        "organizer": {
-            "name": "organizer",
-            "role": "synth",
-            "agent": "tests.environments.test_environments.RecordingOrganizer",
-        },
+        "organizer": member_config("organizer", "synth", RecordingOrganizer),
         "members": [
-            {
-                "name": "alpha",
-                "role": "first solver",
-                "agent": "tests.environments.test_environments.RecordingMember",
-            },
-            {
-                "name": "beta",
-                "role": "second solver",
-                "agent": "tests.environments.test_environments.RecordingMember",
-            },
+            member_config("alpha", "first solver"),
+            member_config("beta", "second solver"),
         ],
         "revision_rounds": 2,
         "workspace": str(tmp_path),
@@ -467,23 +421,12 @@ def test_symposium_uses_stable_names_parent_workspace_and_reviewer_flag(
 ):
     config = {
         "name": "soccer_symposium",
-        "organizer": {
-            "name": "organizer",
-            "role": "synth",
-            "agent": "tests.environments.test_environments.RecordingOrganizer",
-        },
+        "organizer": member_config("organizer", "synth", RecordingOrganizer),
         "members": [
-            {
-                "name": "nemo_soccer",
-                "role": "first solver and reviewer",
-                "agent": "tests.environments.test_environments.RecordingMember",
-            },
-            {
-                "name": "honeybee_soccer",
-                "role": "second solver only",
-                "agent": "tests.environments.test_environments.RecordingMember",
-                "reviewer": False,
-            },
+            member_config("nemo_soccer", "first solver and reviewer"),
+            member_config(
+                "honeybee_soccer", "second solver only", reviewer=False
+            ),
         ],
         "workspace": str(tmp_path),
     }
@@ -548,22 +491,12 @@ async def test_symposium_ainvoke_gathers_independent_member_phases(tmp_path):
     ConcurrentAsyncMember.max_active = 0
     config = {
         "name": "async_symposium_test",
-        "organizer": {
-            "name": "organizer",
-            "role": "synth",
-            "agent": "tests.environments.test_environments.ConcurrentAsyncOrganizer",
-        },
+        "organizer": member_config(
+            "organizer", "synth", ConcurrentAsyncOrganizer
+        ),
         "members": [
-            {
-                "name": "alpha",
-                "role": "first solver",
-                "agent": "tests.environments.test_environments.ConcurrentAsyncMember",
-            },
-            {
-                "name": "beta",
-                "role": "second solver",
-                "agent": "tests.environments.test_environments.ConcurrentAsyncMember",
-            },
+            member_config("alpha", "first solver", ConcurrentAsyncMember),
+            member_config("beta", "second solver", ConcurrentAsyncMember),
         ],
         "revision_rounds": 1,
         "workspace": str(tmp_path),
@@ -658,15 +591,12 @@ def test_environment_config_defaults_use_group_cache(monkeypatch, tmp_path):
     assert saved_symposium.exists()
 
 
-def test_team_config_resolves_inference_provider_keyring(monkeypatch, tmp_path):
+def test_team_config_resolves_inference_provider_keyring(
+    fake_keyring, tmp_path
+):
     calls = []
-    monkeypatch.setattr(
-        "ursa.util.secrets.get_keyring",
-        lambda: SimpleNamespace(
-            get_password=lambda service, username: (
-                calls.append((service, username)) or "secret"
-            )
-        ),
+    fake_keyring(
+        lambda service, username: calls.append((service, username)) or "secret"
     )
     path = tmp_path / "team.yaml"
     path.write_text(

@@ -59,9 +59,13 @@ the allocated window may only become available after the first response.
 | Input | Action |
 |---|---|
 | `/` | Browse application commands. Use `/keymap` for every keyboard shortcut. |
+| `/subagents` | Switch the message target within the active agent hierarchy. |
+| `/coordination` | Open live messages and the subagent hierarchy. |
 | `#` | Choose an agent and route the message to it. |
 | `@` | Insert a workspace file or directory into the message. |
-| **Enter** | Submit the message. |
+| **Enter** in the editor | Submit the message. During active work, queue it for the selected agent. |
+| **Enter** or **Space** on a focused card | Expand or collapse its details. Use **Shift+Tab** from the editor to reach conversation cards. |
+| **Esc** | Close an open picker or dialog. Does not submit messages or cancel agent work. |
 | **Shift+Enter** or **Ctrl+J** | Insert a newline. Some terminals cannot distinguish Shift+Enter, so Ctrl+J is the portable option. |
 | **Ctrl+Q** or `/exit` | Exit gracefully, waiting for an active turn to finish. |
 | **Ctrl+D** | Exit immediately without cleanup; reserve this for a stuck turn. |
@@ -73,6 +77,23 @@ opens the newest tab first, refreshes while open, and returns to the prompt with
 **Escape** or **Q**. Ghostty tabs preserve their emulated grid and styles;
 ProcessTerm tabs soft-wrap captured output. Agent tools remain responsible for
 terminal input; an empty browser explains when no sessions exist.
+Messages waiting for an agent appear dimmed above the prompt. They move into
+the conversation only when that agent begins processing them.
+
+Each turn groups agent messaging, spawning, waiting, and stopping into one
+**Coordination** card with a summary and its two latest actions. Expand the
+card to inspect individual calls. `/coordination` opens on Messages, which
+displays 50 previews at a time; its Subagents tab shows the live hierarchy.
+Use **Older** and **Newer** to browse, then **Latest** to follow live messages.
+Scrolling back or expanding a message pauses live following so incoming traffic
+does not move what you are reading. Press **End** or select **Latest** to resume.
+Use **Tab** and **Shift+Tab** to move between message cards and controls; the
+focused card has a visible outline. `/keymap` lists the card shortcuts.
+Message bodies and coordination details are stored in SQLite and loaded when
+expanded.
+
+See [Async messages and subagents](../agents/async-messages.md) for the Python
+API and hierarchy addressing rules.
 
 ## 3. Chat with the assistant
 

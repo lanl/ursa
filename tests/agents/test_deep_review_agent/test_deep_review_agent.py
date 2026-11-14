@@ -2,22 +2,20 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import pytest
-from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
+from tests.agents.utils import (
+    ToolReadyFakeChatModel,
+    assert_requests_provider_valid,
+    message_stream_with_usage,
+    message_with_usage,
+    recording_model,
+)
 from ursa.agents.deep_review_agent import DeepReviewAgent
 
 
-class ToolReadyFakeChatModel(GenericFakeChatModel):
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-
-class WorkspaceToolCallingFakeChatModel(GenericFakeChatModel):
+class WorkspaceToolCallingFakeChatModel(ToolReadyFakeChatModel):
     """Calls list_workspace_files once, then answers normally."""
-
-    def bind_tools(self, tools, **kwargs):
-        return self
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         from langchain_core.outputs import ChatGeneration, ChatResult
@@ -27,7 +25,7 @@ class WorkspaceToolCallingFakeChatModel(GenericFakeChatModel):
             self, "_called_workspace", False
         ):
             self._called_workspace = True
-            message = AIMessage(
+            message = message_with_usage(
                 content="",
                 tool_calls=[
                     {
@@ -37,47 +35,24 @@ class WorkspaceToolCallingFakeChatModel(GenericFakeChatModel):
                         "type": "tool_call",
                     }
                 ],
-                usage_metadata={
-                    "input_tokens": 1,
-                    "output_tokens": 1,
-                    "total_tokens": 2,
-                },
             )
         else:
-            message = AIMessage(
-                content="workspace-informed response",
-                usage_metadata={
-                    "input_tokens": 1,
-                    "output_tokens": 1,
-                    "total_tokens": 2,
-                },
-            )
+            message = message_with_usage(content="workspace-informed response")
         return ChatResult(generations=[ChatGeneration(message=message)])
-
-
-def _message_stream(content: str) -> Iterator[AIMessage]:
-    while True:
-        yield AIMessage(
-            content=content,
-            usage_metadata={
-                "input_tokens": 1,
-                "output_tokens": 1,
-                "total_tokens": 2,
-            },
-        )
 
 
 @pytest.fixture
 def chat_model():
-    return ToolReadyFakeChatModel(messages=_message_stream("ok"))
+    return ToolReadyFakeChatModel(messages=message_stream_with_usage("ok"))
 
 
-@pytest.mark.asyncio
 async def test_deep_review_agent_ainvoke_without_hidden_web_search(
     chat_model,
     tmpdir: Path,
 ) -> None:
     agent = DeepReviewAgent(llm=chat_model, workspace=tmpdir)
+    prompt = "  exact user input\n"
+    assert agent._normalize_inputs(prompt)["question"] == prompt
 
     assert "list_workspace_files" in agent.tools
     assert "read_file" in agent.tools
@@ -109,12 +84,13 @@ async def test_deep_review_agent_ainvoke_without_hidden_web_search(
     assert generated_logs, "Expected iteration history files to be written"
 
 
-@pytest.mark.asyncio
 async def test_deep_review_agent_can_autonomously_use_workspace_tools(
     tmpdir: Path,
 ) -> None:
     Path(tmpdir, "notes.txt").write_text("cooling note", encoding="utf-8")
-    model = WorkspaceToolCallingFakeChatModel(messages=_message_stream("ok"))
+    model = WorkspaceToolCallingFakeChatModel(
+        messages=message_stream_with_usage("ok")
+    )
     agent = DeepReviewAgent(llm=model, workspace=tmpdir)
 
     result = await agent.ainvoke({
@@ -147,53 +123,11 @@ def test_deep_review_agent_exposes_web_tools_only_when_enabled(
     assert "run_osti_search" in with_web.tools
 
 
-def _recording_model(log: list) -> ToolReadyFakeChatModel:
-    """Fake model that records every request's message list."""
-
-    class _Recorder(ToolReadyFakeChatModel):
-        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-            log.append(list(messages))
-            return super()._generate(
-                messages, stop=stop, run_manager=run_manager, **kwargs
-            )
-
-    return _Recorder(messages=_message_stream("ok"))
-
-
-def _exploding_model(calls: list) -> ToolReadyFakeChatModel:
-    """Fake model that raises on every call and counts the calls."""
-
-    class _Exploder(ToolReadyFakeChatModel):
-        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-            calls.append(len(messages))
-            raise RuntimeError("provider exploded")
-
-    return _Exploder(messages=_message_stream("unused"))
-
-
-def _system_prefix_ok(messages) -> bool:
-    seen_non_system = False
-    for message in messages:
-        if isinstance(message, SystemMessage):
-            if seen_non_system:
-                return False
-        else:
-            seen_non_system = True
-    return True
-
-
 def _distinct_stream() -> Iterator[AIMessage]:
     n = 0
     while True:
         n += 1
-        yield AIMessage(
-            content=f"turn-{n:02d}",
-            usage_metadata={
-                "input_tokens": 1,
-                "output_tokens": 1,
-                "total_tokens": 2,
-            },
-        )
+        yield message_with_usage(content=f"turn-{n:02d}")
 
 
 _DD_QUESTION = {
@@ -203,30 +137,17 @@ _DD_QUESTION = {
 }
 
 
-@pytest.mark.asyncio
-async def test_phase_requests_keep_system_prompts_leading(tmpdir):
+async def test_phase_prompts_lead_requests_without_persisting_in_history(
+    tmpdir,
+):
     # Issue 294: from the second debate phase onward, requests carried
     # mid-conversation system messages, which langchain-anthropic rejects.
     log: list = []
-    agent = DeepReviewAgent(llm=_recording_model(log), workspace=tmpdir)
-
-    await agent.ainvoke(dict(_DD_QUESTION))
-
-    assert log, "no model requests captured"
-    bad = [
-        [type(message).__name__ for message in request]
-        for request in log
-        if not _system_prefix_ok(request)
-    ]
-    assert not bad, f"requests with mid-conversation system messages: {bad}"
-
-
-@pytest.mark.asyncio
-async def test_phase_prompts_not_persisted_as_system_messages(tmpdir):
-    log: list = []
-    agent = DeepReviewAgent(llm=_recording_model(log), workspace=tmpdir)
+    agent = DeepReviewAgent(llm=recording_model(log, "ok"), workspace=tmpdir)
 
     result = await agent.ainvoke(dict(_DD_QUESTION))
+
+    assert_requests_provider_valid(log)
 
     persisted_systems = [
         message
@@ -236,14 +157,6 @@ async def test_phase_prompts_not_persisted_as_system_messages(tmpdir):
     assert persisted_systems == [], (
         "phase role prompts must not accumulate in the message channel"
     )
-
-
-@pytest.mark.asyncio
-async def test_each_phase_request_leads_with_its_own_role_prompt(tmpdir):
-    log: list = []
-    agent = DeepReviewAgent(llm=_recording_model(log), workspace=tmpdir)
-
-    await agent.ainvoke(dict(_DD_QUESTION))
 
     leading_prompts = [
         request[0].content
@@ -258,14 +171,20 @@ async def test_each_phase_request_leads_with_its_own_role_prompt(tmpdir):
     )
 
 
-@pytest.mark.asyncio
 async def test_phase_model_error_propagates_immediately(tmpdir):
     # Issue 294: phase errors were swallowed into AIMessage critiques
     # ("Deep-review phase error: ...") and fed to later phases, so a
     # failing model still produced a normal-looking run. The first
     # failure must propagate before any further model call happens.
     calls: list = []
-    agent = DeepReviewAgent(llm=_exploding_model(calls), workspace=tmpdir)
+    model = ToolReadyFakeChatModel(messages=message_stream_with_usage("unused"))
+
+    def fail(messages, stop=None, run_manager=None, **kwargs):
+        calls.append(len(messages))
+        raise RuntimeError("provider exploded")
+
+    model._generate = fail
+    agent = DeepReviewAgent(llm=model, workspace=tmpdir)
 
     with pytest.raises(RuntimeError, match="provider exploded"):
         await agent.ainvoke(dict(_DD_QUESTION))
@@ -277,37 +196,29 @@ async def test_phase_model_error_propagates_immediately(tmpdir):
     )
 
 
-async def test_output_lists_have_exactly_one_entry_per_iteration(tmpdir):
-    # One real iteration must produce exactly one entry per output list;
+@pytest.mark.parametrize("iterations", [1, 2])
+async def test_outputs_and_report_match_real_iterations(tmpdir, iterations):
+    # Each real iteration must produce exactly one entry per output list;
     # the previous >= 1 assertions were green with every entry doubled.
     agent = DeepReviewAgent(
-        llm=ToolReadyFakeChatModel(messages=_message_stream("ok")),
+        llm=ToolReadyFakeChatModel(messages=message_stream_with_usage("ok")),
         workspace=tmpdir,
     )
 
-    result = await agent.ainvoke(dict(_DD_QUESTION))
-
-    assert result["agent1_solution"] == ["ok"]
-    assert result["agent2_critiques"] == ["ok"]
-    assert result["agent3_perspectives"] == ["ok"]
-
-
-@pytest.mark.asyncio
-async def test_output_lists_scale_with_iterations(tmpdir):
-    agent = DeepReviewAgent(
-        llm=ToolReadyFakeChatModel(messages=_message_stream("ok")),
-        workspace=tmpdir,
-    )
-
-    result = await agent.ainvoke({**_DD_QUESTION, "max_iterations": 2})
+    result = await agent.ainvoke({**_DD_QUESTION, "max_iterations": iterations})
 
     for key in ("agent1_solution", "agent2_critiques", "agent3_perspectives"):
-        assert len(result[key]) == 2, f"{key}: {result[key]}"
+        assert result[key] == ["ok"] * iterations, f"{key}: {result[key]}"
+
+    # Report sections also follow real iterations, guarding finalization order.
+    text = sorted(agent.workspace.glob("iteration_details_*.txt"))[
+        -1
+    ].read_text(encoding="utf-8")
+    assert text.count("\\subsection") == iterations
 
 
-@pytest.mark.asyncio
 async def test_chained_runs_report_real_iterations_only(tmpdir):
-    # Chaining a second run on the first run's returned state (the HITL
+    # Chaining a second run on the first run's returned state (the AgentRuntime
     # pattern) must report exactly the real iterations, with each report
     # section attributed to its own iteration's content.
     agent = DeepReviewAgent(
@@ -334,12 +245,11 @@ async def test_chained_runs_report_real_iterations_only(tmpdir):
     assert "turn-06" in sections[2]
 
 
-@pytest.mark.asyncio
 async def test_seeded_visited_sites_survive(tmpdir):
     # Guard (green before and after the fix): visited sites provided in
     # the input state survive to the returned state.
     agent = DeepReviewAgent(
-        llm=ToolReadyFakeChatModel(messages=_message_stream("ok")),
+        llm=ToolReadyFakeChatModel(messages=message_stream_with_usage("ok")),
         workspace=tmpdir,
     )
 
@@ -349,21 +259,3 @@ async def test_seeded_visited_sites_survive(tmpdir):
     })
 
     assert "https://seeded.example/x" in result["visited_sites"]
-
-
-@pytest.mark.asyncio
-async def test_details_file_has_one_section_per_iteration(tmpdir):
-    # Guard (green before and after the fix): a single run's report has
-    # exactly one section per real iteration, protecting the
-    # finalize-summarize-print ordering against future rewiring.
-    agent = DeepReviewAgent(
-        llm=ToolReadyFakeChatModel(messages=_message_stream("ok")),
-        workspace=tmpdir,
-    )
-
-    await agent.ainvoke({**_DD_QUESTION, "max_iterations": 2})
-
-    text = sorted(agent.workspace.glob("iteration_details_*.txt"))[
-        -1
-    ].read_text(encoding="utf-8")
-    assert text.count("\\subsection") == 2

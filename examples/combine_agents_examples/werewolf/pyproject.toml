@@ -1,0 +1,12 @@
+[project]
+name = "ursa-example-werewolf"
+version = "0.1.0"
+description = "Play Werewolf with twenty communicating URSA agents."
+requires-python = ">=3.11"
+dependencies = ["ursa-ai"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+ursa-ai = { path = "../../..", editable = true }

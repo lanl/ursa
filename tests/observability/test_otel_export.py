@@ -78,90 +78,66 @@ def _telemetry():
     return timing.Telemetry(enable=True, output_dir="/tmp/unused-otel-tests")
 
 
-def test_d3_span_exported_before_save_otel_returns():
-    telemetry = _telemetry()
-    telemetry._save_otel(_payload(), "http://127.0.0.1:19999/v1/traces", None)
-
-    assert _EXPORTERS, "no exporter constructed"
-    assert len(_EXPORTERS[-1].captured) >= 1, (
-        "span not exported by the time _save_otel returned (no flush)"
+def _export(telemetry, payload=None, *, headers=None):
+    """Export to the test endpoint, using a fresh empty run by default."""
+    return telemetry._save_otel(
+        _payload() if payload is None else payload,
+        "http://127.0.0.1:19999/v1/traces",
+        headers,
     )
 
 
 def test_d4_headers_accept_env_style_string_and_mapping():
     telemetry = _telemetry()
-    telemetry._save_otel(
-        _payload(),
-        "http://127.0.0.1:19999/v1/traces",
-        "authorization=Bearer abc,x-extra=1",
-    )
-    telemetry._save_otel(
-        _payload(),
-        "http://127.0.0.1:19999/v1/traces",
-        {"authorization": "Bearer abc"},
-    )
+    _export(telemetry, headers="authorization=Bearer abc,x-extra=1")
+    _export(telemetry, headers={"authorization": "Bearer abc"})
 
 
 def test_d4_headers_garbage_raises_ursa_error():
     telemetry = _telemetry()
     with pytest.raises(ValueError, match="otel_headers"):
-        telemetry._save_otel(
-            _payload(), "http://127.0.0.1:19999/v1/traces", 12345
-        )
+        _export(telemetry, headers=12345)
 
 
 def test_d4_headers_accept_nondict_mapping():
     telemetry = _telemetry()
-    telemetry._save_otel(
-        _payload(),
-        "http://127.0.0.1:19999/v1/traces",
-        MappingProxyType({"authorization": "Bearer abc"}),
+    _export(
+        telemetry, headers=MappingProxyType({"authorization": "Bearer abc"})
     )
 
 
-def test_d5b_telemetry_field_endpoint_honored():
+@pytest.mark.parametrize(
+    "source, explicit, expected_port",
+    [
+        pytest.param("field", False, "18888", id="d5b-field"),
+        pytest.param(
+            "environment", False, "17777", id="d6-characterization-env"
+        ),
+        pytest.param("field", True, "16666", id="d6-param-beats-field"),
+        pytest.param(
+            "environment", True, "16666", id="d6-characterization-param"
+        ),
+    ],
+)
+def test_d5b_d6_endpoint_precedence(
+    monkeypatch, source, explicit, expected_port
+):
+    if source == "environment":
+        monkeypatch.setenv(
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+            "http://127.0.0.1:17777/v1/traces",
+        )
     telemetry = _telemetry()
-    telemetry.otel_endpoint = "http://127.0.0.1:18888/v1/traces"
-    telemetry._save_otel(_payload(), None, None)
+    if source == "field":
+        field_port = 15555 if explicit else 18888
+        telemetry.otel_endpoint = f"http://127.0.0.1:{field_port}/v1/traces"
+    elif not explicit:
+        telemetry.otel_endpoint = None
+    argument = "http://127.0.0.1:16666/v1/traces" if explicit else None
+    telemetry._save_otel(_payload(), argument, None)
 
     assert _EXPORTERS
-    assert "18888" in str(_EXPORTERS[-1]._endpoint)
-
-
-def test_d6_characterization_env_honored_when_unset(monkeypatch):
-    monkeypatch.setenv(
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-        "http://127.0.0.1:17777/v1/traces",
-    )
-    telemetry = _telemetry()
-    telemetry.otel_endpoint = None
-    telemetry._save_otel(_payload(), None, None)
-
-    assert _EXPORTERS
-    assert "17777" in str(_EXPORTERS[-1]._endpoint)
-
-
-def test_d6_param_beats_field():
-    # Pins the top of the documented precedence order: an explicit call
-    # parameter wins over the Telemetry.otel_endpoint field.
-    telemetry = _telemetry()
-    telemetry.otel_endpoint = "http://127.0.0.1:15555/v1/traces"
-    telemetry._save_otel(_payload(), "http://127.0.0.1:16666/v1/traces", None)
-
-    assert _EXPORTERS
-    assert "16666" in str(_EXPORTERS[-1]._endpoint)
-
-
-def test_d6_characterization_param_beats_env(monkeypatch):
-    monkeypatch.setenv(
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-        "http://127.0.0.1:17777/v1/traces",
-    )
-    telemetry = _telemetry()
-    telemetry._save_otel(_payload(), "http://127.0.0.1:16666/v1/traces", None)
-
-    assert _EXPORTERS
-    assert "16666" in str(_EXPORTERS[-1]._endpoint)
+    assert expected_port in str(_EXPORTERS[-1]._endpoint)
 
 
 def test_d1_inprocess_unavailable_structured_branch(caplog, monkeypatch):
@@ -182,9 +158,7 @@ def test_d1_inprocess_unavailable_structured_branch(caplog, monkeypatch):
 def test_d7_structured_result_and_logging(caplog):
     telemetry = _telemetry()
     with caplog.at_level("INFO", logger="ursa.observability.otel"):
-        result = telemetry._save_otel(
-            _payload(), "http://127.0.0.1:19999/v1/traces", None
-        )
+        result = _export(telemetry)
 
     assert isinstance(result, dict), "structured result expected"
     assert result.get("ok") is True
@@ -246,30 +220,16 @@ def test_d1_unavailable_extra_warns_instead_of_silence():
 
 def test_d2_two_endpoints_route_independently():
     body = textwrap.dedent("""
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-            OTLPSpanExporter,
+        from tests.observability.test_otel_export import (
+            RecordingExporter, _EXPORTERS,
         )
-        from opentelemetry.sdk.trace.export import SpanExportResult
-
-        exporters = []
-
-        class Rec(OTLPSpanExporter):
-            def __init__(self, *a, **k):
-                super().__init__(*a, **k)
-                self.captured = []
-                exporters.append(self)
-
-            def export(self, spans):
-                self.captured.extend(spans)
-                return SpanExportResult.SUCCESS
-
-        timing.OTLPSpanExporter = Rec
+        timing.OTLPSpanExporter = RecordingExporter
         t = timing.Telemetry(enable=True, output_dir="/tmp/unused")
         t._save_otel(payload, "http://127.0.0.1:11111/v1/traces", None)
         t._save_otel(payload, "http://127.0.0.1:22222/v1/traces", None)
         import time
         time.sleep(0.2)
-        print(json.dumps([len(e.captured) for e in exporters]))
+        print(json.dumps([len(e.captured) for e in _EXPORTERS]))
     """)
     proc = _run_subprocess("", body)
     assert proc.returncode == 0, proc.stderr
@@ -335,12 +295,19 @@ def _payload_with_events(events):
     return payload
 
 
-def test_t2_root_span_uses_real_run_timestamps():
+def test_root_export_is_flushed_with_run_timestamps_and_no_extra_spans():
     telemetry = _telemetry()
-    telemetry._save_otel(_payload(), "http://127.0.0.1:19999/v1/traces", None)
+    result = _export(telemetry)
 
-    assert _EXPORTERS
-    (root,) = _EXPORTERS[-1].captured
+    assert _EXPORTERS, "no exporter constructed"
+    captured = _EXPORTERS[-1].captured
+    assert len(captured) >= 1, (
+        "span not exported by the time _save_otel returned (no flush)"
+    )
+    assert len(captured) == 1
+    (root,) = captured
+    assert root.parent is None
+    assert result["span_count"] == 1
     assert root.start_time == _iso_ns(_T2_START), (
         "root span start is not the run's real started_at"
     )
@@ -349,35 +316,32 @@ def test_t2_root_span_uses_real_run_timestamps():
     )
 
 
-def test_t2_child_span_per_llm_event_within_root():
+@pytest.mark.parametrize("offsets", [[(1.0, 2.0)], [(1.0, 2.0), (2.5, 4.0)]])
+def test_t2_child_spans_preserve_timing_attributes_and_parentage(offsets):
     base = _epoch(_T2_START)
     events = [
-        _event(t_start=base + 1.0, t_end=base + 2.0),
-        _event(t_start=base + 2.5, t_end=base + 4.0),
+        _event(t_start=base + start, t_end=base + end) for start, end in offsets
     ]
     telemetry = _telemetry()
-    result = telemetry._save_otel(
-        _payload_with_events(events), "http://127.0.0.1:19999/v1/traces", None
-    )
+    result = _export(telemetry, _payload_with_events(events))
 
     captured = _EXPORTERS[-1].captured
-    assert len(captured) == 3, (
-        f"expected 1 root + 2 children, got {len(captured)}"
+    assert len(captured) == 1 + len(events), (
+        f"expected 1 root + {len(events)} children, got {len(captured)}"
     )
     roots = [s for s in captured if s.parent is None]
     assert len(roots) == 1, "expected exactly one root span"
     root = roots[0]
     children = [s for s in captured if s.parent is not None]
+    assert len(children) == len(events)
     assert all(c.parent.span_id == root.context.span_id for c in children), (
         "children are not parented to the run root span"
     )
     assert sorted(c.start_time for c in children) == [
-        int((base + 1.0) * 1_000_000_000),
-        int((base + 2.5) * 1_000_000_000),
+        int((base + start) * 1_000_000_000) for start, _ in offsets
     ]
     assert sorted(c.end_time for c in children) == [
-        int((base + 2.0) * 1_000_000_000),
-        int((base + 4.0) * 1_000_000_000),
+        int((base + end) * 1_000_000_000) for _, end in offsets
     ]
     for child in children:
         assert (
@@ -386,29 +350,16 @@ def test_t2_child_span_per_llm_event_within_root():
             <= child.end_time
             <= root.end_time
         ), "child span falls outside the root span interval"
-    assert result["span_count"] == 3
-
-
-def test_t2_child_attributes_follow_genai_semconv():
-    base = _epoch(_T2_START)
-    telemetry = _telemetry()
-    telemetry._save_otel(
-        _payload_with_events([_event(t_start=base + 1.0, t_end=base + 2.0)]),
-        "http://127.0.0.1:19999/v1/traces",
-        None,
-    )
-
-    children = [s for s in _EXPORTERS[-1].captured if s.parent is not None]
-    assert len(children) == 1
-    child = children[0]
-    assert child.name == "chat test-model"
-    attrs = dict(child.attributes)
-    assert attrs["gen_ai.operation.name"] == "chat"
-    assert attrs["gen_ai.request.model"] == "test-model"
-    assert attrs["gen_ai.usage.input_tokens"] == 11
-    assert attrs["gen_ai.usage.output_tokens"] == 7
-    assert attrs["ursa.langgraph.node"] == "agent_node"
-    assert attrs["ursa.langgraph.step"] == 3
+        assert child.kind is SpanKind.CLIENT
+        assert child.name == "chat test-model"
+        attrs = dict(child.attributes)
+        assert attrs["gen_ai.operation.name"] == "chat"
+        assert attrs["gen_ai.request.model"] == "test-model"
+        assert attrs["gen_ai.usage.input_tokens"] == 11
+        assert attrs["gen_ai.usage.output_tokens"] == 7
+        assert attrs["ursa.langgraph.node"] == "agent_node"
+        assert attrs["ursa.langgraph.step"] == 3
+    assert result["span_count"] == 1 + len(events)
 
 
 def test_t2_error_event_child_has_error_status():
@@ -418,9 +369,7 @@ def test_t2_error_event_child_has_error_status():
         _event(ok=False, t_start=base + 2.0, t_end=base + 3.0),
     ]
     telemetry = _telemetry()
-    telemetry._save_otel(
-        _payload_with_events(events), "http://127.0.0.1:19999/v1/traces", None
-    )
+    _export(telemetry, _payload_with_events(events))
 
     children = {
         c.start_time: c for c in _EXPORTERS[-1].captured if c.parent is not None
@@ -433,20 +382,6 @@ def test_t2_error_event_child_has_error_status():
     assert ok_child.status.status_code is StatusCode.UNSET
 
 
-def test_t2_no_events_root_only():
-    # Guard (green before and after T1.2): empty llm_events yields exactly
-    # one root span and span_count 1.
-    telemetry = _telemetry()
-    result = telemetry._save_otel(
-        _payload(), "http://127.0.0.1:19999/v1/traces", None
-    )
-
-    captured = _EXPORTERS[-1].captured
-    assert len(captured) == 1
-    assert captured[0].parent is None
-    assert result["span_count"] == 1
-
-
 def test_t2_missing_run_timestamps_still_exports():
     # Robustness guard (green before and after T1.2): a degenerate context
     # without timestamps must not crash and still exports a root span.
@@ -454,9 +389,7 @@ def test_t2_missing_run_timestamps_still_exports():
     del payload["context"]["started_at"]
     del payload["context"]["ended_at"]
     telemetry = _telemetry()
-    result = telemetry._save_otel(
-        payload, "http://127.0.0.1:19999/v1/traces", None
-    )
+    result = _export(telemetry, payload)
 
     assert result["ok"] is True
     assert len(_EXPORTERS[-1].captured) == 1
@@ -476,9 +409,7 @@ def test_t2_real_langchain_metadata_names_child_spans():
         "langgraph_step": 1,
     }
     telemetry = _telemetry()
-    telemetry._save_otel(
-        _payload_with_events([event]), "http://127.0.0.1:19999/v1/traces", None
-    )
+    _export(telemetry, _payload_with_events([event]))
 
     children = [s for s in _EXPORTERS[-1].captured if s.parent is not None]
     assert len(children) == 1
@@ -496,9 +427,7 @@ def test_t2_explicit_model_key_wins_over_ls_model_name():
     event = _event(t_start=base + 1.0, t_end=base + 2.0)
     event["metadata"]["ls_model_name"] = "other-model"
     telemetry = _telemetry()
-    telemetry._save_otel(
-        _payload_with_events([event]), "http://127.0.0.1:19999/v1/traces", None
-    )
+    _export(telemetry, _payload_with_events([event]))
 
     children = [s for s in _EXPORTERS[-1].captured if s.parent is not None]
     assert children[0].name == "chat test-model"
@@ -514,11 +443,7 @@ def test_t2_malformed_event_does_not_crash_export(caplog):
     malformed["metadata"] = "not-a-dict"
     telemetry = _telemetry()
     with caplog.at_level("WARNING", logger="ursa.observability.otel"):
-        result = telemetry._save_otel(
-            _payload_with_events([good, malformed]),
-            "http://127.0.0.1:19999/v1/traces",
-            None,
-        )
+        result = _export(telemetry, _payload_with_events([good, malformed]))
 
     assert result["ok"] is True
     captured = _EXPORTERS[-1].captured
@@ -539,28 +464,10 @@ def test_t2_timestampless_events_logged_as_skipped(caplog):
     ]
     telemetry = _telemetry()
     with caplog.at_level("DEBUG", logger="ursa.observability.otel"):
-        result = telemetry._save_otel(
-            _payload_with_events(events),
-            "http://127.0.0.1:19999/v1/traces",
-            None,
-        )
+        result = _export(telemetry, _payload_with_events(events))
 
     assert result["span_count"] == 2
     assert any("Skipped 1" in r.message for r in caplog.records)
-
-
-def test_t2_child_spans_are_client_kind():
-    # GenAI semconv: inference spans SHOULD be SpanKind.CLIENT.
-    base = _epoch(_T2_START)
-    telemetry = _telemetry()
-    telemetry._save_otel(
-        _payload_with_events([_event(t_start=base + 1.0, t_end=base + 2.0)]),
-        "http://127.0.0.1:19999/v1/traces",
-        None,
-    )
-
-    children = [s for s in _EXPORTERS[-1].captured if s.parent is not None]
-    assert children[0].kind is SpanKind.CLIENT
 
 
 def test_t4_no_atexit_providers_registered():
@@ -573,7 +480,7 @@ def test_t4_no_atexit_providers_registered():
         pytest.skip("atexit._ncallbacks not available")
     before = atexit._ncallbacks()
     telemetry = _telemetry()
-    telemetry._save_otel(_payload(), "http://127.0.0.1:19999/v1/traces", None)
+    _export(telemetry)
 
     assert atexit._ncallbacks() == before, (
         "export left an atexit-registered provider behind"

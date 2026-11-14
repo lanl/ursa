@@ -1,6 +1,9 @@
 import asyncio
 import io
+import logging
+import sys
 import threading
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -10,138 +13,49 @@ from textual.widgets import Markdown, Static
 
 import ursa.cli.tui.app as app_module
 import ursa.util.crossplatform as crossplatform
-from tests.cli._app_fakes import FakeHITL, emit_event
-from tests.tui.utils import await_event, await_screen, await_workers, eventually
+from tests.cli._app_helpers import (
+    assert_eventually,
+    emit_event,
+    make_runtime,
+    wait_for,
+)
+from tests.tui.utils import await_event, await_screen, await_workers
 from ursa.cli.config import UrsaConfig
 from ursa.cli.tui.app import UrsaTextualApp
-from ursa.cli.tui.event_cards import EventCard, ExceptionCard, RunCommandCard
+from ursa.cli.tui.event_cards import (
+    EventCard,
+    ExceptionCard,
+    RunCommandCard,
+    ToolCallCard,
+)
+from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.turn import Turn
 from ursa.cli.tui.widgets import (
     ActivityIndicator,
     AgentsScreen,
-    InformationScreen,
+    HierarchyMessageCard,
+    HotlistScreen,
     MessageCard,
-    ModelScreen,
+    MessagesScreen,
     PromptArea,
-    TermsScreen,
+    QueuedMessage,
     WelcomeBanner,
 )
 
 
-async def test_agent_descriptions_load_without_blocking_input(tmp_path):
-    started = threading.Event()
-    release = threading.Event()
-    ui_thread = threading.get_ident()
-    loader_threads = []
-
-    class SlowAgent:
-        @property
-        def description(self):
-            loader_threads.append(threading.get_ident())
-            started.set()
-            assert threading.get_ident() != ui_thread
-            assert release.wait(10), "Description loading was never released"
-            return "Description loaded in the background."
-
-    hitl = FakeHITL(tmp_path)
-    hitl.agents = {"chat": SlowAgent()}
-
-    async def get_agent(name):
-        return hitl.agents[name]
-
-    hitl.get_agent = get_agent
-    app = UrsaTextualApp(hitl)
-    async with app.run_test(size=(100, 36)) as pilot:
-        try:
-            await pilot.press("/", "a", "g", "e", "n", "t", "s", "enter")
-            await await_event(pilot, started)
-            assert loader_threads and ui_thread not in loader_threads
-            await pilot.press("x")
-            assert app.query_one(PromptArea).text == "x"
-        finally:
-            release.set()
-        screen = await await_screen(pilot, AgentsScreen)
-        assert screen.agents[0].description == (
-            "Description loaded in the background."
-        )
-        await await_workers(app, pilot)
+def _activate_hierarchy(runtime, *paths):
+    root_id = runtime.agents["chat"].runtime_id
+    runtime._active_root_id = root_id
+    runtime._active_agent_ready.set()
+    runtime._hierarchies[root_id] = {path: f"runtime:{path}" for path in paths}
+    return root_id
 
 
-async def test_agent_description_failure_is_reported(tmp_path, monkeypatch):
-    class BrokenAgent:
-        @property
-        def description(self):
-            raise ImportError("Agent dependency unavailable")
-
-    hitl = FakeHITL(tmp_path)
-    hitl.agents = {"chat": BrokenAgent()}
-    app = UrsaTextualApp(hitl)
-    notices = []
-    monkeypatch.setattr(
-        app,
-        "notify",
-        lambda message, **kwargs: notices.append((message, kwargs)),
+async def start_turn_tool(app, turn, tool):
+    """Start a tool through the app's event-to-turn route."""
+    await app.add_turn_event(
+        turn, {"type": "custom", "tool": tool, "phase": "start"}
     )
-    async with app.run_test() as pilot:
-        await app._show_command("agents")
-        await await_workers(app, pilot)
-        assert len(notices) == 1
-        message, options = notices[0]
-        assert message == "Agent dependency unavailable"
-        assert options["severity"] == "error"
-        assert options["title"] == "Unable to load agents"
-        assert not isinstance(app.screen, AgentsScreen)
-        await pilot.press("x")
-        assert app.query_one(PromptArea).text == "x"
-
-
-@pytest.mark.parametrize("cancel_unlock", [False, True])
-@pytest.mark.parametrize("configured", [False, True])
-def test_keychain_unlock_precedes_tui_startup(
-    monkeypatch, cancel_unlock, configured
-):
-    calls = []
-    expected_username = "hosted" if configured else "__unlock__"
-
-    def read_password(service, username):
-        assert service == "ursa"
-        assert username == expected_username
-        calls.append(username)
-        if cancel_unlock:
-            raise KeyringLocked("Unlock cancelled")
-
-    async def close():
-        calls.append("close")
-
-    monkeypatch.setattr(
-        "ursa.util.secrets.get_keyring",
-        lambda: SimpleNamespace(get_password=read_password),
-    )
-    monkeypatch.setattr(
-        app_module,
-        "UrsaTextualApp",
-        lambda hitl: SimpleNamespace(run=lambda: calls.append("run")),
-    )
-    config = UrsaConfig(
-        inference_providers={"hosted": {"api_key": {"keyring": True}}},
-        llm_model={"inference_provider": "hosted"},
-        mcp_servers={
-            "tools": {
-                "url": "https://example.test/mcp",
-                "headers": {"Authorization": {"keyring": True}},
-            }
-        },
-    ).resolve()
-    if not configured:
-        config = UrsaConfig()
-    hitl = SimpleNamespace(config=config, aclose=close)
-    if cancel_unlock:
-        with pytest.raises(KeyringLocked, match="Unlock cancelled"):
-            app_module.run_textual(hitl)
-        assert calls == [expected_username, "close"]
-    else:
-        app_module.run_textual(hitl)
-        assert calls == [expected_username, "run", "close"]
 
 
 def test_copy_bindings_are_uniform_and_global():
@@ -156,9 +70,117 @@ def test_copy_bindings_are_uniform_and_global():
         assert bindings[key].priority
 
 
-async def test_welcome_banner_starts_at_top_of_conversation(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+def test_hierarchy_activity_uses_uniform_labels():
+    assert (
+        UrsaTextualApp._event_activity({
+            "tool": "inspect_code",
+            "phase": "start",
+            "message": "provider-specific input",
+        })
+        == "Running inspect code"
+    )
+    assert (
+        UrsaTextualApp._event_activity({
+            "tool": "inspect_code",
+            "phase": "end",
+        })
+        == "Finished inspect code"
+    )
+    assert (
+        UrsaTextualApp._event_activity({
+            "reasoning_summary": "  checking\nimports  "
+        })
+        == "Thinking: checking imports"
+    )
 
+
+async def test_coordination_command_shows_live_collapsible_colored_log(app):
+    content = (
+        "[OPENING round=1 root/p08] Review the first line.\n\n"
+        "Include the complete supporting detail. [red]literal brackets[/red]"
+    )
+    await app.record_hierarchy_message(
+        "root",
+        ("root/researcher", "root/reviewer"),
+        content,
+    )
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await app._show_command("coordination")
+        assert isinstance(app.screen, MessagesScreen)
+        await wait_for(
+            pilot, lambda: len(app.screen.query(HierarchyMessageCard)) == 1
+        )
+
+        card = app.screen.query_one(HierarchyMessageCard)
+        header = card.query_one(".hierarchy-message-header")
+        route = card.query_one(".hierarchy-message-route", Static)
+        timestamp = card.query_one(".hierarchy-message-time", Static)
+        preview = card.query_one(".hierarchy-message-preview", Static)
+        full = card.query_one(".hierarchy-message-full", Markdown)
+        assert "root" in str(route.content)
+        assert "root/researcher" in str(route.content)
+        assert "root/reviewer" in str(route.content)
+        assert str(timestamp.content) == "now"
+        assert timestamp.region.right == header.content_region.right
+        assert "\n" not in str(preview.content)
+        assert str(preview.content) == " ".join(content.split())
+        assert full.has_class("hidden")
+        assert not card.query(".hierarchy-message-expand-hint")
+        assert "Enter expands" in str(
+            app.screen.query_one("#messages-footer", Static).content
+        )
+        assert len(set(app._agent_colors.values())) == 3
+        assert card.sender_color == app._agent_color("root")
+
+        thirty_seconds_later = card.message.timestamp + timedelta(seconds=30)
+        card.refresh_timestamp(thirty_seconds_later)
+        assert str(timestamp.content) == "30s ago"
+
+        await pilot.click(card)
+        await pilot.pause()
+        assert card.expanded
+        assert preview.has_class("hidden")
+        assert not full.has_class("hidden")
+        assert "complete supporting detail" in str(full.source)
+
+        # Expanding a card pauses follow so the body remains readable. Resume
+        # before asserting that subsequent live traffic appears automatically.
+        await app.screen.action_latest()
+
+        await app.record_hierarchy_message(
+            "root/researcher",
+            ("root",),
+            "[DISCUSS round=1 root/p08] Research complete.",
+        )
+        assert await wait_for(
+            pilot,
+            lambda: len(app.screen.query(HierarchyMessageCard)) == 2,
+        )
+        assert not app.screen.query("#messages-body Input")
+
+
+def test_tui_logging_never_writes_through_terminal_handler(capsys):
+    root = logging.getLogger()
+    terminal_handler = logging.StreamHandler(sys.stderr)
+    root.addHandler(terminal_handler)
+    try:
+        with app_module._tui_logging():
+            assert terminal_handler not in root.handlers
+            assert any(
+                isinstance(handler, app_module.TextualHandler)
+                for handler in root.handlers
+            )
+            logging.getLogger("tests.tui.output").warning("tui logging marker")
+        assert terminal_handler in root.handlers
+    finally:
+        root.removeHandler(terminal_handler)
+
+    captured = capsys.readouterr()
+    assert "tui logging marker" not in captured.out + captured.err
+
+
+async def test_welcome_banner_starts_at_top_of_conversation(tmp_path, app):
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.pause()
         conversation = app.query_one("#conversation", VerticalScroll)
@@ -171,17 +193,18 @@ async def test_welcome_banner_starts_at_top_of_conversation(tmp_path):
         await turn.add_response("Short response")
         await pilot.pause()
 
-        await eventually(
+        await assert_eventually(
             pilot, lambda: banner.region.y == conversation.content_region.y
         )
-        assert banner.region.y == conversation.content_region.y
 
 
-async def test_prompt_submission_events_and_history(tmp_path):
-    hitl = FakeHITL(tmp_path)
+async def test_prompt_submission_events_and_history(app):
+    runtime = app.runtime
+    _activate_hierarchy(runtime, "root")
+    calls = []
 
     async def run_agent(name, prompt, callbacks=None):
-        hitl.calls.append((name, prompt))
+        calls.append((name, prompt))
         handler = callbacks[0]
         await emit_event(
             handler,
@@ -204,15 +227,13 @@ async def test_prompt_submission_events_and_history(tmp_path):
         )
         return "**Finished**"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("h", "e", "l", "l", "o", "enter")
         await pilot.pause()
 
-        await eventually(pilot, lambda: hitl.calls == [("chat", "hello")])
-        assert hitl.calls == [("chat", "hello")]
+        await assert_eventually(pilot, lambda: calls == [("chat", "hello")])
         messages = list(app.query(MessageCard))
         assert len(messages) == 2
         assert messages[0].styles.background != messages[1].styles.background
@@ -222,6 +243,11 @@ async def test_prompt_submission_events_and_history(tmp_path):
         assert app.input_tokens == 30
         assert app.output_tokens == 7
         assert app.cached_tokens == 12
+        assert app._agent_token_usage["root"].input_tokens == 30
+        assert app._agent_token_usage["root"].output_tokens == 7
+        assert app._agent_token_usage["root"].cached_tokens == 12
+        assert app._agent_token_usage["root"].total_tokens == 37
+        assert app._agent_last_activity["root"] == "Running read file"
         status = str(app.query_one("#status", Static).content)
         assert "37 tokens" in status
         assert "input" not in status
@@ -235,23 +261,101 @@ async def test_prompt_submission_events_and_history(tmp_path):
         roles = list(app.query(".message-role"))
         assert len(roles) == 1
         assert str(roles[0].content) == "URSA"
-        for message in app.query(MessageCard):
-            markdown = message.query_one(Markdown)
-            assert list(markdown.children)[-1].styles.margin.bottom == 0
+        markdown = messages[1].query_one(Markdown)
+        assert list(markdown.children)[-1].styles.margin.bottom == 0
+        assert isinstance(messages[0].query_one(".message-body"), Static)
 
         prompt = app.query_one(PromptArea)
         await pilot.press("up")
         assert prompt.text == "hello"
 
 
-async def test_agent_exception_card_expands_to_full_traceback(tmp_path):
-    hitl = FakeHITL(tmp_path)
+async def test_long_submitted_prompt_is_not_clipped(app):
+    runtime = app.runtime
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def run_agent(_name, _prompt, callbacks=None):
+        started.set()
+        await release.wait()
+        return "Finished"
+
+    runtime.run_agent = run_agent
+    prompt_text = (
+        "Act as GM and run a complete compact game of Werewolf with exactly "
+        "five player subagents. Privately assign roles, collect every reply "
+        "with wait_for, and report whether all expected messages were "
+        "received exactly once."
+    )
+
+    async with app.run_test(size=(140, 48)) as pilot:
+        prompt = app.query_one(PromptArea)
+        prompt.load_text(prompt_text)
+        await pilot.press("enter")
+        await started.wait()
+        await pilot.pause()
+
+        user = app.query_one(".message-card.user", MessageCard)
+        body = user.query_one(".message-body", Static)
+        rendered = " ".join(
+            body.render_line(line).text.strip()
+            for line in range(body.region.height)
+        )
+        assert body.region.height >= 2
+        assert "received exactly once." in rendered
+
+        release.set()
+        await app.workers.wait_for_complete()
+
+
+async def test_root_view_hides_duplicate_child_progress_during_initial_run(
+    app,
+):
+    runtime = app.runtime
+    child_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def run_agent(_name, _prompt, callbacks=None):
+        await callbacks[0].on_chat_model_start(
+            metadata={"ursa_message_recipient": "root"}
+        )
+        await callbacks[0].on_agent_message_start("root/player1")
+        child_started.set()
+        await release.wait()
+        await callbacks[0].on_agent_message_end("root/player1", succeeded=True)
+        return "Finished"
+
+    runtime.run_agent = run_agent
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.press("g", "o", "enter")
+        await child_started.wait()
+        await pilot.pause()
+
+        root_turn = app._agent_turns["root"]
+        child_turn = app._agent_turns["root/player1"]
+        assert app._active_agent_path == "root"
+        assert app._view_agent_path == "root"
+        assert not root_turn.has_class("hidden")
+        assert child_turn.has_class("hidden")
+
+        app._active_agent_path = "root/player1"
+        app._view_agent_path = "root/player1"
+        app._apply_agent_turn_visibility()
+        assert root_turn.has_class("hidden")
+        assert not child_turn.has_class("hidden")
+
+        release.set()
+        await app.workers.wait_for_complete()
+
+
+async def test_agent_exception_card_expands_to_full_traceback(app):
+    runtime = app.runtime
 
     async def run_agent(_name, _prompt, callbacks=None):
         raise RuntimeError("provider disconnected")
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("h", "e", "l", "l", "o", "enter")
@@ -273,8 +377,7 @@ async def test_agent_exception_card_expands_to_full_traceback(tmp_path):
 
         card.on_click(Click())
         await pilot.pause()
-        await eventually(pilot, lambda: card.expanded)
-        assert card.expanded
+        await assert_eventually(pilot, lambda: card.expanded)
         rich_traceback = card.query_one(".exception-traceback", Static)
         assert not rich_traceback.has_class("hidden")
         assert type(rich_traceback.content).__name__ == "Traceback"
@@ -283,8 +386,8 @@ async def test_agent_exception_card_expands_to_full_traceback(tmp_path):
         )
 
 
-async def test_command_events_from_a_worker_thread_update_the_ui(tmp_path):
-    hitl = FakeHITL(tmp_path)
+async def test_command_events_from_a_worker_thread_update_the_ui(app):
+    runtime = app.runtime
 
     async def run_agent(_name, _prompt, callbacks=None):
         handler = callbacks[0]
@@ -299,7 +402,7 @@ async def test_command_events_from_a_worker_thread_update_the_ui(tmp_path):
                         "phase": "start",
                         "message": "Running command",
                         "query": "pwd",
-                        "tool_call_id": "pwd-command",
+                        "tool_call_id": "worker-command",
                     },
                 )
             )
@@ -307,8 +410,7 @@ async def test_command_events_from_a_worker_thread_update_the_ui(tmp_path):
         await asyncio.to_thread(emit_command_event)
         return "Command finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("r", "u", "n", "enter")
@@ -321,9 +423,9 @@ async def test_command_events_from_a_worker_thread_update_the_ui(tmp_path):
 
 
 async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
-    tmp_path,
+    app,
 ):
-    hitl = FakeHITL(tmp_path)
+    runtime = app.runtime
     release_agent = asyncio.Event()
 
     async def run_agent(_name, _prompt, callbacks=None):
@@ -340,8 +442,7 @@ async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
         await release_agent.wait()
         return "Finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
+    runtime.run_agent = run_agent
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("w", "a", "i", "t", "enter")
@@ -352,15 +453,15 @@ async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
         done_mark = activity.query_one(".activity-done-mark", Static)
         first_frame = str(spinner.content)
         assert first_frame in ActivityIndicator.FRAMES
-        assert str(label.content) == "Inspecting the request"
+        assert str(label.content) == "Thinking: Inspecting the request"
 
-        assert await eventually(
+        assert await wait_for(
             pilot, lambda: str(spinner.content) != first_frame
         )
         assert str(spinner.content) in ActivityIndicator.FRAMES
 
         release_agent.set()
-        assert await eventually(pilot, lambda: not app.workers)
+        assert await wait_for(pilot, lambda: not app.workers)
         assert str(spinner.content) == ""
         assert str(label.content) == ""
         assert str(done_mark.content) == ""
@@ -379,152 +480,8 @@ async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
         assert activity.has_class("hidden")
 
 
-async def test_ctrl_c_reports_that_running_agent_cannot_be_cancelled(
-    tmp_path, monkeypatch
-):
-    hitl = FakeHITL(tmp_path)
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def run_agent(_name, _prompt, callbacks=None):
-        started.set()
-        await release.wait()
-        return "Finished"
-
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
-    notifications = []
-    monkeypatch.setattr(
-        app,
-        "notify",
-        lambda message, **kwargs: notifications.append((message, kwargs)),
-    )
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        await pilot.press("w", "a", "i", "t", "enter")
-        await started.wait()
-        prompt = app.query_one(PromptArea)
-        assert not prompt.disabled
-        assert app._agent_running
-
-        await pilot.press("ctrl+c")
-        assert await eventually(pilot, lambda: len(notifications) == 1)
-
-        assert not prompt.disabled
-        assert app._agent_running
-        assert any(worker.group == "agent" for worker in app.workers)
-        assert "not supported" in notifications[0][0]
-        assert "Ctrl+D" in notifications[0][0]
-        assert notifications[0][1]["severity"] == "warning"
-
-        release.set()
-        await app.workers.wait_for_complete()
-        assert await eventually(pilot, lambda: not prompt.disabled)
-        assert not app._agent_running
-
-
-async def test_active_turn_allows_commands_but_blocks_models_and_prompts(
-    tmp_path, monkeypatch
-):
-    hitl = FakeHITL(tmp_path)
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def run_agent(name, prompt, callbacks=None):
-        hitl.calls.append((name, prompt))
-        started.set()
-        await release.wait()
-        return "Finished"
-
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
-    notifications = []
-    monkeypatch.setattr(
-        app,
-        "notify",
-        lambda message, **kwargs: notifications.append((message, kwargs)),
-    )
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        await pilot.press("w", "a", "i", "t", "enter")
-        await started.wait()
-        prompt = app.query_one(PromptArea)
-        assert not prompt.disabled
-
-        commands = app._hotlist_candidates("/")
-        assert any(choice.startswith("status ") for choice in commands)
-        assert any(choice.startswith("terms ") for choice in commands)
-        assert any(choice.startswith("theme ") for choice in commands)
-        assert not any(choice.startswith("models ") for choice in commands)
-
-        await app._show_command("status")
-        await pilot.pause()
-        assert isinstance(app.screen, InformationScreen)
-        await pilot.press("escape")
-        await pilot.pause()
-
-        await app._show_command("terms")
-        await pilot.pause()
-        assert isinstance(app.screen, TermsScreen)
-        await pilot.press("escape")
-        await pilot.pause()
-
-        await app._show_command("models")
-        await pilot.pause()
-        assert not isinstance(app.screen, ModelScreen)
-        assert "cannot be changed" in notifications[-1][0]
-
-        await pilot.press("n", "e", "x", "t", "enter")
-        await pilot.pause()
-        assert hitl.calls == [("chat", "wait")]
-        assert prompt.text == "next"
-        assert "another prompt" in notifications[-1][0]
-
-        release.set()
-        await app.workers.wait_for_complete()
-
-
-async def test_clear_conversation_is_refused_during_active_turn(
-    tmp_path, monkeypatch
-):
-    hitl = FakeHITL(tmp_path)
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def run_agent(_name, _prompt, callbacks=None):
-        started.set()
-        await release.wait()
-        return "Finished"
-
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
-    notifications = []
-    monkeypatch.setattr(
-        app,
-        "notify",
-        lambda message, **kwargs: notifications.append((message, kwargs)),
-    )
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        await pilot.press("w", "a", "i", "t", "enter")
-        await started.wait()
-        turn = app.query_one(Turn)
-
-        await pilot.press("ctrl+l")
-        await pilot.pause()
-
-        await eventually(pilot, lambda: turn.is_mounted)
-        assert turn.is_mounted
-        assert "not allowed" in notifications[0][0]
-        assert "Ctrl+D" in notifications[0][0]
-        release.set()
-        await pilot.pause()
-
-
-async def test_quitting_waits_for_active_agent_then_exits(
-    tmp_path, monkeypatch
-):
-    hitl = FakeHITL(tmp_path)
+@pytest.mark.parametrize("key", ["ctrl+c", "ctrl+l", "ctrl+q"])
+async def test_controls_during_active_work(app, notifications, key):
     started = asyncio.Event()
     release = asyncio.Event()
     finished = asyncio.Event()
@@ -535,43 +492,251 @@ async def test_quitting_waits_for_active_agent_then_exits(
         finished.set()
         return "Finished"
 
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
-    notifications = []
-    monkeypatch.setattr(
-        app,
-        "notify",
-        lambda message, **kwargs: notifications.append((message, kwargs)),
-    )
+    app.runtime.run_agent = run_agent
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("w", "a", "i", "t", "enter")
         await started.wait()
-        await pilot.press("ctrl+q")
-        await pilot.pause()
-
-        assert not app._exit
-        assert notifications
-        assert "active turn finishes" in notifications[0][0]
-        assert "Ctrl+D" in notifications[0][0]
+        prompt = app.query_one(PromptArea)
+        turn = app.query_one(Turn)
+        assert not prompt.disabled
+        assert "Message active agent" in prompt.placeholder
+        await pilot.press(key)
+        assert await wait_for(pilot, lambda: len(notifications) == 1)
+        message, options = notifications[0]
+        if key == "ctrl+c":
+            assert not prompt.disabled
+            assert any(worker.group == "agent" for worker in app.workers)
+            assert message == "Stopped chat at its last committed state."
+            assert options["severity"] == "warning"
+        elif key == "ctrl+l":
+            assert turn.is_mounted
+            assert "not allowed" in message
+            assert "Ctrl+D" in message
+        else:
+            assert not app._exit
+            assert "active turn finishes" in message
+            assert "Ctrl+D" in message
 
         release.set()
         await finished.wait()
+        if key != "ctrl+q":
+            await app.workers.wait_for_complete()
+            assert not prompt.disabled
         await pilot.pause()
 
-    await eventually(pilot, lambda: app._exit)
-    assert app._exit
+    if key == "ctrl+q":
+        assert await wait_for(pilot, lambda: app._exit)
+        assert app._exit
 
 
-async def test_command_arrows_navigate_turn_markers_and_end_anchor(tmp_path):
-    hitl = FakeHITL(tmp_path)
-    app = UrsaTextualApp(hitl)
+@pytest.mark.parametrize(
+    ("in_band", "reply_first", "overlap"),
+    [
+        (False, False, False),
+        (False, True, False),
+        (True, False, False),
+        (True, False, True),
+    ],
+)
+async def test_active_message_promotes_only_on_acceptance(
+    app, monkeypatch, in_band, reply_first, overlap
+):
+    runtime = app.runtime
+    _activate_hierarchy(runtime, "root")
+    started = asyncio.Event()
+    release_root = asyncio.Event()
+    accept_message = asyncio.Event()
+    if overlap:
+        finishing = asyncio.Event()
+        original_finish = app._finish_agent_run
+        original_remove = QueuedMessage.remove
+
+        async def finish(turn, response, **kwargs):
+            if response == "Original response":
+                finishing.set()
+            await original_finish(turn, response, **kwargs)
+
+        async def remove(queued):
+            # The agent has received the input, but Textual is still moving
+            # its row from the queue into the conversation when the reply arrives.
+            release_root.set()
+            await finishing.wait()
+            await original_remove(queued)
+
+        monkeypatch.setattr(app, "_finish_agent_run", finish)
+        monkeypatch.setattr(QueuedMessage, "remove", remove)
+
+    async def run_agent(_name, _prompt, callbacks=None):
+        started.set()
+        await release_root.wait()
+        return "Original response"
+
+    async def run_active_agent(path, prompt, *, callbacks=None, on_start=None):
+        if not in_band:
+            await accept_message.wait()
+        await on_start(None)
+        release_root.set()
+        # A delivery through wait_for belongs to the existing turn and has
+        # no separate reply. An inbox turn produces its own response.
+        return None if in_band else f"Processed {prompt}"
+
+    runtime.run_agent = run_agent
+    runtime.run_active_agent = run_active_agent
 
     async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.press("s", "t", "a", "r", "t", "enter")
+        await started.wait()
+        await pilot.press("u", "p", "d", "a", "t", "e", "enter")
+
+        if not in_band:
+            assert await wait_for(pilot, lambda: bool(app.query(QueuedMessage)))
+            queued = app.query_one(QueuedMessage)
+            prompt = app.query_one(PromptArea)
+            assert queued.region.y < prompt.region.y
+            assert all(
+                card.content != "update" for card in app.query(MessageCard)
+            )
+            await pilot.press("escape")
+            assert queued.is_mounted
+            assert not release_root.is_set()
+            prompt.load_text("unsent draft")
+            await pilot.press("escape")
+            assert prompt.text == "unsent draft"
+            assert len(app.query(QueuedMessage)) == 1
+            assert not release_root.is_set()
+            if reply_first:
+                release_root.set()
+                assert await wait_for(
+                    pilot,
+                    lambda: any(
+                        card.content == "Original response"
+                        for card in app.query(MessageCard)
+                    ),
+                )
+                assert queued.is_mounted
+            accept_message.set()
+
+        assert await wait_for(pilot, lambda: not app.query(QueuedMessage))
+        assert any(card.content == "update" for card in app.query(MessageCard))
+        assert all(card.content != "None" for card in app.query(MessageCard))
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cards = {card.content: card for card in app.query(MessageCard)}
+        assert (
+            cards["update"].region.y < cards["Original response"].region.y
+        ) != reply_first
+        if not in_band:
+            assert cards["update"].region.y < cards["Processed update"].region.y
+
+
+@pytest.mark.parametrize("agent_path", [None, "root", "root/reviewer"])
+async def test_replies_follow_accepted_messages_for_the_same_agent(
+    app, agent_path
+):
+    async with app.run_test():
+        first = Turn("first", app.runtime.workspace, agent_path=agent_path)
+        followup = Turn(
+            "follow-up", app.runtime.workspace, agent_path=agent_path
+        )
+        other = Turn(
+            "another agent", app.runtime.workspace, agent_path="root/other"
+        )
+        for turn in (first, followup, other):
+            await app._mount_existing_turn(turn)
+        await app._finish_agent_run(first, "First reply", succeeded=True)
+        await app._finish_agent_run(followup, "Second reply", succeeded=True)
+
+        messages = list(app.query(MessageCard))
+        expected = (
+            ["first", "First reply", "follow-up", "Second reply"]
+            if agent_path is None
+            else ["first", "follow-up", "First reply", "Second reply"]
+        )
+        assert [card.content for card in messages] == [
+            *expected,
+            "another agent",
+        ]
+        assert [card.content for card in other.query(MessageCard)] == [
+            "another agent"
+        ]
+        assert first.activity_finished and followup.activity_finished
+        # Several replies can follow an accepted input. Every message remains
+        # reachable through the previous/next turn navigation shortcuts.
+        markers = app._turn_markers()
+        assert [
+            marker for marker in markers if isinstance(marker, MessageCard)
+        ] == messages
+
+
+async def test_subagents_command_switches_message_and_progress_target(
+    app, tmp_path
+):
+    runtime = app.runtime
+    _activate_hierarchy(runtime, "root", "root/researcher")
+    messages = []
+
+    async def run_active_agent(
+        path,
+        prompt,
+        *,
+        callbacks=None,
+        on_start=None,
+    ):
+        messages.append((path, prompt))
+        await on_start(None)
+        return "Research complete"
+
+    runtime.run_active_agent = run_active_agent
+    app._active_agent_path = "root"
+    app._message_mode = True
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        root_turn = Turn("delegate", tmp_path, agent_path="root")
+        await app._mount_existing_turn(root_turn)
+        handler = TextualEventHandler(app, root_turn)
+        await handler.on_agent_message_start("root/researcher")
+        await handler.on_tool_start(
+            {"name": "inspect_code"},
+            '{"path": "src/example.py"}',
+            run_id="child-tool",
+            metadata={"ursa_message_recipient": "root/researcher"},
+        )
+        assert (
+            app._agent_last_activity["root/researcher"]
+            == "Running inspect code"
+        )
+        await handler.on_agent_message_end("root/researcher", succeeded=True)
+        assert (
+            app._agent_last_activity["root/researcher"]
+            == "Running inspect code"
+        )
+
+        await app._show_command("subagents")
+        assert isinstance(app.screen, HotlistScreen)
+        await pilot.press("r", "e", "s", "e", "a", "r", "c", "h", "enter")
+        assert await wait_for(
+            pilot, lambda: app._active_agent_path == "root/researcher"
+        )
+        child_turn = app._agent_turns["root/researcher"]
+        assert not child_turn.has_class("hidden")
+        assert root_turn.has_class("hidden")
+        assert len(child_turn.query(ToolCallCard)) == 1
+
+        await pilot.press("r", "e", "v", "i", "e", "w", "enter")
+        assert await wait_for(pilot, lambda: bool(messages))
+        assert messages == [("root/researcher", "review")]
+        await app.workers.wait_for_complete()
+
+
+async def test_command_arrows_navigate_turn_markers_and_end_anchor(
+    app, finished_agent
+):
+    async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("o", "n", "e", "enter")
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.press("t", "w", "o", "enter")
-        await pilot.pause()
+        await app.workers.wait_for_complete()
 
         markers = app._turn_markers()
         assert len(markers) == 8
@@ -605,24 +770,23 @@ async def test_command_arrows_navigate_turn_markers_and_end_anchor(tmp_path):
         assert app._turn_navigation_marker is markers[5]
 
 
-async def test_turn_navigation_changes_real_scroll_position(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
+async def test_turn_navigation_changes_real_scroll_position(
+    app, finished_agent
+):
     async with app.run_test(size=(80, 20)) as pilot:
         for index in range(6):
             await pilot.press(*str(index), "enter")
-            await pilot.pause()
+            await app.workers.wait_for_complete()
         conversation = app.query_one("#conversation", VerticalScroll)
         bottom = conversation.scroll_y
         assert bottom > 0
 
         await pilot.press("alt+down")
         await pilot.pause()
-        await eventually(
+        await assert_eventually(
             pilot,
             lambda: app._turn_navigation_marker is app._turn_markers()[-1],
         )
-        assert app._turn_navigation_marker is app._turn_markers()[-1]
         assert conversation.scroll_y == conversation.max_scroll_y
         assert conversation.is_anchored
 
@@ -634,26 +798,19 @@ async def test_turn_navigation_changes_real_scroll_position(tmp_path):
         assert conversation.scroll_y < bottom
 
 
-async def test_new_cards_follow_bottom_without_moving_scrolled_view(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
+async def test_new_cards_follow_bottom_without_moving_scrolled_view(
+    tmp_path, app
+):
     async with app.run_test(size=(80, 20)) as pilot:
         conversation = app.query_one("#conversation", VerticalScroll)
         turn = Turn("test", tmp_path)
         await conversation.mount(turn)
 
         for index in range(12):
-            await app.add_turn_event(
-                turn,
-                {
-                    "type": "custom",
-                    "tool": f"tool-{index}",
-                    "phase": "start",
-                },
-            )
+            await start_turn_tool(app, turn, f"tool-{index}")
             await pilot.pause()
 
-        assert await eventually(
+        assert await wait_for(
             pilot,
             lambda: conversation.scroll_y == conversation.max_scroll_y,
         )
@@ -667,63 +824,37 @@ async def test_new_cards_follow_bottom_without_moving_scrolled_view(tmp_path):
         scrolled_position = conversation.scroll_y
         assert scrolled_position < conversation.max_scroll_y
 
-        await app.add_turn_event(
-            turn,
-            {
-                "type": "custom",
-                "tool": "one-more-tool",
-                "phase": "start",
-            },
-        )
+        await start_turn_tool(app, turn, "one-more-tool")
         await pilot.pause()
 
         assert conversation.scroll_y == pytest.approx(scrolled_position)
 
 
-async def test_user_scroll_cancels_initial_anchor_transition(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
+async def test_user_scroll_cancels_initial_anchor_transition(tmp_path, app):
     async with app.run_test(size=(80, 20)) as pilot:
         conversation = app.query_one("#conversation", VerticalScroll)
         turn = Turn("test", tmp_path)
         await conversation.mount(turn)
 
         for index in range(12):
-            await app.add_turn_event(
-                turn,
-                {
-                    "type": "custom",
-                    "tool": f"tool-{index}",
-                    "phase": "start",
-                },
-            )
-            await pilot.pause()
-            if conversation.max_scroll_y > 0:
+            await start_turn_tool(app, turn, f"tool-{index}")
+            await pilot.pause(0.01)
+            if app._conversation_anchor_transition:
                 break
 
-        # Start a fresh transition synchronously now that overflow is known.
-        # On slower CI hosts the original 150 ms animation can otherwise
-        # finish during ``pilot.pause`` before the test gets to observe it.
-        app._reset_conversation_auto_follow(conversation)
-        app._anchor_conversation_if_overflowing()
         assert app._conversation_anchor_transition
+        # Animation must start with the flag: a deferred start would override
+        # a user scroll during the gap. Check every frame window after it.
+        assert app.animator.is_being_animated(conversation, "scroll_y")
         conversation.scroll_home(animate=False, immediate=True)
-        await eventually(
-            pilot,
-            lambda: not conversation.is_anchored,
-            description="the user scroll to cancel conversation anchoring",
-        )
+        for _ in range(8):
+            await asyncio.sleep(0.03)
+            assert conversation.scroll_y == 0
+        await pilot.pause(0.2)
 
         assert not conversation.is_anchored
         scrolled_position = conversation.scroll_y
-        await app.add_turn_event(
-            turn,
-            {
-                "type": "custom",
-                "tool": "after-interruption",
-                "phase": "start",
-            },
-        )
+        await start_turn_tool(app, turn, "after-interruption")
         await pilot.pause()
 
         assert conversation.scroll_y == pytest.approx(scrolled_position)
@@ -731,11 +862,10 @@ async def test_user_scroll_cancels_initial_anchor_transition(tmp_path):
 
         await app.submit_prompt(PromptArea.Submitted("next prompt"))
         await app.workers.wait_for_complete()
-        await eventually(
-            pilot,
-            lambda: conversation.is_anchored,
-            description="the next prompt to restore conversation anchoring",
-        )
+        for _ in range(50):
+            await pilot.pause(0.02)
+            if conversation.is_anchored:
+                break
 
         assert conversation.is_anchored
         assert conversation.scroll_y == conversation.max_scroll_y
@@ -751,19 +881,19 @@ async def test_user_scroll_cancels_initial_anchor_transition(tmp_path):
     ],
 )
 def test_hash_agent_routing_accepts_whitespace_and_multiline_prompts(
-    tmp_path, prompt, expected
+    app, prompt, expected
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
     assert app._route_prompt(prompt) == expected
 
 
-def test_copy_to_clipboard_prefers_platform_tool_when_available(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("platform_available", [True, False])
+def test_copy_to_clipboard_falls_back_only_when_platform_tool_is_unavailable(
+    app, monkeypatch, platform_available
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
     fallback = []
-    monkeypatch.setattr(crossplatform, "copy_to_clipboard", lambda text: True)
+    monkeypatch.setattr(
+        crossplatform, "copy_to_clipboard", lambda text: platform_available
+    )
     monkeypatch.setattr(
         app_module.App,
         "copy_to_clipboard",
@@ -772,60 +902,153 @@ def test_copy_to_clipboard_prefers_platform_tool_when_available(
 
     app.copy_to_clipboard("hello")
 
-    assert fallback == []
-    assert app.clipboard == "hello"
-
-
-def test_copy_to_clipboard_uses_osc52_when_platform_copy_unavailable(
-    tmp_path, monkeypatch
-):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-    fallback = []
-    monkeypatch.setattr(crossplatform, "copy_to_clipboard", lambda text: False)
-    monkeypatch.setattr(
-        app_module.App,
-        "copy_to_clipboard",
-        lambda self, text: fallback.append(text),
-    )
-
-    app.copy_to_clipboard("hello")
-
-    assert fallback == ["hello"]
+    assert fallback == ([] if platform_available else ["hello"])
     assert app.clipboard == "hello"
 
 
 def test_one_shot_routes_hash_agent_and_writes_response(tmp_path):
-    class OneShotHITL(FakeHITL):
-        async def run_agent(self, name, prompt, callbacks=None):
-            self.calls.append((name, prompt))
-            return "One-shot result"
+    runtime = make_runtime(tmp_path)
+    calls = []
 
-        async def aclose(self):
-            assert "One-shot result" in output.getvalue()
-            await super().aclose()
+    async def run_agent(name, prompt, callbacks=None):
+        calls.append((name, prompt))
+        return "One-shot result"
 
-    hitl = OneShotHITL(tmp_path)
+    runtime.run_agent = run_agent
     output = io.StringIO()
 
-    result = app_module.run_textual_once(
-        hitl, "#plan inspect this", stdout=output
+    result = app_module.prompt_agent_once(
+        runtime, "#plan inspect this", stdout=output
     )
 
     assert result == "One-shot result"
-    assert hitl.calls == [("plan", "inspect this")]
-    assert hitl.closed
+    assert calls == [("plan", "inspect this")]
+    assert runtime._closed
     assert "One-shot result" in output.getvalue()
 
 
-async def test_update_status_survives_absent_status_widget(tmp_path):
+async def test_update_status_survives_absent_status_widget(app):
     # The agent worker's tail calls _update_status; when teardown has
     # already pruned the status widget, the bare query crashed the
     # worker and surfaced as WorkerFailed at run_test exit, after every
     # test assertion had passed (the recurring Windows CI signature).
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
     async with app.run_test(size=(100, 36)) as pilot:
         await app.query_one("#status").remove()
         await pilot.pause()
 
         app._update_status("ready")
+
+
+async def test_agent_descriptions_load_without_blocking_input(
+    tmp_path, monkeypatch
+):
+    started = threading.Event()
+    release = threading.Event()
+    ui_thread = threading.get_ident()
+    loader_threads = []
+
+    class SlowAgent:
+        @property
+        def description(self):
+            loader_threads.append(threading.get_ident())
+            started.set()
+            assert threading.get_ident() != ui_thread
+            assert release.wait(10), "Description loading was never released"
+            return "Description loaded in the background."
+
+    async def no_tools(_runtime, _name):
+        return ()
+
+    monkeypatch.setattr("ursa.cli.tui.widgets.load_agent_tools", no_tools)
+    runtime = make_runtime(tmp_path)
+    runtime.agents = {"chat": SlowAgent()}
+    app = UrsaTextualApp(runtime)
+    async with app.run_test(size=(100, 36)) as pilot:
+        try:
+            await app._show_command("agents")
+            await await_event(pilot, started)
+            assert loader_threads and ui_thread not in loader_threads
+            await pilot.press("x")
+            assert app.query_one(PromptArea).text == "x"
+        finally:
+            release.set()
+        screen = await await_screen(pilot, AgentsScreen)
+        assert screen.agents[0].description == (
+            "Description loaded in the background."
+        )
+        await await_workers(app, pilot)
+
+
+async def test_agent_description_failure_is_reported(tmp_path, monkeypatch):
+    class BrokenAgent:
+        @property
+        def description(self):
+            raise ImportError("Agent dependency unavailable")
+
+    runtime = make_runtime(tmp_path)
+    runtime.agents = {"chat": BrokenAgent()}
+    app = UrsaTextualApp(runtime)
+    notices = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notices.append((message, kwargs)),
+    )
+    async with app.run_test() as pilot:
+        await app._show_command("agents")
+        await await_workers(app, pilot)
+        assert len(notices) == 1
+        message, options = notices[0]
+        assert message == "Agent dependency unavailable"
+        assert options["severity"] == "error"
+        assert options["title"] == "Unable to load agents"
+        assert not isinstance(app.screen, AgentsScreen)
+        await pilot.press("x")
+        assert app.query_one(PromptArea).text == "x"
+
+
+@pytest.mark.parametrize("cancel_unlock", [False, True])
+@pytest.mark.parametrize("configured", [False, True])
+def test_keychain_unlock_precedes_runtime_startup(
+    monkeypatch, cancel_unlock, configured
+):
+    import ursa.cli as cli_module
+
+    calls = []
+    expected_username = "hosted" if configured else "__unlock__"
+
+    def read_password(service, username):
+        assert service == "ursa"
+        assert username == expected_username
+        calls.append(username)
+        if cancel_unlock:
+            raise KeyringLocked("Unlock cancelled")
+
+    monkeypatch.setattr(
+        "ursa.util.secrets.get_keyring",
+        lambda: SimpleNamespace(get_password=read_password),
+    )
+    monkeypatch.setattr(
+        "ursa.runtime.AgentRuntime",
+        lambda config: calls.append("runtime")
+        or SimpleNamespace(config=config),
+    )
+    config = UrsaConfig(
+        inference_providers={"hosted": {"api_key": {"keyring": True}}},
+        llm_model={"inference_provider": "hosted"},
+        mcp_servers={
+            "tools": {
+                "url": "https://example.test/mcp",
+                "headers": {"Authorization": {"keyring": True}},
+            }
+        },
+    ).resolve()
+    if not configured:
+        config = UrsaConfig()
+    if cancel_unlock:
+        with pytest.raises(KeyringLocked, match="Unlock cancelled"):
+            cli_module._initialize_runtime(config, unlock_keychain_first=True)
+        assert calls == [expected_username]
+    else:
+        cli_module._initialize_runtime(config, unlock_keychain_first=True)
+        assert calls == [expected_username, "runtime"]

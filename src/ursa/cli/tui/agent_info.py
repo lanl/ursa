@@ -97,7 +97,11 @@ def _tool_details(
     *,
     include_schema: bool = True,
 ) -> ToolDetails:
-    schema = getattr(tool, "args_schema", None) if include_schema else None
+    schema = None
+    if include_schema:
+        schema = getattr(tool, "tool_call_schema", None)
+        if schema is None:
+            schema = getattr(tool, "args_schema", None)
     return ToolDetails(
         name=str(getattr(tool, "name", None) or name),
         class_name=tool.__class__.__name__,
@@ -138,11 +142,11 @@ def _configured_tools(
     )
 
 
-def load_agent_details(hitl: Any) -> tuple[AgentDetails, ...]:
+def load_agent_details(runtime: Any) -> tuple[AgentDetails, ...]:
     """Snapshot configured-agent metadata without instantiating any agents."""
     details = []
-    # Dict insertion order is the canonical UI order established in HITL.
-    for name, wrapper in hitl.agents.items():
+    # Dict insertion order is the canonical runtime/UI order.
+    for name, wrapper in runtime.agents.items():
         description = str(
             getattr(wrapper, "description", None) or "No description available."
         ).strip()
@@ -176,11 +180,26 @@ def load_agent_details(hitl: Any) -> tuple[AgentDetails, ...]:
     return tuple(details)
 
 
-async def load_agent_tools(hitl: Any, name: str) -> tuple[ToolDetails, ...]:
+async def load_agent_tools(runtime: Any, name: str) -> tuple[ToolDetails, ...]:
     """Instantiate one agent, if needed, and return its display-safe tools."""
-    use_agent = getattr(hitl, "use_agent", None)
+    use_agent = getattr(runtime, "use_agent", None)
 
     async def extract(wrapper: Any) -> tuple[ToolDetails, ...]:
+        remote_tools = getattr(wrapper, "remote_tools", None)
+        if callable(remote_tools):
+            details = await remote_tools()
+            return tuple(
+                ToolDetails(
+                    name=str(item["name"]),
+                    class_name=str(item["class_name"]),
+                    description=str(item["description"]),
+                    schema_name=_schema_name(item.get("schema")),
+                    return_direct=item.get("return_direct"),
+                    arguments=_schema_arguments(item.get("schema")),
+                    mcp_server=str(item.get("mcp_server") or ""),
+                )
+                for item in details
+            )
         actual = getattr(wrapper, "_agent", None) or wrapper
         # Schema conversion can invoke provider/Pydantic schema generation for
         # every tool, so it should not block Textual's event loop either.
@@ -191,10 +210,13 @@ async def load_agent_tools(hitl: Any, name: str) -> tuple[ToolDetails, ...]:
         )
 
     async def snapshot() -> tuple[ToolDetails, ...]:
-        if callable(use_agent):
+        configured = getattr(runtime, "agents", {}).get(name)
+        if callable(use_agent) and callable(
+            getattr(configured, "remote_tools", None)
+        ):
             async with use_agent(name) as wrapper:
                 return await extract(wrapper)
-        return await extract(await hitl.get_agent(name))
+        return await extract(await runtime.get_agent(name))
 
     # Keep the lease-owning operation alive if Textual dismisses its worker:
     # the worker can clean up immediately, while this task retains the lease

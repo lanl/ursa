@@ -39,36 +39,45 @@ def _isolate_xdg_config(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_DIRS", str(tmp_path / "xdg-dirs"))
 
 
-def _stub_mcp_server(monkeypatch):
-    mcp = MagicMock()
-    hitl = MagicMock()
-    hitl.as_mcp_server.return_value = mcp
-    hitl_class = MagicMock(return_value=hitl)
-    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
+def _stub_runtime(monkeypatch):
+    runtime_class = MagicMock()
+    monkeypatch.setattr("ursa.runtime.AgentRuntime", runtime_class)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
-    return hitl, mcp
+    monkeypatch.setattr(
+        "ursa.util.secrets.unlock_keychain", lambda _config: None
+    )
+    return runtime_class
 
 
 def _stub_textual(monkeypatch):
-    hitl_class = MagicMock()
+    runtime_class = _stub_runtime(monkeypatch)
     run_textual = MagicMock()
-    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
     monkeypatch.setattr("ursa.cli.tui.app.run_textual", run_textual)
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
-    return hitl_class, run_textual
-
-
-def _parse_config_args(parser, args):
-    """Parse the runtime namespace and its sparse config overrides."""
-    return (
-        parser.parse_args(args),
-        parser.parse_args(args, defaults=False),
-    )
+    return runtime_class, run_textual
 
 
 def _resolve_args(parser, args):
-    cfg, env_overrides = _parse_config_args(parser, args)
+    """Parse the runtime namespace and its sparse config overrides."""
+    cfg = parser.parse_args(args)
+    env_overrides = parser.parse_args(args, defaults=False)
     return merge_ursa_config(cfg, env_overrides=env_overrides).resolve()
+
+
+def _resolve_model_overrides(parser, config, workspace, model):
+    """Apply the same explicit CLI model/workspace overrides to a config file."""
+    return _resolve_args(
+        parser,
+        [
+            "--config",
+            str(config),
+            "--emb_model.model",
+            "openai:text-embedding-3-large",
+            "--workspace",
+            str(workspace),
+            "--llm_model.model",
+            model,
+        ],
+    )
 
 
 def test_cli_warns_about_legacy_unnamed_checkpoint(
@@ -91,63 +100,53 @@ def test_cli_warns_about_legacy_unnamed_checkpoint(
     assert "--name <new agent name>" in warning
 
 
-def test_cli_does_not_warn_about_legacy_checkpoint_with_name(
-    monkeypatch, tmp_path, capsys
+@pytest.mark.parametrize(
+    "legacy_checkpoint, options",
+    [(True, ["--name", "continued-agent"]), (False, [])],
+)
+def test_cli_does_not_warn_when_checkpoint_migration_is_unneeded(
+    monkeypatch, tmp_path, capsys, legacy_checkpoint, options
 ):
     _stub_textual(monkeypatch)
-    checkpoint = tmp_path / "db" / "checkpointer.db"
-    checkpoint.parent.mkdir()
-    checkpoint.touch()
+    if legacy_checkpoint:
+        checkpoint = tmp_path / "db" / "checkpointer.db"
+        checkpoint.parent.mkdir()
+        checkpoint.touch()
 
-    main(["--workspace", str(tmp_path), "--name", "continued-agent"])
+    main(["--workspace", str(tmp_path), *options])
 
     assert capsys.readouterr().err == ""
 
 
-def test_cli_does_not_warn_without_legacy_checkpoint(
-    monkeypatch, tmp_path, capsys
-):
-    _stub_textual(monkeypatch)
-
-    main(["--workspace", str(tmp_path)])
-
-    assert capsys.readouterr().err == ""
-
-
-def test_exec_uses_textual_one_shot_renderer(monkeypatch):
-    hitl = MagicMock()
+@pytest.mark.parametrize("prompt", ["#plan inspect this", "summarize this"])
+def test_exec_uses_textual_one_shot_renderer(monkeypatch, prompt):
+    runtime = _stub_runtime(monkeypatch).return_value
     run_once = MagicMock()
-    monkeypatch.setattr("ursa.cli.runtime.HITL", MagicMock(return_value=hitl))
-    monkeypatch.setattr("ursa.cli.one_shot.run_once", run_once)
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    monkeypatch.setattr("ursa.cli.tui.app.prompt_agent_once", run_once)
 
-    main(["exec", "#plan inspect this"])
+    main(["exec", prompt])
 
-    run_once.assert_called_once_with(hitl, "#plan inspect this")
+    run_once.assert_called_once_with(runtime, prompt)
 
 
 @pytest.mark.parametrize("mode", ["interactive", "exec"])
 def test_named_agent_reaches_textual_runtime(monkeypatch, mode):
-    hitl_class = MagicMock()
-    run_textual = MagicMock()
+    runtime_class, run_textual = _stub_textual(monkeypatch)
     run_once = MagicMock()
-    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
-    monkeypatch.setattr("ursa.cli.tui.app.run_textual", run_textual)
-    monkeypatch.setattr("ursa.cli.one_shot.run_once", run_once)
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    monkeypatch.setattr("ursa.cli.tui.app.prompt_agent_once", run_once)
     args = ["--name", "lab-assistant"]
     if mode == "exec":
         args.extend(["exec", "#plan inspect this"])
 
     main(args)
 
-    config = hitl_class.call_args.args[0]
+    config = runtime_class.call_args.args[0]
     assert config.agent_name == "lab-assistant"
     if mode == "interactive":
-        run_textual.assert_called_once_with(hitl_class.return_value)
+        run_textual.assert_called_once_with(runtime_class.return_value)
     else:
         run_once.assert_called_once_with(
-            hitl_class.return_value, "#plan inspect this"
+            runtime_class.return_value, "#plan inspect this"
         )
 
 
@@ -156,10 +155,13 @@ def test_cli_reports_runtime_initialization_error_without_traceback(
     monkeypatch, capsys, args
 ):
     monkeypatch.setattr(
-        "ursa.cli.runtime.HITL",
+        "ursa.runtime.AgentRuntime",
         MagicMock(side_effect=ValueError("API credentials are invalid")),
     )
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    monkeypatch.setattr(
+        "ursa.util.secrets.unlock_keychain", lambda _config: None
+    )
 
     with pytest.raises(SystemExit, match="2"):
         main(args)
@@ -167,19 +169,6 @@ def test_cli_reports_runtime_initialization_error_without_traceback(
     stderr = capsys.readouterr().err
     assert stderr == "Error: API credentials are invalid\n"
     assert "Traceback" not in stderr
-
-
-def test_exec_runs_prompt_with_textual_runtime(monkeypatch):
-    hitl_class = MagicMock()
-    run_once = MagicMock()
-    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
-    monkeypatch.setattr("ursa.cli.one_shot.run_once", run_once)
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
-
-    main(["exec", "summarize this"])
-
-    hitl = hitl_class.return_value
-    run_once.assert_called_once_with(hitl, "summarize this")
 
 
 @pytest.mark.parametrize(
@@ -193,7 +182,7 @@ def test_exec_runs_prompt_with_textual_runtime(monkeypatch):
 def test_legacy_ursa_name_is_supported_with_deprecation_warning(
     monkeypatch, modern_env, cli_args, expected
 ):
-    hitl_class, _ = _stub_textual(monkeypatch)
+    runtime_class, _ = _stub_textual(monkeypatch)
     monkeypatch.setenv("URSA_NAME", "legacy-agent")
     if modern_env is not None:
         monkeypatch.setenv("URSA_AGENT_NAME", modern_env)
@@ -201,7 +190,7 @@ def test_legacy_ursa_name_is_supported_with_deprecation_warning(
     with pytest.warns(FutureWarning, match="URSA_NAME is deprecated"):
         main(cli_args)
 
-    (config,), _ = hitl_class.call_args
+    (config,), _ = runtime_class.call_args
     assert config.agent_name == expected
 
 
@@ -266,107 +255,77 @@ def test_rag_model_commands_resolve_with_subcommand_group(
     assert policy_calls == [("https://models.example/v1", "rag-group")]
 
 
-def test_mcp_server_passes_only_stdio_run_options(monkeypatch):
-    hitl, mcp = _stub_mcp_server(monkeypatch)
-
-    main(["mcp-server"])
-
-    hitl.as_mcp_server.assert_called_once_with()
-    mcp.run.assert_called_once_with(transport="stdio", log_level="INFO")
-
-
-def test_mcp_server_config_flag_sets_hosted_llm(monkeypatch, tmp_path):
-    """`ursa mcp-server --config FILE` must configure the hosted URSA instance.
-
-    Regression: previously the mcp-server subparser had no --config option, so
-    `ursa mcp-server --config foo.yaml` failed with "Unrecognized arguments".
-    The subcommand-local --config should feed the LLM model/endpoint (and other
-    UrsaConfig fields) into the HITL instance backing the MCP server.
-    """
-    hitl_class = MagicMock()
-    hitl_class.return_value = MagicMock()
-    hitl_class.return_value.as_mcp_server.return_value = MagicMock()
-    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
-
-    config_file = tmp_path / "mcp.yaml"
-    config_file.write_text(
-        yaml.safe_dump({
-            "llm_model": {
-                "model": "ollama:llama3.1",
-                "base_url": "http://localhost:11434",
-            }
-        })
-    )
-
-    main(["mcp-server", "--config", str(config_file)])
-
-    # HITL should be constructed with the config loaded from --config.
-    (ursa_config,), _ = hitl_class.call_args
-    assert ursa_config.llm_model.model == "llama3.1"
-    assert ursa_config.llm_model.model_provider == "ollama"
-    assert ursa_config.llm_model.base_url == "http://localhost:11434"
-
-
-def test_mcp_server_config_flag_parses_alongside_transport(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize(
+    "options, expected",
+    [
+        ([], {"transport": "stdio", "log_level": "INFO"}),
+        (
+            [
+                "--transport",
+                "streamable-http",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "9001",
+                "--log_level",
+                "warning",
+            ],
+            dict(
+                transport="streamable-http",
+                log_level="WARNING",
+                host="127.0.0.1",
+                port=9001,
+            ),
+        ),
+    ],
+)
+def test_mcp_server_passes_transport_specific_run_options(
+    monkeypatch, options, expected
 ):
-    """--config coexists with MCP transport options on the subcommand."""
-    hitl_class = MagicMock()
-    hitl_class.return_value = MagicMock()
-    mcp = MagicMock()
-    hitl_class.return_value.as_mcp_server.return_value = mcp
-    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    runtime = _stub_runtime(monkeypatch).return_value
+    mcp = runtime.as_mcp_server.return_value
 
+    main(["mcp-server", *options])
+
+    runtime.as_mcp_server.assert_called_once_with()
+    mcp.run.assert_called_once_with(**expected)
+
+
+@pytest.mark.parametrize("http", [False, True])
+def test_mcp_server_configures_hosted_llm_with_transport(
+    monkeypatch, tmp_path, http
+):
+    """Subcommand --config must configure the hosted URSA instance.
+
+    Regression: the mcp-server subparser once rejected --config as an
+    unrecognized argument. Model/endpoint settings must reach AgentRuntime
+    both with default transport and alongside explicit HTTP options.
+    """
+    runtime_class = _stub_runtime(monkeypatch)
+    model = {"model": "ollama:llama3.1"}
+    if not http:
+        model["base_url"] = "http://localhost:11434"
     config_file = tmp_path / "mcp.yaml"
-    config_file.write_text(
-        yaml.safe_dump({"llm_model": {"model": "ollama:llama3.1"}})
+    config_file.write_text(yaml.safe_dump({"llm_model": model}))
+    options = (
+        ["--transport", "streamable-http", "--port", "9001"] if http else []
     )
 
-    main([
-        "mcp-server",
-        "--config",
-        str(config_file),
-        "--transport",
-        "streamable-http",
-        "--port",
-        "9001",
-    ])
+    main(["mcp-server", "--config", str(config_file), *options])
 
-    (ursa_config,), _ = hitl_class.call_args
+    (ursa_config,), _ = runtime_class.call_args
     assert ursa_config.llm_model.model == "llama3.1"
     assert ursa_config.llm_model.model_provider == "ollama"
-    mcp.run.assert_called_once_with(
-        transport="streamable-http",
-        log_level="INFO",
-        host="localhost",
-        port=9001,
-    )
-
-
-def test_mcp_server_passes_http_options_when_running(monkeypatch):
-    hitl, mcp = _stub_mcp_server(monkeypatch)
-
-    main([
-        "mcp-server",
-        "--transport",
-        "streamable-http",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        "9001",
-        "--log_level",
-        "warning",
-    ])
-
-    hitl.as_mcp_server.assert_called_once_with()
-    mcp.run.assert_called_once_with(
-        transport="streamable-http",
-        log_level="WARNING",
-        host="127.0.0.1",
-        port=9001,
-    )
+    if http:
+        mcp = runtime_class.return_value.as_mcp_server.return_value
+        mcp.run.assert_called_once_with(
+            transport="streamable-http",
+            log_level="INFO",
+            host="localhost",
+            port=9001,
+        )
+    else:
+        assert ursa_config.llm_model.base_url == "http://localhost:11434"
 
 
 def test_cli_parses_typed_flags(tmp_path):
@@ -437,27 +396,21 @@ def test_file_config_resolution_preserves_tmp_workspace_owner(tmp_path):
     assert config._temp_workspace.name == str(config.workspace)
 
 
-def test_cli_applies_chat_only_openai_defaults_to_llm_model():
-    parser = build_parser()
-    config = _resolve_args(parser, [])
-
-    assert isinstance(config.llm_model, ChatModelConfig)
-    assert config.llm_model.kwargs["use_responses_api"] is True
-
-
-def test_cli_does_not_apply_chat_only_openai_defaults_to_emb_model():
-    parser = build_parser()
-    config = _resolve_args(
-        parser,
-        [
-            "--emb_model.model",
-            "openai:text-embedding-3-large",
-        ],
+@pytest.mark.parametrize("embedding", [False, True])
+def test_cli_reserves_chat_only_openai_defaults_for_chat_models(embedding):
+    args = (
+        ["--emb_model.model", "openai:text-embedding-3-large"]
+        if embedding
+        else []
     )
-
-    assert isinstance(config.emb_model, EmbModelConfig)
-    assert not isinstance(config.emb_model, ChatModelConfig)
-    assert "use_responses_api" not in config.emb_model.kwargs
+    config = _resolve_args(build_parser(), args)
+    if embedding:
+        assert isinstance(config.emb_model, EmbModelConfig)
+        assert not isinstance(config.emb_model, ChatModelConfig)
+        assert "use_responses_api" not in config.emb_model.kwargs
+    else:
+        assert isinstance(config.llm_model, ChatModelConfig)
+        assert config.llm_model.kwargs["use_responses_api"] is True
 
 
 def test_print_config_yaml_round_trip(tmp_path):
@@ -484,6 +437,29 @@ def test_print_config_yaml_round_trip(tmp_path):
     assert loaded_config.model_dump() == serialized
 
 
+def test_cli_parses_subagent_limits_and_model_overrides():
+    config = _resolve_args(
+        build_parser(),
+        [
+            "--subagents.max_agents",
+            "4",
+            "--subagents.max_depth",
+            "2",
+            "--subagents.llm_model.model",
+            "openai:gpt-5-mini",
+            "--subagents.embedding_model.model",
+            "openai:text-embedding-3-small",
+        ],
+    )
+
+    assert config.subagents.max_agents == 4
+    assert config.subagents.max_depth == 2
+    assert config.subagents.llm_model is not None
+    assert config.subagents.llm_model.model == "gpt-5-mini"
+    assert config.subagents.embedding_model is not None
+    assert config.subagents.embedding_model.model == "text-embedding-3-small"
+
+
 def test_config_env_cli_precedence(tmp_path, monkeypatch):
     cfg_path = tmp_path / "ursa.yml"
     cfg_path.write_text(
@@ -507,18 +483,8 @@ def test_config_env_cli_precedence(tmp_path, monkeypatch):
 
     cli_workspace = tmp_path / "cli-workspace"
     cli_workspace.mkdir()
-    config_cli = _resolve_args(
-        parser,
-        [
-            "--config",
-            str(cfg_path),
-            "--emb_model.model",
-            "openai:text-embedding-3-large",
-            "--workspace",
-            str(cli_workspace),
-            "--llm_model.model",
-            "cli-model",
-        ],
+    config_cli = _resolve_model_overrides(
+        parser, cfg_path, cli_workspace, "cli-model"
     )
     assert config_cli.workspace == cli_workspace
     assert config_cli.llm_model.model == "cli-model"
@@ -617,18 +583,8 @@ def test_config_file_and_cli_are_merged(tmp_path):
 
     cli_workspace = tmp_path / "cli-workspace"
     parser = build_parser()
-    config = _resolve_args(
-        parser,
-        [
-            "--config",
-            str(cfg_path),
-            "--emb_model.model",
-            "openai:text-embedding-3-large",
-            "--workspace",
-            str(cli_workspace),
-            "--llm_model.model",
-            "openai:gpt-5-nano",
-        ],
+    config = _resolve_model_overrides(
+        parser, cfg_path, cli_workspace, "openai:gpt-5-nano"
     )
 
     assert config.workspace == cli_workspace
@@ -869,30 +825,14 @@ def test_chat_model_config_kwargs_includes_extra():
     assert kwargs["timeout"] == 30
 
 
-def test_chat_model_config_kwargs_includes_max_completion_tokens():
-    cfg = ChatModelConfig(model="openai:gpt-5", max_completion_tokens=1024)
-
-    kwargs = cfg.kwargs
-
-    assert kwargs["model"] == "gpt-5"
-    assert kwargs["model_provider"] == "openai"
-    assert kwargs["max_completion_tokens"] == 1024
-
-
 def test_chat_model_config_initializes_chat_model(monkeypatch):
-    captured_kwargs = {}
-
-    def fake_init_chat_model(**kwargs):
-        captured_kwargs.update(kwargs)
-        return "chat-model"
-
-    monkeypatch.setattr(
-        "langchain.chat_models.init_chat_model",
-        fake_init_chat_model,
-    )
+    initializer = MagicMock(return_value="chat-model")
+    monkeypatch.setattr("langchain.chat_models.init_chat_model", initializer)
     cfg = ChatModelConfig(model="openai:gpt-5", max_completion_tokens=1024)
 
     result = cfg.init_chat_model()
+    initializer.assert_called_once()
+    captured_kwargs = initializer.call_args.kwargs
 
     assert result == "chat-model"
     assert captured_kwargs["model"] == "gpt-5"
@@ -902,19 +842,13 @@ def test_chat_model_config_initializes_chat_model(monkeypatch):
 
 
 def test_emb_model_config_initializes_embedding_model(monkeypatch):
-    captured_kwargs = {}
-
-    def fake_init_embeddings(**kwargs):
-        captured_kwargs.update(kwargs)
-        return "embedding-model"
-
-    monkeypatch.setattr(
-        "langchain.embeddings.init_embeddings",
-        fake_init_embeddings,
-    )
+    initializer = MagicMock(return_value="embedding-model")
+    monkeypatch.setattr("langchain.embeddings.init_embeddings", initializer)
     cfg = EmbModelConfig(model="openai:text-embedding-3-large")
 
     result = cfg.init_embedding()
+    initializer.assert_called_once()
+    captured_kwargs = initializer.call_args.kwargs
 
     assert result == "embedding-model"
     assert captured_kwargs["model"] == "text-embedding-3-large"
@@ -1025,95 +959,72 @@ def test_model_config_omits_blank_api_key_env(monkeypatch):
     assert "api_key_env" not in cfg.model_dump()
 
 
-def test_inference_provider_applies_to_llm_model():
+@pytest.mark.parametrize(
+    ("field", "provider", "model", "url", "extras"),
+    [
+        (
+            "llm_model",
+            "local-openai",
+            "openai:gpt-5",
+            " https://models.example.org/v1 ",
+            {"api_key_env": "PROVIDER_API_KEY", "timeout": 45},
+        ),
+        (
+            "emb_model",
+            "local-embeddings",
+            "openai:text-embedding-3-large",
+            "https://embeddings.example.org/v1",
+            {"cache_dir": "/tmp/provider-cache"},
+        ),
+    ],
+)
+def test_inference_provider_applies_to_models(
+    field, provider, model, url, extras
+):
     config = UrsaConfig(
         inference_providers={
-            "local-openai": {
-                "base_url": " https://models.example.org/v1 ",
-                "ssl_verify": False,
-                "api_key_env": "PROVIDER_API_KEY",
-                "timeout": 45,
-            }
+            provider: {"base_url": url, "ssl_verify": False, **extras}
         },
-        llm_model={
-            "model": "openai:gpt-5",
-            "inference_provider": "local-openai",
-        },
+        **{field: {"model": model, "inference_provider": provider}},
     )
+    selected = getattr(config, field)
+    assert selected is not None
+    resolved = selected.resolve_inference_provider(config.inference_providers)
 
-    resolved = config.llm_model.resolve_inference_provider(
-        config.inference_providers
-    )
-
-    assert config.llm_model.inference_provider == "local-openai"
-    assert config.llm_model.base_url is None
-    assert resolved.inference_provider == "local-openai"
-    assert resolved.base_url == "https://models.example.org/v1"
+    assert selected.inference_provider == provider
+    assert selected.base_url is None
+    assert resolved.inference_provider == provider
+    assert resolved.base_url == url.strip()
     assert resolved.ssl_verify is False
-    assert resolved.api_key == SecretReference(env="PROVIDER_API_KEY")
-    assert resolved.model_extra["timeout"] == 45
+    for key, value in extras.items():
+        if key == "api_key_env":
+            assert resolved.api_key == SecretReference(env=value)
+        else:
+            assert resolved.model_extra[key] == value
     assert "inference_provider" not in resolved.kwargs
 
 
-def test_model_config_model_provider_overrides_inference_provider():
+@pytest.mark.parametrize("explicit_provider", [True, False])
+def test_model_provider_inherits_only_when_unset(explicit_provider):
     config = UrsaConfig(
         inference_providers={"gateway": {"model_provider": "anthropic"}},
         llm_model={
             "model": "gpt-test",
-            "model_provider": "openai",
+            **({"model_provider": "openai"} if explicit_provider else {}),
             "inference_provider": "gateway",
         },
     )
 
     resolved = config.resolve()
 
-    assert resolved.llm_model.model_provider == "openai"
-    assert resolved.inference_providers["gateway"].model_extra == {
-        "model_provider": "anthropic"
-    }
-
-
-def test_inference_provider_sets_unset_model_provider():
-    config = UrsaConfig(
-        inference_providers={"gateway": {"model_provider": "anthropic"}},
-        llm_model={
-            "model": "gpt-test",
-            "inference_provider": "gateway",
-        },
-    )
-
-    resolved = config.resolve()
-
-    assert "model_provider" not in config.llm_model.model_fields_set
-    assert resolved.llm_model.model_provider == "anthropic"
-
-
-def test_inference_provider_applies_to_embedding_model():
-    config = UrsaConfig(
-        inference_providers={
-            "local-embeddings": {
-                "base_url": "https://embeddings.example.org/v1",
-                "ssl_verify": False,
-                "cache_dir": "/tmp/provider-cache",
-            }
-        },
-        emb_model={
-            "model": "openai:text-embedding-3-large",
-            "inference_provider": "local-embeddings",
-        },
-    )
-
-    assert config.emb_model is not None
-    resolved = config.emb_model.resolve_inference_provider(
-        config.inference_providers
-    )
-    assert config.emb_model.inference_provider == "local-embeddings"
-    assert config.emb_model.base_url is None
-    assert resolved.inference_provider == "local-embeddings"
-    assert resolved.base_url == "https://embeddings.example.org/v1"
-    assert resolved.ssl_verify is False
-    assert resolved.model_extra["cache_dir"] == "/tmp/provider-cache"
-    assert "inference_provider" not in resolved.kwargs
+    if explicit_provider:
+        assert resolved.llm_model.model_provider == "openai"
+        assert resolved.inference_providers["gateway"].model_extra == {
+            "model_provider": "anthropic"
+        }
+    else:
+        assert "model_provider" not in config.llm_model.model_fields_set
+        assert resolved.llm_model.model_provider == "anthropic"
 
 
 def test_model_config_explicit_values_override_inference_provider():
@@ -1295,6 +1206,12 @@ def test_print_config_includes_defaults_and_nulls(
     assert output["agent_name"] is None
     assert output["emb_model"] is None
     assert output["agent_config"] == {}
+    assert output["subagents"] == {
+        "max_agents": 32,
+        "max_depth": 3,
+        "llm_model": None,
+        "embedding_model": None,
+    }
     for key, value in expected_model.items():
         assert output["llm_model"][key] == value
     assert output["inference_providers"]["shared"] == {
@@ -1305,6 +1222,7 @@ def test_print_config_includes_defaults_and_nulls(
     assert output["inference_providers"]["openai"]["api_key"] == {
         "env": "OPENAI_API_KEY",
         "keyring": None,
+        "template": "%s",
     }
     assert output["mcp_servers"] == {
         "example": {

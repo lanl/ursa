@@ -118,14 +118,8 @@ def should_continue(state: ExecutionState) -> Literal["review", "continue"]:
         A literal "review" if the last message has no tool calls,
         otherwise "continue".
     """
-    messages = state["messages"]
-    last_message = messages[-1]
-    # If there is no tool call, then review the work before finishing.
-    if not last_message.tool_calls:
-        return "review"
-    # Otherwise if there is, we continue.
-    else:
-        return "continue"
+    last_message = state["messages"][-1]
+    return "continue" if last_message.tool_calls else "review"
 
 
 def _review_is_complete(review: Any) -> bool:
@@ -352,8 +346,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         ):
             reviews_without_tools = 0
 
-        full_overwrite = False
-
         # 1.5) Check message history length, summarize, and patch dangling tool calls.
         new_state, full_overwrite = self.prepare_messages_context(
             new_state, system_prompt=self.executor_prompt
@@ -460,7 +452,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         """
         new_state = deepcopy(state)
         events = self.events(config)
-        full_overwrite = False
 
         new_state, full_overwrite = self.prepare_messages_context(
             new_state, system_prompt=self.executor_prompt
@@ -559,7 +550,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         """
         new_state = deepcopy(state)
         events = self.events(config)
-        full_overwrite = False
 
         # 0) Check message history length, summarize, and patch dangling tool calls.
         new_state, full_overwrite = self.prepare_messages_context(

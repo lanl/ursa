@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     import pandas as pd
 
 from ursa.observability.metrics_charts import (
+    _TOKEN_CATEGORIES,
     compute_attribution,
     extract_llm_token_stats,  # reuse per-file tokens
     extract_time_breakdown,  # reuse per-file extraction
@@ -26,40 +27,6 @@ def _optional_dependency_error(package: str, *, utility: str) -> ImportError:
         f"Install it to use this observability metrics utility "
         f"(for example: pip install {package})."
     )
-
-
-def _require_matplotlib():
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.dates as mdates
-        import matplotlib.pyplot as plt
-    except ImportError as exc:
-        raise _optional_dependency_error(
-            "matplotlib", utility="Metrics session chart generation"
-        ) from exc
-    return plt, mdates
-
-
-def _require_pandas():
-    try:
-        import pandas as pd
-    except ImportError as exc:
-        raise _optional_dependency_error(
-            "pandas", utility="Metrics session DataFrame/CSV export"
-        ) from exc
-    return pd
-
-
-def _require_plotly_express():
-    try:
-        import plotly.express as px
-    except ImportError as exc:
-        raise _optional_dependency_error(
-            "plotly", utility="Interactive metrics session timeline"
-        ) from exc
-    return px
 
 
 def _dt(x: str) -> datetime:
@@ -191,7 +158,16 @@ def plot_thread_timeline(
       • Exact bounds: xlim is precisely first start → last end
       • Legend outside bars: compact legend drawn above the axes
     """
-    plt, mdates = _require_matplotlib()
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.dates as mdates
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise _optional_dependency_error(
+            "matplotlib", utility="Metrics session chart generation"
+        ) from exc
     if not runs:
         raise ValueError("No runs provided for timeline")
 
@@ -342,7 +318,12 @@ def plot_thread_timeline(
 
 
 def runs_to_dataframe(runs: list[RunRecord]) -> pd.DataFrame:
-    pd = _require_pandas()
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise _optional_dependency_error(
+            "pandas", utility="Metrics session DataFrame/CSV export"
+        ) from exc
     rows = [
         {
             "thread_id": r.thread_id,
@@ -366,7 +347,12 @@ def plot_thread_timeline_interactive(
     *,
     group_by: str = "agent",  # "agent" (few lanes) or "run" (one lane per run)
 ) -> str:
-    px = _require_plotly_express()
+    try:
+        import plotly.express as px
+    except ImportError as exc:
+        raise _optional_dependency_error(
+            "plotly", utility="Interactive metrics session timeline"
+        ) from exc
 
     if not runs:
         raise ValueError("No runs provided")
@@ -458,13 +444,7 @@ def extract_thread_token_stats(
     Merge token totals and concatenate per-call samples across all runs of a thread.
     Returns (totals, samples, context).
     """
-    totals = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "reasoning_tokens": 0,
-        "cached_tokens": 0,
-        "total_tokens": 0,
-    }
+    totals = dict.fromkeys(_TOKEN_CATEGORIES, 0)
     samples = {k: [] for k in totals.keys()}
 
     for r in runs:
@@ -522,13 +502,7 @@ def extract_run_tokens_by_model(
             else (name or "unknown")
         )
         roll = ((ev.get("metrics") or {}).get("usage_rollup")) or {}
-        for k in (
-            "input_tokens",
-            "output_tokens",
-            "reasoning_tokens",
-            "cached_tokens",
-            "total_tokens",
-        ):
+        for k in _TOKEN_CATEGORIES:
             try:
                 tokens_by_model[model][k] += int(float(roll.get(k, 0) or 0))
             except Exception:
@@ -551,14 +525,8 @@ def extract_run_tokens_by_model(
     )
 
 
-def extract_thread_tokens_by_model(
-    runs,
-) -> tuple[dict[str, dict[str, int]], dict[str, float], float, dict]:
-    """
-    Aggregate by LLM across all runs in a single thread.
-    Returns:
-      tokens_by_model, seconds_by_model, window_seconds, context
-    """
+def _accumulate_model_runs(runs):
+    """Collect model totals and context bounds without choosing report metadata."""
     tokens_by_model: dict[str, dict[str, int]] = defaultdict(
         lambda: defaultdict(int)
     )
@@ -585,6 +553,20 @@ def extract_thread_tokens_by_model(
         if e:
             de = _dt(e)
             max_end = de if (max_end is None or de > max_end) else max_end
+    return tokens_by_model, seconds_by_model, min_start, max_end
+
+
+def extract_thread_tokens_by_model(
+    runs,
+) -> tuple[dict[str, dict[str, int]], dict[str, float], float, dict]:
+    """
+    Aggregate by LLM across all runs in a single thread.
+    Returns:
+      tokens_by_model, seconds_by_model, window_seconds, context
+    """
+    tokens_by_model, seconds_by_model, min_start, max_end = (
+        _accumulate_model_runs(runs)
+    )
 
     window_seconds = (
         (max_end - min_start).total_seconds()
@@ -614,40 +596,16 @@ def aggregate_super_tokens_by_model(
     Returns:
       tokens_by_model, seconds_by_model, window_seconds, context
     """
-    tokens_by_model: dict[str, dict[str, int]] = defaultdict(
-        lambda: defaultdict(int)
+    tokens_by_model, seconds_by_model, min_start, max_end = (
+        _accumulate_model_runs(
+            run
+            for directory in thread_dirs
+            for _tid, runs in (
+                scan_directory_for_threads(directory) or {}
+            ).items()
+            for run in runs
+        )
     )
-    seconds_by_model: dict[str, float] = defaultdict(float)
-
-    min_start, max_end = None, None
-
-    for d in thread_dirs:
-        sessions = scan_directory_for_threads(d)
-        for _tid, runs in (sessions or {}).items():
-            for r in runs:
-                payload = load_metrics(r.path)
-                t_by_model, s_by_model = extract_run_tokens_by_model(payload)
-
-                for m, dct in t_by_model.items():
-                    for k, v in dct.items():
-                        tokens_by_model[m][k] += int(v or 0)
-                for m, secs in s_by_model.items():
-                    seconds_by_model[m] += float(secs or 0.0)
-
-                ctx = payload.get("context") or {}
-                s, e = ctx.get("started_at"), ctx.get("ended_at")
-                if s:
-                    ds = _dt(s)
-                    min_start = (
-                        ds
-                        if (min_start is None or ds < min_start)
-                        else min_start
-                    )
-                if e:
-                    de = _dt(e)
-                    max_end = (
-                        de if (max_end is None or de > max_end) else max_end
-                    )
 
     window_seconds = (
         (max_end - min_start).total_seconds()
@@ -667,6 +625,26 @@ def aggregate_super_tokens_by_model(
         window_seconds,
         ctx_out,
     )
+
+
+def _accumulate_agent_run(r, totals_by_agent, llm_secs_by_agent):
+    """Add one run, retaining partial totals when token or timing data is invalid."""
+    payload = load_metrics(r.path)
+
+    # tokens for this run -> bucket by r.agent
+    run_totals, _ = extract_llm_token_stats(payload)
+    for k, v in run_totals.items():
+        try:
+            totals_by_agent[r.agent][k] += int(v or 0)
+        except Exception:
+            pass
+
+    # llm-active seconds for this run -> bucket by r.agent
+    try:
+        att = compute_attribution(payload)
+        llm_secs_by_agent[r.agent] += float(att.get("llm_total_s", 0.0) or 0.0)
+    except Exception:
+        pass
 
 
 def extract_thread_token_stats_by_agent(
@@ -694,24 +672,7 @@ def extract_thread_token_stats_by_agent(
     thread_window_seconds = max(0.0, (max_end - min_start).total_seconds())
 
     for r in runs:
-        payload = load_metrics(r.path)
-
-        # tokens for this run -> bucket by r.agent
-        run_totals, _ = extract_llm_token_stats(payload)
-        for k, v in run_totals.items():
-            try:
-                totals_by_agent[r.agent][k] += int(v or 0)
-            except Exception:
-                pass
-
-        # llm-active seconds for this run -> bucket by r.agent
-        try:
-            att = compute_attribution(payload)
-            llm_secs_by_agent[r.agent] += float(
-                att.get("llm_total_s", 0.0) or 0.0
-            )
-        except Exception:
-            pass
+        _accumulate_agent_run(r, totals_by_agent, llm_secs_by_agent)
 
     # cast out of defaultdicts
     return (
@@ -756,24 +717,7 @@ def aggregate_super_token_stats_by_agent(
 
         # per-run aggregation by agent
         for r in runs:
-            payload = load_metrics(r.path)
-
-            # tokens
-            run_totals, _ = extract_llm_token_stats(payload)
-            for k, v in run_totals.items():
-                try:
-                    totals_by_agent[r.agent][k] += int(v or 0)
-                except Exception:
-                    pass
-
-            # llm seconds
-            try:
-                att = compute_attribution(payload)
-                llm_secs_by_agent[r.agent] += float(
-                    att.get("llm_total_s", 0.0) or 0.0
-                )
-            except Exception:
-                pass
+            _accumulate_agent_run(r, totals_by_agent, llm_secs_by_agent)
 
     summary = {
         "n_threads": float(len(sessions)),

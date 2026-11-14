@@ -16,7 +16,7 @@ from pydantic import Field
 
 from ursa.cli.config import UrsaConfig, config_file_value
 from ursa.util import mcp as mcp_mod
-from ursa.util.secrets import SecretTemplate
+from ursa.util.secrets import SecretReference
 
 DUMMY_SERVER = Path(__file__).parents[1] / "tools" / "dummy_mcp_server.py"
 
@@ -143,7 +143,7 @@ def test_mcp_config_loading_types_secret_headers():
         },
     })
 
-    assert isinstance(config.headers["Authorization"], SecretTemplate)
+    assert isinstance(config.headers["Authorization"], SecretReference)
 
 
 def test_mcp_header_reports_missing_environment_secret(monkeypatch):
@@ -254,3 +254,104 @@ async def test_upstream_adapter_puts_structured_content_in_tool_artifact(
 
     assert isinstance(result, ToolMessage)
     assert result.artifact == {"structured_content": {"result": 5}}
+
+
+def test_cached_mcp_specs_rebuild_tools_without_tool_discovery():
+    details = [
+        {
+            "name": "lookup",
+            "description": "Look something up.",
+            "schema": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+            "mcp_input_schema": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            "mcp_server": "demo",
+            "mcp_metadata": {
+                "readOnlyHint": True,
+                "_meta": {"display_name": "Remote lookup"},
+            },
+        },
+        # Built-in tools are not MCP specs and must not be cached here.
+        {"name": "read_file", "schema": {}, "mcp_server": ""},
+    ]
+    specs = mcp_mod.mcp_tool_specs_from_details(details)
+
+    client = SimpleNamespace(
+        connections={
+            "demo": {
+                "transport": "streamable_http",
+                "url": "https://example.test/mcp",
+            }
+        }
+    )
+    tools, sources = mcp_mod.mcp_tools_from_specs(client, specs)
+
+    assert [tool.name for tool in tools] == ["lookup"]
+    assert sources == {"lookup": "demo"}
+    assert tools[0].args_schema == specs[0]["input_schema"]
+    assert tools[0].args_schema["additionalProperties"] is False
+    assert tools[0].metadata == details[0]["mcp_metadata"]
+
+
+def test_cached_mcp_specs_reject_unknown_server():
+    client = SimpleNamespace(connections={})
+    with pytest.raises(ValueError, match="unknown server"):
+        mcp_mod.mcp_tools_from_specs(
+            client,
+            [
+                {
+                    "server": "missing",
+                    "name": "lookup",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+        )
+
+
+async def test_cached_mcp_tool_invokes_through_a_fresh_session(stdio_client):
+    tools, sources = mcp_mod.mcp_tools_from_specs(
+        stdio_client,
+        [
+            {
+                "server": "demo",
+                "name": "add",
+                "description": "Add two numbers",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "a": {"type": "integer"},
+                        "b": {"type": "integer"},
+                    },
+                    "required": ["a", "b"],
+                },
+            }
+        ],
+    )
+
+    result = await tools[0].ainvoke({
+        "type": "tool_call",
+        "name": "add",
+        "args": {"a": 2, "b": 3},
+        "id": "cached-add",
+    })
+
+    assert sources == {"add": "demo"}
+    assert isinstance(result, ToolMessage)
+    assert result.artifact == {"structured_content": {"result": 5}}
+
+
+@pytest.fixture
+async def stdio_client():
+    return mcp_mod.start_mcp_client({
+        "demo": StdioServerParameters(
+            command=sys.executable,
+            args=[str(DUMMY_SERVER)],
+        )
+    })

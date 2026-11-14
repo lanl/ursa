@@ -89,6 +89,7 @@ nav:
       - Quick reference: persistence/quick-reference.md
   - Agents:
       - Overview: agents/index.md
+      - Async messages and subagents: agents/async-messages.md
       - Chat Agent: agents/chat.md
       - Acquisition Agents:
           - Overview: agents/acquisition/index.md

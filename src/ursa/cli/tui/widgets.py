@@ -3,9 +3,13 @@
 """Reusable widgets and modal screens for the Textual CLI."""
 
 import asyncio
+import logging
+import textwrap
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
+from datetime import datetime
+from functools import partialmethod
 from itertools import islice
 from math import ceil
 from pathlib import Path
@@ -33,6 +37,7 @@ from textual.widgets import (
     TabbedContent,
     TabPane,
     TextArea,
+    Tree,
 )
 from textual.widgets._select import SelectCurrent, SelectOverlay
 from textual.widgets.option_list import Option
@@ -44,11 +49,12 @@ from ursa.cli.config import (
     InferenceProviderConfig,
     ModelConfig,
 )
-from ursa.cli.runtime import HITL
 from ursa.cli.tui.agent_info import AgentDetails, ToolDetails, load_agent_tools
 from ursa.cli.tui.helpers import _fuzzy_score
+from ursa.cli.tui.message_store import HierarchyMessage, MessageStore
 from ursa.cli.tui.terminal_view import TerminalView
 from ursa.cli.tui.tips import random_tip
+from ursa.runtime import AgentRuntime
 from ursa.tools.terminal import TermInfo, TermManager, term_manager
 from ursa.util.inference_providers import (
     ModelLister,
@@ -59,74 +65,35 @@ from ursa.util.inference_providers import (
     supported_model_providers,
 )
 
+LOGGER = logging.getLogger(__name__)
+
 
 class PromptArea(TextArea):
     """A multiline editor whose bare Enter submits the current prompt."""
 
     BINDINGS = [
-        Binding(
-            "enter", "submit_prompt", "Submit prompt", show=False, priority=True
-        ),
-        Binding(
-            "shift+enter",
-            "insert_newline",
-            "Insert newline",
-            show=False,
-            priority=True,
-        ),
-        Binding(
-            "ctrl+j",
-            "insert_newline",
-            "Insert newline",
-            show=False,
-            priority=True,
-        ),
-        Binding(
-            "ctrl+c", "clear_prompt", "Clear prompt", show=False, priority=True
-        ),
-        Binding(
-            "up",
-            "history_up",
-            "Cursor or prompt history up",
-            show=False,
-            priority=True,
-        ),
-        Binding(
-            "down",
-            "history_down",
-            "Cursor or prompt history down",
-            show=False,
-            priority=True,
-        ),
-        Binding(
-            "alt+left,meta+left,alt+b",
-            "cursor_word_left",
-            "Cursor word left",
-            show=False,
-            priority=True,
-        ),
-        Binding(
-            "alt+right,meta+right,alt+f",
-            "cursor_word_right",
-            "Cursor word right",
-            show=False,
-            priority=True,
-        ),
-        Binding(
-            "@",
-            "file_macro",
-            "Choose workspace path",
-            show=False,
-            priority=True,
-        ),
-        Binding("#", "agent_macro", "Choose agent", show=False, priority=True),
-        Binding(
-            "/",
-            "command_macro",
-            "Open command picker",
-            show=False,
-            priority=True,
-        ),
+        Binding(key, action, description, show=False, priority=True)
+        for key, action, description in (
+            ("enter", "submit_prompt", "Submit prompt"),
+            ("shift+enter", "insert_newline", "Insert newline"),
+            ("ctrl+j", "insert_newline", "Insert newline"),
+            ("ctrl+c", "clear_prompt", "Clear prompt"),
+            ("up", "history_up", "Cursor or prompt history up"),
+            ("down", "history_down", "Cursor or prompt history down"),
+            (
+                "alt+left,meta+left,alt+b",
+                "cursor_word_left",
+                "Cursor word left",
+            ),
+            (
+                "alt+right,meta+right,alt+f",
+                "cursor_word_right",
+                "Cursor word right",
+            ),
+            ("@", "file_macro", "Choose workspace path"),
+            ("#", "agent_macro", "Choose agent"),
+            ("/", "command_macro", "Open command picker"),
+        )
     ]
 
     class Submitted(Message):
@@ -187,8 +154,10 @@ class PromptArea(TextArea):
         self.insert("\n")
 
     def action_clear_prompt(self) -> None:
-        if getattr(self.app, "_agent_running", False):
-            self.app.action_cancel_agent()
+        if not self.text and getattr(self.app, "_active_agent_runs", 0):
+            explain = getattr(self.app, "action_cancel_agent", None)
+            if callable(explain):
+                explain()
             return
         self._remember(self.text)
         self._history_index = len(self.prompt_history)
@@ -718,35 +687,6 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         self._yaml_timers: dict[str, Timer] = {}
         self._syncing_controls = False
 
-    @classmethod
-    def _editable_choice(
-        cls,
-        prefix: str,
-        field: str,
-        values: Sequence[str],
-        current: str,
-    ) -> tuple[ModelSelect, Input]:
-        choices = tuple(dict.fromkeys(value for value in values if value))
-        listed = current in choices
-        selected = (
-            current
-            if listed
-            else (cls.CUSTOM_VALUE if current else cls.NONE_VALUE)
-        )
-        select = ModelSelect(
-            ModelSelect.options(choices),
-            value=selected,
-            allow_blank=False,
-            id=f"{prefix}-{field}",
-            classes="model-editable-choice",
-        )
-        custom = Input(
-            value="" if listed else current,
-            id=f"{prefix}-{field}-custom",
-            classes=f"model-custom-choice{' hidden' if listed else ''}",
-        )
-        return select, custom
-
     def _model_fields(self, prefix: str, config: ModelConfig) -> ComposeResult:
         options = [
             ("None (direct model config)", self.NONE_VALUE),
@@ -767,11 +707,19 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
             selected_provider = next(iter(self.providers), None)
         selected_provider = selected_provider or self.NONE_VALUE
         yield self._field_label("Model", "model", prefix)
-        model_select, custom_model = self._editable_choice(
-            prefix, "model-name", (config.model,), config.model
+        model = config.model
+        yield ModelSelect(
+            ModelSelect.options((model,) if model else ()),
+            value=model or self.NONE_VALUE,
+            allow_blank=False,
+            id=f"{prefix}-model-name",
+            classes="model-editable-choice",
         )
-        yield model_select
-        yield custom_model
+        yield Input(
+            value="",
+            id=f"{prefix}-model-name-custom",
+            classes=f"model-custom-choice{' hidden' if model else ''}",
+        )
         yield self._field_label("Model provider", "model-provider", prefix)
         provider_options, selected_model_provider = model_provider_options(
             prefix, config.model_provider, retain_unknown=False
@@ -890,6 +838,18 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
             exclusive=True,
         )
 
+    def _model_discovery_config(
+        self, prefix: str, inference_provider: str
+    ) -> ModelConfig:
+        """Build a model-shaped discovery config for a provider selection."""
+        draft = self.drafts[prefix]
+        if inference_provider not in self.providers:
+            return draft
+        selected = draft.model_copy(
+            update={"inference_provider": inference_provider}
+        )
+        return selected.resolve_inference_provider(self.providers)
+
     async def _load_models(
         self,
         prefix: str,
@@ -950,7 +910,7 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
             return
         prefix = event.select.id.removesuffix("-inference-provider")
         self._structured_controls_changed(prefix)
-        config = self.providers.get(event.value, self.drafts[prefix])
+        config = self._model_discovery_config(prefix, event.value)
         self._request_model_load(prefix, config)
 
     @on(Select.Changed, "#chat-model-provider, #embedding-model-provider")
@@ -1077,8 +1037,8 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         finally:
             self._syncing_controls = False
         if inference_provider != previous_inference_provider:
-            provider_config = self.providers.get(
-                str(inference_provider), config
+            provider_config = self._model_discovery_config(
+                prefix, str(inference_provider)
             )
             self._request_model_load(prefix, provider_config)
 
@@ -1178,6 +1138,170 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
                 select.expanded = False
 
 
+@dataclass(frozen=True)
+class HierarchyTreeRow:
+    """One presentation-ready row in the live agent hierarchy."""
+
+    path: str
+    parent: str | None
+    state: str
+    tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    pending_messages: int = 0
+    last_action: str = ""
+    active: bool = False
+
+
+class LiveHierarchyTree(Tree[HierarchyTreeRow]):
+    """A low-churn live tree for the managed agent hierarchy."""
+
+    REFRESH_INTERVAL = 0.5
+
+    def __init__(
+        self,
+        snapshot: Callable[[], Sequence[HierarchyTreeRow]],
+        *,
+        id: str = "live-hierarchy-tree",
+    ) -> None:
+        super().__init__("Live hierarchy", id=id)
+        self._snapshot = snapshot
+        self._signature: tuple[HierarchyTreeRow, ...] | None = None
+
+    def on_mount(self) -> None:
+        self.refresh_hierarchy(force=True)
+        self.set_interval(self.REFRESH_INTERVAL, self.refresh_hierarchy)
+
+    def refresh_hierarchy(self, *, force: bool = False) -> None:
+        """Redraw only after the host snapshot changes."""
+        rows = tuple(self._snapshot())
+        if not force and rows == self._signature:
+            return
+        expanded = self._expanded_paths()
+        cursor = self.cursor_node
+        cursor_path = (
+            cursor.data.path
+            if isinstance(getattr(cursor, "data", None), HierarchyTreeRow)
+            else None
+        )
+        previous_paths = {row.path for row in self._signature or ()}
+        first_render = self._signature is None
+        self._signature = rows
+        self.reset(
+            Text(
+                "Live hierarchy"
+                if rows
+                else "No active agent hierarchy — start an agent to inspect it."
+            )
+        )
+        self.root.expand()
+        nodes = {}
+        for row in sorted(
+            rows, key=lambda item: (item.path.count("/"), item.path)
+        ):
+            parent = nodes.get(row.parent, self.root)
+            node = parent.add(
+                self._label(row),
+                row,
+                expand=(
+                    first_render
+                    or row.path not in previous_paths
+                    or row.path in expanded
+                ),
+            )
+            nodes[row.path] = node
+            for detail in self._detail_labels(row):
+                node.add_leaf(detail)
+        # ``reset`` retains Textual's numeric cursor line. Rebuild the lines
+        # before restoring a surviving agent; the neutral wrapper is a safe
+        # fallback when an agent disappears.
+        self.get_node_at_line(0)
+        self.move_cursor(nodes.get(cursor_path, self.root), animate=False)
+
+    def action_cursor_up(self) -> None:
+        self._move_agent_cursor(-1)
+
+    def action_cursor_down(self) -> None:
+        self._move_agent_cursor(1)
+
+    def _move_agent_cursor(self, direction: int) -> None:
+        """Keep keyboard navigation on agent rows, not their detail leaves."""
+        start = self.cursor_line
+        if start < 0:
+            start = -1 if direction > 0 else len(self._tree_lines)
+        stop = len(self._tree_lines) if direction > 0 else -1
+        for line in range(start + direction, stop, direction):
+            node = self.get_node_at_line(line)
+            if isinstance(getattr(node, "data", None), HierarchyTreeRow):
+                self.move_cursor(node, animate=False)
+                return
+
+    def _expanded_paths(self) -> set[str]:
+        expanded: set[str] = set()
+
+        def visit(node) -> None:
+            if isinstance(node.data, HierarchyTreeRow) and node.is_expanded:
+                expanded.add(node.data.path)
+            for child in node.children:
+                visit(child)
+
+        visit(self.root)
+        return expanded
+
+    @staticmethod
+    def _label(row: HierarchyTreeRow) -> Text:
+        label = Text()
+        if row.active:
+            label.append("● ", style="bold green")
+        label.append(row.path.rsplit("/", 1)[-1], style="bold")
+        state = row.state
+        if row.pending_messages:
+            state += f" · {row.pending_messages} queued"
+        state_style = {
+            "Working": "yellow",
+            "Queued": "cyan",
+            "Waiting": "magenta",
+            "Ready": "green",
+        }.get(row.state, "dim")
+        label.append(f"  {state}", style=state_style)
+        return label
+
+    @staticmethod
+    def _detail_labels(row: HierarchyTreeRow) -> list[Text]:
+        """Render usage and activity as readable child rows."""
+        usage = Text("Tokens: ", style="dim")
+        usage.append(f"{row.tokens:,} total", style="dim")
+        if row.input_tokens or row.output_tokens or row.cached_tokens:
+            usage.append(
+                f" · {row.input_tokens:,} input · {row.output_tokens:,} output",
+                style="dim",
+            )
+            if row.cached_tokens:
+                usage.append(f" · {row.cached_tokens:,} cached", style="dim")
+        details = [usage]
+        action = " ".join(row.last_action.split())
+        if not action:
+            return details
+        if len(action) > 320:
+            action = f"{action[:319]}…"
+        lines = textwrap.wrap(
+            action,
+            width=72,
+            break_long_words=True,
+            break_on_hyphens=False,
+        ) or [action]
+        for index, line in enumerate(lines):
+            prefix = "Last activity: " if index == 0 else "               "
+            details.append(Text(f"{prefix}{line}", style="dim italic"))
+        return details
+
+
+def _scroll_action(self, action: str) -> None:
+    """Forward a modal's scroll action to its currently selected widget."""
+    getattr(self._scroll_view(), action)()
+
+
 class InformationScreen(ModalScreen[None]):
     """Scrollable command output displayed without leaving the application."""
 
@@ -1197,11 +1321,14 @@ class InformationScreen(ModalScreen[None]):
         content: str,
         *,
         config_yaml: str | None = None,
+        status_content: Callable[[], str] | None = None,
     ) -> None:
         super().__init__()
         self.screen_title = title
         self.content = content
         self.config_yaml = config_yaml
+        self.status_content = status_content
+        self._status_content_signature = content
 
     def compose(self) -> ComposeResult:
         with Vertical(id="information"):
@@ -1229,29 +1356,36 @@ class InformationScreen(ModalScreen[None]):
                             id="status-config-yaml",
                         )
 
+    def on_mount(self) -> None:
+        if self.status_content is not None:
+            self.set_interval(
+                LiveHierarchyTree.REFRESH_INTERVAL,
+                self._refresh_status_content,
+            )
+
+    async def _refresh_status_content(self) -> None:
+        """Keep the overview token totals current without needless rerenders."""
+        content = (
+            self.status_content() if self.status_content is not None else None
+        )
+        if content is None or content == self._status_content_signature:
+            return
+        self._status_content_signature = content
+        body = self.query_one("#information-body", VerticalScroll)
+        await body.query_one(Markdown).update(content)
+
     def action_close(self) -> None:
         self.dismiss(None)
 
-    def _scroll_view(self) -> VerticalScroll:
+    def _scroll_view(self):
         return self.query_one("#information-body", VerticalScroll)
 
-    def action_scroll_up(self) -> None:
-        self._scroll_view().action_scroll_up()
-
-    def action_scroll_down(self) -> None:
-        self._scroll_view().action_scroll_down()
-
-    def action_scroll_home(self) -> None:
-        self._scroll_view().action_scroll_home()
-
-    def action_scroll_end(self) -> None:
-        self._scroll_view().action_scroll_end()
-
-    def action_page_up(self) -> None:
-        self._scroll_view().action_page_up()
-
-    def action_page_down(self) -> None:
-        self._scroll_view().action_page_down()
+    action_scroll_up = partialmethod(_scroll_action, "action_scroll_up")
+    action_scroll_down = partialmethod(_scroll_action, "action_scroll_down")
+    action_scroll_home = partialmethod(_scroll_action, "action_scroll_home")
+    action_scroll_end = partialmethod(_scroll_action, "action_scroll_end")
+    action_page_up = partialmethod(_scroll_action, "action_page_up")
+    action_page_down = partialmethod(_scroll_action, "action_page_down")
 
 
 class TermsScreen(ModalScreen[None]):
@@ -1381,48 +1515,38 @@ def _markdown_cell(value: object) -> str:
 
 def _tool_markdown(tool: ToolDetails) -> str:
     """Render expanded tool metadata inspired by the legacy Rich report."""
-    return "\n\n".join(
-        filter(
-            None,
-            (
-                tool.description,
-                "\n".join([
-                    "| Setting | Value |",
-                    "|---|---|",
-                    *(
-                        [
-                            "| Source | "
-                            f"`MCP: {_markdown_cell(tool.mcp_server)}` |"
-                        ]
-                        if tool.mcp_server
-                        else []
-                    ),
-                    f"| Class | `{_markdown_cell(tool.class_name)}` |",
-                    f"| Args schema | `{_markdown_cell(tool.schema_name)}` |",
-                    "| Return directly | "
-                    f"`{_markdown_cell(tool.return_direct)}` |",
-                ]),
-                (
-                    "\n".join([
-                        "### Arguments",
-                        "",
-                        "| Name | Type | Required | Description |",
-                        "|---|---|---|---|",
-                        *(
-                            "| "
-                            f"`{_markdown_cell(argument.name)}` | "
-                            f"`{_markdown_cell(argument.type_name)}` | "
-                            f"{'yes' if argument.required else 'no'} | "
-                            f"{_markdown_cell(argument.description)} |"
-                            for argument in tool.arguments
-                        ),
-                    ])
-                    if tool.arguments
-                    else ""
-                ),
+    sections = [
+        tool.description,
+        "\n".join([
+            "| Setting | Value |",
+            "|---|---|",
+            *(
+                [f"| Source | `MCP: {_markdown_cell(tool.mcp_server)}` |"]
+                if tool.mcp_server
+                else []
             ),
+            f"| Class | `{_markdown_cell(tool.class_name)}` |",
+            f"| Args schema | `{_markdown_cell(tool.schema_name)}` |",
+            f"| Return directly | `{_markdown_cell(tool.return_direct)}` |",
+        ]),
+    ]
+    if tool.arguments:
+        sections.append(
+            "\n".join([
+                "### Arguments",
+                "",
+                "| Name | Type | Required | Description |",
+                "|---|---|---|---|",
+                *(
+                    f"| `{_markdown_cell(argument.name)}` | "
+                    f"`{_markdown_cell(argument.type_name)}` | "
+                    f"{'yes' if argument.required else 'no'} | "
+                    f"{_markdown_cell(argument.description)} |"
+                    for argument in tool.arguments
+                ),
+            ])
         )
-    )
+    return "\n\n".join(filter(None, sections))
 
 
 class AgentToolDetails(Collapsible):
@@ -1460,10 +1584,12 @@ class AgentToolDetails(Collapsible):
 class AgentsScreen(InformationScreen):
     """Tabbed descriptions and configured-tool details for all agents."""
 
-    def __init__(self, agents: tuple[AgentDetails, ...], hitl: HITL) -> None:
+    def __init__(
+        self, agents: tuple[AgentDetails, ...], runtime: AgentRuntime
+    ) -> None:
         super().__init__("Agents", "")
         self.agents = agents
-        self.hitl = hitl
+        self.runtime = runtime
         self._tool_loads_started: set[str] = set()
         self._tool_loading_frames: dict[int, int] = {}
         self._tool_loading_timers: dict[int, Timer] = {}
@@ -1589,7 +1715,7 @@ class AgentsScreen(InformationScreen):
     async def _hydrate_tools(self, index: int) -> None:
         agent = self.agents[index]
         try:
-            tools = await load_agent_tools(self.hitl, agent.name)
+            tools = await load_agent_tools(self.runtime, agent.name)
             updated = replace(
                 agent,
                 tools=tools,
@@ -1662,8 +1788,6 @@ class AgentsScreen(InformationScreen):
     ) -> bool:
         try:
             return await self._render_agent_tools(index, agent)
-        except asyncio.CancelledError:
-            raise
         except Exception as exc:
             failed = replace(
                 agent,
@@ -1694,10 +1818,10 @@ class WelcomeBanner(Vertical):
 / /_/ / /  (__  ) /_/ /
 \__,_/_/  /____/\__,_/"""
 
-    def __init__(self, hitl: HITL) -> None:
+    def __init__(self, runtime: AgentRuntime) -> None:
         super().__init__(id="welcome")
-        self.hitl = hitl
-        workspace = Path(self.hitl.workspace).resolve()
+        self.runtime = runtime
+        workspace = Path(self.runtime.workspace).resolve()
         try:
             relative = workspace.relative_to(Path.home())
             self.workspace_text = str(Path("~") / relative)
@@ -1754,12 +1878,12 @@ class WelcomeBanner(Vertical):
         self._fit_metadata()
 
     def _config_snapshot(self) -> Text:
-        embedding = self.hitl.config.emb_model
+        embedding = self.runtime.config.emb_model
         return Text(
             "\n".join([
-                f"LLM        {self.hitl.config.llm_model.pretty_repr()}",
+                f"LLM        {self.runtime.config.llm_model.pretty_repr()}",
                 f"Embedding  {embedding.pretty_repr() if embedding else 'none'}",
-                f"Group      {getattr(self.hitl, 'group', None) or 'default'}",
+                f"Group      {getattr(self.runtime, 'group', None) or 'default'}",
             ])
         )
 
@@ -1803,7 +1927,12 @@ class MessageCard(Static):
     def compose(self) -> ComposeResult:
         if self.role == "assistant":
             yield Static("URSA", classes="message-role")
-        yield Markdown(str(self.content), classes="message-body")
+            yield Markdown(str(self.content), classes="message-body")
+        else:
+            # User input is plain text. A Static recalculates its wrapped
+            # height with the final card width, avoiding Markdown's stale
+            # auto-height when a scrollbar appears during submission.
+            yield Static(Text(str(self.content)), classes="message-body")
 
     @on(Markdown.TableOfContentsUpdated)
     def remove_trailing_markdown_margin(
@@ -1812,6 +1941,504 @@ class MessageCard(Static):
         blocks = list(event.markdown.children)
         if blocks:
             blocks[-1].styles.margin = 0
+
+
+class HierarchyMessageCard(MessageCard):
+    """A compact routed message that expands to its complete Markdown body."""
+
+    can_focus = True
+    BINDINGS = [
+        Binding("enter,space", "toggle", "Expand message", show=False),
+    ]
+
+    def __init__(
+        self,
+        message: HierarchyMessage,
+        color_for: Callable[[str], str],
+        store: MessageStore,
+        on_expand: Callable[[], None] | None = None,
+    ) -> None:
+        super().__init__("hierarchy-message", message.content)
+        self.message = message
+        self.store = store
+        self.color_for = color_for
+        self._on_expand = on_expand
+        self.expanded = False
+        self.sender_color = color_for(message.sender)
+        self.styles.border_left = ("thick", self.sender_color)
+
+    @staticmethod
+    def _display_name(agent: str) -> str:
+        return "You" if agent == "user" else agent
+
+    def _route(self) -> Text:
+        route = Text()
+        route.append(
+            self._display_name(self.message.sender),
+            style=f"bold {self.sender_color}",
+        )
+        route.append(" → ", style="dim")
+        for index, recipient in enumerate(self.message.recipients):
+            if index:
+                route.append(", ", style="dim")
+            route.append(
+                self._display_name(recipient),
+                style=f"bold {self.color_for(recipient)}",
+            )
+        return route
+
+    def _relative_timestamp(self, now: datetime | None = None) -> str:
+        now = now or datetime.now().astimezone()
+        timestamp = self.message.timestamp
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.astimezone()
+        elapsed = max(
+            0,
+            int((now - timestamp.astimezone(now.tzinfo)).total_seconds()),
+        )
+        if elapsed < 5:
+            return "now"
+        if elapsed < 60:
+            return f"{elapsed}s ago"
+        if elapsed < 3_600:
+            return f"{elapsed // 60}m ago"
+        if elapsed < 86_400:
+            return f"{elapsed // 3_600}h ago"
+        return f"{elapsed // 86_400}d ago"
+
+    def refresh_timestamp(self, now: datetime | None = None) -> None:
+        timestamp = self.query_one_optional(".hierarchy-message-time", Static)
+        if timestamp is not None:
+            timestamp.update(self._relative_timestamp(now))
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(classes="hierarchy-message-header"):
+            yield Static(self._route(), classes="hierarchy-message-route")
+            yield Static(
+                self._relative_timestamp(),
+                classes="hierarchy-message-time",
+            )
+        preview = " ".join(self.content.split()) or "(empty message)"
+        yield Static(Text(preview), classes="hierarchy-message-preview")
+        yield Markdown(
+            "",
+            classes="message-body hierarchy-message-full hidden",
+        )
+
+    def set_expanded(self, expanded: bool) -> None:
+        self.expanded = expanded
+        self.query_one(".hierarchy-message-preview").set_class(
+            expanded, "hidden"
+        )
+        self.query_one(".hierarchy-message-full").set_class(
+            not expanded, "hidden"
+        )
+        if expanded:
+            if self._on_expand is not None:
+                self._on_expand()
+            self.query_one(".hierarchy-message-full", Markdown).update(
+                "_Loading message…_"
+            )
+        self.run_worker(self._load_body, exclusive=True, group="message-body")
+
+    async def _load_body(self) -> None:
+        full = self.query_one(".hierarchy-message-full", Markdown)
+        if not self.expanded:
+            full.update("")
+            return
+        try:
+            content = await self.store.message_body(self.message.id)
+        except Exception:
+            LOGGER.exception(
+                "Could not load hierarchy message %s", self.message.id
+            )
+            content = None
+        if self.expanded and self.is_mounted:
+            full.update(
+                "_(empty message)_"
+                if content == ""
+                else content
+                if content is not None
+                else "_Message is no longer available._"
+            )
+
+    def on_click(self, event: events.Click) -> None:
+        event.stop()
+        self.focus()
+        self.set_expanded(not self.expanded)
+
+    def action_toggle(self) -> None:
+        """Expand or collapse the focused message without a mouse."""
+        self.set_expanded(not self.expanded)
+
+
+class MessagesScreen(ModalScreen[None]):
+    """Live, read-only log of messages routed through the hierarchy."""
+
+    BINDINGS = [
+        Binding("escape,q", "close", "Close", priority=True),
+        Binding("up", "scroll_up", "Scroll up", priority=True),
+        Binding("down", "scroll_down", "Scroll down", priority=True),
+        Binding("home", "scroll_home", "Scroll to top", priority=True),
+        Binding("end", "scroll_end", "Resume live messages", priority=True),
+        Binding("pageup", "page_up", "Page up", priority=True),
+        Binding("pagedown", "page_down", "Page down", priority=True),
+        Binding("left", "older", "Older messages", priority=True),
+        Binding("right", "newer", "Newer messages", priority=True),
+    ]
+
+    PAGE_SIZE = 50
+
+    def __init__(
+        self,
+        messages: MessageStore,
+        color_for: Callable[[str], str],
+        subagent_rows: Callable[[], Sequence[HierarchyTreeRow]] | None = None,
+        on_subagent_selected: Callable[[str], None] | None = None,
+    ) -> None:
+        super().__init__()
+        self._messages = messages
+        self._color_for = color_for
+        self._subagent_rows = subagent_rows
+        self._on_subagent_selected = on_subagent_selected
+        self._ids: tuple[int, ...] = ()
+        self._live = True
+        self._resuming_live = False
+        self._resume_generation = 0
+        self._has_newer = False
+        self._sync_lock = asyncio.Lock()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="coordination-dialog"):
+            yield Static("Coordination", id="coordination-title")
+            with TabbedContent(id="coordination-tabs"):
+                with TabPane("Messages", id="coordination-messages-tab"):
+                    with Vertical(id="messages-dialog"):
+                        with Vertical(id="messages-header"):
+                            yield Static("Messages", id="messages-title")
+                            with Horizontal(id="messages-controls"):
+                                yield Button("← Older", id="messages-older")
+                                yield Button("Newer →", id="messages-newer")
+                                yield Button("Latest", id="messages-latest")
+                        yield VerticalScroll(id="messages-body")
+                        yield Static("Loading messages…", id="messages-footer")
+                if self._subagent_rows is not None:
+                    with TabPane("Subagents", id="coordination-subagents-tab"):
+                        yield Static(
+                            id="coordination-subagents-summary",
+                        )
+                        yield LiveHierarchyTree(
+                            self._subagent_rows,
+                            id="coordination-subagents-tree",
+                        )
+
+    def on_mount(self) -> None:
+        # Tab panes mount after their parent screen, so wait until the first
+        # message-loop turn before querying the initially active pane.
+        self.call_later(self._start_sync)
+        self.call_after_refresh(self._refresh_subagent_hint)
+
+    async def _start_sync(self) -> None:
+        if not self.is_mounted:
+            return
+        if not self.query("#messages-body"):
+            self.call_later(self._start_sync)
+            return
+        self._refresh_subagent_hint()
+        await self._sync_messages()
+        self.set_interval(0.5, self._sync_messages)
+
+    def on_resize(self) -> None:
+        if self.is_mounted and self.query("#messages-footer"):
+            self._refresh_navigation(has_newer=self._has_newer)
+        self.call_after_refresh(self._refresh_subagent_hint)
+
+    @on(TabbedContent.TabActivated, "#coordination-tabs")
+    def _refresh_coordination_hint(
+        self, event: TabbedContent.TabActivated
+    ) -> None:
+        if event.pane.id == "coordination-subagents-tab":
+            self.call_after_refresh(self._refresh_subagent_hint)
+
+    def _refresh_subagent_hint(self) -> None:
+        summary = self.query("#coordination-subagents-summary")
+        if not summary:
+            return
+        widget = summary.first(Static)
+        width = widget.content_region.width or self.app.size.width - 10
+        hint = (
+            "Enter · Space · Esc"
+            if width < 34
+            else "Enter switch · Space expand · Esc"
+            if width < 100
+            else "Live state, token usage, and latest activity · "
+            "Enter switches agent · Space expands · Esc closes"
+        )
+        widget.update(hint)
+
+    async def _sync_messages(self) -> None:
+        async with self._sync_lock:
+            body = self._body()
+            now = datetime.now().astimezone()
+            for card in body.query(HierarchyMessageCard):
+                card.refresh_timestamp(now)
+            # Moving away from the lower edge pauses follow before a later
+            # update can replace the page or scroll away from what is open.
+            if (
+                self._live
+                and not self._resuming_live
+                and body.scroll_y < body.max_scroll_y
+            ):
+                self._live = False
+            if self._ids and not self._live:
+                newer = await self._messages.messages(
+                    after=self._ids[-1], limit=1
+                )
+                self.query_one("#messages-newer", Button).disabled = not newer
+                self.query_one("#messages-latest", Button).disabled = False
+                self._refresh_navigation(has_newer=bool(newer))
+                return
+            latest = await self._messages.messages(limit=1)
+            if self._ids and latest and latest[0].id == self._ids[-1]:
+                return
+            await self._show_page(
+                await self._messages.messages(limit=self.PAGE_SIZE)
+            )
+            self._schedule_live_bottom()
+
+    async def _show_page(self, messages: Sequence[HierarchyMessage]) -> None:
+        body = self._body()
+        ids = tuple(message.id for message in messages)
+        existing = {
+            card.message.id: card for card in body.query(HierarchyMessageCard)
+        }
+        if not messages:
+            if not body.children:
+                await body.mount(
+                    Static("No hierarchy messages yet.", id="messages-empty")
+                )
+        else:
+            # Live updates append only new rows. Historical paging replaces
+            # the bounded page, releasing both previews and expanded bodies.
+            prepend = bool(self._ids and ids[0] < self._ids[0])
+            if prepend:
+                await body.remove_children()
+                existing = {}
+            else:
+                for message_id, card in existing.items():
+                    if message_id not in ids:
+                        await card.remove()
+                empty = body.query("#messages-empty")
+                if empty:
+                    await empty.first().remove()
+            new = [
+                HierarchyMessageCard(
+                    message,
+                    self._color_for,
+                    self._messages,
+                    on_expand=self._pause_live_follow,
+                )
+                for message in messages
+                if message.id not in existing
+            ]
+            if new:
+                await body.mount(*new)
+        self._ids = ids
+        older = bool(
+            ids and await self._messages.messages(before=ids[0], limit=1)
+        )
+        newer = bool(
+            ids and await self._messages.messages(after=ids[-1], limit=1)
+        )
+        self.query_one("#messages-older", Button).disabled = not older
+        self.query_one("#messages-newer", Button).disabled = not newer
+        self.query_one("#messages-latest", Button).disabled = self._live
+        self._refresh_navigation(has_newer=newer)
+
+    def _refresh_navigation(self, *, has_newer: bool) -> None:
+        """State the current reading mode where it is useful, in the footer."""
+        self._has_newer = has_newer
+        footer_width = self.query_one(
+            "#messages-footer", Static
+        ).content_region.width
+        state = "Live" if self._live else "History" if has_newer else "Paused"
+        if footer_width < 45:
+            text = f"{state} · Enter · End · Esc"
+        elif self._live:
+            text = "Live · Enter expands · ←/→ · Esc"
+        elif has_newer:
+            text = "History · newer available · → newer · End latest · Esc"
+        else:
+            text = "Paused · Enter expands · End live · Esc"
+        self.query_one("#messages-title", Static).update(
+            f"Messages · {state} · {len(self._ids)} shown"
+        )
+        self.query_one("#messages-footer", Static).update(text)
+
+    def _pause_live_follow(self) -> None:
+        """Keep an expanded body stable while its reader is inspecting it."""
+        if not self._live:
+            return
+        self._live = False
+        self._cancel_live_resume()
+        self.query_one("#messages-latest", Button).disabled = False
+        self._refresh_navigation(has_newer=False)
+
+    def _schedule_live_bottom(self) -> None:
+        """Avoid treating a just-mounted latest page as reader scrollback."""
+        self._resuming_live = True
+        self._resume_generation += 1
+        generation = self._resume_generation
+        self.call_after_refresh(lambda: self._finish_resuming_live(generation))
+
+    def _cancel_live_resume(self) -> None:
+        """Invalidate a deferred scroll when the reader starts inspecting."""
+        self._resuming_live = False
+        self._resume_generation += 1
+
+    @on(Button.Pressed, "#messages-older")
+    async def action_older(self) -> None:
+        if self._scroll_view() is not self._body():
+            return
+        async with self._sync_lock:
+            if not self._ids:
+                return
+            page = await self._messages.messages(
+                before=self._ids[0], limit=self.PAGE_SIZE
+            )
+            if page:
+                self._live = False
+                self._cancel_live_resume()
+                await self._show_page(page)
+                self.call_after_refresh(self._body().scroll_end, animate=False)
+
+    @on(Button.Pressed, "#messages-newer")
+    async def action_newer(self) -> None:
+        if self._scroll_view() is not self._body():
+            return
+        async with self._sync_lock:
+            if not self._ids:
+                return
+            page = await self._messages.messages(
+                after=self._ids[-1], limit=self.PAGE_SIZE
+            )
+            if page:
+                self._live = not bool(
+                    await self._messages.messages(after=page[-1].id, limit=1)
+                )
+                self._resuming_live = self._live
+                await self._show_page(page)
+                if self._live:
+                    self._schedule_live_bottom()
+                else:
+                    self._cancel_live_resume()
+                    self.call_after_refresh(
+                        self._body().scroll_home, animate=False
+                    )
+
+    @on(Button.Pressed, "#messages-latest")
+    async def action_latest(self) -> None:
+        async with self._sync_lock:
+            self._live = True
+            await self._show_page(
+                await self._messages.messages(limit=self.PAGE_SIZE)
+            )
+            self._schedule_live_bottom()
+
+    def _finish_resuming_live(self, generation: int) -> None:
+        """Reach the lower edge before allowing the next live refresh."""
+        if (
+            not self.is_mounted
+            or not self._live
+            or not self._resuming_live
+            or generation != self._resume_generation
+            or not self.query("#messages-body")
+        ):
+            return
+        self._body().scroll_end(animate=False, immediate=True)
+        self._resuming_live = False
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+    @on(Tree.NodeSelected, "#coordination-subagents-tree")
+    def _select_subagent(self, event: Tree.NodeSelected) -> None:
+        row = event.node.data
+        if not isinstance(row, HierarchyTreeRow):
+            return
+        event.stop()
+        if self._on_subagent_selected is not None:
+            self._on_subagent_selected(row.path)
+        self.dismiss(None)
+
+    def _body(self) -> VerticalScroll:
+        return self.query_one("#messages-body", VerticalScroll)
+
+    def _scroll_view(self):
+        tabs = self.query("#coordination-tabs")
+        if tabs and tabs.first().active == "coordination-subagents-tab":
+            return self.query_one(
+                "#coordination-subagents-tree", LiveHierarchyTree
+            )
+        return self._body()
+
+    def _scroll_line(self, direction: str) -> None:
+        """Move between agents in the tree or scroll the message log."""
+        view = self._scroll_view()
+        action = "cursor" if isinstance(view, LiveHierarchyTree) else "scroll"
+        getattr(view, f"action_{action}_{direction}")()
+
+    action_scroll_up = partialmethod(_scroll_line, "up")
+    action_scroll_down = partialmethod(_scroll_line, "down")
+
+    async def action_scroll_home(self) -> None:
+        if self._scroll_view() is not self._body():
+            self._scroll_view().action_scroll_home()
+            return
+        async with self._sync_lock:
+            self._live = False
+            self._cancel_live_resume()
+            await self._show_page(
+                await self._messages.messages(after=0, limit=self.PAGE_SIZE)
+            )
+            self.call_after_refresh(self._body().scroll_home, animate=False)
+
+    async def action_scroll_end(self) -> None:
+        if self._scroll_view() is not self._body():
+            self._scroll_view().action_scroll_end()
+            return
+        await self.action_latest()
+
+    action_page_up = partialmethod(_scroll_action, "action_page_up")
+    action_page_down = partialmethod(_scroll_action, "action_page_down")
+
+
+class QueuedMessage(Static):
+    """A dimmed user draft waiting to reach an agent inbox."""
+
+    def __init__(self, content: str, target: str | None) -> None:
+        super().__init__(classes="queued-message")
+        self.content = content
+        self.target = target or "active agent"
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            f"Queued for {self.target}", classes="queued-message-label"
+        )
+        yield Markdown(self.content, classes="queued-message-body")
+
+    def mark_failed(self, message: str) -> None:
+        """Keep an undelivered draft visible with its failure state."""
+        self.add_class("delivery-failed")
+        label = self.query_one(".queued-message-label", Static)
+        label.update(f"Not delivered to {self.target}: {message}")
+
+    def set_target(self, target: str) -> None:
+        """Refresh the destination once an initializing agent is known."""
+        self.target = target
+        labels = self.query(".queued-message-label")
+        if labels:
+            labels.first(Static).update(f"Queued for {self.target}")
 
 
 class ToolMessage(Horizontal):
@@ -1845,6 +2472,8 @@ class ActivityIndicator(Horizontal):
         self._timer = self.set_interval(0.08, self._advance)
 
     def _advance(self) -> None:
+        if not self.is_mounted or self.screen is not self.app.screen:
+            return
         self.query_one(".activity-spinner", Static).update(
             self.FRAMES[self._frame]
         )
@@ -1857,10 +2486,13 @@ class ActivityIndicator(Horizontal):
                 Text(message[-500:])
             )
 
-    def finish(self, *, elapsed: float, tokens: int) -> None:
+    def _stop_spinner(self, symbol: str) -> None:
         if self._timer is not None:
             self._timer.pause()
-        self.query_one(".activity-spinner", Static).update("")
+        self.query_one(".activity-spinner", Static).update(symbol)
+
+    def finish(self, *, elapsed: float, tokens: int) -> None:
+        self._stop_spinner("")
         if elapsed <= 30:
             self.query_one(".activity-text", Static).update("")
             self.query_one(".activity-done-mark", Static).update("")

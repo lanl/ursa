@@ -14,7 +14,9 @@ from textual.widgets import Static
 
 from ursa.cli.tui.event_cards import (
     AgentEventCard,
+    AgentToolCard,
     ArtifactCard,
+    CoordinationCard,
     EditCard,
     EventCard,
     ExceptionCard,
@@ -26,28 +28,47 @@ from ursa.cli.tui.event_cards import (
     ToolCallCard,
 )
 from ursa.cli.tui.event_cards.term import terminal_id
+from ursa.cli.tui.event_cards.tools import tool_event_input
 from ursa.cli.tui.helpers import (
     AGENT_LABELS,
     FILE_TOOLS,
     SEARCH_TOOLS,
     SUMMARY_GROUP_GRACE_SECONDS,
+    TokenUsage,
 )
+from ursa.cli.tui.message_store import COORDINATION_TOOLS
 from ursa.cli.tui.widgets import ActivityIndicator, MessageCard
 from ursa.util.rendering import event_artifacts
 
 
 class Turn(Static):
-    def __init__(self, prompt: str, workspace: Path) -> None:
+    def __init__(
+        self,
+        prompt: str,
+        workspace: Path,
+        *,
+        agent_path: str | None = None,
+        progress_only: bool = False,
+    ) -> None:
         super().__init__(classes="turn")
         self.prompt = prompt
         self.workspace = Path(workspace).resolve()
+        self.agent_path = agent_path
+        self.progress_only = progress_only
+        self.activity_finished = False
+        self.delegated_message_id: str | None = None
         self.cards: dict[str, EventCard] = {}
         self.started_at = monotonic()
         self.token_usage = 0
+        self.token_usage_breakdown = TokenUsage()
+        self._attributed_token_usage = TokenUsage()
+        self.last_activity = ""
+        self._command_count = 0
         self._commands: list[RunCommandCard] = []
         self._commands_by_tool_call_id: dict[str, RunCommandCard] = {}
         self._commands_overlapped = False
-        self._tool_calls_by_id: dict[str, ToolCallCard] = {}
+        self._tool_calls_by_id: dict[str, ToolCallCard | AgentToolCard] = {}
+        self._coordination_card: CoordinationCard | None = None
         self._terms_by_id: dict[str, TermCard] = {}
         self._edits_by_id: dict[str, EditCard] = {}
         self._summary_count = 0
@@ -63,10 +84,12 @@ class Turn(Static):
         self.card_details_expanded = False
 
     def compose(self) -> ComposeResult:
-        yield MessageCard("user", self.prompt)
+        if not self.progress_only:
+            yield MessageCard("user", self.prompt)
         yield Vertical(classes="events hidden")
         activity = ActivityIndicator()
-        activity.add_class("activity-after-user")
+        if not self.progress_only:
+            activity.add_class("activity-after-user")
         yield activity
         yield Static("", classes="turn-end-marker")
 
@@ -112,6 +135,9 @@ class Turn(Static):
         if tool == "term" or tool.startswith("term_"):
             await self._term_event(payload)
             return
+        if tool in COORDINATION_TOOLS:
+            await self._default_tool_event(payload)
+            return
         artifacts = event_artifacts(payload)
         if artifacts:
             artifact_key = self._next_summary_key("artifact")
@@ -126,7 +152,6 @@ class Turn(Static):
         }:
             await self._plan_event(payload)
             return
-        edit_card = None
         additions = payload.get("additions")
         deletions = payload.get("deletions")
         outcome = self._file_outcome(payload)
@@ -170,7 +195,6 @@ class Turn(Static):
                 *change,
                 show_heading=not has_edit_heading,
             )
-        if edit_card is not None:
             edit_key = self._next_summary_key("edit")
             await self._replace_or_mount(edit_key, edit_card)
             if edit_id:
@@ -198,17 +222,8 @@ class Turn(Static):
                 card.record_outcome(operation, path, state, detail)
                 return
             summary_kind = f"files:{operation}"
-            self._prepare_summary(summary_kind)
-            card = (
-                self._summary_cards.get(summary_kind)
-                if self._can_reuse_summary(summary_kind)
-                and isinstance(
-                    self._summary_cards.get(summary_kind),
-                    FileActivityCard,
-                )
-                else None
-            )
-            if card is None:
+            card = self._reusable_summary(summary_kind)
+            if not isinstance(card, FileActivityCard):
                 key = self._next_summary_key("files")
                 card = FileActivityCard(key)
                 await self._replace_or_mount(key, card)
@@ -228,34 +243,19 @@ class Turn(Static):
         label = str(payload.get("message") or stage or tool or "Event")
         source = str(agent or tool or "agent")
         summary_kind = f"progress:{source}"
-        card_type: type[EventCard] = (
-            AgentEventCard
-            if agent in AGENT_LABELS
-            else SearchEventCard
-            if tool in SEARCH_TOOLS
-            else EventCard
-        )
-        self._prepare_summary(summary_kind)
-        card = (
-            self._summary_cards.get(summary_kind)
-            if self._can_reuse_summary(summary_kind)
-            and type(self._summary_cards.get(summary_kind)) is card_type
-            else None
-        )
-        if card is None:
+        if agent in AGENT_LABELS:
+            card_type, card_label = AgentEventCard, agent
+        elif tool in SEARCH_TOOLS:
+            card_type, card_label = SearchEventCard, tool
+        else:
+            card_type, card_label = EventCard, f"◌ {source}"
+        card = self._reusable_summary(summary_kind)
+        if type(card) is not card_type:
             key = self._next_summary_key("progress")
-            card = (
-                AgentEventCard(key, agent)
-                if agent in AGENT_LABELS
-                else SearchEventCard(key, tool)
-                if tool in SEARCH_TOOLS
-                else EventCard(key, f"◌ {source}")
-            )
+            card = card_type(key, card_label)
             await self._replace_or_mount(key, card)
         self._mark_summary(summary_kind, card)
-        if isinstance(card, AgentEventCard):
-            card.update_event(payload)
-        elif isinstance(card, SearchEventCard):
+        if isinstance(card, (AgentEventCard, SearchEventCard)):
             card.update_event(payload)
         else:
             detail = payload.get("error") or payload.get("preview")
@@ -289,27 +289,27 @@ class Turn(Static):
             )
 
     async def _default_tool_event(self, payload: Mapping[str, Any]) -> None:
+        if payload.get("tool") in COORDINATION_TOOLS:
+            if self._coordination_card is None:
+                key = self._next_summary_key("coordination")
+                self._coordination_card = CoordinationCard(
+                    key, self.app.message_store
+                )
+                await self._replace_or_mount(key, self._coordination_card)
+            await self._coordination_card.update_action(payload)
+            return
         run_id = str(payload.get("_run_id") or "")
         card = self._tool_calls_by_id.get(run_id) if run_id else None
         phase = str(payload.get("phase") or "")
         if card is None:
-            ignored = {
-                "tool",
-                "phase",
-                "result",
-                "error",
-                "status",
-                "tool_message",
-                "_run_id",
-                "_received_at",
-            }
-            tool_input = {
-                key: value
-                for key, value in payload.items()
-                if key not in ignored
-            }
+            tool_input = tool_event_input(payload)
             key = self._next_summary_key("tool")
-            card = ToolCallCard(key, str(payload.get("tool")), tool_input)
+            tool = str(payload.get("tool"))
+            card = (
+                AgentToolCard(key, tool, tool_input)
+                if tool == "list_agents"
+                else ToolCallCard(key, tool, tool_input)
+            )
             await self._replace_or_mount(key, card)
             if run_id:
                 self._tool_calls_by_id[run_id] = card
@@ -368,20 +368,20 @@ class Turn(Static):
         self._summary_count += 1
         return f"{prefix}:{self._summary_count}"
 
-    def _can_reuse_summary(self, kind: str) -> bool:
-        card = self._summary_cards.get(kind)
-        deadline = self._summary_deadlines.get(kind)
-        return (
-            card is not None
-            and not card.done
-            and deadline is not None
-            and self._current_event_at < deadline
-        )
-
-    def _prepare_summary(self, kind: str) -> None:
+    def _reusable_summary(self, kind: str) -> EventCard | None:
+        """Finalize an expired group and return any still-active card."""
         deadline = self._summary_deadlines.get(kind)
         if deadline is not None and self._current_event_at >= deadline:
             self._finalize_summary(kind)
+        card = self._summary_cards.get(kind)
+        return (
+            card
+            if card is not None
+            and not card.done
+            and deadline is not None
+            and self._current_event_at < deadline
+            else None
+        )
 
     def _mark_summary(self, kind: str, card: EventCard) -> None:
         self._summary_cards[kind] = card
@@ -449,9 +449,7 @@ class Turn(Static):
         if len(active) > 1:
             self._commands_overlapped = True
         detailed: set[RunCommandCard] = set()
-        if self._commands_overlapped:
-            detailed = set()
-        elif len(active) == 1:
+        if not self._commands_overlapped and len(active) == 1:
             detailed.add(active[0])
 
         for command_card in self._commands:
@@ -463,10 +461,18 @@ class Turn(Static):
     def update_activity(self, message: str) -> None:
         self.query_one(ActivityIndicator).update_message(message)
 
-    def add_tokens(self, count: int) -> None:
-        self.token_usage += count
+    def add_tokens(self, usage: TokenUsage) -> None:
+        self.token_usage_breakdown += usage
+        self.token_usage = self.token_usage_breakdown.total_tokens
+
+    def take_unattributed_token_usage(self) -> TokenUsage:
+        """Return usage not yet assigned to this turn's hierarchy path."""
+        usage = self.token_usage_breakdown - self._attributed_token_usage
+        self._attributed_token_usage = self.token_usage_breakdown
+        return usage
 
     def finish_activity(self, *, succeeded: bool = True) -> None:
+        self.activity_finished = True
         for plan in self._plan_cards:
             plan.finish_pending_review(succeeded=succeeded)
         self._finalize_summaries()

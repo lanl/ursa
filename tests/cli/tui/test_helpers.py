@@ -3,9 +3,9 @@ from dataclasses import dataclass
 import pytest
 
 from ursa.cli.tui.helpers import (
+    TokenUsage,
     _fuzzy_match,
     _plan_step_text,
-    _token_usage,
     _token_usage_breakdown,
     _truncate_middle,
 )
@@ -14,7 +14,10 @@ from ursa.cli.tui.helpers import (
 def test_fuzzy_match_and_token_usage_support_common_shapes():
     assert _fuzzy_match("sre", "src/example.py")
     assert not _fuzzy_match("xyz", "src/example.py")
-    assert _token_usage({"usage": {"total_tokens": 42}}) == 42
+    assert (
+        _token_usage_breakdown({"usage": {"total_tokens": 42}}).total_tokens
+        == 42
+    )
 
     usage = _token_usage_breakdown({
         "usage_metadata": {
@@ -30,6 +33,21 @@ def test_fuzzy_match_and_token_usage_support_common_shapes():
         usage.cached_tokens,
         usage.total_tokens,
     ) == (31, 11, 17, 42)
+    assert usage.uncached_input_tokens == 14
+    assert usage + TokenUsage(
+        input_tokens=2,
+        output_tokens=3,
+        cached_tokens=1,
+        total_tokens=5,
+    ) == TokenUsage(
+        input_tokens=33,
+        output_tokens=14,
+        cached_tokens=18,
+        total_tokens=47,
+    )
+    assert (
+        TokenUsage(input_tokens=3, cached_tokens=5).uncached_input_tokens == 0
+    )
 
 
 @dataclass

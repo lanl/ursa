@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Mapping
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 
@@ -12,10 +13,10 @@ from langchain_core.messages import ToolMessage
 
 from ursa.cli.tui.helpers import (
     FILE_TOOLS,
-    TokenUsage,
     _reasoning_trace,
     _token_usage_breakdown,
 )
+from ursa.cli.tui.message_store import COORDINATION_TOOLS
 from ursa.cli.tui.turn import Turn
 from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.model_metadata import refresh_ollama_context
@@ -31,24 +32,44 @@ class TextualEventHandler(AsyncCallbackHandler):
         self.app = app
         self.turn = turn
         self.tools: dict[Any, dict[str, Any]] = {}
+        self.delegated_turns: dict[str, Turn] = {}
 
-    async def _emit(self, data: dict[str, Any]) -> None:
+    async def _on_ui(self, method, *args, **kwargs):
+        """Dispatch every callback through the same Textual thread boundary."""
+        if self.app.is_ui_thread:
+            return await method(*args, **kwargs)
+        return self.app.call_from_thread(method, *args, **kwargs)
+
+    @staticmethod
+    def _agent_path(metadata: Any) -> str | None:
+        if not isinstance(metadata, Mapping):
+            return None
+        path = metadata.get("ursa_message_recipient")
+        return str(path) if path else None
+
+    async def _emit(
+        self,
+        data: dict[str, Any],
+        *,
+        metadata: Any = None,
+    ) -> None:
         """Apply callback data on Textual's event-loop thread."""
         data.setdefault("_received_at", monotonic())
-        if self.app.is_ui_thread:
-            await self.app.add_turn_event(self.turn, data)
-        else:
-            self.app.call_from_thread(
-                self.app.add_turn_event,
-                self.turn,
-                data,
-            )
+        agent_path = data.get("_agent_path") or self._agent_path(metadata)
+        if agent_path:
+            data["_agent_path"] = agent_path
+        await self._on_ui(self.app.add_agent_event, self.turn, agent_path, data)
 
-    async def _update_activity(self, message: str) -> None:
-        if self.app.is_ui_thread:
-            self.turn.update_activity(message)
-        else:
-            self.app.call_from_thread(self.turn.update_activity, message)
+    async def _update_activity(
+        self,
+        message: str,
+        *,
+        metadata: Any = None,
+    ) -> None:
+        agent_path = self._agent_path(metadata)
+        await self._on_ui(
+            self.app.update_agent_activity, self.turn, agent_path, message
+        )
 
     async def on_custom_event(
         self,
@@ -56,6 +77,7 @@ class TextualEventHandler(AsyncCallbackHandler):
         data: Any,
         *,
         run_id: Any = None,
+        metadata: Any = None,
         **_: Any,
     ) -> None:
         if name == DEFAULT_EVENT_NAME and isinstance(data, dict):
@@ -73,29 +95,35 @@ class TextualEventHandler(AsyncCallbackHandler):
                         "failed",
                         "no changes made",
                     )):
-                        await self._emit(data)
+                        await self._emit(data, metadata=metadata)
                     return
                 if any(
                     pending.get("tool") == tool
                     for pending in self.tools.values()
                 ):
                     return
-            await self._emit(data)
+            await self._emit(data, metadata=metadata)
 
-    async def on_llm_start(self, *_: Any, **__: Any) -> None:
-        await self._update_activity("Thinking…")
+    async def on_llm_start(
+        self, *_: Any, metadata: Any = None, **__: Any
+    ) -> None:
+        await self._update_activity("Thinking…", metadata=metadata)
 
-    async def on_chat_model_start(self, *_: Any, **__: Any) -> None:
-        await self._update_activity("Thinking…")
+    on_chat_model_start = on_llm_start
 
     async def on_llm_new_token(
-        self, token: str, *, chunk: Any = None, **_: Any
+        self,
+        token: str,
+        *,
+        chunk: Any = None,
+        metadata: Any = None,
+        **_: Any,
     ) -> None:
         # Ordinary answer tokens are intentionally ignored. Providers that
         # publish reasoning summaries place them in explicit reasoning or
         # thinking fields on the chunk.
         if trace := _reasoning_trace(chunk):
-            await self._update_activity(trace)
+            await self._update_activity(f"Thinking: {trace}", metadata=metadata)
 
     async def on_tool_start(
         self,
@@ -105,6 +133,7 @@ class TextualEventHandler(AsyncCallbackHandler):
         run_id: Any,
         inputs: dict[str, Any] | None = None,
         tool_call_id: Any = None,
+        metadata: Any = None,
         **_: Any,
     ) -> None:
         data = dict(inputs or {})
@@ -122,11 +151,32 @@ class TextualEventHandler(AsyncCallbackHandler):
             if tool_call_id in (None, ""):
                 raise ValueError("run_command callback missing tool_call_id")
             data["tool_call_id"] = str(tool_call_id)
-        self.tools[run_id] = data
-        await self._emit(data)
+        if agent_path := self._agent_path(metadata):
+            data["_agent_path"] = agent_path
+        # Coordination inputs can contain large message bodies. They are
+        # persisted by the card, so retain only routing keys for the end event.
+        self.tools[run_id] = (
+            {
+                key: value
+                for key, value in data.items()
+                if key in {"tool", "_run_id", "_agent_path"}
+            }
+            if data["tool"] in COORDINATION_TOOLS
+            else data
+        )
+        await self._emit(data, metadata=metadata)
 
-    async def on_tool_end(self, output: Any, *, run_id: Any, **_: Any) -> None:
+    async def on_tool_end(
+        self,
+        output: Any,
+        *,
+        run_id: Any,
+        metadata: Any = None,
+        **_: Any,
+    ) -> None:
         data = self.tools.pop(run_id, {"tool": "tool"})
+        if agent_path := self._agent_path(metadata):
+            data.setdefault("_agent_path", agent_path)
         data = {**data, "phase": "end"}
         if isinstance(output, ToolMessage):
             data["result"] = output.content
@@ -139,17 +189,16 @@ class TextualEventHandler(AsyncCallbackHandler):
         await self._emit(data)
 
     async def on_tool_error(
-        self, error: BaseException, *, run_id: Any, **_: Any
+        self,
+        error: BaseException,
+        *,
+        run_id: Any,
+        metadata: Any = None,
+        **_: Any,
     ) -> None:
         data = self.tools.pop(run_id, {"tool": "tool"})
-        if data.get("tool") in FILE_TOOLS:
-            await self._emit({
-                **data,
-                "phase": "error",
-                "error": str(error),
-                "result": str(error),
-            })
-            return
+        if agent_path := self._agent_path(metadata):
+            data.setdefault("_agent_path", agent_path)
         await self._emit({
             **data,
             "phase": "error",
@@ -157,15 +206,61 @@ class TextualEventHandler(AsyncCallbackHandler):
             "result": str(error),
         })
 
-    async def on_llm_end(self, response: Any, **_: Any) -> None:
-        # Ollama may only expose its allocated window after the first response.
-        await asyncio.to_thread(refresh_ollama_context, self.app.hitl.model)
+    async def on_llm_end(
+        self, response: Any, *, metadata: Any = None, **_: Any
+    ) -> None:
+        model = getattr(self.app.runtime, "model", None)
+        if model is not None:
+            await asyncio.to_thread(refresh_ollama_context, model)
         usage = _token_usage_breakdown(response)
-        if self.app.is_ui_thread:
-            self._record_tokens(usage)
-        else:
-            self.app.call_from_thread(self._record_tokens, usage)
+        await self._on_ui(
+            self.app.add_agent_tokens,
+            self.turn,
+            self._agent_path(metadata),
+            usage,
+        )
 
-    def _record_tokens(self, usage: TokenUsage) -> None:
-        self.turn.add_tokens(usage.total_tokens)
-        self.app.add_tokens(usage)
+    async def on_agent_message_start(
+        self,
+        agent_path: str,
+        *,
+        message_id: str | None = None,
+    ) -> None:
+        """Start the progress view for a delegated hierarchy message."""
+        turn = await self._on_ui(
+            self.app.start_agent_activity, agent_path, message_id=message_id
+        )
+        if message_id is not None:
+            self.delegated_turns[message_id] = turn
+
+    async def on_agent_message_end(
+        self,
+        agent_path: str,
+        *,
+        succeeded: bool,
+        message_id: str | None = None,
+    ) -> None:
+        """Finish the progress view for a delegated hierarchy message."""
+        turn = (
+            self.delegated_turns.pop(message_id, None)
+            if message_id is not None
+            else None
+        )
+        await self._on_ui(
+            self.app.finish_agent_activity,
+            self.turn,
+            agent_path,
+            succeeded=succeeded,
+            turn=turn,
+        )
+
+    async def on_hierarchy_message(
+        self,
+        sender: str,
+        recipients: list[str] | tuple[str, ...],
+        message: str,
+    ) -> None:
+        """Retain one user/agent message in the session-wide log."""
+        await self._on_ui(
+            self.app.record_hierarchy_message, sender, recipients, message
+        )

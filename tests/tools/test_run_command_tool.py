@@ -8,6 +8,12 @@ import pytest
 from langchain.chat_models import BaseChatModel
 from langgraph.store.memory import InMemoryStore
 
+from tests.event_fixtures import (
+    FIXED_MONOTONIC_TIMESTAMP_NS,
+)
+from tests.event_fixtures import (
+    fixed_monotonic_timestamp as fixed_monotonic_timestamp,
+)
 from tests.tools.utils import (
     invoke_with_event_recorder,
     invoke_with_parent_run,
@@ -17,17 +23,10 @@ from ursa.sandbox.base import _run_process_group
 from ursa.sandbox.mac import MacSandbox
 from ursa.tools.run_command_tool import SafetyAssessment, run_command
 
-FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
-
 
 @pytest.fixture(autouse=True)
-def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "ursa.util.events.monotonic_ns",
-        lambda: FIXED_MONOTONIC_TIMESTAMP_NS,
-    )
-    # These tests exercise command handling independently of host sandbox
-    # availability; sandbox backends have their own behavior.
+def isolate_command_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests cover command handling independently of host sandbox setup.
     monkeypatch.setenv("URSA_SBX", "0")
     monkeypatch.delenv("URSA_SAFETY_LEVEL", raising=False)
 
@@ -44,12 +43,11 @@ def _patch_safety_result(
     def fake_with_structured_output(self, schema):
         captured["schema"] = schema
 
-        class Invoker:
-            def invoke(self_inner, prompt):
-                captured["prompt"] = prompt
-                return {"is_safe": is_safe, "reason": reason}
+        def invoke(prompt):
+            captured["prompt"] = prompt
+            return {"is_safe": is_safe, "reason": reason}
 
-        return Invoker()
+        return SimpleNamespace(invoke=invoke)
 
     monkeypatch.setattr(
         chat_model.__class__,

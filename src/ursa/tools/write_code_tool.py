@@ -40,6 +40,23 @@ def _resolve_repo_dir(
     return repo, None
 
 
+def _record_file_edit(
+    filename: str, runtime: ToolRuntime[AgentContext]
+) -> None:
+    if (store := runtime.store) is not None:
+        store.put(
+            ("workspace", "file_edit"),
+            str(filename),
+            {
+                "modified": time.time(),
+                "tool_call_id": runtime.tool_call_id,
+                "thread_id": runtime.config.get("metadata", {}).get(
+                    "thread_id", None
+                ),
+            },
+        )
+
+
 def _write_code_file(
     code: str,
     filename: AsciiStr,
@@ -50,7 +67,8 @@ def _write_code_file(
     events = ToolEvents.from_runtime("write_code", runtime)
 
     code_file, error = _validate_file_path(filename, workspace_dir, repo)
-    if error:
+    if error or code_file is None:
+        error = error or "Invalid file path."
         events.emit(
             "Failed to write file",
             stage="write",
@@ -59,15 +77,6 @@ def _write_code_file(
             error=error,
         )
         return f"Failed to write {filename}: {error}"
-    if code_file is None:
-        events.emit(
-            "Failed to write file",
-            stage="write",
-            phase="error",
-            filename=filename,
-            error="Invalid file path.",
-        )
-        return f"Failed to write {filename}: Invalid file path."
 
     try:
         with events.range(
@@ -96,18 +105,7 @@ def _write_code_file(
             )
     except OSError as exc:
         return f"Failed to write {filename}: {exc}"
-    if (store := runtime.store) is not None:
-        store.put(
-            ("workspace", "file_edit"),
-            str(filename),
-            {
-                "modified": time.time(),
-                "tool_call_id": runtime.tool_call_id,
-                "thread_id": runtime.config.get("metadata", {}).get(
-                    "thread_id", None
-                ),
-            },
-        )
+    _record_file_edit(filename, runtime)
     return f"File {filename} written successfully."
 
 
@@ -283,7 +281,8 @@ def edit_code(
         workspace_dir,
         repo,
     )
-    if error:
+    if error or code_file is None:
+        error = error or "Invalid file path."
         events.emit(
             "Failed to edit file",
             stage="edit",
@@ -292,48 +291,23 @@ def edit_code(
             error=error,
         )
         return f"Failed to edit {filename}: {error}"
-    if code_file is None:
-        events.emit(
-            "Failed to edit file",
-            stage="edit",
-            phase="error",
-            filename=filename,
-            error="Invalid file path.",
-        )
-        return f"Failed to edit {filename}: Invalid file path."
 
     try:
         content = read_text_file(code_file)
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        missing = isinstance(exc, FileNotFoundError)
         events.emit(
             "Failed to edit file",
             stage="edit",
             phase="error",
             filename=filename,
             path=str(code_file),
-            error="File not found.",
+            error="File not found." if missing else str(exc),
         )
-        return f"Failed: {filename} not found."
-    except ValueError as exc:
-        events.emit(
-            "Failed to edit file",
-            stage="edit",
-            phase="error",
-            filename=filename,
-            path=str(code_file),
-            error=str(exc),
-        )
-        return f"Failed to edit {filename}: {exc}"
-    except OSError as exc:
-        events.emit(
-            "Failed to edit file",
-            stage="edit",
-            phase="error",
-            filename=filename,
-            path=str(code_file),
-            error=str(exc),
-        )
-        return f"Failed to edit {filename}: Could not read file: {exc}"
+        if missing:
+            return f"Failed: {filename} not found."
+        prefix = "" if isinstance(exc, ValueError) else "Could not read file: "
+        return f"Failed to edit {filename}: {prefix}{exc}"
 
     # Clean up markdown fences
     old_code_clean = old_code
@@ -387,16 +361,5 @@ def edit_code(
         return f"Failed to edit {filename}: {exc}"
 
     # Record the edit operation
-    if (store := runtime.store) is not None:
-        store.put(
-            ("workspace", "file_edit"),
-            str(filename),
-            {
-                "modified": time.time(),
-                "tool_call_id": runtime.tool_call_id,
-                "thread_id": runtime.config.get("metadata", {}).get(
-                    "thread_id", None
-                ),
-            },
-        )
+    _record_file_edit(filename, runtime)
     return f"File {filename} updated successfully."

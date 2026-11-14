@@ -7,6 +7,7 @@ from typing import Any
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.tools import convert_mcp_tool_to_langchain_tool
 from mcp import StdioServerParameters as StdioServerParameters
 from mcp.client.session_group import (
     ServerParameters as ServerParameters,
@@ -17,10 +18,11 @@ from mcp.client.session_group import (
 from mcp.client.session_group import (
     StreamableHttpParameters as StreamableHttpParameters,
 )
+from mcp.types import Tool as MCPTool
 from pydantic import ValidationError
 
 from ursa.util.http import build_mcp_httpx_async_client
-from ursa.util.secrets import SecretTemplate
+from ursa.util.secrets import SecretReference
 
 _PARAMETER_TYPES = {
     "stdio": StdioServerParameters,
@@ -41,7 +43,7 @@ def parse_server_parameters(config: Any) -> ServerParameters:
     kind = payload.pop("transport", None)
     if isinstance(headers := payload.get("headers"), dict):
         payload["headers"] = {
-            name: SecretTemplate.maybe_validate(value)
+            name: SecretReference.maybe_validate(value)
             for name, value in headers.items()
         }
     if kind is not None:
@@ -141,8 +143,98 @@ async def load_mcp_tools_with_sources(
     return tools, sources
 
 
+def mcp_tool_specs_from_details(
+    details: list[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Extract transport-safe MCP schemas from a runner's tool description.
+
+    Tool discovery opens a network session and can dominate child-process
+    startup. The host captures the root agent's already-discovered schemas and
+    passes these small, serializable specs to equivalent child agents. A child
+    still builds its own client connection for actual invocations.
+    """
+    specs: list[dict[str, Any]] = []
+    for detail in details:
+        server = detail.get("mcp_server")
+        name = detail.get("name")
+        # Prefer the exact MCP input schema over the tool's display schema.
+        # Some LangChain wrappers enrich their display schema with generated
+        # titles and descriptions; those must not alter what we send back to
+        # the MCP adapter.
+        schema = detail.get("mcp_input_schema", detail.get("schema"))
+        if not (
+            isinstance(server, str)
+            and server
+            and isinstance(name, str)
+            and name
+            and isinstance(schema, Mapping)
+        ):
+            continue
+        specs.append({
+            "server": server,
+            "name": name,
+            "description": str(detail.get("description") or ""),
+            "input_schema": dict(schema),
+            **(
+                {"metadata": dict(detail["mcp_metadata"])}
+                if isinstance(detail.get("mcp_metadata"), Mapping)
+                else {}
+            ),
+        })
+    return specs
+
+
+def mcp_tools_from_specs(
+    client: MultiServerMCPClient,
+    specs: list[Mapping[str, Any]],
+) -> tuple[list[BaseTool], dict[str, str]]:
+    """Rebuild MCP wrappers from captured schemas without rediscovery I/O."""
+    connections = getattr(client, "connections", None)
+    if not isinstance(connections, Mapping):
+        raise TypeError("MCP client does not expose connection settings")
+    tools: list[BaseTool] = []
+    sources: dict[str, str] = {}
+    for spec in specs:
+        server = spec.get("server")
+        name = spec.get("name")
+        schema = spec.get("input_schema")
+        if not (
+            isinstance(server, str)
+            and isinstance(name, str)
+            and isinstance(schema, Mapping)
+        ):
+            raise ValueError("Invalid cached MCP tool specification")
+        try:
+            connection = connections[server]
+        except KeyError:
+            raise ValueError(
+                f"Cached MCP tool {name!r} refers to unknown server {server!r}"
+            ) from None
+        tool = MCPTool(
+            name=name,
+            description=str(spec.get("description") or ""),
+            inputSchema=dict(schema),
+        )
+        wrapped = convert_mcp_tool_to_langchain_tool(
+            None,
+            tool,
+            connection=connection,
+            server_name=server,
+        )
+        metadata = spec.get("metadata")
+        if metadata is not None:
+            if not isinstance(metadata, Mapping):
+                raise ValueError("Invalid cached MCP tool metadata")
+            # Preserve the adapter's annotations and _meta, including hints
+            # such as readOnlyHint/destructiveHint used by tool consumers.
+            wrapped.metadata = dict(metadata)
+        tools.append(wrapped)
+        sources[wrapped.name] = server
+    return tools, sources
+
+
 def start_mcp_client(
-    server_configs: dict[str, ServerParameters | dict],
+    server_configs: Mapping[str, ServerParameters | dict],
 ) -> UrsaMCPClient:
     client_config = {}
     for server, config in server_configs.items():
@@ -164,10 +256,13 @@ def start_mcp_client(
 
 def _resolve_header(value, server_name: str):
     """Resolve a typed secret template in an MCP HTTP header."""
-    if isinstance(value, dict):
-        value = SecretTemplate.model_validate(value)
-    if isinstance(value, SecretTemplate):
-        rendered = value.get_secret_value(server_name)
+    reference = (
+        SecretReference.model_validate(value)
+        if isinstance(value, dict)
+        else value
+    )
+    if isinstance(reference, SecretReference):
+        rendered = reference.bind_keyring_name(server_name).get_secret_value()
         if rendered is None:
             raise ValueError(
                 f"Secret for MCP server '{server_name}' is not set"

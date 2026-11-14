@@ -89,36 +89,12 @@ class AgentSymposiumEnvironment(BaseEnvironment):
             path=[self.name],
         )
 
-    def _source(self, name: str, *, kind: str = "agent") -> dict[str, Any]:
-        return {
-            "id": f"{self.name}.{name}",
-            "name": name,
-            "kind": kind,
-            "path": [self.name, name],
-        }
-
     def _environment_source(self) -> dict[str, Any]:
         return {
             "id": self.name,
             "name": self.name,
             "kind": "environment",
             "path": [self.name],
-        }
-
-    def _member_node(self, member: EnvironmentMemberConfig) -> dict[str, Any]:
-        member_obj = self.members.get(member.name)
-        kind = (
-            "environment"
-            if isinstance(member_obj, BaseEnvironment)
-            else "agent"
-        )
-        return {
-            "id": f"{self.name}.{member.name}",
-            "name": member.name,
-            "kind": kind,
-            "role": member.role,
-            "agent_class": member.agent,
-            "path": [self.name, member.name],
         }
 
     def _topology_payload(self) -> dict[str, Any]:

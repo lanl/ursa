@@ -97,17 +97,29 @@ def test_sync_pruning_retains_latest_checkpoint_and_state(tmp_path):
     conn.close()
 
 
-def test_pruning_skips_database_at_or_below_threshold(tmp_path):
-    db_path = tmp_path / "small.db"
+@pytest.mark.parametrize("delta_history", [False, True])
+def test_pruning_preserves_small_databases_and_delta_history(
+    tmp_path, delta_history
+):
+    db_path = tmp_path / ("delta.db" if delta_history else "small.db")
     conn = sqlite3.connect(db_path, check_same_thread=False)
     saver = SqliteSaver(conn)
     graph = _graph(saver)
     config = {"configurable": {"thread_id": "ursa"}}
     graph.invoke({"values": ["input"]}, config)
     before = _count(conn, "checkpoints")
+
+    if delta_history:
+        conn.execute(
+            "UPDATE checkpoints SET metadata = ?",
+            (b'{"counters_since_delta_snapshot": {"values": 1}}',),
+        )
+        conn.commit()
 
     result = prune_sqlite_checkpoints(
-        saver, "ursa", threshold_bytes=1024 * 1024 * 1024
+        saver,
+        "ursa",
+        threshold_bytes=0 if delta_history else 1024 * 1024 * 1024,
     )
 
     assert not result.pruned
@@ -115,28 +127,6 @@ def test_pruning_skips_database_at_or_below_threshold(tmp_path):
     conn.close()
 
 
-def test_pruning_skips_delta_channel_history(tmp_path):
-    db_path = tmp_path / "delta.db"
-    conn = sqlite3.connect(db_path, check_same_thread=False)
-    saver = SqliteSaver(conn)
-    graph = _graph(saver)
-    config = {"configurable": {"thread_id": "ursa"}}
-    graph.invoke({"values": ["input"]}, config)
-    before = _count(conn, "checkpoints")
-    conn.execute(
-        "UPDATE checkpoints SET metadata = ?",
-        (b'{"counters_since_delta_snapshot": {"values": 1}}',),
-    )
-    conn.commit()
-
-    result = prune_sqlite_checkpoints(saver, "ursa", threshold_bytes=0)
-
-    assert not result.pruned
-    assert _count(conn, "checkpoints") == before
-    conn.close()
-
-
-@pytest.mark.asyncio
 async def test_async_pruning_retains_latest_checkpoint_and_state(tmp_path):
     db_path = tmp_path / "async.db"
     conn = await aiosqlite.connect(db_path)

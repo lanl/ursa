@@ -1,52 +1,317 @@
+import json
+
 import pytest
 from langchain_core.messages import ToolMessage
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
-from tests.cli._app_fakes import FakeHITL
-from tests.tui.utils import eventually
+from tests.cli._app_helpers import (
+    assert_eventually,
+    emit_tool_start,
+    make_runtime,
+    static_text,
+    wait_for,
+)
 from ursa.cli.tui.app import UrsaTextualApp
-from ursa.cli.tui.event_cards import TermCard, ToolCallCard
+from ursa.cli.tui.event_cards import (
+    AgentToolCard,
+    CoordinationCard,
+    TermCard,
+    ToolCallCard,
+)
 from ursa.cli.tui.event_cards.term import terminal_id
 from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.turn import Turn
 
 
-async def test_default_tool_card_switches_from_input_to_output(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("call it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+async def test_default_tool_card_switches_from_input_to_output(app, event_turn):
+    async with event_turn("call it", size=(100, 36)) as (pilot, turn):
         handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "lookup_widget"},
-            "",
-            run_id="tool-one",
-            inputs={"query": "bear", "limit": 5},
+        await emit_tool_start(
+            handler, "lookup_widget", "tool-one", query="bear", limit=5
         )
         await pilot.pause()
+
         card = turn.query_one(ToolCallCard)
-        assert (
-            str(card.query_one(".tool-call-title", Static).content)
-            == "🛠️ lookup_widget"
-        )
+        assert static_text(card, ".tool-call-title") == "🛠️ lookup_widget"
         assert card.tool_input == {"query": "bear", "limit": 5}
         assert not card.completed
-        card.set_expanded(True)
-        assert (
-            card.query_one(".tool-input-json", Static).content.code
-            == '{\n  "limit": 5,\n  "query": "bear"\n}'
+        assert "bear" in static_text(card, ".tool-call-preview")
+        assert card.query_one(".tool-call-state", Static).content in (
+            *card.app.query_one(".activity").FRAMES,
         )
+        assert card.query_one(".tool-call-details").has_class("hidden")
+
+        card.set_expanded(True)
+        assert not card.query_one(".tool-call-details").has_class("hidden")
+        assert card.query_one(".tool-output-pane").has_class("hidden")
+        input_syntax = card.query_one(".tool-input-json", Static).content
+        assert type(input_syntax).__name__ == "Syntax"
+        assert input_syntax.code == '{\n  "limit": 5,\n  "query": "bear"\n}'
+
         await handler.on_tool_end(
             {"matches": ["polar", "grizzly"]}, run_id="tool-one"
         )
-        await eventually(pilot, lambda: card.completed)
-        assert (
-            card.query_one(".tool-output-json", Static).content.code.find(
-                '"grizzly"'
-            )
-            >= 0
+        await pilot.pause()
+
+        await assert_eventually(pilot, lambda: card.completed)
+        assert card.query_one(".tool-call-state", Static).content == "✓"
+        assert "polar" in static_text(card, ".tool-call-preview")
+        assert not card.query_one(".tool-output-pane").has_class("hidden")
+        output_syntax = card.query_one(".tool-output-json", Static).content
+        assert type(output_syntax).__name__ == "Syntax"
+        assert '"grizzly"' in output_syntax.code
+
+
+async def test_spawn_agent_card_shows_task_and_queue_acknowledgement(
+    app, event_turn
+):
+    async with event_turn("delegate it", size=(100, 30)) as (pilot, turn):
+        handler = TextualEventHandler(app, turn)
+        await emit_tool_start(
+            handler,
+            "spawn_agent",
+            "spawn-reviewer",
+            name="reviewer",
+            message="Review the implementation for correctness.",
+            agent_type="deep_review",
         )
+        await pilot.pause()
+
+        group = turn.query_one(CoordinationCard)
+        assert not turn.query(AgentToolCard)
+        group.set_expanded(True)
+        assert await wait_for(pilot, lambda: bool(turn.query(AgentToolCard)))
+        card = turn.query_one(AgentToolCard)
+        assert card.tool == "spawn_agent"
+        assert static_text(card, ".agent-tool-title") == ("✦ Delegating work")
+        assert "reviewer" in static_text(card, ".agent-tool-preview")
+        assert "deep_review" in static_text(card, ".agent-tool-preview")
+        assert card.query_one(".agent-tool-details").has_class("hidden")
+
+        card.set_expanded(True)
+        assert await wait_for(
+            pilot, lambda: card.task.startswith("Review the implementation")
+        )
+        assert "Review the implementation" in str(
+            card.query_one(".agent-tool-task", Markdown).source
+        )
+        assert "reviewer" in str(
+            card.query_one(".agent-tool-task", Markdown).source
+        )
+
+        await handler.on_tool_end(
+            "Spawned agent root/reviewer\n\nMessage queued for root/reviewer.",
+            run_id="spawn-reviewer",
+        )
+        await pilot.pause()
+
+        assert card.completed
+        assert card.query_one(".agent-tool-state", Static).content == "✓"
+        assert "started" in static_text(card, ".agent-tool-preview")
+        assert "Message queued" in str(
+            card.query_one(".agent-tool-result", Markdown).source
+        )
+
+
+async def test_agent_message_and_listing_cards_render_specialized_outcomes(
+    app,
+    event_turn,
+):
+    async with event_turn("coordinate it", size=(100, 30)) as (pilot, turn):
+        handler = TextualEventHandler(app, turn)
+        await emit_tool_start(
+            handler,
+            "send_message",
+            "message-reviewer",
+            target="root/reviewer",
+            message="Check tests.",
+        )
+        await handler.on_tool_end(
+            "Message queued for root/reviewer.",
+            run_id="message-reviewer",
+        )
+        await emit_tool_start(handler, "list_agents", "list")
+        await handler.on_tool_end("root (self)\nroot/reviewer", run_id="list")
+        await pilot.pause()
+
+        turn.query_one(CoordinationCard).set_expanded(True)
+        assert await wait_for(
+            pilot, lambda: len(turn.query(AgentToolCard)) == 2
+        )
+        cards = list(turn.query(AgentToolCard))
+        assert len(cards) == 2
+        message, listing = cards
+        assert "Message queued for root/reviewer" in static_text(
+            message, ".agent-tool-preview"
+        )
+        assert "2 agents in the hierarchy" in static_text(
+            listing, ".agent-tool-preview"
+        )
+        listing.set_expanded(True)
+        assert "root/reviewer" in str(
+            listing.query_one(".agent-tool-result", Markdown).source
+        )
+
+
+async def test_agent_message_card_summarizes_broadcast_results(app, event_turn):
+    async with event_turn("coordinate everyone", size=(100, 30)) as (
+        pilot,
+        turn,
+    ):
+        handler = TextualEventHandler(app, turn)
+        await emit_tool_start(
+            handler,
+            "send_message",
+            "broadcast",
+            target=["root/analyst", "root/reviewer", "root/missing"],
+            message="Compare findings.",
+        )
+        await handler.on_tool_end(
+            "root/analyst: Message queued for root/analyst.\n\n"
+            "root/reviewer: Message queued for root/reviewer.\n\n"
+            "root/critic: Message queued for root/critic.",
+            run_id="broadcast",
+        )
+        await pilot.pause()
+
+        turn.query_one(CoordinationCard).set_expanded(True)
+        assert await wait_for(pilot, lambda: bool(turn.query(AgentToolCard)))
+        card = turn.query_one(AgentToolCard)
+        assert "Messages queued for 3 agents" in static_text(
+            card, ".agent-tool-preview"
+        )
+
+
+async def test_wait_card_renders_batched_agent_messages_as_plain_text(
+    app, event_turn
+):
+    """Bracketed delivery JSON is content, never Textual markup."""
+    output = (
+        "Received 2 messages while waiting. Each entry retains its sender, "
+        "recipient, and exact content:\n"
+        '[{"sender": "root/p08", "recipient": "root", '
+        '"content": "SETUP ACK: role=Villager"}, '
+        '{"sender": "root/p20", "recipient": "root", '
+        '"content": "SETUP ACK: identity p20"}]'
+    )
+
+    async with event_turn("coordinate", size=(125, 24)) as (pilot, turn):
+        handler = TextualEventHandler(app, turn)
+        await emit_tool_start(
+            handler, "wait_for", "batched-wait", target=["root/p08", "root/p20"]
+        )
+        await handler.on_tool_end(output, run_id="batched-wait")
+        # Rendering the mounted card used to raise MarkupError here.
+        await pilot.pause()
+
+        turn.query_one(CoordinationCard).set_expanded(True)
+        assert await wait_for(pilot, lambda: bool(turn.query(AgentToolCard)))
+        card = turn.query_one(AgentToolCard)
+        preview = card.query_one(".agent-tool-preview", Static)
+        assert card.completed
+        assert len(card.output) <= 241
+        card.set_expanded(True)
+        assert await wait_for(pilot, lambda: card.output == output)
+        assert str(preview.content) == output
+        assert '"sender": "root/p08"' in str(preview.content)
+
+
+async def test_agent_tool_card_survives_unavailable_lazy_details(event_turn):
+    async def unavailable():
+        raise LookupError("action was pruned")
+
+    async with event_turn("coordinate", size=(100, 30)) as (pilot, turn):
+        card = AgentToolCard(
+            "missing-details",
+            "send_message",
+            {"target": "root/reviewer"},
+            details_loader=unavailable,
+        )
+        await turn._replace_or_mount("missing-details", card)
+        card.complete("Message queued for root/reviewer.")
+        card.set_expanded(True)
+        assert await wait_for(
+            pilot,
+            lambda: "Details unavailable"
+            in card.query_one(".agent-tool-task", Markdown).source,
+        )
+        assert card.completed and not card.failed
+        assert "Message queued" in str(
+            card.query_one(".agent-tool-result", Markdown).source
+        )
+
+
+@pytest.mark.parametrize(
+    ("tool", "output", "expected"),
+    [
+        pytest.param(
+            "lookup_widget",
+            ValueError("bad filter"),
+            "bad filter",
+            id="failure",
+        ),
+        pytest.param(
+            "edit_plot",
+            "[patch={'old_code': 'ax.set_xticklabels([labels])'}]",
+            "[patch={'old_code': 'ax.set_xticklabels([labels])'}]",
+            id="literal-code-brackets",
+        ),
+        pytest.param(
+            "lookup_widget",
+            ToolMessage(
+                content="Human-readable fallback",
+                artifact={
+                    "structured_content": {"matches": ["polar", "grizzly"]}
+                },
+                tool_call_id="result",
+            ),
+            {"matches": ["polar", "grizzly"]},
+            id="structured-tool-message",
+        ),
+        pytest.param(
+            "lookup_widget",
+            ToolMessage(
+                content=[
+                    {"type": "text", "text": "## Result\n\n**Found it.**"}
+                ],
+                tool_call_id="result",
+            ),
+            "## Result\n\n**Found it.**",
+            id="text-block-tool-message",
+        ),
+    ],
+)
+async def test_tool_card_output_formats_and_failure_state(
+    app, event_turn, tool, output, expected
+):
+    async with event_turn("call it", size=(100, 24)) as (pilot, turn):
+        handler = TextualEventHandler(app, turn)
+        await emit_tool_start(handler, tool, "result")
+        failed = isinstance(output, Exception)
+        if failed:
+            await handler.on_tool_error(output, run_id="result")
+        else:
+            await handler.on_tool_end(output, run_id="result")
+        await pilot.pause()
+
+        card = turn.query_one(ToolCallCard)
+        assert card.completed and card.failed == failed
+        assert card.query_one(".tool-call-state", Static).content == (
+            "✗" if failed else "✓"
+        )
+        if failed or isinstance(output, str):
+            assert card.output == expected
+        card.set_expanded(True)
+        json_output = card.query_one(".tool-output-json", Static)
+        markdown = card.query_one(".tool-output-markdown", Markdown)
+        structured = isinstance(expected, dict)
+        assert json_output.has_class("hidden") != structured
+        assert markdown.has_class("hidden") == structured
+        if structured:
+            assert json.loads(json_output.content.code) == expected
+        else:
+            assert markdown.source == expected
 
 
 @pytest.mark.parametrize(
@@ -73,7 +338,7 @@ def test_terminal_id_only_accepts_documented_session_results(result, expected):
     ],
 )
 async def test_terminal_session_tools_share_one_live_card(tmp_path, tool):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
     async with app.run_test(size=(100, 30)) as pilot:
         turn = Turn("use a terminal", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
@@ -99,7 +364,7 @@ async def test_terminal_session_tools_share_one_live_card(tmp_path, tool):
 
 
 async def test_short_terminal_result_stays_a_generic_tool_card(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
     async with app.run_test(size=(100, 24)) as pilot:
         turn = Turn("quick terminal", tmp_path)
         await app.query_one("#conversation", VerticalScroll).mount(turn)
@@ -113,86 +378,3 @@ async def test_short_terminal_result_stays_a_generic_tool_card(tmp_path):
         await pilot.pause()
         assert not list(turn.query(TermCard))
         assert "two" in str(turn.query_one(ToolCallCard).output)
-
-
-async def test_default_tool_card_shows_failure_output(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-    async with app.run_test(size=(100, 24)) as pilot:
-        turn = Turn("call it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "lookup_widget"}, "", run_id="bad", inputs={}
-        )
-        await handler.on_tool_error(ValueError("bad filter"), run_id="bad")
-        await pilot.pause()
-        card = turn.query_one(ToolCallCard)
-        assert card.failed and card.output == "bad filter"
-
-
-async def test_tool_call_preview_renders_code_brackets_as_plain_text(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-    output = "[patch={'old_code': 'ax.set_xticklabels([labels])'}]"
-    async with app.run_test(size=(100, 24)) as pilot:
-        turn = Turn("edit it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "edit_plot"}, "", run_id="code", inputs={}
-        )
-        await handler.on_tool_end(output, run_id="code")
-        await pilot.pause()
-        assert turn.query_one(ToolCallCard).output == output
-
-
-async def test_tool_message_prefers_structured_content_as_json(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-    async with app.run_test(size=(100, 24)) as pilot:
-        turn = Turn("call it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "lookup_widget"}, "", run_id="structured", inputs={}
-        )
-        await handler.on_tool_end(
-            ToolMessage(
-                content="fallback",
-                artifact={"structured_content": {"matches": ["grizzly"]}},
-                tool_call_id="structured",
-            ),
-            run_id="structured",
-        )
-        await pilot.pause()
-        card = turn.query_one(ToolCallCard)
-        card.set_expanded(True)
-        assert (
-            '"grizzly"'
-            in card.query_one(".tool-output-json", Static).content.code
-        )
-
-
-async def test_text_only_tool_message_renders_as_markdown(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-    async with app.run_test(size=(100, 24)) as pilot:
-        turn = Turn("call it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        handler = TextualEventHandler(app, turn)
-        await handler.on_tool_start(
-            {"name": "lookup_widget"}, "", run_id="text", inputs={}
-        )
-        await handler.on_tool_end(
-            ToolMessage(
-                content=[
-                    {"type": "text", "text": "## Result\n\n**Found it.**"}
-                ],
-                tool_call_id="text",
-            ),
-            run_id="text",
-        )
-        await pilot.pause()
-        card = turn.query_one(ToolCallCard)
-        card.set_expanded(True)
-        assert (
-            str(card.query_one(".tool-output-markdown", Markdown).source)
-            == "## Result\n\n**Found it.**"
-        )

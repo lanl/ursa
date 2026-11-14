@@ -11,12 +11,11 @@ import uuid
 from collections.abc import Iterator
 from types import SimpleNamespace
 
-from langchain_core.language_models.fake_chat_models import (
-    GenericFakeChatModel,
-)
+import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 
+from tests.agents.utils import ToolReadyFakeChatModel
 from ursa.agents.chat_agent import ChatAgent
 from ursa.observability.metrics_charts import extract_llm_token_stats
 from ursa.observability.timing import PerLLMTimer
@@ -29,13 +28,21 @@ _RAW_CC = {
     "prompt_tokens_details": {"cached_tokens": 20},
 }
 
-_STANDARDIZED = {
-    "input_tokens": 100,
-    "output_tokens": 80,
-    "total_tokens": 180,
-    "input_token_details": {"cache_read": 20},
-    "output_token_details": {"reasoning": 30},
-}
+
+def _usage(**details):
+    """Build a fresh usage payload with this suite's shared headline counts."""
+    return {
+        "input_tokens": 100,
+        "output_tokens": 80,
+        "total_tokens": 180,
+        **details,
+    }
+
+
+_STANDARDIZED = _usage(
+    input_token_details={"cache_read": 20},
+    output_token_details={"reasoning": 30},
+)
 
 
 def _roll(message=None, llm_output=None, messages=None):
@@ -51,14 +58,19 @@ def _roll(message=None, llm_output=None, messages=None):
     return timer.samples[-1]["metrics"].get("usage_rollup") or {}
 
 
-def test_standardized_details_captured():
-    # Issue 165: reasoning and cache_read arriving only in the
-    # standardized usage_metadata details (the Gemini, OpenAI Responses,
-    # and streaming shapes) must be captured.
-    roll = _roll(message=AIMessage("x", usage_metadata=dict(_STANDARDIZED)))
+@pytest.mark.parametrize("contents", [("x",), ("a", "b")])
+def test_standardized_details_sum_across_generations(contents):
+    # Issue 165: standardized reasoning and cache_read details must be captured
+    # from each generation, including sums across multiple generations.
+    roll = _roll(
+        messages=[
+            AIMessage(content, usage_metadata=dict(_STANDARDIZED))
+            for content in contents
+        ]
+    )
 
-    assert roll.get("reasoning_tokens") == 30
-    assert roll.get("cached_tokens") == 20
+    assert roll.get("reasoning_tokens") == 30 * len(contents)
+    assert roll.get("cached_tokens") == 20 * len(contents)
 
 
 def test_responses_raw_naming_captured():
@@ -66,13 +78,10 @@ def test_responses_raw_naming_captured():
     roll = _roll(
         message=AIMessage("x"),
         llm_output={
-            "token_usage": {
-                "input_tokens": 100,
-                "output_tokens": 80,
-                "total_tokens": 180,
-                "output_tokens_details": {"reasoning_tokens": 30},
-                "input_tokens_details": {"cached_tokens": 20},
-            }
+            "token_usage": _usage(
+                output_tokens_details={"reasoning_tokens": 30},
+                input_tokens_details={"cached_tokens": 20},
+            )
         },
     )
 
@@ -135,13 +144,10 @@ def test_service_tier_prefixed_details_captured():
     roll = _roll(
         message=AIMessage(
             "x",
-            usage_metadata={
-                "input_tokens": 100,
-                "output_tokens": 80,
-                "total_tokens": 180,
-                "input_token_details": {"flex_cache_read": 20},
-                "output_token_details": {"flex_reasoning": 30, "flex": 999},
-            },
+            usage_metadata=_usage(
+                input_token_details={"flex_cache_read": 20},
+                output_token_details={"flex_reasoning": 30, "flex": 999},
+            ),
         )
     )
 
@@ -149,28 +155,9 @@ def test_service_tier_prefixed_details_captured():
     assert roll.get("cached_tokens") == 20
 
 
-def test_two_generations_sum_reasoning():
-    # Per-message summation is preserved: two generations each carrying
-    # standardized reasoning must sum.
-    roll = _roll(
-        messages=[
-            AIMessage("a", usage_metadata=dict(_STANDARDIZED)),
-            AIMessage("b", usage_metadata=dict(_STANDARDIZED)),
-        ]
-    )
-
-    assert roll.get("reasoning_tokens") == 60
-    assert roll.get("cached_tokens") == 40
-
-
 def _standardized_stream() -> Iterator[AIMessage]:
     while True:
         yield AIMessage("ok", usage_metadata=dict(_STANDARDIZED))
-
-
-class _ToolReadyFakeChatModel(GenericFakeChatModel):
-    def bind_tools(self, tools, **kwargs):
-        return self
 
 
 def test_end_to_end_chart_surface_nonzero(tmp_path):
@@ -179,7 +166,7 @@ def test_end_to_end_chart_surface_nonzero(tmp_path):
     # tmp_path because the agent's sqlite checkpointer keeps its file
     # open past the test, and Windows cannot delete open files.
     agent = ChatAgent(
-        llm=_ToolReadyFakeChatModel(messages=_standardized_stream()),
+        llm=ToolReadyFakeChatModel(messages=_standardized_stream()),
         workspace=tmp_path,
     )
     agent.invoke({"messages": [], "query": "hello"})
@@ -192,39 +179,25 @@ def test_end_to_end_chart_surface_nonzero(tmp_path):
     assert totals.get("cached_tokens") == 20
 
 
-def test_raw_chat_completions_llm_output_pinned():
-    # Guard (green before and after): the raw Chat Completions rescue.
+@pytest.mark.parametrize(
+    "carrier", ["llm_output", "response_metadata", "attributes"]
+)
+def test_raw_chat_completions_carriers_remain_supported(carrier):
+    # These paths worked before the rollup repair: raw LLM output, message
+    # metadata, and SDK-style attribute objects must all retain the counts.
+    usage = dict(_RAW_CC)
+    if carrier == "attributes":
+        usage = SimpleNamespace(**{
+            key: SimpleNamespace(**value) if isinstance(value, dict) else value
+            for key, value in usage.items()
+        })
+    payload = {"token_usage": usage}
+    in_message = carrier == "response_metadata"
     roll = _roll(
-        message=AIMessage("x"), llm_output={"token_usage": dict(_RAW_CC)}
-    )
-
-    assert roll.get("reasoning_tokens") == 30
-    assert roll.get("cached_tokens") == 20
-
-
-def test_raw_response_metadata_pinned():
-    # Guard (green before and after): raw usage in response_metadata.
-    roll = _roll(
-        message=AIMessage("x", response_metadata={"token_usage": dict(_RAW_CC)})
-    )
-
-    assert roll.get("reasoning_tokens") == 30
-    assert roll.get("cached_tokens") == 20
-
-
-def test_attr_object_coercion_pinned():
-    # Guard (green before and after): attribute-object usage coercion.
-    roll = _roll(
-        message=AIMessage("x"),
-        llm_output={
-            "token_usage": SimpleNamespace(
-                prompt_tokens=100,
-                completion_tokens=80,
-                total_tokens=180,
-                completion_tokens_details=SimpleNamespace(reasoning_tokens=30),
-                prompt_tokens_details=SimpleNamespace(cached_tokens=20),
-            )
-        },
+        message=AIMessage(
+            "x", **({"response_metadata": payload} if in_message else {})
+        ),
+        llm_output=None if in_message else payload,
     )
 
     assert roll.get("reasoning_tokens") == 30
@@ -248,13 +221,9 @@ def test_empty_details_clean():
     roll = _roll(
         message=AIMessage(
             "x",
-            usage_metadata={
-                "input_tokens": 100,
-                "output_tokens": 80,
-                "total_tokens": 180,
-                "input_token_details": {},
-                "output_token_details": {},
-            },
+            usage_metadata=_usage(
+                input_token_details={}, output_token_details={}
+            ),
         )
     )
 
@@ -268,13 +237,10 @@ def test_dual_names_single_dict_no_double():
     roll = _roll(
         message=AIMessage(
             "x",
-            usage_metadata={
-                "input_tokens": 100,
-                "output_tokens": 80,
-                "total_tokens": 180,
-                "completion_tokens_details": {"reasoning_tokens": 30},
-                "output_token_details": {"reasoning": 30},
-            },
+            usage_metadata=_usage(
+                completion_tokens_details={"reasoning_tokens": 30},
+                output_token_details={"reasoning": 30},
+            ),
         )
     )
 

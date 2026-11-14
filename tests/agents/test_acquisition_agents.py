@@ -47,8 +47,18 @@ class FakeAcquisitionAgent(BaseAcquisitionAgent):
         return f"source:{item['id']}"
 
 
+@pytest.fixture
+def make_agent(chat_model, tmp_path):
+    def create(**options):
+        return FakeAcquisitionAgent(
+            llm=chat_model, **options, workspace=tmp_path
+        )
+
+    return create
+
+
 async def test_langgraph_fan_out_is_bounded_ordered_and_failure_isolated(
-    chat_model, tmp_path
+    make_agent,
 ):
     hits = [
         {"id": "first", "delay": 0.03},
@@ -61,13 +71,7 @@ async def test_langgraph_fan_out_is_bounded_ordered_and_failure_isolated(
         },
         {"id": "last"},
     ]
-    agent = FakeAcquisitionAgent(
-        llm=chat_model,
-        hits=hits,
-        summarize=False,
-        num_threads=2,
-        workspace=tmp_path,
-    )
+    agent = make_agent(hits=hits, summarize=False, num_threads=2)
 
     result = await agent.ainvoke({"query": "ursa", "context": "compare"})
 
@@ -85,15 +89,9 @@ async def test_langgraph_fan_out_is_bounded_ordered_and_failure_isolated(
     }
 
 
-async def test_langgraph_max_concurrency_replaces_local_semaphores(
-    chat_model, tmp_path
-):
-    agent = FakeAcquisitionAgent(
-        llm=chat_model,
-        hits=[{"id": "a"}, {"id": "b"}],
-        summarize=False,
-        num_threads=1,
-        workspace=tmp_path,
+async def test_langgraph_max_concurrency_replaces_local_semaphores(make_agent):
+    agent = make_agent(
+        hits=[{"id": "a"}, {"id": "b"}], summarize=False, num_threads=1
     )
 
     await agent.ainvoke({"query": "ursa", "context": "compare"})
@@ -104,19 +102,15 @@ async def test_langgraph_max_concurrency_replaces_local_semaphores(
 
 
 async def test_cached_sources_are_fanned_out_filtered_and_sorted(
-    chat_model, tmp_path
+    make_agent, tmp_path
 ):
     database = tmp_path / "database"
     database.mkdir()
     (database / "b.html").write_text("second")
     (database / "a.txt").write_text("first")
     (database / "ignored.json").write_text("ignored")
-    agent = FakeAcquisitionAgent(
-        llm=chat_model,
-        summarize=False,
-        download=False,
-        database_path="database",
-        workspace=tmp_path,
+    agent = make_agent(
+        summarize=False, download=False, database_path="database"
     )
 
     result = await agent.ainvoke({"query": "unused", "context": "cached"})
@@ -129,7 +123,7 @@ async def test_cached_sources_are_fanned_out_filtered_and_sorted(
 
 
 async def test_langgraph_map_reduce_preserves_source_order(
-    chat_model, tmp_path, monkeypatch
+    make_agent, monkeypatch
 ):
     active = 0
     maximum_active = 0
@@ -163,15 +157,13 @@ async def test_langgraph_map_reduce_preserves_source_order(
         "from_template",
         lambda _template: chain,
     )
-    agent = FakeAcquisitionAgent(
-        llm=chat_model,
+    agent = make_agent(
         hits=[
             {"id": "a", "text": "alpha"},
             {"id": "b", "text": "beta"},
             {"id": "c", "text": "gamma"},
         ],
         num_threads=2,
-        workspace=tmp_path,
     )
 
     result = await agent.ainvoke({"query": "ursa", "context": "compare"})
@@ -194,12 +186,8 @@ async def test_langgraph_map_reduce_preserves_source_order(
     assert result["final_summary"] == "reduced answer"
 
 
-def test_graph_uses_direct_nodes_and_send_router(chat_model, tmp_path):
-    agent = FakeAcquisitionAgent(
-        llm=chat_model,
-        hits=[{"id": "a"}, {"id": "b"}],
-        workspace=tmp_path,
-    )
+def test_graph_uses_direct_nodes_and_send_router(make_agent):
+    agent = make_agent(hits=[{"id": "a"}, {"id": "b"}])
     graph = agent.build_graph()
 
     assert set(graph.nodes) == {
@@ -222,10 +210,8 @@ def test_graph_uses_direct_nodes_and_send_router(chat_model, tmp_path):
     ]
 
 
-async def test_sync_source_adapter_does_not_block_event_loop(
-    chat_model, tmp_path
-):
-    agent = FakeAcquisitionAgent(llm=chat_model, workspace=tmp_path)
+async def test_sync_source_adapter_does_not_block_event_loop(make_agent):
+    agent = make_agent()
     started = asyncio.Event()
     release = asyncio.Event()
     main_loop = asyncio.get_running_loop()
@@ -245,10 +231,8 @@ async def test_sync_source_adapter_does_not_block_event_loop(
     assert await asyncio.wait_for(task, timeout=1) == []
 
 
-async def test_existing_query_node_does_not_reemit_reducer_state(
-    chat_model, tmp_path
-):
-    agent = FakeAcquisitionAgent(llm=chat_model, workspace=tmp_path)
+async def test_existing_query_node_does_not_reemit_reducer_state(make_agent):
+    agent = make_agent()
     state = {
         "query": "ursa",
         "context": "compare",
@@ -262,9 +246,9 @@ async def test_existing_query_node_does_not_reemit_reducer_state(
 
 
 async def test_generated_query_normalizes_structured_message_content(
-    chat_model, tmp_path
+    make_agent,
 ):
-    agent = FakeAcquisitionAgent(llm=chat_model, workspace=tmp_path)
+    agent = make_agent()
 
     class StructuredModel:
         async def ainvoke(self, _prompt):
@@ -279,13 +263,9 @@ async def test_generated_query_normalizes_structured_message_content(
     }
 
 
-async def test_summarize_false_skips_rag(chat_model, tmp_path, monkeypatch):
-    agent = FakeAcquisitionAgent(
-        llm=chat_model,
-        hits=[{"id": "a"}],
-        summarize=False,
-        rag_embedding=object(),
-        workspace=tmp_path,
+async def test_summarize_false_skips_rag(make_agent, monkeypatch):
+    agent = make_agent(
+        hits=[{"id": "a"}], summarize=False, rag_embedding=object()
     )
 
     async def fail_if_called(_state):
@@ -301,71 +281,48 @@ async def test_summarize_false_skips_rag(chat_model, tmp_path, monkeypatch):
     assert "final_summary" not in result
 
 
-async def test_summary_cache_write_failure_does_not_abort_source(
-    chat_model, tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    "method, args, response",
+    [
+        (
+            "_summarize_source",
+            ({"id": "a", "full_text": "content"}, 0, "compare"),
+            "useful summary",
+        ),
+        (
+            "_aggregate_sources",
+            ([{"id": "a"}], ["source summary"], "compare"),
+            "reduced answer",
+        ),
+    ],
+)
+async def test_cache_write_failure_preserves_model_answer(
+    make_agent, monkeypatch, method, args, response
 ):
     class FakeChain:
         def __or__(self, _other):
             return self
 
         async def ainvoke(self, _values, config=None):
-            return "useful summary"
+            return response
 
     monkeypatch.setattr(
         acquisition_module.ChatPromptTemplate,
         "from_template",
         lambda _template: FakeChain(),
     )
-    agent = FakeAcquisitionAgent(llm=chat_model, workspace=tmp_path)
+    agent = make_agent()
 
     def fail_write(*_args, **_kwargs):
         raise OSError("read-only cache")
 
     monkeypatch.setattr(acquisition_module.Path, "write_text", fail_write)
 
-    summary = await agent._summarize_source(
-        {"id": "a", "full_text": "content"}, 0, "compare"
-    )
-
-    assert summary == "useful summary"
+    assert await getattr(agent, method)(*args) == response
 
 
-def test_synchronous_stream_is_explicitly_unsupported(chat_model, tmp_path):
-    agent = FakeAcquisitionAgent(
-        llm=chat_model,
-        hits=[{"id": "a"}],
-        summarize=False,
-        workspace=tmp_path,
-    )
+def test_synchronous_stream_is_explicitly_unsupported(make_agent):
+    agent = make_agent(hits=[{"id": "a"}], summarize=False)
 
     with pytest.raises(RuntimeError, match="do not support synchronous"):
         list(agent.stream({"query": "ursa", "context": "compare"}))
-
-
-async def test_aggregate_cache_write_failure_keeps_model_answer(
-    chat_model, tmp_path, monkeypatch
-):
-    class FakeChain:
-        def __or__(self, _other):
-            return self
-
-        async def ainvoke(self, _values, config=None):
-            return "reduced answer"
-
-    monkeypatch.setattr(
-        acquisition_module.ChatPromptTemplate,
-        "from_template",
-        lambda _template: FakeChain(),
-    )
-    agent = FakeAcquisitionAgent(llm=chat_model, workspace=tmp_path)
-
-    def fail_write(*_args, **_kwargs):
-        raise OSError("read-only cache")
-
-    monkeypatch.setattr(acquisition_module.Path, "write_text", fail_write)
-
-    answer = await agent._aggregate_sources(
-        [{"id": "a"}], ["source summary"], "compare"
-    )
-
-    assert answer == "reduced answer"

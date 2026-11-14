@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from contextlib import closing
 from math import sqrt
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,11 @@ from langchain_core.messages import (
 )
 from langgraph.types import Overwrite
 
+from tests.agents.utils import (
+    ToolReadyFakeChatModel,
+    message_stream,
+    tool_call_message,
+)
 from ursa.agents import ExecutionAgent
 from ursa.agents.execution_agent import ReviewAssessment
 from ursa.util import Checkpointer
@@ -28,96 +34,89 @@ def stub_execution_tools(monkeypatch):
         """Return a placeholder response instead of executing shell commands."""
         return "STDOUT:\nstubbed output\nSTDERR:\n"
 
-    @tool
-    def fake_run_web_search(
-        prompt: str,
-        query: str,
-        runtime: ToolRuntime,
-        max_results: int = 3,
-    ) -> str:
-        """Return a deterministic web search payload for testing."""
-        return f"[stubbed web search] {query}"
+    def search_tool(source, label):
+        def search(
+            prompt: str,
+            query: str,
+            runtime: ToolRuntime,
+            max_results: int = 3,
+        ) -> str:
+            return f"[stubbed {source} search] {query}"
 
-    @tool
-    def fake_run_arxiv_search(
-        prompt: str,
-        query: str,
-        runtime: ToolRuntime,
-        max_results: int = 3,
-    ) -> str:
-        """Return a deterministic arXiv search payload for testing."""
-        return f"[stubbed arxiv search] {query}"
-
-    @tool
-    def fake_run_osti_search(
-        prompt: str,
-        query: str,
-        runtime: ToolRuntime,
-        max_results: int = 3,
-    ) -> str:
-        """Return a deterministic OSTI search payload for testing."""
-        return f"[stubbed osti search] {query}"
+        search.__name__ = f"fake_run_{source}_search"
+        search.__doc__ = (
+            f"Return a deterministic {label} search payload for testing."
+        )
+        return tool(search)
 
     monkeypatch.setattr(
         "ursa.agents.execution_agent.run_command", fake_run_command
     )
-    monkeypatch.setattr(
-        "ursa.agents.execution_agent.run_web_search", fake_run_web_search
-    )
-    monkeypatch.setattr(
-        "ursa.agents.execution_agent.run_arxiv_search", fake_run_arxiv_search
-    )
-    monkeypatch.setattr(
-        "ursa.agents.execution_agent.run_osti_search", fake_run_osti_search
-    )
-
-
-class ToolReadyFakeChatModel(GenericFakeChatModel):
-    def bind_tools(self, tools, **kwargs):
-        return self
+    for source, label in (("web", "web"), ("arxiv", "arXiv"), ("osti", "OSTI")):
+        monkeypatch.setattr(
+            f"ursa.agents.execution_agent.run_{source}_search",
+            search_tool(source, label),
+        )
 
 
 class SplitBehaviorFakeChatModel(GenericFakeChatModel):
     """Emit plain responses; bind_tools() returns a separate tool-calling fake model."""
 
     def bind_tools(self, tools, **kwargs):
-        return ToolCallingFakeChatModel(messages=_tool_call_message_stream())
-
-
-class ToolCallingFakeChatModel(GenericFakeChatModel):
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-
-def _message_stream(content: str) -> Iterator[AIMessage]:
-    while True:
-        yield AIMessage(content=content)
+        return ToolReadyFakeChatModel(messages=_tool_call_message_stream())
 
 
 def _tool_call_message_stream() -> Iterator[AIMessage]:
     while True:
-        yield AIMessage(
+        yield tool_call_message(
+            "fake_run_command",
+            {"query": "pwd"},
+            "call-1",
             content="tool-bound-response",
-            tool_calls=[
-                {
-                    "name": "fake_run_command",
-                    "args": {"query": "pwd"},
-                    "id": "call-1",
-                    "type": "tool_call",
-                }
-            ],
+            type="tool_call",
         )
 
 
 @pytest.fixture
 def chat_model():
-    return ToolReadyFakeChatModel(messages=_message_stream("ok"))
+    return ToolReadyFakeChatModel(messages=message_stream("ok"))
 
 
-def test_execution_agent_captures_current_invoke_request(
-    chat_model, tmpdir: Path
-):
-    execution_agent = ExecutionAgent(llm=chat_model, workspace=tmpdir)
+@pytest.fixture
+def make_agent(chat_model, tmpdir):
+    def create(**options):
+        return ExecutionAgent(llm=chat_model, workspace=tmpdir, **options)
+
+    return create
+
+
+@pytest.fixture
+def review_capture(monkeypatch):
+    """Capture review prompts and model inputs with a successful assessment."""
+    captured = SimpleNamespace(requests=[], messages=[])
+
+    def fake_get_review_prompt(user_request: str) -> str:
+        captured.requests.append(user_request)
+        return f"REVIEW::{user_request}"
+
+    def fake_invoke_structured(*args, **kwargs):
+        captured.messages.append(args[2])
+        return ReviewAssessment(is_complete=True, reason="done")
+
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.get_review_prompt",
+        fake_get_review_prompt,
+    )
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.invoke_structured",
+        fake_invoke_structured,
+    )
+
+    return captured
+
+
+def test_execution_agent_captures_current_invoke_request(make_agent):
+    execution_agent = make_agent()
 
     normalized = execution_agent._normalize_inputs("current request")
 
@@ -137,28 +136,9 @@ def test_execution_agent_captures_current_invoke_request(
 
 
 def test_execution_agent_review_uses_current_invoke_request(
-    chat_model, monkeypatch, tmpdir: Path
+    make_agent, review_capture
 ):
-    captured = {}
-
-    def fake_get_review_prompt(user_request: str) -> str:
-        captured["user_request"] = user_request
-        return f"REVIEW::{user_request}"
-
-    def fake_invoke_structured(*args, **kwargs):
-        captured["review_messages"] = args[2]
-        return ReviewAssessment(is_complete=True, reason="done")
-
-    monkeypatch.setattr(
-        "ursa.agents.execution_agent.get_review_prompt",
-        fake_get_review_prompt,
-    )
-    monkeypatch.setattr(
-        "ursa.agents.execution_agent.invoke_structured",
-        fake_invoke_structured,
-    )
-
-    execution_agent = ExecutionAgent(llm=chat_model, workspace=tmpdir)
+    execution_agent = make_agent()
     result = execution_agent.review_work({
         "messages": [
             HumanMessage(content="old persisted request"),
@@ -170,56 +150,33 @@ def test_execution_agent_review_uses_current_invoke_request(
         "symlinkdir": {},
     })
 
-    assert captured["user_request"] == "new invocation request"
-    assert captured["review_messages"][-1].content == (
+    assert review_capture.requests[-1] == "new invocation request"
+    assert review_capture.messages[-1][-1].content == (
         "REVIEW::new invocation request"
     )
     assert result["review"].is_complete is True
 
 
 def test_execution_agent_persistent_thread_reviews_latest_invoke_request(
-    chat_model, monkeypatch, tmpdir: Path
+    make_agent, review_capture, tmpdir: Path
 ):
-    reviewed_requests = []
-
-    def fake_get_review_prompt(user_request: str) -> str:
-        reviewed_requests.append(user_request)
-        return f"REVIEW::{user_request}"
-
-    def fake_invoke_structured(*args, **kwargs):
-        return ReviewAssessment(is_complete=True, reason="done")
-
-    monkeypatch.setattr(
-        "ursa.agents.execution_agent.get_review_prompt",
-        fake_get_review_prompt,
+    execution_agent = make_agent(
+        checkpointer=Checkpointer.from_workspace(Path(tmpdir) / "checkpoints")
     )
-    monkeypatch.setattr(
-        "ursa.agents.execution_agent.invoke_structured",
-        fake_invoke_structured,
-    )
-
-    execution_agent = ExecutionAgent(
-        llm=chat_model,
-        workspace=tmpdir,
-        checkpointer=Checkpointer.from_workspace(Path(tmpdir) / "checkpoints"),
-    )
-    try:
+    with closing(execution_agent):
         execution_agent.invoke("first persisted request")
         execution_agent.invoke("second persisted request")
-    finally:
-        execution_agent.close()
 
-    assert reviewed_requests == [
+    assert review_capture.requests == [
         "first persisted request",
         "second persisted request",
     ]
 
 
-@pytest.mark.asyncio
 async def test_execution_agent_ainvoke_returns_ai_message(
-    chat_model, tmpdir: Path
+    make_agent, tmpdir: Path
 ):
-    execution_agent = ExecutionAgent(llm=chat_model, workspace=tmpdir)
+    execution_agent = make_agent()
     workspace = tmpdir / ".ursa"
     inputs = {
         "messages": [
@@ -250,18 +207,13 @@ async def test_execution_agent_ainvoke_returns_ai_message(
     )
 
 
-@pytest.mark.asyncio
-async def test_execution_agent_invokes_extra_tool(chat_model, tmpdir: Path):
+async def test_execution_agent_invokes_extra_tool(make_agent, tmpdir: Path):
     @tool
     def do_magic(a: int, b: int) -> float:
         """Return the hypotenuse for the provided right-triangle legs."""
         return sqrt(a**2 + b**2)
 
-    execution_agent = ExecutionAgent(
-        llm=chat_model,
-        extra_tools=[do_magic],
-        workspace=tmpdir,
-    )
+    execution_agent = make_agent(extra_tools=[do_magic])
     workspace = tmpdir / ".ursa_with_tool"
     prompt = "List every tool you have access to and provide the names only."
     inputs = {
@@ -293,7 +245,7 @@ def test_execution_agent_keeps_tool_calls_out_of_summary_and_recap(
 ):
     execution_agent = ExecutionAgent(
         llm=SplitBehaviorFakeChatModel(
-            messages=_message_stream("base-response")
+            messages=message_stream("base-response")
         ),
         workspace=tmpdir,
         tokens_before_summarize=99999,
@@ -325,11 +277,8 @@ def test_execution_agent_keeps_tool_calls_out_of_summary_and_recap(
     assert reply.tool_calls[0]["name"] == "fake_run_command"
 
 
-def test_safe_codes_in_store(chat_model, tmpdir):
-    execution_agent = ExecutionAgent(
-        llm=chat_model,
-        workspace=tmpdir,
-    )
+def test_safe_codes_in_store(make_agent):
+    execution_agent = make_agent()
     assert len(execution_agent.safe_codes) > 0
     store = execution_agent.storage
     safe_codes = [
@@ -340,10 +289,7 @@ def test_safe_codes_in_store(chat_model, tmpdir):
 
 
 def test_patch_dangling_tool_calls_emits_events(
-    chat_model,
-    monkeypatch,
-    capsys,
-    tmpdir,
+    make_agent, monkeypatch, capsys
 ):
     events = []
 
@@ -355,20 +301,9 @@ def test_patch_dangling_tool_calls_emits_events(
         capture_event,
     )
 
-    execution_agent = ExecutionAgent(llm=chat_model, workspace=tmpdir)
+    execution_agent = make_agent()
     state = {
-        "messages": [
-            AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "fake_tool",
-                        "args": {},
-                        "id": "call-1",
-                    }
-                ],
-            )
-        ],
+        "messages": [tool_call_message("fake_tool", {}, "call-1")],
         "symlinkdir": {},
     }
 

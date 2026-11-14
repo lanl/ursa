@@ -77,17 +77,14 @@ def check_db_valid(db_path: str) -> bool:
     """
     if not os.path.exists(db_path):
         return False
-    else:
-        try:
-            with redirect_stdout(_NULL), redirect_stderr(_NULL):
-                temp_store = DSI(db_path, check_same_thread=False)
-                temp_store.list(
-                    True
-                )  # force things to fail if the table is empty
-                temp_store.close()
+    try:
+        with redirect_stdout(_NULL), redirect_stderr(_NULL):
+            temp_store = DSI(db_path, check_same_thread=False)
+            temp_store.list(True)  # force things to fail if the table is empty
+            temp_store.close()
 
-        except Exception:  # noqa: BLE001
-            return False
+    except Exception:  # noqa: BLE001
+        return False
 
     return True
 
@@ -275,7 +272,7 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
         )
 
     def _build_graph(self):
-        self.llm = self.llm.bind_tools(self.tools.values())
+        self.llm = self.llm.bind_tools(list(self.tools.values()))
 
         self.add_node(self._response_node, "response")
         self.add_node(self.tool_node, "tools")
@@ -333,11 +330,8 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
             system_parts.append("Dataset description: " + self.db_description)
 
         # Combine
-        if system_parts:
-            system_message = SystemMessage(content="\n\n".join(system_parts))
-            messages = [system_message, HumanMessage(content=human_msg)]
-        else:
-            messages = [HumanMessage(content=human_msg)]
+        system_message = SystemMessage(content="\n\n".join(system_parts))
+        messages = [system_message, HumanMessage(content=human_msg)]
 
         # clear
         self.db_schema = ""
@@ -371,10 +365,7 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
         Arg:
            result (DSIState): The state output from the DSI agent
         """
-        response_text = result["response"]
-        cleaned_output = response_text.strip()
-
-        return cleaned_output
+        return result["response"].strip()
 
     def ask(self, user_query) -> None:
         """Ask a question to the DSI Explorer agent.

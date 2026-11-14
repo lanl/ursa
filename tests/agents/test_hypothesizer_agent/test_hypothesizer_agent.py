@@ -1,5 +1,3 @@
-import pytest
-
 from ursa.agents.hypothesizer_agent import HypothesizerAgent
 
 
@@ -38,7 +36,6 @@ def test_hypothesizer_extracts_text_from_structured_response_blocks(
     )
 
 
-@pytest.mark.asyncio
 async def test_hypothesizer_agent_offloads_hypothesis_space(
     chat_model,
     tmp_path,
@@ -85,7 +82,6 @@ def test_hypothesizer_sanitizes_polluted_existing_artifact(
     )
 
 
-@pytest.mark.asyncio
 async def test_hypothesizer_agent_updates_existing_experience(
     chat_model,
     tmp_path,

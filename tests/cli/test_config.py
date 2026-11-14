@@ -7,6 +7,21 @@ from pydantic import ValidationError
 import ursa.cli.config as config_mod
 
 
+def _openai_embedding_config(**overrides):
+    return {
+        "model": "text-embedding-3-large",
+        "model_provider": "openai",
+        **overrides,
+    }
+
+
+def _ollama_embedding_config():
+    return {
+        "model": "ollama:nomic-embed-text:latest",
+        "base_url": "http://localhost:11434",
+    }
+
+
 def test_editable_values_preserve_explicit_nulls_and_reject_secrets():
     config = config_mod.UrsaConfig.model_validate({"emb_model": None})
 
@@ -32,6 +47,27 @@ def test_editable_values_preserve_explicit_nulls_and_reject_secrets():
         }).editable_values()
 
 
+def test_subagent_config_defaults_and_limit_validation():
+    config = config_mod.UrsaConfig()
+
+    assert config.subagents.max_agents == 32
+    assert config.subagents.max_depth == 3
+    assert config.subagents.llm_model is None
+    assert config.subagents.embedding_model is None
+
+    unlimited = config_mod.UrsaConfig(
+        subagents={"max_agents": None, "max_depth": None}
+    )
+    assert unlimited.subagents.max_agents is None
+    assert unlimited.subagents.max_depth is None
+
+    for field in ("max_agents", "max_depth"):
+        with pytest.raises(ValidationError, match=field):
+            config_mod.UrsaConfig(subagents={field: -1})
+        with pytest.raises(ValidationError, match="non-negative integers"):
+            config_mod.UrsaConfig(subagents={field: False})
+
+
 def test_save_config_file_uses_the_path_format(tmp_path):
     config = config_mod.UrsaConfig.model_validate({"emb_model": None})
     path = tmp_path / "config.json"
@@ -46,37 +82,27 @@ def test_interpolate_env_replaces_existing_variable(monkeypatch):
     assert config_mod.interpolate_env("hello ${URSA_TEST_VAR}") == "hello world"
 
 
-def test_interpolate_env_uses_default_when_missing(
-    monkeypatch,
+@pytest.mark.parametrize(
+    "variable, template, expected",
+    [
+        (
+            "URSA_MISSING_VAR",
+            "value ${URSA_MISSING_VAR:fallback}",
+            "value fallback",
+        ),
+        (
+            "URSA_URL_VAR",
+            "url=${URSA_URL_VAR:mysql://localhost:5432/db}",
+            "url=mysql://localhost:5432/db",
+        ),
+        ("URSA_EMPTY_VAR", "start ${URSA_EMPTY_VAR} end", "start  end"),
+    ],
+)
+def test_interpolate_env_when_variable_is_missing(
+    monkeypatch, variable, template, expected
 ):
-    monkeypatch.delenv("URSA_MISSING_VAR", raising=False)
-
-    assert (
-        config_mod.interpolate_env("value ${URSA_MISSING_VAR:fallback}")
-        == "value fallback"
-    )
-
-
-def test_interpolate_env_allows_colon_in_default(monkeypatch):
-    monkeypatch.delenv("URSA_URL_VAR", raising=False)
-
-    assert (
-        config_mod.interpolate_env(
-            "url=${URSA_URL_VAR:mysql://localhost:5432/db}"
-        )
-        == "url=mysql://localhost:5432/db"
-    )
-
-
-def test_interpolate_env_missing_variable_without_default_is_empty(
-    monkeypatch,
-):
-    monkeypatch.delenv("URSA_EMPTY_VAR", raising=False)
-
-    assert (
-        config_mod.interpolate_env("start ${URSA_EMPTY_VAR} end")
-        == "start  end"
-    )
+    monkeypatch.delenv(variable, raising=False)
+    assert config_mod.interpolate_env(template) == expected
 
 
 def test_deep_interp_env_recurses_nested_dictionaries(
@@ -107,146 +133,59 @@ def test_deep_interp_env_recurses_nested_dictionaries(
 
 
 @pytest.mark.parametrize(
-    ("cls", "model", "expected_model", "expected_provider"),
-    [
-        (
-            config_mod.ModelConfig,
-            "openai:gpt-5.4",
-            "openai:gpt-5.4",
-            None,
-        ),
-        (
-            config_mod.ChatModelConfig,
-            "openai:gpt-5.4",
-            "gpt-5.4",
-            "openai",
-        ),
-        (
-            config_mod.ChatModelConfig,
-            "ollama:llama3.1",
-            "llama3.1",
-            "ollama",
-        ),
-        (
-            config_mod.ModelConfig,
-            "ollama:nomic-embed-text:latest",
-            "ollama:nomic-embed-text:latest",
-            None,
-        ),
-        (
-            config_mod.EmbModelConfig,
-            "ollama:nomic-embed-text:latest",
-            "nomic-embed-text:latest",
-            "ollama",
-        ),
-    ],
+    "model",
+    ["openai:gpt-5.4", "ollama:nomic-embed-text:latest"],
 )
-def test_model_config_model_parsing_for_known_provider_prefix(
-    cls, model, expected_model, expected_provider
-):
-    cfg = cls(model=model)
+def test_base_model_config_preserves_provider_prefix(model):
+    cfg = config_mod.ModelConfig(model=model)
 
-    assert cfg.model == expected_model
-    assert cfg.model_provider == expected_provider
+    assert cfg.model == model
+    assert cfg.model_provider is None
 
 
 @pytest.mark.parametrize(
-    (
-        "cls",
-        "model",
-        "model_provider",
-        "expected_model",
-        "expected_provider",
-        "raises_match",
-    ),
+    ("cls", "provider", "model"),
     [
-        (
-            config_mod.ChatModelConfig,
-            "claude-4.8:0",
-            "anthropic",
-            "claude-4.8:0",
-            "anthropic",
-            None,
-        ),
-        (
-            config_mod.EmbModelConfig,
-            "gemma4:latest",
-            "ollama",
-            "gemma4:latest",
-            "ollama",
-            None,
-        ),
-        (
-            config_mod.ChatModelConfig,
-            "claude-4.8:0",
-            None,
-            "claude-4.8:0",
-            "openai",
-            None,
-        ),
-        (
-            config_mod.EmbModelConfig,
-            "gemma4:latest",
-            None,
-            None,
-            None,
-            "Unable to infer model provider",
-        ),
-        (
-            config_mod.ChatModelConfig,
-            "anthropic:claude-4.8:0",
-            None,
-            "claude-4.8:0",
-            "anthropic",
-            None,
-        ),
-        (
-            config_mod.EmbModelConfig,
-            "ollama:gemma4:latest",
-            None,
-            "gemma4:latest",
-            "ollama",
-            None,
-        ),
-        (
-            config_mod.ChatModelConfig,
-            "anthropic:claude-4.8:0",
-            "anthropic",
-            "claude-4.8:0",
-            "anthropic",
-            None,
-        ),
-        (
-            config_mod.EmbModelConfig,
-            "ollama:gemma4:latest",
-            "ollama",
-            "gemma4:latest",
-            "ollama",
-            None,
-        ),
+        (config_mod.ChatModelConfig, "openai", "gpt-5.4"),
+        (config_mod.ChatModelConfig, "ollama", "llama3.1"),
+        (config_mod.EmbModelConfig, "ollama", "nomic-embed-text:latest"),
     ],
 )
-def test_model_config_colon_model_name_handling(
-    cls,
-    model,
-    model_provider,
-    expected_model,
-    expected_provider,
-    raises_match,
+def test_model_config_model_parsing_for_known_provider_prefix(
+    cls, provider, model
 ):
-    kwargs = {"model": model}
-    if model_provider is not None:
-        kwargs["model_provider"] = model_provider
+    cfg = cls(model=f"{provider}:{model}")
 
-    if raises_match is not None:
-        with pytest.raises(ValueError, match=raises_match):
+    assert cfg.model == model
+    assert cfg.model_provider == provider
+
+
+@pytest.mark.parametrize(
+    ("cls", "model", "provider"),
+    [
+        (config_mod.ChatModelConfig, "claude-4.8:0", "anthropic"),
+        (config_mod.EmbModelConfig, "gemma4:latest", "ollama"),
+    ],
+)
+@pytest.mark.parametrize("prefixed", [False, True])
+@pytest.mark.parametrize("explicit_provider", [False, True])
+def test_model_config_colon_model_name_handling(
+    cls, model, provider, prefixed, explicit_provider
+):
+    kwargs = {"model": f"{provider}:{model}" if prefixed else model}
+    if explicit_provider:
+        kwargs["model_provider"] = provider
+
+    has_provider = prefixed or explicit_provider
+    if cls is config_mod.EmbModelConfig and not has_provider:
+        with pytest.raises(ValueError, match="Unable to infer model provider"):
             cls(**kwargs)
         return
 
     cfg = cls(**kwargs)
 
-    assert cfg.model == expected_model
-    assert cfg.model_provider == expected_provider
+    assert cfg.model == model
+    assert cfg.model_provider == (provider if has_provider else "openai")
 
 
 def test_embedding_model_provider_error_lists_supported_providers():
@@ -274,10 +213,7 @@ def test_embedding_model_defers_provider_to_inference_provider():
 @pytest.mark.parametrize(
     "higher_priority",
     [
-        {
-            "model": "ollama:nomic-embed-text:latest",
-            "base_url": "http://localhost:11434",
-        },
+        _ollama_embedding_config(),
         config_mod.EmbModelConfig(
             model="ollama:nomic-embed-text:latest",
             base_url="http://localhost:11434",
@@ -326,21 +262,8 @@ def test_chat_model_merge_inference_provider_overrides_base_url(
     assert merged.base_url is None
     assert merged.inference_provider == "hosted"
     assert "base_url" not in merged.model_fields_set
-    assert merged.model_extra == {}
-
-
-def test_chat_model_merge_marks_cleared_base_url_as_unset():
-    base = config_mod.ChatModelConfig(
-        model="gpt-5.4",
-        base_url="https://models.example/v1",
-    )
-
-    merged = base.model_merge({"inference_provider": "hosted"})
-
-    assert merged.base_url is None
-    assert merged.inference_provider == "hosted"
-    assert "base_url" not in merged.model_fields_set
     assert "base_url" not in merged.model_dump(exclude_unset=True)
+    assert merged.model_extra == {}
 
 
 def test_chat_model_merge_prefers_base_url_if_override_has_both_endpoints():
@@ -412,162 +335,58 @@ def test_model_merge_keeps_provider_defaults_resolvable():
 
 
 @pytest.mark.parametrize(
-    (
-        "base_data",
-        "override_data",
-        "expected_model",
-        "expected_provider",
-        "expected_base_url",
-        "expected_inference_provider",
-        "resolve_result",
-        "expected_api_key_env",
-        "expect_nested_type",
-    ),
+    "base_data",
     [
-        (
-            {
-                "emb_model": {
-                    "model": "text-embedding-3-large",
-                    "model_provider": "openai",
-                    "inference_provider": "openai",
-                }
-            },
-            {
-                "emb_model": {
-                    "model": "ollama:nomic-embed-text:latest",
-                    "base_url": "http://localhost:11434",
-                }
-            },
-            "nomic-embed-text:latest",
-            "ollama",
-            "http://localhost:11434",
-            None,
-            False,
-            None,
-            False,
-        ),
-        (
-            {
-                "emb_model": {
-                    "model": "ollama:nomic-embed-text:latest",
-                    "base_url": "http://localhost:11434",
-                }
-            },
-            {
-                "emb_model": {
-                    "model": "text-embedding-3-large",
-                    "model_provider": "openai",
-                    "inference_provider": "openai",
-                }
-            },
-            "text-embedding-3-large",
-            "openai",
-            None,
-            "openai",
-            False,
-            None,
-            False,
-        ),
-        (
-            {
-                "emb_model": {
-                    "model": "text-embedding-3-large",
-                    "model_provider": "openai",
-                }
-            },
-            {
-                "emb_model": {
-                    "model": "ollama:nomic-embed-text:latest",
-                    "base_url": "http://localhost:11434",
-                }
-            },
-            "nomic-embed-text:latest",
-            "ollama",
-            "http://localhost:11434",
-            None,
-            False,
-            None,
-            False,
-        ),
-        (
-            {},
-            {
-                "emb_model": {
-                    "model": "text-embedding-3-large",
-                    "model_provider": "openai",
-                    "inference_provider": "openai",
-                }
-            },
-            "text-embedding-3-large",
-            "openai",
-            "https://api.openai.com/v1",
-            "openai",
-            True,
-            "OPENAI_API_KEY",
-            False,
-        ),
-        (
-            {},
-            {
-                "emb_model": {
-                    "model": "ollama:nomic-embed-text:latest",
-                    "base_url": "http://localhost:11434",
-                }
-            },
-            "nomic-embed-text:latest",
-            "ollama",
-            "http://localhost:11434",
-            None,
-            False,
-            None,
-            True,
-        ),
+        {"emb_model": _openai_embedding_config(inference_provider="openai")},
+        {"emb_model": _openai_embedding_config()},
+        {},
     ],
 )
-def test_ursa_config_emb_model_layering(
-    base_data,
-    override_data,
-    expected_model,
-    expected_provider,
-    expected_base_url,
-    expected_inference_provider,
-    resolve_result,
-    expected_api_key_env,
-    expect_nested_type,
+def test_ursa_config_layers_ollama_embedding(base_data):
+    base = config_mod.UrsaConfig.model_validate(base_data)
+
+    merged = base.model_merge({"emb_model": _ollama_embedding_config()})
+
+    assert merged.emb_model is not None
+    assert isinstance(merged.emb_model, config_mod.EmbModelConfig)
+    assert merged.emb_model.model == "nomic-embed-text:latest"
+    assert merged.emb_model.model_provider == "ollama"
+    assert merged.emb_model.base_url == "http://localhost:11434"
+    assert merged.emb_model.inference_provider is None
+
+
+@pytest.mark.parametrize(
+    ("base_data", "resolve_result", "expected_base_url"),
+    [
+        ({"emb_model": _ollama_embedding_config()}, False, None),
+        ({}, True, "https://api.openai.com/v1"),
+    ],
+)
+def test_ursa_config_layers_openai_embedding(
+    base_data, resolve_result, expected_base_url
 ):
     base = config_mod.UrsaConfig.model_validate(base_data)
 
-    merged = base.model_merge(override_data)
+    merged = base.model_merge({
+        "emb_model": _openai_embedding_config(inference_provider="openai")
+    })
 
     if resolve_result:
         merged = merged.resolve()
 
     assert merged.emb_model is not None
-    if expect_nested_type:
-        assert isinstance(merged.emb_model, config_mod.EmbModelConfig)
-    assert merged.emb_model.model == expected_model
-    assert merged.emb_model.model_provider == expected_provider
+    assert merged.emb_model.model == "text-embedding-3-large"
+    assert merged.emb_model.model_provider == "openai"
     assert merged.emb_model.base_url == expected_base_url
-    assert merged.emb_model.inference_provider == expected_inference_provider
-    if expected_api_key_env is not None:
-        assert merged.emb_model.api_key.env == expected_api_key_env
+    assert merged.emb_model.inference_provider == "openai"
+    if resolve_result:
+        assert merged.emb_model.api_key.env == "OPENAI_API_KEY"
 
 
 def test_ursa_config_merges_multiple_embedding_model_layers():
     merged = config_mod.UrsaConfig().model_merge(
-        {
-            "emb_model": {
-                "model": "text-embedding-3-large",
-                "model_provider": "openai",
-                "inference_provider": "openai",
-            }
-        },
-        {
-            "emb_model": {
-                "model": "ollama:nomic-embed-text:latest",
-                "base_url": "http://localhost:11434",
-            }
-        },
+        {"emb_model": _openai_embedding_config(inference_provider="openai")},
+        {"emb_model": _ollama_embedding_config()},
     )
     assert isinstance(merged.emb_model, config_mod.EmbModelConfig)
     assert merged.emb_model.model == "nomic-embed-text:latest"

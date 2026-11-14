@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -406,7 +408,6 @@ def test_settings_file_contains_only_credential_metadata(
     assert "secret-value" not in settings_path.read_text(encoding="utf-8")
 
 
-@pytest.mark.asyncio
 async def test_run_manager_delivers_key_only_through_stdin(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
@@ -426,37 +427,24 @@ async def test_run_manager_delivers_key_only_through_stdin(
     )
     captured: dict = {}
 
-    class FakeStdin:
-        def __init__(self) -> None:
-            self.data = bytearray()
-
-        def write(self, value: bytes) -> None:
-            self.data.extend(value)
-
-        async def drain(self) -> None:
-            return None
-
-        def close(self) -> None:
-            return None
-
-        async def wait_closed(self) -> None:
-            return None
-
-    class FakeProcess:
-        def __init__(self) -> None:
-            self.pid = 4321
-            self.returncode = 0
-            self.stdin = FakeStdin()
-            self.stdout = asyncio.StreamReader()
-            self.stderr = asyncio.StreamReader()
-            self.stdout.feed_eof()
-            self.stderr.feed_eof()
-
-        async def wait(self) -> int:
-            return self.returncode
-
     async def fake_subprocess(*cmd, **kwargs):
-        process = FakeProcess()
+        data = bytearray()
+        process = SimpleNamespace(
+            pid=4321,
+            returncode=0,
+            stdin=SimpleNamespace(
+                data=data,
+                write=data.extend,
+                drain=AsyncMock(return_value=None),
+                close=lambda: None,
+                wait_closed=AsyncMock(return_value=None),
+            ),
+            stdout=asyncio.StreamReader(),
+            stderr=asyncio.StreamReader(),
+        )
+        process.stdout.feed_eof()
+        process.stderr.feed_eof()
+        process.wait = AsyncMock(side_effect=lambda: process.returncode)
         captured.update({"cmd": cmd, "kwargs": kwargs, "process": process})
         return process
 

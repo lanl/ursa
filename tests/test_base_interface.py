@@ -12,6 +12,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.runtime import Runtime
 
+from tests.agents.utils import tool_call_message
 from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
 from ursa.tools.write_code_tool import write_code
 from ursa.util.memory_logger import AgentMemory
@@ -95,14 +96,9 @@ def _make_tool(name: str):
 
 
 class DummyAgentWithTools(AgentWithTools, BaseAgent):
-    def __init__(self, llm, tools=None, handle_tool_errors=True, **kwargs):
+    def __init__(self, handle_tool_errors=True, **kwargs):
         self.build_graph_calls = 0
-        super().__init__(
-            llm=llm,
-            tools=tools,
-            handle_tool_errors=handle_tool_errors,
-            **kwargs,
-        )
+        super().__init__(handle_tool_errors=handle_tool_errors, **kwargs)
 
     def _noop(self, state):
         return state
@@ -114,72 +110,54 @@ class DummyAgentWithTools(AgentWithTools, BaseAgent):
         self.graph.set_finish_point("noop")
 
 
-def test_agent_with_tools_defaults_to_empty_tool_dict(chat_model, tmp_path):
-    agent = DummyAgentWithTools(
-        llm=chat_model,
-        tools=None,
-        workspace=tmp_path,
-    )
+@pytest.fixture
+def tool_agent(chat_model, tmp_path):
+    def create(**kwargs):
+        return DummyAgentWithTools(llm=chat_model, workspace=tmp_path, **kwargs)
+
+    return create
+
+
+def test_agent_with_tools_defaults_to_empty_tool_dict(tool_agent):
+    agent = tool_agent(tools=None)
     assert agent.tools == {}
 
 
-def test_agent_with_tools_initializes_tool_mapping(chat_model, tmp_path):
+def test_agent_with_tools_initializes_tool_mapping(tool_agent):
     alpha = _make_tool("alpha")
-    agent = DummyAgentWithTools(
-        llm=chat_model,
-        tools=[alpha],
-        workspace=tmp_path,
-    )
+    agent = tool_agent(tools=[alpha])
     assert agent.tools == {"alpha": alpha}
 
 
-def test_agent_with_tools_add_tool_updates_mapping(chat_model, tmp_path):
+def test_agent_with_tools_add_tool_updates_mapping(tool_agent):
     alpha = _make_tool("alpha")
     beta = _make_tool("beta")
-    agent = DummyAgentWithTools(
-        llm=chat_model,
-        tools=[alpha],
-        workspace=tmp_path,
-    )
+    agent = tool_agent(tools=[alpha])
     agent.add_tool(beta)
     assert agent.tools == {"alpha": alpha, "beta": beta}
 
 
-def test_agent_with_tools_remove_tool_accepts_single_name(chat_model, tmp_path):
+def test_agent_with_tools_remove_tool_accepts_single_name(tool_agent):
     alpha = _make_tool("alpha")
     beta = _make_tool("beta")
-    agent = DummyAgentWithTools(
-        llm=chat_model,
-        tools=[alpha, beta],
-        workspace=tmp_path,
-    )
+    agent = tool_agent(tools=[alpha, beta])
     agent.remove_tool("alpha")
     assert agent.tools == {"beta": beta}
 
 
-def test_agent_with_tools_remove_tool_accepts_list(chat_model, tmp_path):
+def test_agent_with_tools_remove_tool_accepts_list(tool_agent):
     alpha = _make_tool("alpha")
     beta = _make_tool("beta")
     gamma = _make_tool("gamma")
-    agent = DummyAgentWithTools(
-        llm=chat_model,
-        tools=[alpha, beta, gamma],
-        workspace=tmp_path,
-    )
+    agent = tool_agent(tools=[alpha, beta, gamma])
     agent.remove_tool(["alpha", "gamma"])
     assert agent.tools == {"beta": beta}
 
 
-def test_agent_with_tools_setter_updates_mapping_and_rebuilds_graph(
-    chat_model, tmp_path
-):
+def test_agent_with_tools_setter_updates_mapping_and_rebuilds_graph(tool_agent):
     alpha = _make_tool("alpha")
     beta = _make_tool("beta")
-    agent = DummyAgentWithTools(
-        llm=chat_model,
-        tools=[alpha],
-        workspace=tmp_path,
-    )
+    agent = tool_agent(tools=[alpha])
     initial_calls = agent.build_graph_calls
     agent.tools = {"beta": beta}
     assert agent.tools == {"beta": beta}
@@ -188,44 +166,39 @@ def test_agent_with_tools_setter_updates_mapping_and_rebuilds_graph(
 
 
 @pytest.mark.parametrize("handle_tool_errors", [True, "Custom error message"])
-def test_handle_tool_errors_propagation(
-    chat_model, tmp_path, handle_tool_errors
-):
+def test_handle_tool_errors_propagation(tool_agent, handle_tool_errors):
     """Verify that handle_tool_errors is propagated to ToolNode."""
     # Dummy tool used only for adding to the agent; no need to run it
     alpha = _make_tool("alpha")
-    agent = DummyAgentWithTools(
-        llm=chat_model,
-        tools=[alpha],
-        workspace=tmp_path,
-        handle_tool_errors=handle_tool_errors,
-    )
+    agent = tool_agent(tools=[alpha], handle_tool_errors=handle_tool_errors)
     # The ToolNode internally stores the error handling strategy
     assert agent.tool_node._handle_tool_errors == handle_tool_errors
 
 
-@pytest.mark.asyncio
-async def test_agent_with_tools_add_mcp_tools_adds_all(chat_model, tmp_path):
+@pytest.mark.parametrize("tool_name", [None, "beta"])
+async def test_agent_with_tools_adds_requested_mcp_tools(tool_agent, tool_name):
     alpha = _make_tool("alpha")
     beta = _make_tool("beta")
     client = AsyncMock()
     client.get_tools.return_value = [alpha, beta]
 
-    agent = DummyAgentWithTools(llm=chat_model, workspace=tmp_path)
-    await agent.add_mcp_tools(client)
+    agent = tool_agent()
+    options = {} if tool_name is None else {"tool_name": tool_name}
+    await agent.add_mcp_tools(client, **options)
 
-    assert agent.tools == {"alpha": alpha, "beta": beta}
-    client.get_tools.assert_awaited_once()
+    expected = {"beta": beta} if tool_name else {"alpha": alpha, "beta": beta}
+    assert agent.tools == expected
+    if tool_name is None:
+        client.get_tools.assert_awaited_once()
 
 
-@pytest.mark.asyncio
 async def test_agent_with_tools_applies_mcp_tools_off_event_loop(
-    chat_model, tmp_path, monkeypatch
+    tool_agent, monkeypatch
 ):
     alpha = _make_tool("alpha")
     client = AsyncMock()
     client.get_tools.return_value = [alpha]
-    agent = DummyAgentWithTools(llm=chat_model, workspace=tmp_path)
+    agent = tool_agent()
     event_loop_thread = threading.get_ident()
     apply_threads = []
     original_add_tool = agent.add_tool
@@ -242,24 +215,8 @@ async def test_agent_with_tools_applies_mcp_tools_off_event_loop(
     assert apply_threads[0] != event_loop_thread
 
 
-@pytest.mark.asyncio
-async def test_agent_with_tools_add_mcp_tools_filters_by_name(
-    chat_model, tmp_path
-):
-    alpha = _make_tool("alpha")
-    beta = _make_tool("beta")
-    client = AsyncMock()
-    client.get_tools.return_value = [alpha, beta]
-
-    agent = DummyAgentWithTools(llm=chat_model, workspace=tmp_path)
-    await agent.add_mcp_tools(client, tool_name="beta")
-
-    assert agent.tools == {"beta": beta}
-
-
-@pytest.mark.asyncio
 async def test_agent_with_tools_returns_mcp_tool_provenance_without_mutation(
-    chat_model, tmp_path
+    tool_agent,
 ):
     alpha = _make_tool("alpha")
     beta = _make_tool("beta")
@@ -270,7 +227,7 @@ async def test_agent_with_tools_returns_mcp_tool_provenance_without_mutation(
         return [alpha] if server_name == "laboratory" else [beta]
 
     client.get_tools.side_effect = get_tools
-    agent = DummyAgentWithTools(llm=chat_model, workspace=tmp_path)
+    agent = tool_agent()
 
     sources = await agent.add_mcp_tools(client)
 
@@ -288,18 +245,13 @@ def test_tool_runtime_preserved_for_tool_node(chat_model, tmp_path: Path):
             messages = list(state["messages"])
             assert isinstance(runtime.context, AgentContext)
             messages.append(
-                AIMessage(
-                    content="",
-                    tool_calls=[
-                        {
-                            "id": "tool_call_write_code",
-                            "name": "write_code",
-                            "args": {
-                                "code": "print('runtime ok')",
-                                "filename": "runtime_check.py",
-                            },
-                        }
-                    ],
+                tool_call_message(
+                    "write_code",
+                    {
+                        "code": "print('runtime ok')",
+                        "filename": "runtime_check.py",
+                    },
+                    "tool_call_write_code",
                 )
             )
             return {"messages": messages}

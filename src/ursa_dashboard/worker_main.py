@@ -8,9 +8,11 @@ import os
 import sys
 import traceback
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ursa.runtime import AgentManager, AgentSpec
 from ursa.util.http import inject_truststore_into_ssl
 
 logger = logging.getLogger(__name__)
@@ -97,13 +99,8 @@ def _api_key_from_config(
     api_key_reference: SecretReference | None = None
     if api_key is not None:
         if isinstance(api_key, Mapping):
-            candidate = SecretReference.maybe_validate(dict(api_key))
-            if not isinstance(candidate, SecretReference):
-                raise ValueError(
-                    f"Literal {label} API keys are not accepted in worker config"
-                )
-            api_key_reference = candidate
-        else:
+            api_key_reference = SecretReference.maybe_validate(dict(api_key))
+        if not isinstance(api_key_reference, SecretReference):
             raise ValueError(
                 f"Literal {label} API keys are not accepted in worker config"
             )
@@ -126,44 +123,57 @@ def _api_key_from_config(
     return env_val
 
 
+def _model_kwargs(
+    config: dict[str, Any],
+    model: str,
+    *,
+    label: str,
+    api_key_override: str | None | object,
+) -> dict[str, Any]:
+    """Build provider options shared by chat and embedding initialization."""
+    raw_base_url = config.get("base_url")
+    base_url = str(raw_base_url).strip() if raw_base_url is not None else None
+    api_key = _api_key_from_config(
+        config, label=label, override=api_key_override
+    )
+    model_kwargs = config.get("model_kwargs") or {}
+    if not isinstance(model_kwargs, dict):
+        raise ValueError(f"{label.lower()}.model_kwargs must be a JSON object")
+    kwargs = {
+        **model_kwargs,
+        "model": _normalize_model(model, model_kwargs.get("model_provider")),
+    }
+    if api_key is not None:
+        kwargs["api_key"] = api_key
+    if base_url:
+        kwargs["base_url"] = base_url
+    return kwargs
+
+
 def _init_llm(
     llm_cfg: dict[str, Any],
     *,
     api_key_override: str | None | object = _UNSET,
 ):
     # Avoid importing langchain unless actually executing.
-    from langchain.chat_models import init_chat_model  # type: ignore
+    from langchain.chat_models import init_chat_model
 
     from ursa.util.http import build_httpx_async_client, build_httpx_client
     from ursa.util.model_metadata import load_model_context
     from ursa.util.openai_compat import with_responses_fallback
 
-    raw_base_url = llm_cfg.get("base_url")
-    base_url = str(raw_base_url).strip() if raw_base_url is not None else None
-
-    api_key = _api_key_from_config(
-        llm_cfg, label="LLM", override=api_key_override
-    )
-
-    model_kwargs = llm_cfg.get("model_kwargs") or {}
-    if not isinstance(model_kwargs, dict):
-        raise ValueError("llm.model_kwargs must be a JSON object")
-
-    model = _normalize_model(
+    kwargs = _model_kwargs(
+        llm_cfg,
         str(llm_cfg.get("model") or "openai:gpt-5.4-mini"),
-        model_kwargs.get("model_provider"),
+        label="LLM",
+        api_key_override=api_key_override,
     )
+    base_url = str(llm_cfg.get("base_url") or "").strip() or None
+    model_kwargs = llm_cfg.get("model_kwargs") or {}
+    model = str(kwargs["model"])
 
-    kwargs: dict[str, Any] = {**model_kwargs, "model": model}
-
-    if api_key is not None:
-        kwargs["api_key"] = api_key
-    if base_url:
-        kwargs["base_url"] = base_url
-
-    # Fixing an edge case where some users were getting connection errors with OpenAI's endpoint
-    #     Limited fix for edge case for now. Can remove if/when the dashboard config is brought
-    #     into compatibility with the TUI.
+    # Use the truststore-aware clients for OpenAI endpoints while retaining
+    # caller-supplied clients from model_kwargs.
     cond1 = base_url and "openai.com" in base_url
     cond2 = (
         model_kwargs.get("model_provider", "") == "openai"
@@ -192,41 +202,27 @@ def _init_embedding(
     snapshotted into the run record; the run manager delivers stored or
     environment-backed secrets through the worker's one-time stdin channel.
     """
-    from ursa.util.http import build_httpx_async_client, build_httpx_client
-
     model = str(embedding_cfg.get("model") or "").strip()
     if not model or model.lower() in {"none", "disabled"}:
         return None
 
-    from langchain.embeddings import init_embeddings  # type: ignore
+    from langchain.embeddings import init_embeddings
 
-    raw_base_url = embedding_cfg.get("base_url")
-    base_url = str(raw_base_url).strip() if raw_base_url is not None else None
+    from ursa.util.http import build_httpx_async_client, build_httpx_client
 
-    api_key = _api_key_from_config(
-        embedding_cfg, label="Embedding", override=api_key_override
+    kwargs = _model_kwargs(
+        embedding_cfg,
+        model,
+        label="Embedding",
+        api_key_override=api_key_override,
     )
-
+    base_url = str(embedding_cfg.get("base_url") or "").strip() or None
     model_kwargs = embedding_cfg.get("model_kwargs") or {}
-    if not isinstance(model_kwargs, dict):
-        raise ValueError("embedding.model_kwargs must be a JSON object")
-
-    kwargs: dict[str, Any] = {
-        **model_kwargs,
-        "model": _normalize_model(model, model_kwargs.get("model_provider")),
-    }
-    if api_key is not None:
-        kwargs["api_key"] = api_key
-    if base_url:
-        kwargs["base_url"] = base_url
-
-    # Fixing an edge case where some users were getting connection errors with OpenAI's endpoint
-    #     Limited fix for edge case for now. Can remove if/when the dashboard config is brought
-    #     into compatibility with the TUI.
+    normalized_model = str(kwargs["model"])
     cond1 = base_url and "openai.com" in base_url
     cond2 = (
         model_kwargs.get("model_provider", "") == "openai"
-        or model[:7] == "openai:"
+        or normalized_model[:7] == "openai:"
     )
     if cond1 or (not base_url and cond2):
         kwargs.setdefault("http_client", build_httpx_client(verify=True))
@@ -236,12 +232,6 @@ def _init_embedding(
         )
 
     return init_embeddings(**kwargs)
-
-
-def _maybe_run_async(result):
-    if asyncio.iscoroutine(result):
-        return asyncio.run(result)
-    return result
 
 
 def _read_secrets_stdin(*, max_bytes: int = 65_536) -> dict[str, str | None]:
@@ -268,6 +258,142 @@ def _redact_secrets(text: str, values: list[str]) -> str:
         if value:
             redacted = redacted.replace(value, "[REDACTED]")
     return redacted
+
+
+class _NoopSink:
+    """Dashboard adapters render progress to worker stdout directly."""
+
+    def emit(self, _event: Any) -> None:
+        return None
+
+
+@dataclass(slots=True)
+class _DashboardProcessAgent:
+    """Adapt one dashboard registry target to the shared agent protocol."""
+
+    adapter: Any
+    context: Any
+
+    async def ainvoke(
+        self, inputs: Any, config: Mapping[str, Any] | None = None
+    ) -> str:
+        del config
+        return await self.adapter.ainvoke(
+            ctx=self.context, inputs=inputs, sink=_NoopSink()
+        )
+
+
+async def _attach_mcp_tools(adapter: Any, mcp_cfg: Mapping[str, Any]) -> None:
+    """Install dashboard-configured MCP tools before an adapter invokes."""
+    mcp_enabled = bool(mcp_cfg.get("enabled", True))
+    mcp_servers = mcp_cfg.get("servers") or {}
+    if not mcp_enabled or not isinstance(mcp_servers, dict) or not mcp_servers:
+        return
+
+    from ursa.util.mcp import start_mcp_client
+
+    async def attach(agent_obj: Any, _ctx: Any, _inputs: Any) -> None:
+        client = start_mcp_client(mcp_servers)
+        targets = _agent_with_tools_targets(agent_obj)
+        if not targets:
+            logger.warning(
+                "No compatible AgentWithTools target found; skipping MCP tools"
+            )
+            return
+        for target in targets:
+            # Retain the client for the target's complete invocation lifetime.
+            setattr(target, "_ursa_dashboard_mcp_client", client)
+            await target.add_mcp_tools(client)
+
+    if hasattr(adapter, "set_setup_hook"):
+        adapter.set_setup_hook(attach)
+
+
+async def _dashboard_process_factory(
+    config: Mapping[str, Any], _context: Any
+) -> _DashboardProcessAgent:
+    """Build a dashboard target inside an AgentManager child process.
+
+    Configuration is intentionally plain data: the outer dashboard worker reads
+    secrets once from stdin, then the shared runner serializes the resulting
+    process specification without placing credentials in run metadata.
+    """
+    from ursa_dashboard.adapters import RunContext
+    from ursa_dashboard.registry import REGISTRY
+    from ursa_dashboard.settings import LLMSettings
+
+    agent_id = str(config["agent_id"])
+    try:
+        entry = REGISTRY[agent_id]
+    except KeyError:
+        raise ValueError(f"Unknown agent_id: {agent_id}") from None
+
+    llm_cfg = dict(config["llm"])
+    embedding_cfg = dict(config.get("embedding") or {})
+    credentials = dict(config.get("credentials") or {})
+    llm_disabled = bool(llm_cfg.get("disabled")) or str(
+        llm_cfg.get("model") or ""
+    ).strip().lower() in {"none", "disabled"}
+    llm = (
+        None
+        if llm_disabled
+        else await asyncio.to_thread(
+            _init_llm,
+            llm_cfg,
+            api_key_override=credentials.get("llm_api_key"),
+        )
+    )
+    embedding = await asyncio.to_thread(
+        _init_embedding,
+        embedding_cfg,
+        api_key_override=credentials.get("embedding_api_key"),
+    )
+
+    agent_init = dict(config.get("agent_init") or {})
+    agent_init.setdefault(
+        "tokens_before_summarize",
+        LLMSettings.model_validate(llm_cfg).tokens_before_summarize,
+    )
+    agent_init["thread_id"] = "ursa"
+    agent_init.setdefault("enable_metrics", True)
+    if embedding is not None:
+        if agent_init.get("rag_tools"):
+            agent_init.setdefault("rag_tool_embedding", embedding)
+        if agent_id == "rag_agent":
+            agent_init.setdefault("embedding", embedding)
+
+    adapter = entry.build_adapter(llm, agent_init)
+    await _attach_mcp_tools(adapter, dict(config.get("mcp") or {}))
+    return _DashboardProcessAgent(
+        adapter=adapter,
+        context=RunContext(
+            run_id=str(config["run_id"]),
+            agent_id=agent_id,
+            workspace_dir=Path(str(config["workspace_dir"])),
+        ),
+    )
+
+
+async def _run_with_shared_agent_manager(
+    config: Mapping[str, Any], inputs: Any
+) -> str:
+    """Run one dashboard target through the shared process runtime."""
+    manager = AgentManager()
+    runtime_id = "dashboard-run"
+    await manager.register(
+        AgentSpec(
+            runtime_id,
+            "ursa_dashboard.worker_main:_dashboard_process_factory",
+            config=config,
+        )
+    )
+    try:
+        result = await manager.invoke(runtime_id, inputs)
+    finally:
+        await manager.aclose()
+    if not isinstance(result, str):
+        raise TypeError("Dashboard agent returned a non-string result")
+    return result
 
 
 def main() -> int:
@@ -318,99 +444,36 @@ def main() -> int:
             except Exception:
                 mcp_cfg = {}
 
-        # Late import to keep worker startup cheap.
+        # Validate and translate dashboard UI input before sending it through
+        # the shared runner. Registry imports stay late to keep worker startup
+        # cheap and avoid loading every optional agent in the parent process.
         from ursa_dashboard.registry import REGISTRY
-        from ursa_dashboard.settings import LLMSettings
 
-        if args.agent_id not in REGISTRY:
+        try:
+            entry = REGISTRY[args.agent_id]
+        except KeyError:
             raise ValueError(f"Unknown agent_id: {args.agent_id}")
 
-        entry = REGISTRY[args.agent_id]
-
-        # Demo/support: allow runs without an LLM (for smoke tests / demo mode).
-        llm_disabled = bool(llm_cfg.get("disabled")) or str(
-            llm_cfg.get("model") or ""
-        ).strip().lower() in {"none", "disabled"}
-        llm = (
-            None
-            if llm_disabled
-            else _init_llm(
-                llm_cfg,
-                api_key_override=secrets_payload.get("llm_api_key"),
+        inputs_obj = entry.build_inputs(params)
+        final_text = asyncio.run(
+            _run_with_shared_agent_manager(
+                {
+                    "agent_id": args.agent_id,
+                    "run_id": args.run_id,
+                    "workspace_dir": args.workspace_dir,
+                    "agent_init": agent_init,
+                    "llm": llm_cfg,
+                    "embedding": embedding_cfg,
+                    "mcp": mcp_cfg,
+                    # This mapping exists only in memory in the outer worker
+                    # and its managed child; it is never written to the run
+                    # files alongside the non-secret configuration.
+                    "credentials": secrets_payload,
+                },
+                inputs_obj,
             )
         )
-        embedding = _init_embedding(
-            embedding_cfg,
-            api_key_override=secrets_payload.get("embedding_api_key"),
-        )
         secrets_payload = {}
-        # Ensure consistent cross-session threading.
-        agent_init = dict(agent_init)
-        agent_init.setdefault(
-            "tokens_before_summarize",
-            LLMSettings.model_validate(llm_cfg).tokens_before_summarize,
-        )
-        agent_init["thread_id"] = "ursa"
-        agent_init.setdefault("enable_metrics", True)
-        if embedding is not None:
-            if agent_init.get("rag_tools"):
-                agent_init.setdefault("rag_tool_embedding", embedding)
-            if args.agent_id == "rag_agent":
-                agent_init.setdefault("embedding", embedding)
-
-        adapter = entry.build_adapter(llm, agent_init)
-
-        # Optionally attach MCP tools to ExecutionAgent (or an executor inside workflows).
-        # MCP configuration is snapshotted into the run record at creation time, so changes
-        # apply to new runs only.
-        mcp_enabled = bool((mcp_cfg or {}).get("enabled", True))
-        mcp_servers = (mcp_cfg or {}).get("servers") or {}
-        if mcp_enabled and isinstance(mcp_servers, dict) and mcp_servers:
-
-            async def _attach_mcp_tools(agent_obj: Any) -> None:
-                from ursa.util.mcp import start_mcp_client  # type: ignore
-
-                client = start_mcp_client(mcp_servers)
-                targets = _agent_with_tools_targets(agent_obj)
-                if not targets:
-                    logger.warning(
-                        "No compatible AgentWithTools target found; "
-                        "skipping MCP tool attachment"
-                    )
-                    return
-
-                for tgt in targets:
-                    # Keep a reference so the client stays alive for the run.
-                    setattr(tgt, "_ursa_dashboard_mcp_client", client)
-                    await tgt.add_mcp_tools(client)
-
-            # Install hook if the adapter supports it.
-            if hasattr(adapter, "set_setup_hook"):
-                adapter.set_setup_hook(
-                    lambda agent_obj, _ctx, _inputs: _attach_mcp_tools(
-                        agent_obj
-                    )
-                )
-
-        inputs_obj = entry.build_inputs(params)
-
-        from ursa_dashboard.adapters import RunContext
-
-        ctx = RunContext(
-            run_id=args.run_id,
-            agent_id=args.agent_id,
-            workspace_dir=Path(args.workspace_dir),
-        )
-
-        # Adapter expects an EventSink, but for subprocess isolation we do not
-        # use the event stream from inside the worker. Provide a no-op sink.
-        class _NoopSink:
-            def emit(self, _event):
-                return None
-
-        final_text = asyncio.run(
-            adapter.ainvoke(ctx=ctx, inputs=inputs_obj, sink=_NoopSink())
-        )
 
         out = {
             "status": "succeeded",

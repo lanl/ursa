@@ -1,10 +1,23 @@
+import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import pytest
+from langchain.tools import ToolException, tool
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_openai import ChatOpenAI
 
+from tests.agents.utils import RecordingChatModel
 from ursa.agents.chat_agent import ChatAgent
 from ursa.tools.term_tool import get_supported_term_tools
+
+
+@pytest.fixture
+async def agent(chat_model, tmp_path):
+    agent = ChatAgent(llm=chat_model, workspace=tmp_path)
+    yield agent
+    await agent.stop_message_loop(descendants=True)
 
 
 async def test_chat_agent_appends_ai_response(chat_model, tmpdir):
@@ -91,3 +104,215 @@ async def test_chat_agent_dispatches_opt_in_terminal_tools(
         "Terminal ID: PyTerm01"
     ]
     assert result["messages"][-1].content == "Terminal operations complete."
+
+
+@pytest.mark.parametrize("parallel", [None, False, True])
+def test_chat_agent_preserves_openai_parallel_tool_setting(tmp_path, parallel):
+    options = {} if parallel is None else {"parallel_tool_calls": parallel}
+    model = ChatOpenAI(
+        model="gpt-5.4", api_key="test-key", model_kwargs=options
+    )
+
+    agent = ChatAgent(llm=model, workspace=tmp_path)
+
+    assert "parallel_tool_calls" not in agent.llm.kwargs
+    assert agent.llm.bound.model_kwargs == options
+
+
+async def test_chat_agent_runs_independent_tool_calls_concurrently(tmp_path):
+    """One tool-call turn uses LangGraph's concurrent ToolNode execution."""
+    model = RecordingChatModel(
+        script=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": f"{name}_independent_action",
+                        "args": {},
+                        "id": name,
+                        "type": "tool_call",
+                    }
+                    for name in ("first", "second")
+                ],
+            ),
+            AIMessage(content="Both independent actions completed."),
+        ]
+    )
+    first_started = asyncio.Event()
+    second_started = asyncio.Event()
+
+    @tool
+    async def first_independent_action() -> str:
+        """Complete the first independent action."""
+        first_started.set()
+        await asyncio.wait_for(second_started.wait(), timeout=5)
+        return "first complete"
+
+    @tool
+    async def second_independent_action() -> str:
+        """Complete the second independent action."""
+        second_started.set()
+        await asyncio.wait_for(first_started.wait(), timeout=5)
+        return "second complete"
+
+    agent = ChatAgent(llm=model, workspace=tmp_path)
+    agent.add_tool([first_independent_action, second_independent_action])
+
+    result = await agent.ainvoke("Run the independent actions together.")
+
+    assert (
+        result["messages"][-1].content == "Both independent actions completed."
+    )
+    assert [m.content for m in result["messages"] if m.type == "tool"] == [
+        "first complete",
+        "second complete",
+    ]
+
+
+async def test_spawn_startup_timeout_is_a_recoverable_tool_error(agent):
+    async def failed_start(_name, _message, _agent_type):
+        raise RuntimeError(
+            "Agent 'session:sub:root/slow' did not become ready within 120 seconds"
+        )
+
+    agent._process_runtime = SimpleNamespace(spawn_subagent=failed_start)
+    with pytest.raises(ToolException, match="did not become ready"):
+        await agent.tools["spawn_agent"].ainvoke({
+            "name": "slow",
+            "message": "Work on an independent task.",
+        })
+
+
+async def test_chat_agent_exposes_hierarchy_tools(agent):
+    assert {
+        "spawn_agent",
+        "send_message",
+        "wait_for",
+        "stop_agent",
+        "list_agents",
+    } <= agent.tools.keys()
+    spawned = await agent.tools["spawn_agent"].ainvoke({
+        "name": "reviewer",
+        "message": "Review the greeting.",
+    })
+
+    assert spawned.startswith("Spawned agent root/reviewer\n\n")
+    reviewer = agent.resolve_agent("root/reviewer")
+    assert reviewer.agent_path == "root/reviewer"
+
+    nested = await reviewer.tools["spawn_agent"].ainvoke({
+        "name": "critic",
+        "message": "Critique the greeting.",
+    })
+    assert nested.startswith("Spawned agent root/reviewer/critic\n\n")
+    assert (await reviewer.tools["list_agents"].ainvoke({})).splitlines() == [
+        "root",
+        "root/reviewer (self)",
+        "root/reviewer/critic",
+    ]
+
+    listing = await agent.tools["list_agents"].ainvoke({})
+    assert listing.splitlines() == [
+        "root (self)",
+        "root/reviewer",
+        "root/reviewer/critic",
+    ]
+
+    response = await agent.tools["send_message"].ainvoke({
+        "target": "root/reviewer",
+        "message": "Share a quick greeting.",
+    })
+    assert isinstance(response, str)
+    assert response
+
+
+async def test_spawn_agent_limit_becomes_recoverable_tool_error(
+    chat_model, tmp_path
+):
+    agent = ChatAgent(
+        llm=chat_model,
+        workspace=tmp_path,
+        subagent_max_agents=1,
+    )
+    await agent.tools["spawn_agent"].ainvoke({
+        "name": "first",
+        "message": "Handle the first task.",
+    })
+
+    with pytest.raises(ToolException) as error:
+        await agent.tools["spawn_agent"].ainvoke({
+            "name": "overflow",
+            "message": "This should not launch.",
+        })
+
+    assert "subagents.max_agents=1" in str(error.value)
+    assert agent.handle_tool_errors(error.value) == str(error.value)
+    assert [member.agent_path for member in agent.walk_agents()] == [
+        "root",
+        "root/first",
+    ]
+
+    listing = await agent.tools["list_agents"].ainvoke({})
+    assert "root/first" in listing
+    await agent.stop_message_loop(descendants=True)
+
+
+async def test_local_spawn_agent_rejects_host_agent_type_selection(agent):
+    with pytest.raises(ToolException, match="managed AgentRuntime"):
+        await agent.tools["spawn_agent"].ainvoke({
+            "name": "planner",
+            "message": "Create a plan.",
+            "agent_type": "plan",
+        })
+
+    assert [member.agent_path for member in agent.walk_agents()] == ["root"]
+
+
+@pytest.mark.parametrize(
+    "bridge_method", [None, "send_message", "wait_for_agent"]
+)
+async def test_unknown_agent_path_is_a_recoverable_hierarchy_tool_error(
+    agent, monkeypatch, bridge_method
+):
+    spawned = await agent.tools["spawn_agent"].ainvoke({
+        "name": "reviewer",
+        "message": "Review this normally.",
+    })
+    assert spawned.startswith("Spawned agent root/reviewer")
+    caller = agent.resolve_agent("root/reviewer")
+    tool_name = "send_message"
+    options = {"target": "../foo", "message": "Please review this."}
+    if bridge_method is not None:
+        caller = agent
+        error = RuntimeError("Unknown agent path '../foo' from 'root'")
+        bridge = SimpleNamespace(**{
+            bridge_method: AsyncMock(side_effect=error)
+        })
+        monkeypatch.setattr(agent, "_process_runtime", bridge, raising=False)
+        if bridge_method == "wait_for_agent":
+            tool_name = "wait_for"
+            options = {"target": "../foo", "timeout_seconds": 0}
+    with pytest.raises(ToolException, match="Unknown agent path"):
+        await caller.tools[tool_name].ainvoke(options)
+    if bridge_method is not None:
+        monkeypatch.delattr(agent, "_process_runtime")
+    assert "root/reviewer" in await agent.tools["list_agents"].ainvoke({})
+
+
+async def test_managed_hierarchy_tool_queues_broadcast_in_input_order(agent):
+    expected = [
+        f"Message queued for {target}."
+        for target in ("first", "missing", "second")
+    ]
+    send_to_runtime = AsyncMock(
+        return_value=[{"result": ack} for ack in expected]
+    )
+    agent._process_runtime = SimpleNamespace(send_messages=send_to_runtime)
+    response = await agent.tools["send_message"].ainvoke({
+        "target": ["first", "missing", "second"],
+        "message": "Review this.",
+    })
+    send_to_runtime.assert_awaited_once_with(
+        ["first", "missing", "second"], "Review this."
+    )
+    assert response.split("\n\n") == expected

@@ -1,5 +1,6 @@
 """Named workflow members can be resumed using the TUI/dashboard thread."""
 
+import asyncio
 from itertools import repeat
 from typing import TypedDict
 
@@ -66,7 +67,7 @@ async def test_persistent_symposium_resumes_named_agents_across_parent_threads(
         workspace=tmp_path / "seed",
         enable_metrics=False,
     )
-    seed.invoke("Remember the original measurement")
+    await seed.ainvoke("Remember the original measurement")
     seed.close()
     environment = AgentSymposiumEnvironment(
         llm,
@@ -151,7 +152,7 @@ async def test_persistent_symposium_resumes_named_agents_across_parent_threads(
         enable_metrics=False,
     )
     try:
-        resumed.invoke("Continue the research")
+        await resumed.ainvoke("Continue the research")
         prompt = request_text(llm.plain_requests[-1])
         assert "Remember the original measurement" in prompt
         assert "investigation 0" in prompt
@@ -282,7 +283,9 @@ async def test_named_team_delegation_uses_canonical_thread(
         if asynchronous:
             await delegation.ainvoke({"task": "Analyze the data"})
         else:
-            delegation.invoke({"task": "Analyze the data"})
+            await asyncio.to_thread(
+                delegation.invoke, {"task": "Analyze the data"}
+            )
         assert team.pi.thread_id == team.members["analyst"].thread_id == "ursa"
         assert_canonical_checkpoints(team.members["analyst"])
     finally:

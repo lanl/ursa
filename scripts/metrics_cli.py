@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 
 from ursa.observability.metrics_charts import (
+    _TOKEN_CATEGORIES,
     compute_attribution,
     compute_llm_wall_seconds,  # used in single-file tokens-rate
     extract_llm_token_stats,
@@ -320,20 +321,10 @@ def _aggregate_super_across_dirs(
     llm_total_all = 0.0
     tool_total_all = 0.0
 
-    token_totals_all: dict[str, int] = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "reasoning_tokens": 0,
-        "cached_tokens": 0,
-        "total_tokens": 0,
-    }
+    token_totals_all: dict[str, int] = dict.fromkeys(_TOKEN_CATEGORIES, 0)
     # IMPORTANT: dict-of-lists, not a flat list
     token_samples_all: dict[str, list[float]] = {
-        "input_tokens": [],
-        "output_tokens": [],
-        "reasoning_tokens": [],
-        "cached_tokens": [],
-        "total_tokens": [],
+        k: [] for k in _TOKEN_CATEGORIES
     }
 
     # context bounds
@@ -708,39 +699,15 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---------------- Specialized modes below ----------------
 
-    # --- thread-level interactive timeline ---
-    if args.chart == "timeline-html":
-        sessions = scan_directory_for_threads(dir_path)
-        if not sessions:
-            print("No thread_ids found in directory.")
-            return 1
-        if not args.thread:
-            print("Thread_IDs found:")
-            for i, (tid, count) in enumerate(
-                list_threads_summary(sessions), start=1
-            ):
-                print(f"{i}: {tid!r} [{count} agent JSONs]")
-            print("\nRe-run with: --chart timeline-html --thread <thread_id>")
-            return 0
-        runs = sessions.get(args.thread)
-        if not runs:
-            print(f"No JSONs found for thread_id: {args.thread!r}")
-            return 1
-        out_path = args.out or os.path.join(
-            dir_path, f"thread_{args.thread}_timeline.html"
-        )
-        saved = plot_thread_timeline_interactive(
-            runs, out_path, group_by=args.group_by
-        )
-        print(f"Saved interactive timeline to: {saved}")
-        return 0
-
-    # --- thread-level single chart routes ---
-    if args.chart in ("thread-agents-tokens", "thread-agents-tps"):
-        if not args.dir:
+    # Thread chart routes share discovery, selection and retry guidance.
+    if args.chart == "timeline-html" or args.chart.startswith("thread-"):
+        if (
+            args.chart in ("thread-agents-tokens", "thread-agents-tps")
+            and not args.dir
+        ):
             print(f"{args.chart} requires --dir and --thread")
             return 2
-        sessions = scan_directory_for_threads(args.dir)
+        sessions = scan_directory_for_threads(dir_path)
         if not sessions:
             print("No thread_ids found in directory.")
             return 1
@@ -752,12 +719,24 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{i}: {tid!r} [{count} agent JSONs]")
             print(f"\nRe-run with: --chart {args.chart} --thread <thread_id>")
             return 0
-
         runs = sessions.get(args.thread)
         if not runs:
             print(f"No JSONs found for thread_id: {args.thread!r}")
             return 1
 
+    # --- thread-level interactive timeline ---
+    if args.chart == "timeline-html":
+        out_path = args.out or os.path.join(
+            dir_path, f"thread_{args.thread}_timeline.html"
+        )
+        saved = plot_thread_timeline_interactive(
+            runs, out_path, group_by=args.group_by
+        )
+        print(f"Saved interactive timeline to: {saved}")
+        return 0
+
+    # --- thread-level single chart routes ---
+    if args.chart in ("thread-agents-tokens", "thread-agents-tps"):
         totals_by_agent, llm_secs_by_agent, thread_secs = (
             extract_thread_token_stats_by_agent(runs)
         )
@@ -798,23 +777,6 @@ def main(argv: list[str] | None = None) -> int:
         "thread-tokens-kde",
         "thread-tokens-rate",
     ):
-        sessions = scan_directory_for_threads(dir_path)
-        if not sessions:
-            print("No thread_ids found in directory.")
-            return 1
-        if not args.thread:
-            print("Thread_IDs found:")
-            for i, (tid, count) in enumerate(
-                list_threads_summary(sessions), start=1
-            ):
-                print(f"{i}: {tid!r} [{count} agent JSONs]")
-            print(f"\nRe-run with: --chart {args.chart} --thread <thread_id>")
-            return 0
-        runs = sessions.get(args.thread)
-        if not runs:
-            print(f"No JSONs found for thread_id: {args.thread!r}")
-            return 1
-
         os.makedirs(dir_path, exist_ok=True)
 
         if args.chart == "thread-lollipop":

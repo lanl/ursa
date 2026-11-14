@@ -3,14 +3,28 @@ import asyncio
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
-from tests.cli._app_fakes import FakeHITL, emit_event
-from tests.tui.utils import eventually
+from tests.cli._app_helpers import (
+    assert_eventually,
+    emit_event,
+    emit_tool_start,
+    make_runtime,
+)
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import CommandSafetyIndicator, RunCommandCard
 from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.turn import Turn
 from ursa.cli.tui.widgets import ActivityIndicator
 from ursa.util.events import DEFAULT_EVENT_NAME
+
+
+async def _command_event(turn, phase, query, command_id, **details):
+    await turn.event({
+        "tool": "run_command",
+        "phase": phase,
+        "query": query,
+        "tool_call_id": command_id,
+        **details,
+    })
 
 
 def test_long_command_preview_keeps_top_and_bottom_eight_lines():
@@ -26,20 +40,11 @@ def test_long_command_preview_keeps_top_and_bottom_eight_lines():
 
 
 async def test_overlapping_commands_stay_compact_and_complete_independently(
-    tmp_path,
+    event_turn,
 ):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("run both", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
+    async with event_turn("run both", size=(100, 36)) as (pilot, turn):
         for command_id, query in (("one", "sleep 1"), ("two", "sleep 2")):
-            await turn.event({
-                "tool": "run_command",
-                "phase": "start",
-                "query": query,
-                "tool_call_id": command_id,
-            })
+            await _command_event(turn, "start", query, command_id)
         await pilot.pause()
 
         cards = list(turn.query(RunCommandCard))
@@ -50,17 +55,11 @@ async def test_overlapping_commands_stay_compact_and_complete_independently(
             for card in cards
         )
 
-        await turn.event({
-            "tool": "run_command",
-            "phase": "end",
-            "query": "sleep 1",
-            "tool_call_id": "one",
-            "returncode": 0,
-            "result": "",
-        })
+        await _command_event(
+            turn, "end", "sleep 1", "one", returncode=0, result=""
+        )
         await pilot.pause()
-        await eventually(pilot, lambda: cards[0].completed)
-        assert cards[0].completed
+        await assert_eventually(pilot, lambda: cards[0].completed)
         assert cards[0].returncode == 0
         assert not cards[1].completed
         assert (
@@ -69,8 +68,281 @@ async def test_overlapping_commands_stay_compact_and_complete_independently(
         )
 
 
+async def test_identical_concurrent_commands_are_correlated_by_run_id(
+    app, event_turn
+):
+    async with event_turn("run both", size=(100, 36)) as (pilot, turn):
+        handler = TextualEventHandler(app, turn)
+        for run_id in ("one", "two"):
+            await emit_tool_start(
+                handler, "run_command", run_id, query="echo same"
+            )
+        await handler.on_tool_error(RuntimeError("first failed"), run_id="one")
+        await handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "tool": "run_command",
+                "stage": "safety_check",
+                "query": "echo same",
+                "safe": True,
+                "tool_call_id": "two",
+            },
+            run_id="child-event-run",
+        )
+        await handler.on_tool_end("second output", run_id="two")
+        await pilot.pause()
+
+        first, second = turn.query(RunCommandCard)
+        assert first.query_one(CommandSafetyIndicator).status == "unavailable"
+        assert first.query_one(".command-compact-state", Static).content == "✗"
+        assert second.query_one(CommandSafetyIndicator).status == "passed"
+        assert second.query_one(".command-compact-state", Static).content == "✓"
+        assert (
+            second.query_one(".command-output", Static).content.code
+            == "second output"
+        )
+
+
+async def test_command_completion_finishes_pending_safety_indicator(event_turn):
+    async with event_turn("run it", size=(100, 36)) as (pilot, turn):
+        await _command_event(turn, "start", "uptime", "uptime")
+        await _command_event(
+            turn, "end", "uptime", "uptime", result="up 10 days"
+        )
+        await pilot.pause()
+
+        safety = turn.query_one(CommandSafetyIndicator)
+        assert safety.status == "passed"
+
+
+async def test_solitary_command_after_overlap_returns_to_detailed_layout(
+    event_turn,
+):
+    async with event_turn("run commands", size=(100, 36)) as (pilot, turn):
+        for command_id in ("one", "two"):
+            await _command_event(turn, "start", command_id, command_id)
+        for command_id in ("one", "two"):
+            await _command_event(
+                turn, "end", command_id, command_id, returncode=0, result="done"
+            )
+        await _command_event(turn, "start", "three", "three")
+        await pilot.pause()
+
+        first, second, third = turn.query(RunCommandCard)
+        assert first.multi_command
+        assert second.multi_command
+        assert not third.multi_command
+        assert third.query_one(".command-compact").has_class("hidden")
+
+
+async def test_run_command_card_tracks_safety_and_collapses_on_result(tmp_path):
+    runtime = make_runtime(tmp_path)
+    pass_safety = asyncio.Event()
+    return_result = asyncio.Event()
+    return_second = asyncio.Event()
+    command = "\n".join(f"echo line-{index}" for index in range(1, 7))
+
+    async def run_agent(_name, _prompt, callbacks=None):
+        handler = callbacks[0]
+        await emit_tool_start(
+            handler, "run_command", "command-1", query=command
+        )
+        await pass_safety.wait()
+        await emit_event(
+            handler,
+            {
+                "tool": "run_command",
+                "stage": "safety_check",
+                "message": "Command passed safety check",
+                "query": command,
+                "safe": True,
+                "tool_call_id": "command-1",
+            },
+        )
+        await return_result.wait()
+        await handler.on_tool_end(
+            "STDOUT:\ncommand output\nSTDERR:\n", run_id="command-1"
+        )
+        await emit_tool_start(
+            handler, "run_command", "command-2", query="echo second"
+        )
+        await emit_event(
+            handler,
+            {
+                "tool": "run_command",
+                "stage": "safety_check",
+                "message": "Command passed safety check",
+                "query": "echo second",
+                "safe": True,
+                "tool_call_id": "command-2",
+            },
+        )
+        await return_second.wait()
+        await handler.on_tool_end(
+            "STDOUT:\nsecond output\nSTDERR:\n", run_id="command-2"
+        )
+        return "Finished"
+
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.press("r", "u", "n", "enter")
+        await pilot.pause()
+        card = app.query_one(RunCommandCard)
+        source = card.query_one(".command-source", Static)
+        safety = card.query_one(CommandSafetyIndicator)
+        assert len(source.content.code.splitlines()) == 6
+        assert (
+            str(safety.query_one(".activity-text", Static).content)
+            == "Running safety check"
+        )
+
+        pass_safety.set()
+        await pilot.pause()
+        await assert_eventually(pilot, lambda: safety.status == "passed")
+
+        return_result.set()
+        await pilot.pause()
+        await assert_eventually(
+            pilot, lambda: source.content.code == "echo line-1 …"
+        )
+        output = card.query_one(".command-output", Static)
+        assert output.content.code == "command output"
+        cards = list(app.query(RunCommandCard))
+        assert len(cards) == 2
+        assert [item.command for item in cards] == [command, "echo second"]
+        assert output.has_class("hidden")
+        assert not card.query_one(".command-compact").has_class("hidden")
+
+        return_second.set()
+        await pilot.pause()
+        assert card.returncode is None
+        assert card.query_one(".command-compact-state", Static).content == "✓"
+        newest = cards[-1]
+        assert not newest.query_one(".command-compact").has_class("hidden")
+        assert newest.query_one(".command-output").has_class("hidden")
+
+        await pilot.press("ctrl+o")
+        assert not output.has_class("hidden")
+        assert source.content.code == command
+
+        await pilot.press("ctrl+o")
+        assert output.has_class("hidden")
+        assert source.content.code == "echo line-1 …"
+
+
+async def test_single_command_output_preserves_top_and_bottom_until_expanded(
+    tmp_path,
+):
+    runtime = make_runtime(tmp_path)
+    full_output = "\n".join(f"line {index}" for index in range(1, 31))
+
+    async def run_agent(_name, _prompt, callbacks=None):
+        handler = callbacks[0]
+        await emit_tool_start(
+            handler, "run_command", "long-output", query="generate output"
+        )
+        await emit_event(
+            handler,
+            {
+                "tool": "run_command",
+                "stage": "safety_check",
+                "query": "generate output",
+                "safe": True,
+                "tool_call_id": "long-output",
+            },
+        )
+        await handler.on_tool_end(full_output, run_id="long-output")
+        return "Finished"
+
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.press("r", "u", "n", "enter")
+        await pilot.pause()
+        output = app.query_one(".command-output", Static)
+        preview = output.content.code
+        assert len(preview.splitlines()) == 9
+        assert "line 1\n" in preview
+        assert "line 4\n… 22 lines omitted …\nline 27" in preview
+        assert preview.endswith("line 30")
+
+        await pilot.press("ctrl+o")
+        assert output.content.code == full_output
+
+
+async def test_collapsed_commands_retain_execution_outcomes(tmp_path):
+    runtime = make_runtime(tmp_path)
+
+    async def run_agent(_name, _prompt, callbacks=None):
+        handler = callbacks[0]
+
+        async def command(
+            run_id,
+            query,
+            *,
+            safe=True,
+            returncode=None,
+            output="",
+        ):
+            await emit_tool_start(handler, "run_command", run_id, query=query)
+            await emit_event(
+                handler,
+                {
+                    "tool": "run_command",
+                    "stage": "safety_check",
+                    "query": query,
+                    "safe": safe,
+                    "reason": "Rejected" if not safe else "Allowed",
+                    "tool_call_id": run_id,
+                },
+            )
+            if returncode is not None:
+                await emit_event(
+                    handler,
+                    {
+                        "tool": "run_command",
+                        "stage": "execute",
+                        "phase": "end",
+                        "query": query,
+                        "returncode": returncode,
+                        "tool_call_id": run_id,
+                    },
+                )
+            await handler.on_tool_end(output, run_id=run_id)
+
+        await command("empty", "true", returncode=0)
+        await command("failed", "false", returncode=2, output="failed")
+        await command("unsafe", "dangerous", safe=False, output="Rejected")
+        return "Finished"
+
+    runtime.run_agent = run_agent
+    app = UrsaTextualApp(runtime)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.press("r", "u", "n", "enter")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cards = list(app.query(RunCommandCard))
+        assert [card.completed for card in cards] == [True, True, True]
+        assert [card.returncode for card in cards] == [0, 2, None]
+        assert [card.safety_failed for card in cards] == [False, False, True]
+        assert [
+            card.query_one(".command-compact-state", Static).content
+            for card in cards
+        ] == ["✓", "✗", "⚔️"]
+        assert all(
+            not card.query_one(".command-compact").has_class("hidden")
+            for card in cards
+        )
+        assert cards[-1].query_one(CommandSafetyIndicator).status == "failed"
+
+
 async def test_identical_commands_are_correlated_by_tool_call_id(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("run both", tmp_path)
@@ -111,7 +383,7 @@ async def test_identical_commands_are_correlated_by_tool_call_id(tmp_path):
 
 
 async def test_command_events_share_card_by_tool_call_id(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
+    app = UrsaTextualApp(make_runtime(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         turn = Turn("run it", tmp_path)
@@ -144,291 +416,3 @@ async def test_command_events_share_card_by_tool_call_id(tmp_path):
         assert (
             cards[0].query_one(".command-output", Static).content.code == "once"
         )
-
-
-async def test_command_completion_finishes_pending_safety_indicator(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("run it", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        await turn.event({
-            "tool": "run_command",
-            "phase": "start",
-            "query": "uptime",
-            "tool_call_id": "uptime",
-        })
-        await turn.event({
-            "tool": "run_command",
-            "phase": "end",
-            "query": "uptime",
-            "tool_call_id": "uptime",
-            "result": "up 10 days",
-        })
-        await pilot.pause()
-
-        safety = turn.query_one(CommandSafetyIndicator)
-        assert safety.status == "passed"
-
-
-async def test_solitary_command_after_overlap_returns_to_detailed_layout(
-    tmp_path,
-):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("run commands", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        for command_id in ("one", "two"):
-            await turn.event({
-                "tool": "run_command",
-                "phase": "start",
-                "query": command_id,
-                "tool_call_id": command_id,
-            })
-        for command_id in ("one", "two"):
-            await turn.event({
-                "tool": "run_command",
-                "phase": "end",
-                "query": command_id,
-                "tool_call_id": command_id,
-                "returncode": 0,
-                "result": "done",
-            })
-        await turn.event({
-            "tool": "run_command",
-            "phase": "start",
-            "query": "three",
-            "tool_call_id": "three",
-        })
-        await pilot.pause()
-
-        first, second, third = turn.query(RunCommandCard)
-        assert first.multi_command
-        assert second.multi_command
-        assert not third.multi_command
-        assert third.query_one(".command-compact").has_class("hidden")
-
-
-async def test_run_command_card_tracks_safety_and_collapses_on_result(tmp_path):
-    hitl = FakeHITL(tmp_path)
-    pass_safety = asyncio.Event()
-    return_result = asyncio.Event()
-    return_second = asyncio.Event()
-    command = "\n".join(f"echo line-{index}" for index in range(1, 7))
-
-    async def run_agent(_name, _prompt, callbacks=None):
-        handler = callbacks[0]
-        await handler.on_tool_start(
-            {"name": "run_command"},
-            "",
-            run_id="command-1",
-            tool_call_id="command-1",
-            inputs={"query": command},
-        )
-        await pass_safety.wait()
-        await emit_event(
-            handler,
-            {
-                "tool": "run_command",
-                "stage": "safety_check",
-                "message": "Command passed safety check",
-                "query": command,
-                "safe": True,
-                "tool_call_id": "command-1",
-            },
-        )
-        await return_result.wait()
-        await handler.on_tool_end(
-            "STDOUT:\ncommand output\nSTDERR:\n", run_id="command-1"
-        )
-        await handler.on_tool_start(
-            {"name": "run_command"},
-            "",
-            run_id="command-2",
-            tool_call_id="command-2",
-            inputs={"query": "echo second"},
-        )
-        await emit_event(
-            handler,
-            {
-                "tool": "run_command",
-                "stage": "safety_check",
-                "message": "Command passed safety check",
-                "query": "echo second",
-                "safe": True,
-                "tool_call_id": "command-2",
-            },
-        )
-        await return_second.wait()
-        await handler.on_tool_end(
-            "STDOUT:\nsecond output\nSTDERR:\n", run_id="command-2"
-        )
-        return "Finished"
-
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        await pilot.press("r", "u", "n", "enter")
-        await pilot.pause()
-        card = app.query_one(RunCommandCard)
-        source = card.query_one(".command-source", Static)
-        safety = card.query_one(CommandSafetyIndicator)
-        assert len(source.content.code.splitlines()) == 6
-        assert (
-            str(safety.query_one(".activity-text", Static).content)
-            == "Running safety check"
-        )
-
-        pass_safety.set()
-        await pilot.pause()
-        await eventually(pilot, lambda: safety.status == "passed")
-        assert safety.status == "passed"
-
-        return_result.set()
-        await pilot.pause()
-        await eventually(pilot, lambda: source.content.code == "echo line-1 …")
-        assert source.content.code == "echo line-1 …"
-        output = card.query_one(".command-output", Static)
-        assert output.content.code == "command output"
-        cards = list(app.query(RunCommandCard))
-        assert len(cards) == 2
-        assert [item.command for item in cards] == [command, "echo second"]
-        assert output.has_class("hidden")
-        assert not card.query_one(".command-compact").has_class("hidden")
-
-        return_second.set()
-        await pilot.pause()
-        assert card.returncode is None
-        assert card.query_one(".command-compact-state", Static).content == "✓"
-        newest = cards[-1]
-        assert not newest.query_one(".command-compact").has_class("hidden")
-        assert newest.query_one(".command-output").has_class("hidden")
-
-        await pilot.press("ctrl+o")
-        assert not output.has_class("hidden")
-        assert source.content.code == command
-
-        await pilot.press("ctrl+o")
-        assert output.has_class("hidden")
-        assert source.content.code == "echo line-1 …"
-
-
-async def test_single_command_output_preserves_top_and_bottom_until_expanded(
-    tmp_path,
-):
-    hitl = FakeHITL(tmp_path)
-    full_output = "\n".join(f"line {index}" for index in range(1, 31))
-
-    async def run_agent(_name, _prompt, callbacks=None):
-        handler = callbacks[0]
-        await handler.on_tool_start(
-            {"name": "run_command"},
-            "",
-            run_id="long-output",
-            tool_call_id="long-output",
-            inputs={"query": "generate output"},
-        )
-        await emit_event(
-            handler,
-            {
-                "tool": "run_command",
-                "stage": "safety_check",
-                "query": "generate output",
-                "safe": True,
-                "tool_call_id": "long-output",
-            },
-        )
-        await handler.on_tool_end(full_output, run_id="long-output")
-        return "Finished"
-
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        await pilot.press("r", "u", "n", "enter")
-        await pilot.pause()
-        output = app.query_one(".command-output", Static)
-        preview = output.content.code
-        assert len(preview.splitlines()) == 9
-        assert "line 1\n" in preview
-        assert "line 4\n… 22 lines omitted …\nline 27" in preview
-        assert preview.endswith("line 30")
-
-        await pilot.press("ctrl+o")
-        assert output.content.code == full_output
-
-
-async def test_collapsed_commands_retain_execution_outcomes(tmp_path):
-    hitl = FakeHITL(tmp_path)
-
-    async def run_agent(_name, _prompt, callbacks=None):
-        handler = callbacks[0]
-
-        async def command(
-            run_id,
-            query,
-            *,
-            safe=True,
-            returncode=None,
-            output="",
-        ):
-            await handler.on_tool_start(
-                {"name": "run_command"},
-                "",
-                run_id=run_id,
-                tool_call_id=run_id,
-                inputs={"query": query},
-            )
-            await emit_event(
-                handler,
-                {
-                    "tool": "run_command",
-                    "stage": "safety_check",
-                    "query": query,
-                    "safe": safe,
-                    "reason": "Rejected" if not safe else "Allowed",
-                    "tool_call_id": run_id,
-                },
-            )
-            if returncode is not None:
-                await emit_event(
-                    handler,
-                    {
-                        "tool": "run_command",
-                        "stage": "execute",
-                        "phase": "end",
-                        "query": query,
-                        "returncode": returncode,
-                        "tool_call_id": run_id,
-                    },
-                )
-            await handler.on_tool_end(output, run_id=run_id)
-
-        await command("empty", "true", returncode=0)
-        await command("failed", "false", returncode=2, output="failed")
-        await command("unsafe", "dangerous", safe=False, output="Rejected")
-        return "Finished"
-
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        await pilot.press("r", "u", "n", "enter")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        cards = list(app.query(RunCommandCard))
-        assert [card.completed for card in cards] == [True, True, True]
-        assert [card.returncode for card in cards] == [0, 2, None]
-        assert [card.safety_failed for card in cards] == [False, False, True]
-        assert [
-            card.query_one(".command-compact-state", Static).content
-            for card in cards
-        ] == ["✓", "✗", "⚔️"]
-        assert all(
-            not card.query_one(".command-compact").has_class("hidden")
-            for card in cards
-        )
-        assert cards[-1].query_one(CommandSafetyIndicator).status == "failed"

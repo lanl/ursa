@@ -7,35 +7,16 @@ orphan the user message in the transcript, and the favicon must resolve.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
-from fastapi.testclient import TestClient
 
-from ursa import security
-from ursa_dashboard.app import create_app
+from tests.dashboard import test_session_workspaces
 from ursa_dashboard.credentials import (
     CredentialConfigurationError,
     MemoryCredentialStore,
     resolve_api_key,
 )
 
-
-@pytest.fixture
-def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "ursa-cache")
-    app = create_app(credential_store=MemoryCredentialStore())
-    with TestClient(app) as test_client:
-        yield test_client, tmp_path
-
-
-def _make_session(test_client) -> str:
-    response = test_client.post(
-        "/sessions",
-        json={"agent_id": "chat_agent", "workspace_mode": "temporary"},
-    )
-    assert response.status_code == 200
-    return response.json()["session"]["session_id"]
+client = test_session_workspaces.client
 
 
 def test_fresh_install_stored_source_names_the_real_problem():
@@ -68,7 +49,12 @@ def test_mismatched_stored_reference_stays_invalid():
 
 def test_failed_send_does_not_orphan_the_user_message(client):
     test_client, _ = client
-    session_id = _make_session(test_client)
+    response = test_client.post(
+        "/sessions",
+        json={"agent_id": "chat_agent", "workspace_mode": "temporary"},
+    )
+    assert response.status_code == 200
+    session_id = response.json()["session"]["session_id"]
 
     response = test_client.post(
         f"/sessions/{session_id}/message", json={"text": "hello"}

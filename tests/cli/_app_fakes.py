@@ -6,7 +6,6 @@ from ursa.cli.config import (
     EmbModelConfig,
     InferenceProviderConfig,
 )
-from ursa.util.events import DEFAULT_EVENT_NAME
 
 
 class FakeAgent:
@@ -41,15 +40,10 @@ class FakeHITL:
             ).resolve_inference_provider(inference_providers),
             agent_name=None,
         )
-        self.calls = []
         self.model_changes = []
         self.inference_provider = "openai"
         self.embedding_inference_provider = "openai"
         self.closed = False
-
-    async def run_agent(self, name, prompt, callbacks=None):
-        self.calls.append((name, prompt))
-        return "Finished"
 
     async def aclose(self):
         self.closed = True
@@ -79,10 +73,3 @@ class FakeHITL:
         self.embedding_inference_provider = (
             embedding_config.inference_provider if embedding_config else None
         )
-
-
-async def emit_event(handler, payload=None, **details):
-    await handler.on_custom_event(
-        DEFAULT_EVENT_NAME,
-        details if payload is None else payload,
-    )

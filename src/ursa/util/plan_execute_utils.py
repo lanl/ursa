@@ -222,8 +222,7 @@ def resolve_llm_kwargs_for_agent(
     agents = models_cfg.get("agents") or {}
 
     # Start with global defaults
-    merged = {}
-    merged = deep_merge_dicts(merged, defaults.get("params") or {})
+    merged = deep_merge_dicts({}, defaults.get("params") or {})
 
     # Apply default profile
     default_profile_name = defaults.get("profile")
@@ -463,11 +462,8 @@ def timed_input_with_countdown(prompt: str, timeout: int) -> str | None:
     except Exception:
         is_tty = False
 
-    if not is_tty:
-        # Non-interactive: default immediately
-        return None
-    if timeout <= 0:
-        # Timeout disabled: default immediately
+    if not is_tty or timeout <= 0:
+        # Non-interactive or timeout disabled: default immediately.
         return None
 
     deadline = time.time() + timeout
@@ -516,16 +512,12 @@ def snapshot_sqlite_db(src_path: Path, dst_path: Path) -> None:
         with dst:
             src.backup(dst)
     finally:
-        try:
-            if src:
-                src.close()
-        except Exception:
-            pass
-        try:
-            if dst:
-                dst.close()
-        except Exception:
-            pass
+        for connection in (src, dst):
+            try:
+                if connection:
+                    connection.close()
+            except Exception:
+                pass
 
 
 # ============================================================================

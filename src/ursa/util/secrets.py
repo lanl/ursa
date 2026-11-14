@@ -9,7 +9,8 @@ from functools import cache
 from os import environ
 from pathlib import Path
 from threading import Lock
-from typing import Annotated, Any, TextIO
+from typing import Annotated, Any, Self, TextIO
+from warnings import warn
 
 import keyring
 from filelock import FileLock
@@ -217,6 +218,7 @@ class SecretReference(BaseModel):
 
     env: Annotated[str | None, AfterValidator(_non_blank)] = None
     keyring: bool | Annotated[str, AfterValidator(_non_blank)] | None = None
+    template: str = "%s"
 
     @classmethod
     def maybe_validate(cls, value: Any, **kwargs) -> Any:
@@ -235,13 +237,21 @@ class SecretReference(BaseModel):
             raise ValueError("a secret reference requires exactly one source")
         return self
 
+    @model_validator(mode="after")
+    def _validate_template(self):
+        if self.template.count("%s") != 1:
+            raise ValueError("secret template must contain exactly one '%s'")
+        return self
+
     def resolve(
         self, default_keyring_username: str | None = None
     ) -> SecretStr | None:
         """Resolve the reference, returning ``None`` for a missing env value."""
         if self.env is not None:
             value = environ.get(self.env)
-            return SecretStr(value) if value is not None else None
+            return (
+                SecretStr(self.template % value) if value is not None else None
+            )
 
         username = self.keyring_username(default_keyring_username)
         if not username:
@@ -249,7 +259,7 @@ class SecretReference(BaseModel):
         value = get_keyring().get_password(KEYRING_SERVICE, username)
         if value is None:
             raise ValueError(f"No secret found in the keyring for '{username}'")
-        return SecretStr(value)
+        return SecretStr(self.template % value)
 
     def keyring_username(
         self, default_username: str | None = None
@@ -258,6 +268,14 @@ class SecretReference(BaseModel):
         if isinstance(self.keyring, str):
             return self.keyring
         return default_username if self.keyring else None
+
+    def bind_keyring_name(self, name: str) -> Self:
+        """Bind the contextual ``keyring: true`` shorthand to one account."""
+        if self.keyring is not True:
+            return self
+        normalized = _non_blank(name)
+        assert normalized is not None
+        return self.model_copy(update={"keyring": normalized})
 
     def get_secret_value(
         self, default_keyring_username: str | None = None
@@ -268,23 +286,15 @@ class SecretReference(BaseModel):
 
 
 class SecretTemplate(SecretReference):
-    """A secret reference rendered into a string at point of use."""
+    """Deprecated compatibility name for :class:`SecretReference`."""
 
-    template: str = "%s"
-
-    @model_validator(mode="after")
-    def _validate_template(self):
-        if self.template.count("%s") != 1:
-            raise ValueError("secret template must contain exactly one '%s'")
-        return self
-
-    def get_secret_value(
-        self, default_keyring_username: str | None = None
-    ) -> str | None:
-        secret = super().get_secret_value(default_keyring_username)
-        if secret is None:
-            return None
-        return self.template % secret
+    def __init__(self, **data: Any) -> None:
+        warn(
+            "SecretTemplate is deprecated; use SecretReference instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(**data)
 
 
 def iter_secret_references(
@@ -293,7 +303,7 @@ def iter_secret_references(
     default_username: str | None = None,
 ) -> Iterator[tuple[tuple[str, ...], SecretReference, str | None]]:
     """Yield secret references found in a loaded configuration value."""
-    value = SecretTemplate.maybe_validate(value)
+    value = SecretReference.maybe_validate(value)
     if isinstance(value, SecretReference):
         yield path, value, default_username
     elif isinstance(value, BaseModel):

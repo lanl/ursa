@@ -2,6 +2,7 @@ import asyncio
 import threading
 from types import SimpleNamespace
 
+from tests.cli._app_helpers import tool_wrapper
 from ursa.cli.tui.agent_info import load_agent_details, load_agent_tools
 
 
@@ -29,12 +30,7 @@ async def test_agent_details_preserve_runtime_order_without_loading_agents():
             tool_sources={"search": "laboratory"},
             _agent=None,
         ),
-        "chat": SimpleNamespace(
-            description="Answer questions.",
-            config={},
-            tool_sources={},
-            _agent=None,
-        ),
+        "chat": tool_wrapper("Answer questions."),
     }
     calls = []
 
@@ -44,9 +40,9 @@ async def test_agent_details_preserve_runtime_order_without_loading_agents():
         wrapper._agent = SimpleNamespace(tools={"search": Tool()})
         return wrapper
 
-    hitl = SimpleNamespace(agents=wrappers, get_agent=get_agent)
+    runtime = SimpleNamespace(agents=wrappers, get_agent=get_agent)
 
-    details = load_agent_details(hitl)
+    details = load_agent_details(runtime)
 
     assert [agent.name for agent in details] == ["execute", "chat"]
     assert calls == []
@@ -54,7 +50,7 @@ async def test_agent_details_preserve_runtime_order_without_loading_agents():
     assert details[0].tools == ()
     assert not details[0].tools_loaded
 
-    tools = await load_agent_tools(hitl, "execute")
+    tools = await load_agent_tools(runtime, "execute")
 
     assert calls == ["execute"]
     assert [tool.name for tool in tools] == ["search"]
@@ -63,12 +59,7 @@ async def test_agent_details_preserve_runtime_order_without_loading_agents():
 
 
 async def test_agent_details_expose_tools_from_initialized_agent():
-    wrapper = SimpleNamespace(
-        description="Execute work.",
-        config={},
-        tool_sources={},
-        _agent=SimpleNamespace(tools={"search": Tool()}),
-    )
+    wrapper = tool_wrapper("Execute work.", {"search": Tool()})
     calls = []
 
     async def get_agent(name):
@@ -99,12 +90,7 @@ def test_initialized_agent_snapshot_does_not_generate_tool_schemas():
 
     tool = Tool()
     tool.args_schema = UnexpectedSchema
-    wrapper = SimpleNamespace(
-        description="Initialized agent",
-        config={},
-        tool_sources={},
-        _agent=SimpleNamespace(tools={"search": tool}),
-    )
+    wrapper = tool_wrapper("Initialized agent", {"search": tool})
 
     details = load_agent_details(SimpleNamespace(agents={"execute": wrapper}))
 

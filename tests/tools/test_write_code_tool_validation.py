@@ -5,6 +5,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.event_fixtures import (
+    stub_event_dispatch as stub_event_dispatch,
+)
 from ursa.agents.base import AgentContext
 from ursa.tools.write_code_tool import (
     _allow_unsafe_writes_enabled,
@@ -15,19 +18,12 @@ from ursa.tools.write_code_tool import (
 )
 
 
-@pytest.fixture(autouse=True)
-def stub_event_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "ursa.util.events.dispatch_custom_event",
-        lambda *args, **kwargs: None,
-    )
-
-
 @pytest.fixture
-def mock_runtime():
+def mock_runtime(tmp_path):
     """Create a mock ToolRuntime with AgentContext."""
     runtime = MagicMock()
     context = MagicMock(spec=AgentContext)
+    context.workspace = tmp_path
     runtime.context = context
     runtime.store = None
     runtime.tool_call_id = "test_tool_call"
@@ -36,36 +32,20 @@ def mock_runtime():
 
 
 class TestPathValidation:
-    """Test path validation in write_code and edit_code."""
+    """Validate workspace and repository boundaries before touching a file."""
 
-    def test_valid_file_within_workspace(self, tmpdir):
-        """Test that a file within workspace is accepted."""
-        workspace = Path(tmpdir)
-        filename = "test.py"
-
-        result_path, error = _validate_file_path(filename, workspace)
+    @pytest.mark.parametrize("filename", ["test.py", "src/main/test.py"])
+    def test_file_within_workspace(self, tmp_path, filename):
+        result_path, error = _validate_file_path(filename, tmp_path)
 
         assert error is None
         assert result_path is not None
-        assert (
-            workspace in result_path.parents or result_path.parent == workspace
-        )
+        assert tmp_path in result_path.parents or result_path.parent == tmp_path
 
-    def test_valid_nested_file_within_workspace(self, tmpdir):
-        """Test that nested files within workspace are accepted."""
-        workspace = Path(tmpdir)
-        filename = "src/main/test.py"
-
-        result_path, error = _validate_file_path(filename, workspace)
-
-        assert error is None
-        assert result_path is not None
-
-    def test_path_traversal_attempt_rejected(self, tmpdir):
-        """Test that path traversal attempts are rejected."""
-        workspace = Path(tmpdir) / "workspace"
+    @pytest.mark.parametrize("filename", ["../../../etc/passwd", "/etc/passwd"])
+    def test_path_outside_workspace_rejected(self, tmp_path, filename):
+        workspace = tmp_path / "workspace"
         workspace.mkdir(parents=True)
-        filename = "../../../etc/passwd"
 
         result_path, error = _validate_file_path(filename, workspace)
 
@@ -73,68 +53,37 @@ class TestPathValidation:
         assert "outside workspace" in error.lower()
         assert result_path is None
 
-    def test_absolute_path_outside_workspace_rejected(self, tmpdir):
-        """Test that absolute paths outside workspace are rejected."""
-        workspace = Path(tmpdir) / "workspace"
-        workspace.mkdir(parents=True)
-        filename = "/etc/passwd"
-
-        _result_path, error = _validate_file_path(filename, workspace)
-
-        assert error is not None
-        assert "outside workspace" in error.lower()
-
-    def test_file_within_repo_path(self, tmpdir):
-        """Test that files within specified repo are accepted."""
-        workspace = Path(tmpdir)
-        repo = workspace / "myrepo"
+    @pytest.mark.parametrize("relative", [False, True])
+    def test_file_within_repo_path(self, tmp_path, relative):
+        repo = tmp_path / "myrepo"
         repo.mkdir(parents=True)
-        filename = "myrepo/test.py"
+        repo_path = Path("myrepo") if relative else repo
 
-        result_path, error = _validate_file_path(filename, workspace, repo)
-
-        assert error is None
-        assert result_path is not None
-
-    def test_file_outside_repo_path_rejected(self, tmpdir):
-        """Test that files outside specified repo are rejected."""
-        workspace = Path(tmpdir)
-        repo = workspace / "myrepo"
-        repo.mkdir(parents=True)
-        other = workspace / "other"
-        other.mkdir(parents=True)
-        filename = "other/test.py"
-
-        _result_path, error = _validate_file_path(filename, workspace, repo)
-
-        assert error is not None
-        assert "outside repository" in error.lower()
-
-    def test_relative_repo_path(self, tmpdir):
-        """Test that relative repo paths are resolved correctly."""
-        workspace = Path(tmpdir)
-        repo = workspace / "myrepo"
-        repo.mkdir(parents=True)
-        filename = "myrepo/test.py"
-
-        # Test with relative repo path
         result_path, error = _validate_file_path(
-            filename, workspace, Path("myrepo")
+            "myrepo/test.py", tmp_path, repo_path
         )
 
         assert error is None
         assert result_path is not None
 
-    def test_allow_unsafe_writes_allows_outside_workspace(self, tmpdir):
-        """Test unsafe writes can bypass workspace validation when enabled."""
-        workspace = Path(tmpdir) / "workspace"
+    def test_file_outside_repo_path_rejected(self, tmp_path):
+        repo = tmp_path / "myrepo"
+        repo.mkdir(parents=True)
+        (tmp_path / "other").mkdir(parents=True)
+
+        _result_path, error = _validate_file_path(
+            "other/test.py", tmp_path, repo
+        )
+
+        assert error is not None
+        assert "outside repository" in error.lower()
+
+    def test_allow_unsafe_writes_allows_outside_workspace(self, tmp_path):
+        workspace = tmp_path / "workspace"
         workspace.mkdir(parents=True)
-        filename = "../../../etc/passwd"
 
         result_path, error = _validate_file_path(
-            filename,
-            workspace,
-            allow_unsafe_writes=True,
+            "../../../etc/passwd", workspace, allow_unsafe_writes=True
         )
 
         assert error is None
@@ -159,249 +108,108 @@ class TestUnsafeWriteEnvToggle:
         assert _allow_unsafe_writes_enabled() is False
 
 
-class TestWriteCodePathValidation:
-    """Test write_code function with path validation."""
+def apply_code(tool, runtime, filename, *, repo_path=None):
+    """Exercise the public write/edit tool functions with their native inputs."""
+    options = {} if repo_path is None else {"repo_path": str(repo_path)}
+    if tool is write_code:
+        writer = write_code if repo_path is None else write_code_with_repo
+        return writer.func("print('hello')", filename, runtime, **options)
+    return tool.func("x = 1", "x = 2", filename, runtime, **options)
 
-    def test_write_code_within_workspace(self, mock_runtime, tmpdir):
-        """Test write_code works for files within workspace."""
-        workspace = Path(tmpdir)
-        mock_runtime.context.workspace = workspace
 
-        code = "print('hello')"
-        filename = "test.py"
+@pytest.mark.parametrize("tool", [write_code, edit_code], ids=["write", "edit"])
+class TestCodePathValidation:
+    def test_file_within_workspace(self, mock_runtime, tmp_path, tool):
+        target = tmp_path / "test.py"
+        if tool is edit_code:
+            target.write_text("x = 1\n")
 
-        result = write_code.func(code, filename, mock_runtime)
-
-        assert "successfully" in result.lower()
-        assert (workspace / filename).exists()
-
-    def test_write_code_path_traversal_rejected(self, mock_runtime, tmpdir):
-        """Test write_code rejects path traversal."""
-        workspace = Path(tmpdir) / "workspace"
-        workspace.mkdir(parents=True)
-        mock_runtime.context.workspace = workspace
-
-        code = "print('hello')"
-        filename = "../../../etc/passwd"
-
-        result = write_code.func(code, filename, mock_runtime)
-
-        assert "failed" in result.lower()
-        assert "outside workspace" in result.lower()
-
-    def test_write_code_nested_directory_creation(self, mock_runtime, tmpdir):
-        """Test write_code creates nested directories."""
-        workspace = Path(tmpdir)
-        mock_runtime.context.workspace = workspace
-
-        code = "print('hello')"
-        filename = "src/main/test.py"
-
-        result = write_code.func(code, filename, mock_runtime)
-
-        assert "successfully" in result.lower()
-        assert (workspace / filename).exists()
-        assert (workspace / "src" / "main").is_dir()
-
-    def test_write_code_with_repo_boundary(self, mock_runtime, tmpdir):
-        """Test write_code_with_repo respects repo boundary when specified."""
-        workspace = Path(tmpdir)
-        repo = workspace / "myrepo"
-        repo.mkdir(parents=True)
-        mock_runtime.context.workspace = workspace
-
-        code = "print('hello')"
-        filename = "myrepo/test.py"
-
-        result = write_code_with_repo.func(
-            code, filename, mock_runtime, repo_path=str(repo)
-        )
-
-        assert "successfully" in result.lower()
-
-    def test_write_code_outside_repo_boundary_rejected(
-        self, mock_runtime, tmpdir
-    ):
-        """Test write_code_with_repo rejects files outside repo boundary."""
-        workspace = Path(tmpdir)
-        repo = workspace / "myrepo"
-        repo.mkdir(parents=True)
-        other = workspace / "other"
-        other.mkdir(parents=True)
-        mock_runtime.context.workspace = workspace
-
-        code = "print('hello')"
-        filename = "other/test.py"
-
-        result = write_code_with_repo.func(
-            code, filename, mock_runtime, repo_path=str(repo)
-        )
-
-        assert "failed" in result.lower()
-        assert "outside repository" in result.lower()
-
-    def test_write_code_outside_workspace_allowed_when_env_enabled(
-        self, mock_runtime, tmpdir, monkeypatch
-    ):
-        """Test write_code allows unsafe writes when env toggle is enabled."""
-        workspace = Path(tmpdir) / "workspace"
-        workspace.mkdir(parents=True)
-        mock_runtime.context.workspace = workspace
-
-        monkeypatch.setenv("URSA_ALLOW_UNSAFE_WRITES", "1")
-        target = Path(tmpdir) / "outside.py"
-
-        result = write_code.func("print('hello')", str(target), mock_runtime)
+        result = apply_code(tool, mock_runtime, "test.py")
 
         assert "successfully" in result.lower()
         assert target.exists()
+        if tool is edit_code:
+            assert target.read_text() == "x = 2\n"
 
-    def test_write_code_repo_path_not_found_rejected(
-        self, mock_runtime, tmpdir
-    ):
-        """Test write_code_with_repo fails clearly when repo path does not exist."""
-        workspace = Path(tmpdir)
-        mock_runtime.context.workspace = workspace
-
-        missing_repo = workspace / "does-not-exist"
-        result = write_code_with_repo.func(
-            "print('hello')",
-            "test.py",
-            mock_runtime,
-            repo_path=str(missing_repo),
-        )
-
-        assert "failed" in result.lower()
-        assert "repository path not found" in result.lower()
-
-
-class TestEditCodePathValidation:
-    """Test edit_code function with path validation."""
-
-    def test_edit_code_within_workspace(self, mock_runtime, tmpdir):
-        """Test edit_code works for files within workspace."""
-        workspace = Path(tmpdir)
-        mock_runtime.context.workspace = workspace
-
-        # Create initial file
-        filename = "test.py"
-        test_file = workspace / filename
-        test_file.write_text("x = 1\n")
-
-        old_code = "x = 1"
-        new_code = "x = 2"
-
-        result = edit_code.func(old_code, new_code, filename, mock_runtime)
-
-        assert "successfully" in result.lower()
-        assert test_file.read_text() == "x = 2\n"
-
-    def test_edit_code_path_traversal_rejected(self, mock_runtime, tmpdir):
-        """Test edit_code rejects path traversal."""
-        workspace = Path(tmpdir) / "workspace"
+    def test_path_traversal_rejected(self, mock_runtime, tmp_path, tool):
+        workspace = tmp_path / "workspace"
         workspace.mkdir(parents=True)
         mock_runtime.context.workspace = workspace
 
-        old_code = "x = 1"
-        new_code = "x = 2"
-        filename = "../../../etc/passwd"
-
-        result = edit_code.func(old_code, new_code, filename, mock_runtime)
+        result = apply_code(tool, mock_runtime, "../../../etc/passwd")
 
         assert "failed" in result.lower()
         assert "outside workspace" in result.lower()
 
-    def test_edit_code_with_repo_boundary(self, mock_runtime, tmpdir):
-        """Test edit_code respects repo boundary when specified."""
-        workspace = Path(tmpdir)
-        repo = workspace / "myrepo"
+    def test_file_within_repo_boundary(self, mock_runtime, tmp_path, tool):
+        repo = tmp_path / "myrepo"
         repo.mkdir(parents=True)
-        mock_runtime.context.workspace = workspace
+        if tool is edit_code:
+            (repo / "test.py").write_text("x = 1\n")
 
-        # Create initial file
-        filename = "myrepo/test.py"
-        test_file = workspace / filename
-        test_file.parent.mkdir(parents=True, exist_ok=True)
-        test_file.write_text("x = 1\n")
-
-        old_code = "x = 1"
-        new_code = "x = 2"
-
-        result = edit_code.func(
-            old_code, new_code, filename, mock_runtime, repo_path=str(repo)
+        result = apply_code(
+            tool, mock_runtime, "myrepo/test.py", repo_path=repo
         )
 
         assert "successfully" in result.lower()
 
-    def test_edit_code_outside_repo_boundary_rejected(
-        self, mock_runtime, tmpdir
+    def test_file_outside_repo_boundary_rejected(
+        self, mock_runtime, tmp_path, tool
     ):
-        """Test edit_code rejects files outside repo boundary."""
-        workspace = Path(tmpdir)
-        repo = workspace / "myrepo"
+        repo = tmp_path / "myrepo"
         repo.mkdir(parents=True)
-        other = workspace / "other"
-        other.mkdir(parents=True)
-        mock_runtime.context.workspace = workspace
+        (tmp_path / "other").mkdir(parents=True)
 
-        old_code = "x = 1"
-        new_code = "x = 2"
-        filename = "other/test.py"
-
-        result = edit_code.func(
-            old_code, new_code, filename, mock_runtime, repo_path=str(repo)
-        )
+        result = apply_code(tool, mock_runtime, "other/test.py", repo_path=repo)
 
         assert "failed" in result.lower()
         assert "outside repository" in result.lower()
 
-    def test_edit_code_outside_workspace_allowed_when_env_enabled(
-        self, mock_runtime, tmpdir, monkeypatch
+    def test_file_outside_workspace_allowed_when_env_enabled(
+        self, mock_runtime, tmp_path, monkeypatch, tool
     ):
-        """Test edit_code allows unsafe edits when env toggle is enabled."""
-        workspace = Path(tmpdir) / "workspace"
+        workspace = tmp_path / "workspace"
         workspace.mkdir(parents=True)
         mock_runtime.context.workspace = workspace
-
         monkeypatch.setenv("URSA_ALLOW_UNSAFE_WRITES", "1")
-        target = Path(tmpdir) / "outside.py"
-        target.write_text("x = 1\n")
+        target = tmp_path / "outside.py"
+        if tool is edit_code:
+            target.write_text("x = 1\n")
 
-        result = edit_code.func("x = 1", "x = 2", str(target), mock_runtime)
+        result = apply_code(tool, mock_runtime, str(target))
 
         assert "successfully" in result.lower()
-        assert target.read_text() == "x = 2\n"
+        assert target.exists()
+        if tool is edit_code:
+            assert target.read_text() == "x = 2\n"
 
-    def test_edit_code_binary_file_returns_failure(self, mock_runtime, tmpdir):
-        """Test edit_code handles binary files without raising."""
-        workspace = Path(tmpdir)
-        mock_runtime.context.workspace = workspace
+    def test_repo_path_not_found_rejected(self, mock_runtime, tmp_path, tool):
+        if tool is edit_code:
+            (tmp_path / "test.py").write_text("x = 1\n")
+        missing_repo = tmp_path / "does-not-exist"
 
-        filename = "binary.bin"
-        test_file = workspace / filename
-        test_file.write_bytes(b"\xff\xfe\x00\x01")
-
-        result = edit_code.func("x", "y", filename, mock_runtime)
-
-        assert "failed" in result.lower()
-        assert "binary" in result.lower()
-
-    def test_edit_code_repo_path_not_found_rejected(self, mock_runtime, tmpdir):
-        """Test edit_code fails clearly when repo path does not exist."""
-        workspace = Path(tmpdir)
-        mock_runtime.context.workspace = workspace
-
-        filename = "test.py"
-        (workspace / filename).write_text("x = 1\n")
-        missing_repo = workspace / "does-not-exist"
-
-        result = edit_code.func(
-            "x = 1",
-            "x = 2",
-            filename,
-            mock_runtime,
-            repo_path=str(missing_repo),
+        result = apply_code(
+            tool, mock_runtime, "test.py", repo_path=missing_repo
         )
 
         assert "failed" in result.lower()
         assert "repository path not found" in result.lower()
+
+
+def test_write_code_creates_nested_directories(mock_runtime, tmp_path):
+    filename = "src/main/test.py"
+    result = write_code.func("print('hello')", filename, mock_runtime)
+
+    assert "successfully" in result.lower()
+    assert (tmp_path / filename).exists()
+    assert (tmp_path / "src" / "main").is_dir()
+
+
+def test_edit_code_binary_file_returns_failure(mock_runtime, tmp_path):
+    filename = "binary.bin"
+    (tmp_path / filename).write_bytes(b"\xff\xfe\x00\x01")
+
+    result = edit_code.func("x", "y", filename, mock_runtime)
+
+    assert "failed" in result.lower()
+    assert "binary" in result.lower()

@@ -29,10 +29,6 @@ def parse_github_owner_repo(url: str) -> tuple[str, str] | None:
     return None
 
 
-def _gh_available() -> bool:
-    return shutil.which("gh") is not None
-
-
 def _gh_api(endpoint: str, timeout: int = 30) -> Any:
     """Call ``gh api`` and return parsed JSON."""
     result = subprocess.run(
@@ -47,32 +43,20 @@ def _gh_api(endpoint: str, timeout: int = 30) -> Any:
     return json.loads(result.stdout)
 
 
-def _format_issue(item: dict) -> str:
+def _format_item(item: dict, *, include_labels: bool = False) -> str:
     number = item.get("number", "?")
     title = item.get("title", "")
     state = item.get("state", "")
-    labels = ", ".join(
-        label.get("name", "") for label in (item.get("labels") or [])
-    )
+    labels = ""
+    if include_labels:
+        labels = ", ".join(
+            label.get("name", "") for label in (item.get("labels") or [])
+        )
     created = (item.get("created_at") or "")[:10]
     body = (item.get("body") or "")[:300]
     parts = [f"  #{number} [{state}] {title}"]
     if labels:
         parts.append(f"    Labels: {labels}")
-    if created:
-        parts.append(f"    Created: {created}")
-    if body:
-        parts.append(f"    {body}")
-    return "\n".join(parts)
-
-
-def _format_pr(item: dict) -> str:
-    number = item.get("number", "?")
-    title = item.get("title", "")
-    state = item.get("state", "")
-    created = (item.get("created_at") or "")[:10]
-    body = (item.get("body") or "")[:300]
-    parts = [f"  #{number} [{state}] {title}"]
     if created:
         parts.append(f"    Created: {created}")
     if body:
@@ -108,7 +92,10 @@ def fetch_repo_context(
         ]
         if pure_issues:
             sections.append(f"### Recent issues ({len(pure_issues)})")
-            sections.extend(_format_issue(issue) for issue in pure_issues)
+            sections.extend(
+                _format_item(issue, include_labels=True)
+                for issue in pure_issues
+            )
         else:
             sections.append("### Recent issues: none")
     except Exception as exc:  # noqa: BLE001
@@ -122,7 +109,7 @@ def fetch_repo_context(
         )
         if prs:
             sections.append(f"### Recent pull requests ({len(prs[:max_prs])})")
-            sections.extend(_format_pr(pr) for pr in prs[:max_prs])
+            sections.extend(_format_item(pr) for pr in prs[:max_prs])
         else:
             sections.append("### Recent pull requests: none")
     except Exception as exc:  # noqa: BLE001
@@ -153,7 +140,7 @@ def gather_github_context(
     Formatted text block with issues/PRs across repos, or ``None`` if nothing
     was fetched (e.g. no GitHub URLs, ``gh`` not installed).
     """
-    if not _gh_available():
+    if shutil.which("gh") is None:
         return None
 
     blocks: list[str] = []

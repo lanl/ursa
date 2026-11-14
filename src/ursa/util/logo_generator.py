@@ -436,27 +436,7 @@ def _choose_n_distinct_styles(n: int) -> list[str]:
     return out
 
 
-def _style_strength_phrase(level: str) -> str:
-    return {
-        "subtle": "Include gentle references to",
-        "clear": "Make the influence of",
-        "overt": "Make the aesthetic of",
-    }.get(level, "Make the aesthetic of")
-
-
 SUPPORTED_SIZES = {"1024x1024", "1024x1536", "1536x1024", "auto"}
-
-
-def _size_for(aspect: str, mode: str) -> str:
-    """
-    Prefer cinematic rectangles for scenes; keep square for logos.
-    Returns only API-supported sizes.
-    """
-    if aspect == "wide":
-        return "1536x1024"
-    if aspect == "tall":
-        return "1024x1536"
-    return "1024x1024"
 
 
 def _normalize_size(size: Optional[str], aspect: str, mode: str) -> str:
@@ -464,7 +444,11 @@ def _normalize_size(size: Optional[str], aspect: str, mode: str) -> str:
     If size is None or invalid, pick a sensible API-supported default based on aspect/mode.
     """
     if not size or size not in SUPPORTED_SIZES:
-        return _size_for(aspect, mode)
+        if aspect == "wide":
+            return "1536x1024"
+        if aspect == "tall":
+            return "1024x1536"
+        return "1024x1024"
     return size
 
 
@@ -598,7 +582,11 @@ def _build_scene_prompt(
     # Open aperture => slightly broader palette choices (still guided)
     palette_rule = palette or random.choice(PALETTES_SCENE)
 
-    style_strength = _style_strength_phrase(style_intensity)
+    style_strength = {
+        "subtle": "Include gentle references to",
+        "clear": "Make the influence of",
+        "overt": "Make the aesthetic of",
+    }.get(style_intensity, "Make the aesthetic of")
 
     objects_pool = (
         STYLE_OBJECTS.get(style_slug)
@@ -840,6 +828,35 @@ def generate_logo_sync(
     # Scenes tend to look odd with transparent backgrounds; force opaque.
     final_background = "opaque" if mode == "scene" else background
 
+    def craft_prompt(style: str | None, mode: str) -> tuple[str, str]:
+        return _craft_logo_prompt(
+            problem_text,
+            workspace,
+            style=style,
+            allow_text=allow_text,
+            palette=palette,
+            mode=mode,
+            style_intensity=style_intensity,
+            aperture=aperture,
+        )
+
+    def generate_image(path: Path, prompt: str) -> None:
+        kwargs = dict(
+            model=model,
+            prompt=prompt,
+            size=final_size,
+            n=1,
+            quality=quality,
+            background=final_background,
+        )
+        try:
+            resp = client.images.generate(**kwargs)
+        except Exception:
+            # Some models ignore/forbid background=; retry without it
+            kwargs.pop("background", None)
+            resp = client.images.generate(**kwargs)
+        path.write_bytes(base64.b64decode(resp.data[0].b64_json))
+
     # -------------------------
     # Multi-style scene generation (requested change)
     # -------------------------
@@ -861,16 +878,7 @@ def generate_logo_sync(
         for idx, (style_slug, path) in enumerate(
             zip(style_slugs, out_paths), start=1
         ):
-            prompt, _ = _craft_logo_prompt(
-                problem_text,
-                workspace,
-                style=style_slug,
-                allow_text=allow_text,
-                palette=palette,
-                mode="scene",
-                style_intensity=style_intensity,
-                aperture=aperture,
-            )
+            prompt, _ = craft_prompt(style_slug, "scene")
 
             extra_title = (
                 f"[bold magenta]mode: scene[/bold magenta] [dim]•[/dim] "
@@ -887,22 +895,7 @@ def generate_logo_sync(
             if path.exists() and not overwrite:
                 continue
 
-            kwargs = dict(
-                model=model,
-                prompt=prompt,
-                size=final_size,
-                n=1,
-                quality=quality,
-                background=final_background,
-            )
-            try:
-                resp = client.images.generate(**kwargs)
-            except Exception:
-                # Some models ignore/forbid background=; retry without it
-                kwargs.pop("background", None)
-                resp = client.images.generate(**kwargs)
-
-            path.write_bytes(base64.b64decode(resp.data[0].b64_json))
+            generate_image(path, prompt)
 
         return out_paths[0]
 
@@ -911,16 +904,7 @@ def generate_logo_sync(
     #   - Also improved diversity: when n>1, we do n separate prompts (not siblings).
     # -------------------------
     # Build filenames for this series
-    prompt0, style_slug0 = _craft_logo_prompt(
-        problem_text,
-        workspace,
-        style=style,
-        allow_text=allow_text,
-        palette=palette,
-        mode=mode,
-        style_intensity=style_intensity,
-        aperture=aperture,
-    )
+    prompt0, style_slug0 = craft_prompt(style, mode)
 
     main_path, alt_paths = _compose_filenames(
         out_dir, style_slug0, filename, n, mode=mode
@@ -939,18 +923,7 @@ def generate_logo_sync(
     for idx, path in enumerate(paths, start=1):
         # For n>1, rebuild prompt each time so pools + aperture actually matter
         prompt_i, style_slug_i = (
-            (prompt0, style_slug0)
-            if idx == 1
-            else _craft_logo_prompt(
-                problem_text,
-                workspace,
-                style=style,
-                allow_text=allow_text,
-                palette=palette,
-                mode=mode,
-                style_intensity=style_intensity,
-                aperture=aperture,
-            )
+            (prompt0, style_slug0) if idx == 1 else craft_prompt(style, mode)
         )
 
         extra_title = (
@@ -968,21 +941,7 @@ def generate_logo_sync(
         if path.exists() and not overwrite:
             continue
 
-        kwargs = dict(
-            model=model,
-            prompt=prompt_i,
-            size=final_size,
-            n=1,
-            quality=quality,
-            background=final_background,
-        )
-        try:
-            resp = client.images.generate(**kwargs)
-        except Exception:
-            kwargs.pop("background", None)
-            resp = client.images.generate(**kwargs)
-
-        path.write_bytes(base64.b64decode(resp.data[0].b64_json))
+        generate_image(path, prompt_i)
 
     return main_path
 

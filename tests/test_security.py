@@ -30,6 +30,15 @@ def isolated_security_cache(monkeypatch, tmp_path):
     return root
 
 
+@pytest.fixture
+def whitelisted_security_cache(isolated_security_cache, group):
+    _write_group_config(
+        isolated_security_cache,
+        security.validate_group_name(group),
+        ["https://models.example.org/v1"],
+    )
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
@@ -64,26 +73,14 @@ def test_validate_group_name_rejects_whitespace_only_name():
 
 
 def test_group_directory_helpers_use_shared_group_root(isolated_security_cache):
-    assert (
-        security.group_root_dir("science")
-        == isolated_security_cache / "science"
-    )
-    assert (
-        security.group_agents_dir("science")
-        == isolated_security_cache / "science" / "agents"
-    )
-    assert (
-        security.group_rag_dir("science")
-        == isolated_security_cache / "science" / "rag"
-    )
-    assert (
-        security.group_dashboard_dir("science")
-        == isolated_security_cache / "science" / "dashboard"
-    )
-    assert (
-        security.group_config_file("science")
-        == isolated_security_cache / "science" / "group.yaml"
-    )
+    for helper, suffix in (
+        (security.group_root_dir, ""),
+        (security.group_agents_dir, "agents"),
+        (security.group_rag_dir, "rag"),
+        (security.group_dashboard_dir, "dashboard"),
+        (security.group_config_file, "group.yaml"),
+    ):
+        assert helper("science") == isolated_security_cache / "science" / suffix
 
 
 @pytest.mark.parametrize("group", ["default", None, "", " default "])
@@ -183,57 +180,27 @@ def test_group_whitelist_allows_exact_url_and_same_origin(
 )
 @pytest.mark.parametrize("group", ["science", "default", None, "", " default "])
 def test_group_whitelist_rejects_missing_or_different_origin(
-    isolated_security_cache, group, base_url
+    whitelisted_security_cache, group, base_url
 ):
-    _write_group_config(
-        isolated_security_cache,
-        security.validate_group_name(group),
-        ["https://models.example.org/v1"],
-    )
-
     assert security.is_base_url_allowed(base_url, group) is False
     with pytest.raises(GroupBaseURLPolicyError):
         security.enforce_group_base_url_policy(base_url, group)
 
 
 @pytest.mark.parametrize("group", ["science", "default", None, "", " default "])
-def test_policy_error_for_missing_base_url_lists_allowed_urls(
-    isolated_security_cache,
-    group,
+@pytest.mark.parametrize("base_url", [None, "https://unsafe.example.org/v1"])
+def test_policy_errors_identify_allowed_urls(
+    whitelisted_security_cache, group, base_url
 ):
-    _write_group_config(
-        isolated_security_cache,
-        security.validate_group_name(group),
-        ["https://models.example.org/v1"],
-    )
-
     with pytest.raises(GroupBaseURLPolicyError) as excinfo:
-        security.enforce_group_base_url_policy(None, group)
+        security.enforce_group_base_url_policy(base_url, group)
 
     message = str(excinfo.value)
-    assert "requires an explicit model base_url" in message
-    assert "https://models.example.org/v1" in message
-
-
-@pytest.mark.parametrize("group", ["science", "default", None, "", " default "])
-def test_policy_error_for_disallowed_base_url_names_group_and_allowed_urls(
-    isolated_security_cache,
-    group,
-):
-    _write_group_config(
-        isolated_security_cache,
-        security.validate_group_name(group),
-        ["https://models.example.org/v1"],
-    )
-
-    with pytest.raises(GroupBaseURLPolicyError) as excinfo:
-        security.enforce_group_base_url_policy(
-            "https://unsafe.example.org/v1", group
-        )
-
-    message = str(excinfo.value)
-    assert "https://unsafe.example.org/v1" in message
-    assert security.validate_group_name(group) in message
+    if base_url is None:
+        assert "requires an explicit model base_url" in message
+    else:
+        assert "https://unsafe.example.org/v1" in message
+        assert security.validate_group_name(group) in message
     assert "https://models.example.org/v1" in message
 
 
@@ -265,14 +232,9 @@ def test_get_model_base_url_uses_first_available_attr():
 
 @pytest.mark.parametrize("group", ["science", "default", None, "", " default "])
 def test_enforce_model_group_policy_uses_model_base_url(
-    isolated_security_cache,
+    whitelisted_security_cache,
     group,
 ):
-    _write_group_config(
-        isolated_security_cache,
-        security.validate_group_name(group),
-        ["https://models.example.org/v1"],
-    )
     safe_model = SimpleNamespace(base_url="https://models.example.org/v1/")
     unsafe_model = SimpleNamespace(base_url="https://unsafe.example.org/v1")
 
