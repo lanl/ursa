@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, Any, Optional, TypedDict, cast
+from typing import Annotated, Any, TypedDict, cast
 
 from langchain.chat_models import BaseChatModel
 from langchain.tools import ToolRuntime, tool
@@ -9,14 +9,16 @@ from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
 )
+from langchain_core.runnables import RunnableConfig
+from langchain_core.runnables.config import merge_configs
 from langgraph.graph.message import add_messages
 from langgraph.types import Overwrite
 
 from ursa.agents import ChatAgent, RAGAgent
-from ursa.agents.base import BaseAgent
+from ursa.agents.base import BaseAgent, _render_for_summary
 from ursa.agents.chat_agent import ChatState
 from ursa.prompt_library.execution_prompts import recap_prompt
-from ursa.util.events import AgentEvents, ToolEvents
+from ursa.util.events import ToolEvents
 
 documenter_prompt = """
 You are a responsible and efficient agent tasked ensuring adequate documentation to pass 
@@ -100,7 +102,7 @@ class SimulatorAgent(BaseAgent[State]):
         llm: BaseChatModel,
         log_state: bool = False,
         use_web: bool = False,
-        workspace: Optional[Path | str] = None,
+        workspace: Path | str | None = None,
         checkpointer=None,
         thread_id: str | None = None,
         docs_path: Path | str = "../simulator_docs",
@@ -280,27 +282,31 @@ class SimulatorAgent(BaseAgent[State]):
         }
 
     # Define the function that calls the model
-    def _summarize(self, state: State) -> State:
-        messages = state["messages"] + [HumanMessage(content=recap_prompt)]
+    def _summarize(
+        self, state: State, config: RunnableConfig | None = None
+    ) -> State:
+        # Child agents can leave provider-specific tool-call records in the
+        # combined history. Recap consumes a transcript, not executable calls.
+        messages = [
+            SystemMessage(content=self.recap_prompt),
+            HumanMessage(content=_render_for_summary(state["messages"])),
+        ]
+        recap_config = merge_configs(self.build_config(tags=["recap"]), config)
         # 2) Invoke the LLM to generate a recap; capture content even on failure.
         try:
-            response = self.llm.invoke(
-                messages, self.build_config(tags=["recap"])
-            )
+            response = self.llm.invoke(messages, recap_config)
             response_content = response.text
         except Exception as ee:
             try:
                 response = self.runner.llm.invoke(
                     input=messages,
-                    config=self.build_config(tags=["recap"]),
+                    config=recap_config,
                 )
                 response_content = response.text
             except Exception as e:
                 response_content = f"Response errors {ee} and {e}"
                 response = AIMessage(content=response_content)
-                events = AgentEvents(
-                    agent=self.name, config=self.build_config()
-                )
+                events = self.events(config)
                 events.emit(
                     "Primary recap failed",
                     stage="recap",
