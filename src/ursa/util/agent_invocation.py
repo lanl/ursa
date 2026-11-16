@@ -2,7 +2,7 @@
 
 import asyncio
 import inspect
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
 
@@ -20,7 +20,17 @@ def _invocation_kwargs(
         yield kwargs
         return
 
-    config = ensure_config(kwargs.get("config"))
+    supplied_config = kwargs.get("config")
+    recursion_limit_supplied = (
+        isinstance(supplied_config, Mapping)
+        and "recursion_limit" in supplied_config
+    )
+    config = ensure_config(supplied_config)
+    if not recursion_limit_supplied:
+        # ensure_config materializes LangGraph's default (25), which would
+        # override the member graph's configured URSA default (50,000).
+        config.pop("recursion_limit", None)
+
     # A named member owns its checkpoint file. Parent graph runtime objects
     # would redirect its checkpoints/storage into the parent's graph instead.
     config["configurable"] = {

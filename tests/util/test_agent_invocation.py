@@ -32,6 +32,9 @@ async def test_named_invocation_restores_parent_context_after_failure(
         }
         assert config["metadata"] == {"experiment": "test", "thread_id": "ursa"}
         assert config["tags"] == ["research"]
+        # ensure_config adds LangGraph's default 25, but it must not override
+        # the named member graph's own URSA recursion limit.
+        assert "recursion_limit" not in config
         assert var_child_runnable_config.get() is config
 
     class FailingAgent:
@@ -59,3 +62,25 @@ async def test_named_invocation_restores_parent_context_after_failure(
         assert parent["metadata"]["thread_id"] == "parent"
     finally:
         var_child_runnable_config.reset(token)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_named_invocation_preserves_explicit_recursion_limit(
+    asynchronous,
+):
+    class Agent:
+        agent_name = "member"
+
+        def invoke(self, inputs, config):
+            return config
+
+        async def ainvoke(self, inputs, config):
+            return config
+
+    kwargs = {"config": {"recursion_limit": 1234}}
+    if asynchronous:
+        result = await ainvoke_agent(Agent(), "task", **kwargs)
+    else:
+        result = invoke_agent(Agent(), "task", **kwargs)
+
+    assert result["recursion_limit"] == 1234

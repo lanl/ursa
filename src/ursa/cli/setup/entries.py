@@ -10,7 +10,6 @@ from collections.abc import Callable, Mapping
 from contextlib import redirect_stderr, suppress
 from threading import Lock
 from typing import Any, NamedTuple, cast
-from urllib.parse import urlparse
 
 import yaml
 from pydantic import SecretStr, ValidationError
@@ -57,7 +56,6 @@ API_KEY_ENV = "__ursa_api_key_env__"
 
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _KEYRING_LOCK = Lock()
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 PROVIDER_DEFAULT_URLS = {
     "openai": "https://api.openai.com/v1",
@@ -143,13 +141,21 @@ class ApiKeyEntry(Vertical):
     def __init__(self, prefix: str, subject: str) -> None:
         super().__init__(id=f"{prefix}-api-key", classes="api-key-entry")
         self.prefix, self.subject, self.entry_name = prefix, subject, ""
+        self._key_help = f"Used to authenticate with the {subject}."
         self.known: list[str] = []
         self.loaded: str | None = None
         self.generation = 0
+        self._default_source = False
 
-    def _options(self, name: str) -> list[tuple[str, str]]:
+    def _options(self, name: str, source: object) -> list[tuple[str, str]]:
+        names = [*self.known, name]
+        if isinstance(source, str) and source not in (
+            MCP_TOKEN_NONE,
+            API_KEY_ENV,
+        ):
+            names.append(source)
         return [("None", MCP_TOKEN_NONE), ("ENV", API_KEY_ENV)] + [
-            (item, item) for item in dict.fromkeys((*self.known, name)) if item
+            (item, item) for item in dict.fromkeys(names) if item
         ]
 
     def compose(self) -> ComposeResult:
@@ -160,11 +166,22 @@ class ApiKeyEntry(Vertical):
                 id=f"{self.prefix}-source-label",
                 classes="credential-source-label",
             ),
-            HelpLabel(
-                "API Key",
-                "Existing values load automatically and stay hidden unless Show is set.",
-                id=f"{self.prefix}-value-label",
-                classes="credential-value-label",
+            Horizontal(
+                HelpLabel(
+                    "API Key",
+                    self._key_help,
+                    id=f"{self.prefix}-value-label",
+                    classes="credential-value-label",
+                ),
+                HelpLabel(
+                    "ENV Contents",
+                    "Read-only: environment variable contents cannot be edited here. "
+                    "Set or change the variable before starting URSA. "
+                    "Show reveals its contents when set and populated.",
+                    id=f"{self.prefix}-env-label",
+                    classes="credential-env-label hidden",
+                ),
+                classes="credential-value-labels",
             ),
             classes="credential-label-row",
         )
@@ -178,12 +195,23 @@ class ApiKeyEntry(Vertical):
             ),
             Horizontal(
                 Input(password=True, id=f"{self.prefix}-key"),
+                Input(
+                    password=True,
+                    disabled=True,
+                    id=f"{self.prefix}-env-contents",
+                    classes="credential-env-contents hidden",
+                ),
                 Checkbox("Show", id=f"{self.prefix}-show"),
                 id=f"{self.prefix}-fields",
                 classes="credential-value api-key-row",
             ),
             id=f"{self.prefix}-row",
             classes="credential-row",
+        )
+        yield Static(
+            "Storing API keys in environment variables is not recommended.",
+            classes="credential-env-note hidden",
+            markup=False,
         )
 
     def configure(
@@ -198,32 +226,53 @@ class ApiKeyEntry(Vertical):
         if reference:
             source = reference.env and API_KEY_ENV or reference.keyring
             source = name if source in (None, True) else source
-        elif not no_key:
+        elif not no_key and name:
             source = name
+        self._default_source = not no_key and (
+            reference is None or reference.keyring in (True, name)
+        )
         select = self.query_one(".credential-source", Select)
         with self.prevent(Select.Changed):
-            select.set_options(self._options(name))
+            select.set_options(self._options(name, source))
             select.value = source
         initial = reference.env or "" if reference and reference.env else ""
         self._source(source, initial)
 
     def _source(self, source: object, initial: str = "") -> None:
         none, env = source == MCP_TOKEN_NONE, source == API_KEY_ENV
-        key = self.query_one(Input)
+        self.set_class(env, "env")
+        key = self.query_one(f"#{self.prefix}-key", Input)
         self.generation += 1
         self.loaded = None
-        key.value = initial
+        with self.prevent(Input.Changed):
+            key.value = initial
         self.query_one(".credential-value").set_class(none, "hidden")
+        self.query_one(".credential-env-label").set_class(not env, "hidden")
+        self.query_one(".credential-env-note").set_class(not env, "hidden")
+        contents = self.query_one(".credential-env-contents", Input)
+        contents.set_class(not env, "hidden")
+        with self.prevent(Input.Changed):
+            contents.value = ""
         show = self.query_one(Checkbox)
-        show.set_class(none or env, "hidden")
+        show.set_class(none, "hidden")
+        show.disabled = False
         key.password = not env and not show.value
         label = self.query_one(".credential-value-label", HelpLabel)
-        label.set_label(
-            "Environmental Variable with API Key" if env else "API Key"
+        label.set_label("ENV Variable Name" if env else "API Key")
+        label.tooltip = (
+            "The name of the environment variable containing the API key."
+            if env
+            else self._key_help
         )
         prompt = f"Enter the API Key for the {self.subject}"
-        key.placeholder = "Environment variable name" if env else prompt
-        if not none and not env:
+        key.placeholder = (
+            f"Environment variable containing the API key for {self.subject}"
+            if env
+            else prompt
+        )
+        if env:
+            self._refresh_env()
+        elif not none:
             key.placeholder = "|"
             self.run_worker(
                 self._load(str(source), self.generation),
@@ -237,11 +286,27 @@ class ApiKeyEntry(Vertical):
         select = self.query_one(".credential-source", Select)
         source, old = select.value, self.entry_name
         self.entry_name = name
+        selected = name if self._default_source else source
         with self.prevent(Select.Changed):
-            select.set_options(self._options(name))
-            select.value = name if source == old else source
-        if source == old:
-            self.loaded = None
+            select.set_options(self._options(name, selected))
+            select.value = selected
+        if self._default_source and name != old:
+            self._source(selected)
+
+    def _refresh_env(self) -> None:
+        name = self.query_one(f"#{self.prefix}-key", Input).value.strip()
+        value = os.environ.get(name)
+        contents = self.query_one(".credential-env-contents", Input)
+        show = self.query_one(Checkbox)
+        show.disabled = not value
+        contents.password = bool(value) and not show.value
+        contents.set_class(value is None, "unset")
+        with self.prevent(Input.Changed):
+            contents.value = (
+                "ENV Variable is UNSET"
+                if value is None
+                else value or "ENV Variable is EMPTY"
+            )
 
     async def _load(self, username: str, generation: int) -> None:
         credential_store = get_keyring()
@@ -254,13 +319,13 @@ class ApiKeyEntry(Vertical):
         if generation != self.generation:
             return
         self.loaded = secret
-        key = self.query_one(Input)
+        key = self.query_one(f"#{self.prefix}-key", Input)
         key.value = secret or ""
         key.placeholder = f"Enter the API Key for the {self.subject}"
 
     def values(self) -> CredentialValue:
         source = self.query_one(".credential-source", Select).value
-        value = self.query_one(Input).value.strip()
+        value = self.query_one(f"#{self.prefix}-key", Input).value.strip()
         if source == MCP_TOKEN_NONE:
             return CredentialValue()
         if source == API_KEY_ENV:
@@ -276,11 +341,24 @@ class ApiKeyEntry(Vertical):
 
     @on(Select.Changed)
     def source_changed(self, event: Select.Changed) -> None:
+        self._default_source = event.value == self.entry_name
         self._source(event.value)
+
+    @on(Input.Changed)
+    def key_changed(self, event: Input.Changed) -> None:
+        if event.input.id == f"{self.prefix}-env-contents":
+            event.stop()
+        elif self.query_one(".credential-source", Select).value == API_KEY_ENV:
+            self._refresh_env()
 
     @on(Checkbox.Changed)
     def show_changed(self, event: Checkbox.Changed) -> None:
-        self.query_one(Input).password = not event.value
+        if self.query_one(".credential-source", Select).value == API_KEY_ENV:
+            self._refresh_env()
+        else:
+            self.query_one(
+                f"#{self.prefix}-key", Input
+            ).password = not event.value
 
 
 class EntryCandidate(NamedTuple):
@@ -372,12 +450,13 @@ class EntryDraftEditor(Vertical):
             ),
             Input(
                 value=(base or "") if custom else "",
+                placeholder="Provider base URL",
                 id=f"{self.prefix}-url-custom",
                 classes="provider-url-custom" + ("" if custom else " hidden"),
             ),
             classes="provider-url-row" + (" custom-url" if custom else ""),
         )
-        yield ApiKeyEntry(f"{self.prefix}-key", "provider")
+        yield ApiKeyEntry(f"{self.prefix}-key", "inference provider")
 
     def _mcp_fields(self) -> ComposeResult:
         kind = self._values.get("transport", "streamable_http")
@@ -411,12 +490,10 @@ class EntryDraftEditor(Vertical):
 
     def on_mount(self) -> None:
         reference = None
-        no_key = self._initial is None
+        no_key = self.kind != "provider"
         if self._initial is not None:
             if self.kind == "provider":
                 reference = getattr(self._initial, "api_key", None)
-                base = getattr(self._initial, "base_url", None)
-                no_key = bool(base) and urlparse(base).hostname in _LOCAL_HOSTS
             else:
                 reference = _auth(cast(ServerParameters, self._initial))[1]
                 no_key = reference is None
@@ -426,6 +503,7 @@ class EntryDraftEditor(Vertical):
             self.known_keys,
             no_key,
         )
+        self._write_yaml_from_form()
         self._validate_yaml(update_controls=False)
 
     def on_unmount(self) -> None:

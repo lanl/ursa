@@ -1,12 +1,14 @@
 import asyncio
 import logging
 import os
+import ssl
 import subprocess
 import sys
 import time
 from types import SimpleNamespace
 
 import pytest
+import truststore
 
 from ursa.util.health import (
     probe_chat_tool_use,
@@ -35,6 +37,22 @@ def _noisy_failure():
     print("probe stderr noise", file=sys.stderr)
     logging.getLogger("probe-noise").error("probe log noise")
     raise RuntimeError("expected probe failure")
+
+
+def _check_default_ssl_context():
+    context = ssl.create_default_context()
+    assert isinstance(context, truststore.SSLContext)
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname
+    return "System trust store enabled"
+
+
+def test_probe_initializes_system_trust_store():
+    parent_context_type = ssl.SSLContext
+    assert run_probe_with_deadline(_check_default_ssl_context, timeout=5) == (
+        "System trust store enabled"
+    )
+    assert ssl.SSLContext is parent_context_type
 
 
 @pytest.mark.parametrize("probe", [_block, _block_async])
