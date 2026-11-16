@@ -551,11 +551,19 @@ class EntryDraftEditor(Vertical):
         _set_optional(values, "base_url", base)
         credential = self.credential.values()
         reference = credential.reference
-        api_key = (
-            reference.model_dump(mode="json", exclude_none=True)
-            if reference
-            else None
-        )
+        api_key = None
+        if reference:
+            api_key = reference.model_dump(mode="json", exclude_none=True)
+            previous = values.get("api_key")
+            if isinstance(previous, dict):
+                previous_reference = SecretReference.maybe_validate(previous)
+                if isinstance(previous_reference, SecretReference):
+                    if previous_reference == reference:
+                        api_key = previous
+                    elif previous_reference.template == "%s":
+                        api_key.pop("template", None)
+                    else:
+                        api_key["template"] = previous_reference.template
         _set_optional(values, "api_key", api_key)
         return values, credential
 

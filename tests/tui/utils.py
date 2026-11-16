@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 from textual.app import App
+from textual.dom import DOMNode
 from textual.pilot import Pilot
 
 UI_TIMEOUT = 15.0
@@ -46,13 +47,38 @@ async def await_workers(
         ) from exc
 
 
-async def await_event(pilot: Pilot[Any], event: Any) -> None:
+async def await_event(
+    pilot: Pilot[Any],
+    event: Any,
+    *,
+    description: str = "event to be set",
+    timeout: float = UI_TIMEOUT,
+) -> None:
     """Pump Textual while waiting for a threading or asyncio event."""
     await eventually(
         pilot,
         event.is_set,
-        description="event to be set",
+        description=description,
+        timeout=timeout,
     )
+
+
+async def await_dom(
+    pilot: Pilot[Any],
+    root: DOMNode,
+    selector: str,
+    *,
+    count: int = 1,
+    timeout: float = UI_TIMEOUT,
+) -> Any:
+    """Wait for an exact number of nodes matching a selector."""
+    await eventually(
+        pilot,
+        lambda: len(root.query(selector)) == count,
+        description=f"{count} node(s) matching {selector!r}",
+        timeout=timeout,
+    )
+    return root.query(selector)
 
 
 async def await_screen(pilot: Pilot[Any], screen_type: type[Any]) -> Any:
