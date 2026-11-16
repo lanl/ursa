@@ -541,25 +541,25 @@ register(
 )
 
 
-# register(
-#     AgentEntry(
-#         spec=AgentSpec(
-#             agent_id="hypothesizer_agent",
-#             display_name="Hypothesize",
-#             description="Defines and maintains a persistent hypothesis space in an experience artifact for reuse by tool-using agents to solve problems. Helpful for providing a reviewable set of approaches that a Chat or Execution agent could then use to guide work or provide a framing for multi-agent environments.",
-#             capabilities=AgentCapabilities(
-#                 supports_streaming=False,
-#                 supports_cancellation=False,
-#                 produces_artifacts=True,
-#             ),
-#             parameters=[_prompt_param(title="Question, evidence, or update")]
-#             + _common_llm_params()
-#             + _runner_params(),
-#             tags=["research", "hypotheses", "experiences"],
-#         ),
-#         build_adapter=_baseagent_adapter_builder(
-#             "ursa.agents.hypothesizer_agent.HypothesizerAgent"
-#         ),
-#         build_inputs=lambda p: p["prompt"],
-#     )
-# )
+register(
+    AgentEntry(
+        spec=AgentSpec(
+            agent_id="hypothesizer_agent",
+            display_name="Hypothesize",
+            description="Defines and maintains a persistent hypothesis space in an experience artifact for reuse by tool-using agents to solve problems. Helpful for providing a reviewable set of approaches that a Chat or Execution agent could then use to guide work or provide a framing for multi-agent environments.",
+            capabilities=AgentCapabilities(
+                supports_streaming=False,
+                supports_cancellation=False,
+                produces_artifacts=True,
+            ),
+            parameters=[_prompt_param(title="Question, evidence, or update")]
+            + _common_llm_params()
+            + _runner_params(),
+            tags=["research", "hypotheses", "experiences"],
+        ),
+        build_adapter=_baseagent_adapter_builder(
+            "ursa.agents.hypothesizer_agent.HypothesizerAgent"
+        ),
+        build_inputs=lambda p: p["prompt"],
+    )
+)
