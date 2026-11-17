@@ -1,6 +1,7 @@
 """Best-effort context discovery at model initialization, never during rendering."""
 
 import re
+import sys
 from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any
@@ -183,17 +184,18 @@ def load_model_context(
     model: object, *, explicit_profile: bool = False
 ) -> None:
     """Enrich the runtime profile once; explicit configuration takes precedence."""
-    from langchain_ollama import ChatOllama
-    from langchain_openai import ChatOpenAI
-
     if not isinstance(model, BaseChatModel):
         return
     if explicit_profile and model_context_window(model) is not None:
         model._ursa_context_source = "Configured profile"
         return
-    if isinstance(model, ChatOllama):
+    # Constructing a provider's model has already loaded its integration.
+    # Inspect only those modules instead of importing unrelated SDKs here.
+    ollama = sys.modules.get("langchain_ollama")
+    openai = sys.modules.get("langchain_openai")
+    if ollama is not None and isinstance(model, ollama.ChatOllama):
         refresh_ollama_context(model, inspect_parameters=True)
-    elif isinstance(model, ChatOpenAI):
+    elif openai is not None and isinstance(model, openai.ChatOpenAI):
         if model.root_client.base_url.host == "api.openai.com":
             if model_context_window(model) is None:
                 window = _openai_catalog().get(model.model_name)

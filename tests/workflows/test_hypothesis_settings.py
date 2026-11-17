@@ -109,7 +109,7 @@ async def test_lazy_children_receive_common_settings_and_mcp_tools(
 
     monkeypatch.setattr("ursa.rag.tools.build_rag_tools", build_rag_tools)
     monkeypatch.setattr(
-        "ursa.agents.base.load_mcp_tools_with_sources", discover_tools
+        "ursa.util.mcp.load_mcp_tools_with_sources", discover_tools
     )
     wf = workflow_class(
         chat_model,

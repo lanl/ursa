@@ -309,7 +309,9 @@ def test_execution_agent_keeps_tool_calls_out_of_summary_and_recap(
         ],
         "symlinkdir": {},
     })
-    assert not recap_result["messages"][1].tool_calls
+    # The recap instruction is call-local; only the response is retained.
+    assert len(recap_result["messages"]) == 1
+    assert not recap_result["messages"][0].tool_calls
 
     query_result = execution_agent.query_executor(
         {"messages": [HumanMessage(content="hi")], "symlinkdir": {}},
@@ -383,3 +385,106 @@ def test_patch_dangling_tool_calls_emits_events(
     assert events[0][1]["stage"] == "dangling_tool_calls"
     assert events[0][1]["tool_call_ids"] == ["call-1"]
     assert "[Dangling Tool Call Warning]" not in capsys.readouterr().out
+
+
+def test_recap_instruction_is_call_local(chat_model, monkeypatch, tmp_path):
+    from ursa.prompt_library.execution_prompts import recap_prompt
+
+    captured = []
+    original = ToolReadyFakeChatModel.invoke
+
+    def record(self, input, *args, **kwargs):
+        captured.append(list(input))
+        return original(self, input, *args, **kwargs)
+
+    monkeypatch.setattr(ToolReadyFakeChatModel, "invoke", record)
+    agent = ExecutionAgent(llm=chat_model, workspace=tmp_path)
+    result = agent.recap({
+        "messages": [HumanMessage("Do the work")],
+        "symlinkdir": {},
+    })
+
+    assert captured[-1][-1].content == recap_prompt
+    messages = (
+        result["messages"].value
+        if isinstance(result["messages"], Overwrite)
+        else result["messages"]
+    )
+    assert isinstance(messages[-1], AIMessage)
+    assert all(msg.content != recap_prompt for msg in messages)
+
+
+def test_incomplete_reviews_without_tools_stop_and_reset_per_invoke(
+    chat_model, monkeypatch, tmp_path
+):
+    reviews = []
+
+    def reject(*args, **kwargs):
+        reviews.append(args[2])
+        return ReviewAssessment(
+            is_complete=False, reason="Required check is missing"
+        )
+
+    monkeypatch.setattr("ursa.agents.execution_agent.invoke_structured", reject)
+    agent = ExecutionAgent(
+        llm=chat_model,
+        workspace=tmp_path,
+        checkpointer=Checkpointer.from_workspace(tmp_path / "checkpoints"),
+    )
+    try:
+        first = agent.invoke("Check the implementation")
+        assert len(reviews) == 3
+        assert first["review"].is_complete is False
+        assert first["reviews_without_tools"] == 3
+        assert "Work remains incomplete" in agent.format_result(first)
+
+        agent.invoke("Try the check again")
+        assert len(reviews) == 6
+    finally:
+        agent.close()
+
+
+def test_tool_execution_resets_no_progress_review_count(chat_model, tmp_path):
+    agent = ExecutionAgent(llm=chat_model, workspace=tmp_path)
+    _ = agent.compiled_graph
+    result = agent.query_executor(
+        {
+            "messages": [
+                HumanMessage("Check the work"),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "fake_run_command",
+                            "args": {"query": "pwd"},
+                            "id": "check",
+                        }
+                    ],
+                ),
+                ToolMessage(content="check completed", tool_call_id="check"),
+            ],
+            "symlinkdir": {},
+            "reviews_without_tools": 2,
+        },
+        runtime=SimpleNamespace(context=agent.context),
+    )
+    assert result["reviews_without_tools"] == 0
+
+
+def test_compacted_recap_updates_only_messages_channel(
+    chat_model, monkeypatch, tmp_path
+):
+    agent = ExecutionAgent(llm=chat_model, workspace=tmp_path)
+    monkeypatch.setattr(
+        agent, "prepare_messages_context", lambda state, **kw: (state, True)
+    )
+
+    result = agent.recap({
+        "messages": [HumanMessage("Task context")],
+        "symlinkdir": {},
+    })
+
+    assert isinstance(result, dict)
+    assert isinstance(result["messages"], Overwrite)
+    assert len(result["messages"].value) == 2
+    assert isinstance(result["messages"].value[-1], AIMessage)

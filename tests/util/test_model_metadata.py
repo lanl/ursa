@@ -111,7 +111,9 @@ def test_litellm_alias_uses_smallest_deployment_and_preserves_client_settings(
         handler, model="gpt-4o", default_headers={"X-Tenant": "science"}
     )
     assert model_context_window(model) == 128000  # Local catalog is overridden.
-    monkeypatch.setattr("ursa.cli.config.init_chat_model", lambda **_: model)
+    monkeypatch.setattr(
+        "langchain.chat_models.init_chat_model", lambda **_: model
+    )
     initialized = ChatModelConfig(model="gpt-4o").init_chat_model()
 
     assert initialized is model
@@ -241,7 +243,9 @@ def test_explicit_profile_skips_endpoint_discovery(monkeypatch):
     model = openai_model(
         unexpected_request, model="alias", profile={"max_input_tokens": 16384}
     )
-    monkeypatch.setattr("ursa.cli.config.init_chat_model", lambda **_: model)
+    monkeypatch.setattr(
+        "langchain.chat_models.init_chat_model", lambda **_: model
+    )
     ChatModelConfig(
         model="alias", profile={"max_input_tokens": 16384}
     ).init_chat_model()

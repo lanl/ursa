@@ -1,5 +1,7 @@
 # ruff: noqa: TID251
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import shutil
@@ -7,19 +9,12 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
-from typing import Any
-
-import aiosqlite
-from fastmcp import FastMCP
-from langchain.chat_models import BaseChatModel
-from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from threading import Lock
+from typing import TYPE_CHECKING, Any
 
 from ursa import agents
-from ursa.agents import BaseAgent
-from ursa.agents.base import AgentWithTools
 from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
@@ -30,9 +25,15 @@ from ursa.security import (
     enforce_model_group_policy,
     group_agents_dir,
 )
-from ursa.util.has_optional_dep_group import has_optional_dep_group
+from ursa.util.has_extra import has_extra
 from ursa.util.inference_providers import validate_model_provider
-from ursa.util.mcp import start_mcp_client
+
+if TYPE_CHECKING:
+    from langchain.chat_models import BaseChatModel
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+    from ursa.agents import BaseAgent
 
 # Reserved name prefix of the throwaway agents backing unnamed sessions.
 EPHEMERAL_AGENT_PREFIX = "tmp_"
@@ -64,10 +65,18 @@ class AgentHITL:
         default=None, init=False, repr=False
     )
 
+    @cached_property
+    def resolved_class(self):
+        """Import an agent implementation only when requested."""
+        if isinstance(self.agent_class, str):
+            return getattr(agents, self.agent_class)
+        return self.agent_class
+
     async def instantiate(
         self,
         mcp_client: MultiServerMCPClient | None = None,
         finalizer: Callable[[Any], Awaitable[None]] | None = None,
+        dependencies: Callable | None = None,
         **kwargs,
     ):
         """Instantiate once, shared by all concurrent and cancelled waiters."""
@@ -77,7 +86,10 @@ class AgentHITL:
         if task is None:
             task = asyncio.create_task(
                 self._instantiate_once(
-                    mcp_client=mcp_client, finalizer=finalizer, **kwargs
+                    mcp_client=mcp_client,
+                    finalizer=finalizer,
+                    dependencies=dependencies,
+                    **kwargs,
                 )
             )
             self._initialization_task = task
@@ -98,21 +110,30 @@ class AgentHITL:
         self,
         mcp_client: MultiServerMCPClient | None = None,
         finalizer: Callable[[Any], Awaitable[None]] | None = None,
+        dependencies: Callable | None = None,
         **kwargs,
     ) -> None:
         kwargs |= self.config
 
         def build_agent():
+            nonlocal mcp_client
+            if dependencies is not None:
+                model, embedding, mcp_client = dependencies()
+                kwargs.setdefault("llm", model)
+                if "rag_tools" in kwargs:
+                    kwargs.setdefault("rag_tool_embedding", embedding)
             try:
-                agent = self.agent_class(**kwargs)
+                agent = self.resolved_class(**kwargs)
             except TypeError as exc:
                 raise TypeError(
-                    f"Failed to instantiate {self.agent_class.__name__} with "
+                    f"Failed to instantiate {self.resolved_class.__name__} with "
                     f"config {self.config}. {exc}"
                 ) from exc
             return agent
 
         agent = await asyncio.to_thread(build_agent)
+        from ursa.agents.base import AgentWithTools
+
         try:
             tool_sources: dict[str, str] = {}
             if mcp_client and isinstance(agent, AgentWithTools):
@@ -132,13 +153,13 @@ class AgentHITL:
             try:
                 await async_close()
             except Exception:
-                logging.exception("Failed to close partially initialized agent")
+                logging.exception("Failed to close async agent resources")
         close = getattr(agent, "close", None)
         if callable(close):
             try:
                 await asyncio.to_thread(close)
             except Exception:
-                logging.exception("Failed to close partially initialized agent")
+                logging.exception("Failed to close sync agent resources")
 
     async def wait_until_initialized(self) -> None:
         """Wait for runtime-owned initialization, if one is in flight."""
@@ -148,7 +169,7 @@ class AgentHITL:
     @property
     def description(self):
         if self._agent is None:
-            return self.agent_class.__doc__
+            return self.resolved_class.__doc__
         return self._agent.__doc__
 
     async def __call__(
@@ -205,14 +226,6 @@ class AgentHITL:
         return msg
 
 
-def get_base_url(model: BaseChatModel) -> str | None:
-    for attr in ["base_url", "api_base", "openai_api_base"]:
-        if base_url := getattr(model, attr, None):
-            return base_url
-    logging.warning(f"Missing base_url for {model}")
-    return None
-
-
 class HITL:
     def __init__(self, config: UrsaConfig):
         self.inference_provider = config.llm_model.inference_provider
@@ -244,27 +257,6 @@ class HITL:
         )
         self.group = self.config.group
 
-        validate_model_provider(self.config.llm_model, "chat")
-        if self.config.emb_model is not None:
-            validate_model_provider(self.config.emb_model, "embedding")
-
-        self.model: BaseChatModel = self.config.llm_model.init_chat_model()
-        enforce_model_group_policy(self.model, self.group)
-
-        self.embedding = (
-            self.config.emb_model.init_embedding()
-            if self.config.emb_model is not None
-            else None
-        )
-        enforce_model_group_policy(self.embedding, self.group)
-
-        self.mcp_client = start_mcp_client(self.config.mcp_servers)
-
-        rag_tool_config = {
-            "rag_tools": self.config.rag_tools,
-            "rag_tool_embedding": self.embedding,
-        }
-
         self.agents: dict[str, AgentHITL] = {}
         for agent_name, agent_class_name, deps in [
             ("chat", "ChatAgent", None),
@@ -278,16 +270,16 @@ class HITL:
             ("web", "WebSearchAgent", None),
             ("lammps", "LammpsAgent", "lammps"),
         ]:
-            if deps is not None and not has_optional_dep_group(deps):
+            if deps is not None and not has_extra(deps):
                 continue
 
             config = {
                 "tokens_before_summarize": self.config.tokens_before_summarize
             }
             if agent_name in {"chat", "execute", "deep_review", "dsi"}:
-                config.update(rag_tool_config)
+                config["rag_tools"] = self.config.rag_tools
             self.agents[agent_name] = AgentHITL(
-                agent_class=getattr(agents, agent_class_name),
+                agent_class=agent_class_name,
                 config=config,
             )
 
@@ -304,6 +296,7 @@ class HITL:
         self.last_agent_result = None
         self.last_agent = None
         self._runtime_checkpointers: list[AsyncSqliteSaver] = []
+        self._dependencies_lock = Lock()
         self._transition_lock = asyncio.Lock()
         self._transition_serial_lock = asyncio.Lock()
         self._loads_allowed = asyncio.Event()
@@ -314,9 +307,54 @@ class HITL:
         self._close_task: asyncio.Task[None] | None = None
         self._closed = False
 
+    @property
+    def initialized_model(self) -> BaseChatModel | None:
+        """Return the cached chat model without triggering initialization."""
+        return self.__dict__.get("model")
+
+    @cached_property
+    def model(self):
+        validate_model_provider(self.config.llm_model, "chat")
+        model = self.config.llm_model.init_chat_model()
+        enforce_model_group_policy(model, self.group)
+        return model
+
+    @cached_property
+    def embedding(self):
+        if self.config.emb_model is None:
+            return None
+        validate_model_provider(self.config.emb_model, "embedding")
+        embedding = self.config.emb_model.init_embedding()
+        enforce_model_group_policy(embedding, self.group)
+        return embedding
+
+    @cached_property
+    def mcp_client(self):
+        if not self.config.mcp_servers:
+            return None
+        from ursa.util.mcp import start_mcp_client
+
+        return start_mcp_client(self.config.mcp_servers)
+
+    def _agent_dependencies(self):
+        # AgentHITL owns initialization and cancellation; serialize shared first
+        # use here so concurrent agents reuse the same cached dependencies.
+        with self._dependencies_lock:
+            needs_embedding = any(
+                agent.config.get("rag_tools") for agent in self.agents.values()
+            )
+            return (
+                self.model,
+                self.embedding if needs_embedding else None,
+                self.mcp_client,
+            )
+
     async def _get_checkpointer(
         self, checkpoint_path: Path
     ) -> AsyncSqliteSaver:
+        import aiosqlite
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
         checkpoint_path = checkpoint_path / "db" / "checkpointer.db"
         await asyncio.to_thread(
             checkpoint_path.parent.mkdir, parents=True, exist_ok=True
@@ -383,6 +421,8 @@ class HITL:
         return await asyncio.shield(task)
 
     async def _finalize_named_agent(self, built_agent: Any) -> None:
+        from langgraph.checkpoint.sqlite import SqliteSaver
+
         # Custom agent classes from the config need not be persistent
         # BaseAgents; without a den there is nothing to checkpoint.
         if getattr(built_agent, "den", None) is None:
@@ -402,11 +442,10 @@ class HITL:
     async def _get_agent(self, name: str) -> AgentHITL:
         agent = self.agents[name]
         await agent.instantiate(
-            llm=self.model,
+            dependencies=self._agent_dependencies,
             workspace=self.workspace,
             agent_name=self.session_agent_name,
             group=self.group,
-            mcp_client=self.mcp_client,
             finalizer=self._finalize_named_agent,
             thread_id=f"{self.thread_id}",
         )
@@ -561,14 +600,7 @@ class HITL:
             agent = wrapper._agent
             if agent is None:
                 continue
-            try:
-                await agent.aclose()
-            except Exception:
-                logging.exception("Failed to close async agent resources")
-            try:
-                await asyncio.to_thread(agent.close)
-            except Exception:
-                logging.exception("Failed to close sync agent resources")
+            await wrapper._close_agent(agent)
             wrapper._agent = None
             wrapper.state = None
 
@@ -625,6 +657,8 @@ class HITL:
         await self.aclose()
 
     def as_mcp_server(self, **kwargs):
+        from fastmcp import FastMCP
+
         from ursa import __version__ as ursa_version
 
         mcp = FastMCP(

@@ -330,10 +330,10 @@ def main(args=None):
                 run_kwargs["port"] = cmd_config.port
             mcp.run(**run_kwargs)
         case "exec":
-            from ursa.cli.tui.app import run_textual_once
+            from ursa.cli.one_shot import run_once
 
             hitl = _initialize_hitl(ursa_config)
-            run_textual_once(hitl, cmd_config.prompt)
+            run_once(hitl, cmd_config.prompt)
         case _:
             logging.error(f"Unknown subcommand {subcommand}")
             raise NotImplementedError

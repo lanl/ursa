@@ -1,4 +1,5 @@
-import ollama
+import subprocess
+
 import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -34,16 +35,18 @@ def test_traced_chat_openai(monkeypatch):
 
 
 def has_ollama_model(model_name: str):
+    """Probe through the CLI so no module-level HTTP socket is left open."""
     try:
-        models = ollama.list()["models"]
-    except Exception:
-        print("ollama server is not running")
+        result = subprocess.run(
+            ["ollama", "show", model_name],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
-
-    for m in models:
-        if m.model == model_name:
-            return True
-    return False
+    return result.returncode == 0
 
 
 @pytest.mark.skipif(

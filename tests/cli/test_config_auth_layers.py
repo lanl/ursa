@@ -157,7 +157,7 @@ def test_secret_reference_get_secret_value(monkeypatch):
     )
 
 
-def test_loaded_config_exposes_typed_secret_references():
+def test_loaded_config_preserves_secret_references():
     config = UrsaConfig.model_validate({
         "inference_providers": {"hosted": {"api_key": {"keyring": True}}},
         "mcp_servers": {
@@ -172,9 +172,9 @@ def test_loaded_config_exposes_typed_secret_references():
     assert isinstance(
         config.inference_providers["hosted"].api_key, SecretReference
     )
-    assert isinstance(
-        config.mcp_servers["tools"].headers["Authorization"], SecretTemplate
-    )
+    assert config.mcp_servers["tools"]["headers"]["Authorization"] == {
+        "env": "MCP_TOKEN"
+    }
 
 
 @pytest.mark.parametrize("template", ["Bearer", "%s:%s"])

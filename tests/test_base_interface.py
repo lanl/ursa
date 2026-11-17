@@ -321,3 +321,46 @@ def test_tool_runtime_preserved_for_tool_node(chat_model, tmp_path: Path):
         getattr(msg, "tool_call_id", "") == "tool_call_write_code"
         for msg in result["messages"]
     )
+
+
+def test_default_tool_error_handler_returns_tool_message(
+    chat_model, tmp_path: Path
+):
+    @tool
+    def broken() -> str:
+        """Always fails with a decode error."""
+        b"\xba".decode("utf-8")
+        return "unreachable"
+
+    class BrokenToolAgent(AgentWithTools, BaseAgent):
+        def __init__(self, **kwargs):
+            super().__init__(llm=chat_model, tools=[broken], **kwargs)
+
+        def _inject_tool_call(self, state):
+            messages = list(state["messages"])
+            messages.append(
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"id": "call_broken", "name": "broken", "args": {}}
+                    ],
+                )
+            )
+            return {"messages": messages}
+
+        def _build_graph(self):
+            self.add_node(self._inject_tool_call, "inject")
+            self.add_node(self.tool_node, "tools")
+            self.graph.set_entry_point("inject")
+            self.graph.add_edge("inject", "tools")
+            self.graph.set_finish_point("tools")
+
+    result = BrokenToolAgent(workspace=tmp_path).invoke("trigger tool")
+
+    tool_messages = [
+        msg
+        for msg in result["messages"]
+        if getattr(msg, "tool_call_id", "") == "call_broken"
+    ]
+    assert len(tool_messages) == 1
+    assert "UnicodeDecodeError" in tool_messages[0].content

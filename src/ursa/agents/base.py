@@ -32,6 +32,7 @@ from functools import cached_property
 from pathlib import Path
 from types import MappingProxyType
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Generic,
@@ -58,7 +59,6 @@ from langchain_core.messages import (
 from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langchain_core.runnables.config import merge_configs
-from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -91,12 +91,15 @@ from ursa.util.checkpoint_retention import (
     prune_sqlite_checkpoints,
 )
 from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER, AgentEvents
-from ursa.util.mcp import load_mcp_tools_with_sources
 from ursa.util.message_portability import make_portable
 from ursa.util.model_context import (
     DEFAULT_SUMMARIZATION_THRESHOLD,
     summarization_threshold,
 )
+
+if TYPE_CHECKING:
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+
 
 logger = logging.getLogger(__name__)
 
@@ -2013,7 +2016,9 @@ def _default_tool_error_handler(e: Exception):
         return e.message
     elif isinstance(e, ToolException):
         return str(e)
-    raise e
+    # Report any other tool failure back to the model instead of aborting the
+    # whole graph run. Graph interrupts never reach this handler.
+    return f"Tool error ({type(e).__name__}): {e}"
 
 
 class AgentWithTools:
@@ -2104,6 +2109,8 @@ class AgentWithTools:
         """
 
         def discover_and_apply() -> dict[str, str]:
+            from ursa.util.mcp import load_mcp_tools_with_sources
+
             # MCP adapters perform synchronous session/schema setup around
             # their async I/O, and applying tools rebuilds the graph. Own one
             # worker boundary for the complete operation so every caller—not

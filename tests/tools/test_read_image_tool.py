@@ -143,6 +143,41 @@ def test_read_image_tool_reads_from_runtime_workspace(
     assert base64.b64decode(result[1]["base64"]).startswith(b"\x89PNG")
 
 
+@pytest.mark.parametrize("path_kind", ["relative", "absolute", "symlink"])
+def test_read_image_tool_rejects_paths_outside_workspace(
+    monkeypatch,
+    tmp_path: Path,
+    chat_model: BaseChatModel,
+    path_kind: str,
+):
+    monkeypatch.delenv("URSA_ALLOW_UNSAFE_READS", raising=False)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.png"
+    Image.new("RGB", (1, 1), color="red").save(outside)
+    if path_kind == "symlink":
+        link = workspace / "link.png"
+        try:
+            link.symlink_to(outside)
+        except OSError:
+            pytest.skip("Symlink creation is unavailable")
+        image_path = link.name
+    else:
+        image_path = (
+            "../outside.png" if path_kind == "relative" else str(outside)
+        )
+    monkeypatch.setattr(
+        "ursa.tools.read_image_tool.image_block_from_file",
+        lambda path: pytest.fail("Rejected images must not be read"),
+    )
+
+    with pytest.raises(ValueError, match="resolves outside workspace"):
+        read_image_tool.func(
+            image_path=image_path,
+            runtime=make_runtime(workspace, llm=chat_model),
+        )
+
+
 @pytest.mark.real_llm
 def test_read_image_tool_output_can_be_read_by_attached_llm(
     tmp_path: Path, vision_chat_model: BaseChatModel

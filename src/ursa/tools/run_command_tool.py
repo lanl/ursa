@@ -118,13 +118,14 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
                 reason=safety_result.reason,
             )
             return tool_response
-        events.emit(
-            "Command passed safety check",
-            stage="safety_check",
-            query=query,
-            safe=True,
-            reason=safety_result.reason,
-        )
+
+    events.emit(
+        "Command passed safety check",
+        stage="safety_check",
+        query=query,
+        safe=True,
+        reason=safety_result.reason,
+    )
 
     try:
         with events.range(
@@ -218,6 +219,13 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
         )
     except KeyboardInterrupt:
         stdout, stderr = "", "KeyboardInterrupt:"
+        stdout_fit, stderr_fit = _fit_streams_to_budget(
+            stdout,
+            stderr,
+            runtime.context.tool_character_limit,
+        )
+    except Exception as exc:  # noqa: BLE001
+        stdout, stderr = "", f"{type(exc).__name__}: {exc}"
         stdout_fit, stderr_fit = _fit_streams_to_budget(
             stdout,
             stderr,

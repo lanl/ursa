@@ -20,11 +20,6 @@ from ursa.tools import (
     write_experience,
 )
 from ursa.tools.read_image_tool import read_image_tool
-from ursa.tools.search_tools import (
-    run_arxiv_search,
-    run_osti_search,
-    run_web_search,
-)
 
 
 class ChatState(TypedDict):
@@ -108,6 +103,12 @@ class ChatAgent(AgentWithTools, BasicChatAgent):
             edit_experience,
         ]
         if use_web:
+            from ursa.tools.search_tools import (
+                run_arxiv_search,
+                run_osti_search,
+                run_web_search,
+            )
+
             default_tools.extend([
                 run_web_search,
                 run_osti_search,

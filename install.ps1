@@ -1,6 +1,6 @@
 & {
     param(
-        [Alias("h")][switch]$Help,
+        [Alias("Help", "h")][switch]$ShowHelp,
         [string]$Config,
         [string]$Version,
         [string]$Branch,
@@ -15,7 +15,7 @@
             if ($directory -and (Test-Path -LiteralPath "$directory\uv.exe" -PathType Leaf)) { return "$directory\uv.exe" }
         }
     }
-    if ($Help) { Write-Output "Usage: install.ps1 [-Config FILE] [-Branch BRANCH | -Version VERSION] [-Python VERSION]"; return }
+    if ($ShowHelp) { Write-Output "Usage: install.ps1 [-Config FILE] [-Branch BRANCH | -Version VERSION] [-Python VERSION]"; return }
 
     if ($PSBoundParameters.ContainsKey("Branch") -and $PSBoundParameters.ContainsKey("Version")) { Fail "-Branch and -Version cannot be used together" }
     $ursaRequirement = "ursa-ai"
@@ -48,10 +48,16 @@
     & $uv tool install --python $Python --force --upgrade --compile-bytecode $ursaRequirement
     if ($LASTEXITCODE) { Fail "uv failed to install URSA (exit code ${LASTEXITCODE})" }
     $toolBin = "$(& $uv tool dir --bin | Select-Object -Last 1)".Trim()
-    $ursa = Join-Path $toolBin "ursa.exe"
+
     & $uv tool update-shell
     if ($LASTEXITCODE) { Write-Output "Could not update this shell automatically; add ${toolBin} to PATH." }
     $env:Path = "$toolBin$([IO.Path]::PathSeparator)$(Split-Path -Parent $uv)$([IO.Path]::PathSeparator)$($env:Path)"
+
+    $ursaCommand = Get-Command ursa -CommandType Application -ErrorAction SilentlyContinue
+    if (-not $ursaCommand) {
+        Fail "URSA was installed, but its executable could not be found in $toolBin"
+    }
+    $ursa = $ursaCommand.Path
 
     & $ursa self setup --help *> $null
     if ($LASTEXITCODE) {

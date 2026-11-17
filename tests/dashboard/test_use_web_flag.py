@@ -36,8 +36,29 @@ def _invoke(argv: list[str], monkeypatch) -> str | None:
     import uvicorn
 
     monkeypatch.setattr(uvicorn, "run", fake_run)
-    # Avoid opening a browser during tests.
-    monkeypatch.setattr(dashboard_main.webbrowser, "open", lambda *a, **k: None)
+
+    # Run the delayed browser task inline while the browser stub is installed.
+    # A real daemon thread can wake after monkeypatch teardown and call the
+    # restored webbrowser.open, opening a browser window during later tests.
+    class InlineThread:
+        def __init__(self, *, target, daemon):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    class ImmediateTime:
+        sleep = staticmethod(lambda _seconds: None)
+
+    class InlineThreading:
+        Thread = InlineThread
+
+    class NoBrowser:
+        open = staticmethod(lambda *_args, **_kwargs: None)
+
+    monkeypatch.setattr(dashboard_main, "time", ImmediateTime)
+    monkeypatch.setattr(dashboard_main, "threading", InlineThreading)
+    monkeypatch.setattr(dashboard_main, "webbrowser", NoBrowser)
 
     result = CliRunner().invoke(dashboard_main.app, argv)
     assert result.exit_code == 0, result.output

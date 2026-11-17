@@ -1,8 +1,6 @@
 import json
-import os
-from pathlib import Path
 
-from ursa.skills import create_skill_catalog
+from ursa.skills import create_skill_catalog, skill_directories
 from ursa.skills.prompt import skills_system_prompt_template
 
 chatter_system_prompt_template = """
@@ -15,14 +13,10 @@ The documentation for URSA is available at https://lanl.github.io/ursa/.
 
 
 def get_chatter_system_prompt():
-    # Discovery skills and build catalog
-    skills_dirs = [Path.cwd() / ".ursa" / "skills"]
-    delim = ";" if os.name == "nt" else ":"
-    skills_dirs.extend(
-        os.environ.get("URSA_SKILLS_PATH", "").strip().split(delim)
-    )
+    # Discover skills and build the catalog from the same resolved roots that
+    # read_file authorizes.
     skill_catalog = create_skill_catalog(
-        directories=[Path(d) for d in skills_dirs if Path(d).is_dir()]
+        directories=[root for root in skill_directories() if root.is_dir()]
     )
 
     # Build the skills catalog prompt

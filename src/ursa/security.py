@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import yaml
-from langchain.chat_models import BaseChatModel
+
+if TYPE_CHECKING:
+    from langchain.chat_models import BaseChatModel
 
 URSA_CACHE_DIR = (
     Path(

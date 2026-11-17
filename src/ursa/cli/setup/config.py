@@ -8,7 +8,7 @@ from collections.abc import Collection, Mapping
 from contextlib import contextmanager, suppress
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import yaml
@@ -25,8 +25,10 @@ from ursa.cli.config import (
     save_config_file,
 )
 from ursa.util import get_keyring
-from ursa.util.mcp import ServerParameters
 from ursa.util.secrets import KEYRING_SERVICE, SecretReference, SecretTemplate
+
+if TYPE_CHECKING:
+    from mcp.client.session_group import ServerParameters
 
 # The compact layout keeps this setup-specific boundary proportional to the
 # canonical config machinery it delegates to.

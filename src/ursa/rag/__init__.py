@@ -1,5 +1,7 @@
 """Persistent RAG collection helpers for URSA."""
 
+from typing import TYPE_CHECKING
+
 from .persistence import (
     URSA_CACHE_DIR,
     build_persistent_rag_agent,
@@ -18,7 +20,20 @@ from .persistence import (
     validate_rag_agent_name,
     validate_rag_group_name,
 )
-from .tools import build_rag_tool, build_rag_tools, rag_tool_name
+
+if TYPE_CHECKING:
+    from .tools import build_rag_tool, build_rag_tools, rag_tool_name
+
+
+def __getattr__(name: str):
+    if name in {"build_rag_tool", "build_rag_tools", "rag_tool_name"}:
+        from . import tools
+
+        value = getattr(tools, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "URSA_CACHE_DIR",

@@ -7,7 +7,6 @@ from langchain_core.tools import tool
 
 from ursa.agents.base import AgentContext
 from ursa.util.events import ToolEvents
-from ursa.util.parse import read_text_file, read_text_from_file
 from ursa.util.rendering import event_artifact, file_artifact
 from ursa.util.types import (
     AsciiValidationError,
@@ -83,6 +82,9 @@ def write_experience(
     Returns:
         Confirmation message describing the write operation.
     """
+
+    from ursa.util.parse import read_text_file
+
     try:
         filename = validate_ascii(filename)
     except AsciiValidationError as exc:
@@ -92,8 +94,12 @@ def write_experience(
     experience_file.parent.mkdir(parents=True, exist_ok=True)
 
     existing_text = ""
-    if experience_file.exists():
-        existing_text = read_text_from_file(experience_file)
+    if append and experience_file.exists():
+        # Refuse to append rather than clobber a file we cannot read back.
+        try:
+            existing_text = read_text_file(experience_file)
+        except (ValueError, OSError) as exc:
+            return f"Failed to append to {filename}: {exc}"
 
     text_to_write = content.rstrip() + "\n"
     if append and existing_text:
@@ -159,6 +165,8 @@ def edit_experience(
     Returns:
         Success or failure message describing the edit operation.
     """
+    from ursa.util.parse import read_text_file
+
     try:
         filename = validate_ascii(filename)
     except AsciiValidationError as exc:
@@ -280,6 +288,8 @@ def read_experience(
     Returns:
         The contents of the requested experience file.
     """
+    from ursa.util.parse import read_text_from_file
+
     try:
         filename = validate_ascii(filename)
     except AsciiValidationError as exc:

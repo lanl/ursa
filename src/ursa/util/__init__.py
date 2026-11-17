@@ -1,11 +1,15 @@
+from __future__ import annotations
+
 import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import aiosqlite
+if TYPE_CHECKING:
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
-from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from ursa.util.secrets import get_keyring as get_keyring
 
@@ -42,6 +46,8 @@ class Checkpointer:
         *,
         allowed_msgpack_modules: Sequence[tuple[str, str] | type] = (),
     ) -> SqliteSaver:
+        from langgraph.checkpoint.sqlite import SqliteSaver
+
         (db_path := workspace / db_dir).mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(db_path / db_name), check_same_thread=False)
         return SqliteSaver(conn, serde=_serde(allowed_msgpack_modules))
@@ -56,6 +62,9 @@ class Checkpointer:
         allowed_msgpack_modules: Sequence[tuple[str, str] | type] = (),
     ) -> AsyncSqliteSaver:
         """Make an async SQLite checkpointer under a workspace directory."""
+        import aiosqlite
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
         (db_path := workspace / db_dir).mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(str(db_path / db_name))
         return AsyncSqliteSaver(conn, serde=_serde(allowed_msgpack_modules))
@@ -74,6 +83,7 @@ class Checkpointer:
         ====
         * db_path: The path to the SQLite database file (e.g. ./checkpoint.db) to be created.
         """
+        from langgraph.checkpoint.sqlite import SqliteSaver
 
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(db_path / db_name), check_same_thread=False)
@@ -88,6 +98,9 @@ class Checkpointer:
         allowed_msgpack_modules: Sequence[tuple[str, str] | type] = (),
     ) -> AsyncSqliteSaver:
         """Make an async SQLite checkpointer under a database path."""
+        import aiosqlite
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(str(db_path / db_name))
         return AsyncSqliteSaver(conn, serde=_serde(allowed_msgpack_modules))

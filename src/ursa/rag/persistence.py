@@ -6,10 +6,11 @@ import re
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
-from langchain.chat_models import BaseChatModel
-from langchain.embeddings import Embeddings
+if TYPE_CHECKING:
+    from langchain.chat_models import BaseChatModel
+    from langchain.embeddings import Embeddings
 
 from ursa.security import GROUP_CONFIG_FILENAME, URSA_CACHE_DIR
 
