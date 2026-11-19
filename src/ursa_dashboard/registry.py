@@ -157,42 +157,42 @@ register(
     )
 )
 
-register(
-    AgentEntry(
-        spec=AgentSpec(
-            agent_id="planning_agent",
-            display_name="Plan",
-            description="Creates a step-by-step plan using structured output and optional self-reflection.",
-            capabilities=AgentCapabilities(
-                supports_streaming=False,
-                supports_cancellation=False,
-                produces_artifacts=False,
-            ),
-            parameters=[
-                _prompt_param(title="Goal"),
-                AgentParam(
-                    name="max_reflection_steps",
-                    title="Max reflection steps",
-                    description="Number of reflection passes to improve the plan.",
-                    type="integer",
-                    required=False,
-                    default=1,
-                    advanced=True,
-                    source=ParamSource.agent_init,
-                    target="max_reflection_steps",
-                    constraints=ParamConstraint(minimum=0, maximum=10),
-                ),
-            ]
-            + _common_llm_params()
-            + _runner_params(),
-            tags=["planning"],
-        ),
-        build_adapter=_baseagent_adapter_builder(
-            "ursa.agents.planning_agent.PlanningAgent"
-        ),
-        build_inputs=lambda p: p["prompt"],
-    )
-)
+# register(
+#     AgentEntry(
+#         spec=AgentSpec(
+#             agent_id="planning_agent",
+#             display_name="Plan",
+#             description="Creates a step-by-step plan using structured output and optional self-reflection.",
+#             capabilities=AgentCapabilities(
+#                 supports_streaming=False,
+#                 supports_cancellation=False,
+#                 produces_artifacts=False,
+#             ),
+#             parameters=[
+#                 _prompt_param(title="Goal"),
+#                 AgentParam(
+#                     name="max_reflection_steps",
+#                     title="Max reflection steps",
+#                     description="Number of reflection passes to improve the plan.",
+#                     type="integer",
+#                     required=False,
+#                     default=1,
+#                     advanced=True,
+#                     source=ParamSource.agent_init,
+#                     target="max_reflection_steps",
+#                     constraints=ParamConstraint(minimum=0, maximum=10),
+#                 ),
+#             ]
+#             + _common_llm_params()
+#             + _runner_params(),
+#             tags=["planning"],
+#         ),
+#         build_adapter=_baseagent_adapter_builder(
+#             "ursa.agents.planning_agent.PlanningAgent"
+#         ),
+#         build_inputs=lambda p: p["prompt"],
+#     )
+# )
 
 
 register(

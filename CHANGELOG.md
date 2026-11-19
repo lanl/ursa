@@ -1,5 +1,133 @@
 # Change Log
 
+## v0.18.0
+
+Changes since `v0.17.3`:
+
+### New workflows and agent composition
+
+- Added composable agent nodes and persistent composite-agent lifecycle support,
+  including shared storage setup, async invocation, checkpoint isolation, and
+  documentation for embedding agents inside larger LangGraph workflows (#209).
+- Added the Think-Plan-Execute workflow and refactored Planning-Execution into a
+  persistent composite agent, with reusable planning/execution and simulation-use
+  workflow APIs (#209).
+- Added two hypothesis research workflows: a static Hypothesis Symposium with
+  specialist-per-hypothesis investigation, peer review, revision, synthesis, and
+  live visualization; and a dynamic Hypothesis Orchestrator that creates and
+  reuses persistent investigator agents at runtime (#209).
+- Added shared workflow configuration for web and persisted RAG tools, stable
+  investigator identities, read-only peer-workspace access during review, and
+  dashboard entries for the hypothesis workflows (#209).
+
+### Dashboard and onboarding
+
+- Redesigned the dashboard around a cleaner session composer, sidebar, settings
+  experience, workspace selection, environment-run visualization, responsive
+  layouts, and guided welcome/onboarding tasks (#342).
+- Added a secure editor for the normal URSA user config, inference-provider and
+  model discovery, explicit configuration precedence, connection tests, and
+  keyring-backed credential management. Dashboard model defaults now update the
+  same config used by the TUI while preserving unrelated settings (#342).
+- Expanded environment-run displays with clearer topology, delegation, phase,
+  status, log, and artifact presentation, including live symposium progress
+  (#342).
+- Simplified the dashboard agent registry to emphasize the general chat,
+  execution, composite planning, and hypothesis workflows instead of exposing
+  internal/specialist and demo agents as equivalent top-level choices
+  (#342, #419, #420).
+- Fixed duplicate running-command cards in the TUI (#405).
+
+### Cross-provider model switching and conversation persistence
+
+- Added provider-portable message-history conversion for model switches: foreign
+  reasoning/signature metadata is removed, visible text and tool calls are
+  preserved, unsafe tool-call IDs are normalized, and OpenAI, Anthropic, Google,
+  and compatible gateway histories can be replayed safely (#404).
+- Added automatic fallback from the OpenAI Responses API to Chat Completions for
+  partially compatible endpoints, with sticky endpoint/model routing,
+  Responses-only parameter cleanup, reasoning-effort mapping, and portable image
+  handling for tool results (#404).
+- Prevented reasoning signatures, response metadata, and base64 images from being
+  stringified into summarization prompts; fixed history-overwrite handling after
+  sanitization and compaction (#404).
+- Unnamed TUI sessions now use temporary persistent agents, so history survives
+  model switches and is shared consistently across agent types; temporary agents
+  are cleaned up on normal exit and `ursa delete-agent --name 'pattern*'` supports
+  wildcard cleanup after interrupted sessions (#404).
+- Removed duplicated cross-agent handoff text when both agents already share the
+  persisted message history, prevented stale cached messages from resurrecting
+  summarized history, and made error rendering safe from Textual markup parsing
+  (#404).
+- Agent instances now generate unique default thread IDs instead of sharing one
+  global constant, with persistence tests updated accordingly (#335, #401).
+
+### Agent and environment reliability
+
+- Bounded ExecutionAgent review/executor ping-pong at three rejected reviews
+  without intervening tool execution; the agent now reports incomplete work
+  honestly, resets the bound after tool progress or a new invocation, and updates
+  compacted recap history through the correct messages channel (#414).
+- Made recap instructions call-local while retaining recap responses, and added
+  explicit phase-ending instructions to symposium work, review, revision, and
+  synthesis prompts so stale review/recap restrictions do not leak into later
+  phases (#414).
+- Fixed named environment members inheriting LangGraph's default recursion limit
+  of 25: absent an explicit caller override, member graphs now retain URSA's own
+  configured recursion limit (#418).
+- Improved simulator, planner, hypothesizer, LAMMPS, and composite workflow
+  behavior and tests as part of the agent-composition work (#209).
+
+### Skills, filesystem boundaries, and sandboxing
+
+- Added Agent Skills support: URSA discovers validated `SKILL.md` files from
+  `<cwd>/.ursa/skills` and `URSA_SKILLS_PATH`, adds a skill catalog to the chat
+  system prompt, and documents skill locations for agent use (#392).
+- Added workspace containment to `read_file`, with explicit
+  `URSA_ALLOW_UNSAFE_READS` opt-out, while permitting resolved skill roots;
+  multiple platform-separated skill paths, symlinked roots, and local skill
+  directories now use one shared discovery/authorization implementation
+  (#395, #409, #410, #413).
+- Applied the same containment rules to image reads and the existing write-code
+  boundary to downloads, rejecting relative traversal, absolute outside paths,
+  and symlink escapes unless the corresponding unsafe override is enabled
+  (#413).
+- Added command sandbox backends using bubblewrap on Linux and sandbox-exec on
+  macOS, with configurable network access and extra writable paths; unsupported
+  or unavailable sandbox setups now provide clearer opt-out guidance (#403).
+- Made command timeouts configurable through `URSA_COMMAND_TIMEOUT_SECONDS` and
+  kill the complete unsandboxed/macOS process group on timeout so child processes
+  do not continue consuming resources (#396, #413).
+- Made sandbox command output tolerate invalid UTF-8 using replacement decoding,
+  returned tool failures to agents instead of aborting their graph runs, and
+  prevented failed experience-file reads from being overwritten on append
+  (#411).
+
+### Startup, setup, and installation
+
+- Reduced CLI/TUI startup time by roughly 10x through deferred imports and agent
+  initialization, lightweight optional-extra detection, lazy MCP/tool loading,
+  and streamlined runtime/configuration setup (#406).
+- Improved MCP boundaries and optional dependency handling, added a one-shot CLI
+  path, and unlocked configured keyring credentials once before TUI startup
+  (#406).
+- Improved the setup wizard so newly entered provider credentials automatically
+  select secure keyring storage, and made provider health probes use URSA's
+  truststore-aware HTTP clients (#417).
+- Fixed the Windows installer, strengthened both shell and PowerShell installers,
+  and added CI coverage that executes the installers; corrected related install
+  commands and documentation (#394, #415, #416).
+
+### Documentation, security, and maintenance
+
+- Added documentation for agent-node composition, Planning-Execution workflows,
+  workflow APIs, skills, sandbox configuration, command timeouts, and updated
+  examples that load the normal user configuration stack (#209, #397, #403,
+  #410).
+- Expanded `SECURITY.md` with vulnerability-reporting guidance (#398).
+- Added `packaging` as an explicit runtime dependency and continued Windows and
+  optional-dependency test hardening (#406).
+
 ## v0.17.3
 
 Changes since `v0.17.2`:

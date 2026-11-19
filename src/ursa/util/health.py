@@ -55,6 +55,10 @@ def _probe_worker(connection: Any, probe: Any, args: tuple[Any, ...]) -> None:
             redirect_stderr(output),
         ):
             try:
+                from ursa.util.http import inject_truststore_into_ssl
+
+                # Spawned workers do not inherit the CLI's SSL initialization.
+                inject_truststore_into_ssl()
                 result = probe(*args)
                 if inspect.isawaitable(result):
                     result = asyncio.run(result)
