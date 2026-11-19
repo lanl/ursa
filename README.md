@@ -4,6 +4,7 @@
 
 [![PyPI Version][pypi-version]](https://pypi.org/project/ursa-ai/)
 [![PyPI Downloads][monthly-downloads]](https://pypistats.org/packages/ursa-ai)
+[![codecov](https://codecov.io/gh/lanl/ursa/graph/badge.svg?token=Ekzty8ByxQ)](https://codecov.io/gh/lanl/ursa)
 
 The flexible agentic workflow for accelerating scientific tasks.
 Composes information flow between agents for planning, code writing and execution, and online research to solve complex problems.
