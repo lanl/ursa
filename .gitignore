@@ -13,6 +13,10 @@ dist/
 wheels/
 *.egg-info
 *.sql
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 .ipynb_checkpoints/
 
 # Virtual environments
