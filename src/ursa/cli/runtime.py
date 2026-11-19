@@ -122,6 +122,8 @@ class AgentHITL:
                 kwargs.setdefault("llm", model)
                 if "rag_tools" in kwargs:
                     kwargs.setdefault("rag_tool_embedding", embedding)
+                if kwargs.get("rerank") == "embedding":
+                    kwargs.setdefault("rerank_embedding", embedding)
             try:
                 agent = self.resolved_class(**kwargs)
             except TypeError as exc:
@@ -341,7 +343,9 @@ class HITL:
         # use here so concurrent agents reuse the same cached dependencies.
         with self._dependencies_lock:
             needs_embedding = any(
-                agent.config.get("rag_tools") for agent in self.agents.values()
+                agent.config.get("rag_tools")
+                or agent.config.get("rerank") == "embedding"
+                for agent in self.agents.values()
             )
             return (
                 self.model,
@@ -587,6 +591,8 @@ class HITL:
                 for wrapper in self.agents.values():
                     if "rag_tool_embedding" in wrapper.config:
                         wrapper.config["rag_tool_embedding"] = new_embedding
+                    if "rerank_embedding" in wrapper.config:
+                        wrapper.config["rerank_embedding"] = new_embedding
 
         await self._run_runtime_task(apply_reconfiguration())
 
