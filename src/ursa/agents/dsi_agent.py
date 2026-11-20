@@ -190,6 +190,10 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
 
         self.output_mode = output_mode
 
+        # Per-question context from craft_message, sent with every request of
+        # the question rather than stored in the message history.
+        self._question_context = ""
+
         # Try to load the master database if a path is provided, otherwise wait for the user to load one
         if run_path == "":
             self.run_path = os.getcwd()
@@ -261,7 +265,10 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
         new_state, full_overwrite = self.prepare_messages_context(state)
         messages = new_state["messages"]
 
-        conversation = [SystemMessage(content=self.prompt)] + messages
+        system_prompt = self.prompt
+        if self._question_context:
+            system_prompt += "\n\n" + self._question_context
+        conversation = [SystemMessage(content=system_prompt)] + messages
         response = self.llm.invoke(conversation)
 
         return self.messages_update(
@@ -332,12 +339,10 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
         if self.db_description != "":
             system_parts.append("Dataset description: " + self.db_description)
 
-        # Combine
-        if system_parts:
-            system_message = SystemMessage(content="\n\n".join(system_parts))
-            messages = [system_message, HumanMessage(content=human_msg)]
-        else:
-            messages = [HumanMessage(content=human_msg)]
+        # Combine. The context goes into the per-request system prompt (see
+        # _response_node), not the history, where the sanitizer would drop it.
+        self._question_context = "\n\n".join(system_parts)
+        messages = [HumanMessage(content=human_msg)]
 
         # clear
         self.db_schema = ""
