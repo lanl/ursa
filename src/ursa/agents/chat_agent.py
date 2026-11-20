@@ -1,4 +1,4 @@
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Literal, NotRequired, TypedDict
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -25,6 +25,7 @@ from ursa.tools.read_image_tool import read_image_tool
 class ChatState(TypedDict):
     messages: Annotated[list, add_messages]
     thread_id: str
+    chat_system_prompt: NotRequired[str]
 
 
 class BasicChatAgent(BaseAgent[ChatState]):
@@ -36,16 +37,31 @@ class BasicChatAgent(BaseAgent[ChatState]):
         self, state: ChatState, runtime: Runtime[AgentContext]
     ) -> ChatState:
         new_state, full_overwrite = self.prepare_messages_context(state)
-        res = self.llm.invoke(new_state["messages"])
+        # A session's history is shared with other agents, so the system
+        # message that leads it (theirs, or none) must not decide which prompt
+        # chat runs under. The prompt format_query recorded goes first in the
+        # request only; the stored history is left as it is.
+        request = self._ensure_system_first(
+            new_state["messages"],
+            new_state.get("chat_system_prompt"),
+            replace=True,
+        )
+        res = self.llm.invoke(request)
         return self.messages_update(
             new_state, [res], full_overwrite=full_overwrite
         )
 
     def format_query(self, prompt: str, state: ChatState | None = None):
         if state is None:
+            chat_prompt = get_chatter_system_prompt()
             state = ChatState(
-                messages=[SystemMessage(content=get_chatter_system_prompt())]
+                messages=[SystemMessage(content=chat_prompt)],
+                chat_system_prompt=chat_prompt,
             )
+        elif "chat_system_prompt" in state:
+            # Rebuilt for every query. A state the caller built without
+            # format_query has no such key and keeps the caller's own prompt.
+            state["chat_system_prompt"] = get_chatter_system_prompt()
         state["messages"].append(HumanMessage(content=prompt))
 
         return state
