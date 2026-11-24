@@ -67,7 +67,6 @@ from ursa.util.inference_providers import (
     model_listing_provider,
     sort_provider_models,
 )
-from ursa.welcome_tasks import dashboard_payload
 
 from .api_models import (
     CredentialSetRequest,
@@ -3236,6 +3235,8 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     agentsById: new Map(),
     agentNames: [],
     selectedComposerAgentId: '',
+    behaviorsExpanded: false,
+    sidebarCollapsed: false,
     sessions: [],
     activeSessionId: null,
     activeSession: null, // {session, messages}
@@ -3246,7 +3247,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     logs: { stdout: '', stderr: '' },
     workspaceInfo: null,
 
-    // Panel visibility (left sidebar is always shown). Every dashboard load
+    // Panel visibility. Every dashboard load
     // starts with the work panels closed so the welcome screen can orient users.
     showChat: false,
     showRunLogs: false,
@@ -3265,14 +3266,13 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     _logToken: 0,
     _followLogs: { stdout: true, stderr: true },
     _pendingWhilePaused: { stdout: false, stderr: false },
-    _welcomeTaskIndexes: {},
   };
 
-  // Welcome tasks are curated in ursa/welcome_tasks.py 
-  // and injected below when the dashboard is rendered, so the same
-  // library can be reused elsewhere in URSA. The placeholder is replaced
-  // with a JSON array literal in ui_dashboard().
-  const WELCOME_TASK_LIBRARY = __WELCOME_TASK_LIBRARY__;
+  const WELCOME_MODES = {
+    simple: { agentId: 'chat_agent', behaviorsExpanded: false },
+    complex: { agentId: 'hypothesis_symposium_agent', behaviorsExpanded: false },
+    custom: { agentId: 'chat_agent', behaviorsExpanded: true },
+  };
 
   function escHtml(s) {
     return String(s).replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\'':'&#39;'}[c]));
@@ -3299,9 +3299,24 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     return !state.showChat && !state.showRunLogs && !state.showArtifacts;
   }
 
+  function setSidebarCollapsed(collapsed, {persist=true} = {}) {
+    state.sidebarCollapsed = Boolean(collapsed);
+    $('#leftPanel').classList.toggle('collapsed', state.sidebarCollapsed);
+    $('#sidebarContent').classList.toggle('hidden', state.sidebarCollapsed);
+    $('#sidebarBrandCopy').classList.toggle('hidden', state.sidebarCollapsed);
+    $('#collapseSidebarBtn').classList.toggle('hidden', state.sidebarCollapsed);
+    for (const selector of ['#sidebarLogoBtn', '#collapseSidebarBtn']) {
+      const button = $(selector);
+      button.setAttribute('aria-expanded', String(!state.sidebarCollapsed));
+      button.setAttribute('aria-label', state.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar');
+      button.title = state.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    }
+    $('#leftSplitter').classList.toggle('hidden', state.sidebarCollapsed || !(state.showChat || state.showRunLogs || welcomeIsVisible()));
+    if (persist) savePref('ursa.ui.sidebarCollapsed', state.sidebarCollapsed);
+  }
+
   function applyPanelVisibility() {
     const app = $('.app');
-    const left = $('#leftPanel');
     const main = $('#mainPanel');
     const right = $('#rightPanel');
     const leftSplit = $('#leftSplitter');
@@ -3318,9 +3333,6 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     const showArtifacts = !!state.showArtifacts;
     const showMain = (showChat || showRunLogs);
     const showWelcome = welcomeIsVisible();
-
-    // Left sidebar is always visible.
-    if (left) left.classList.toggle('hidden', false);
 
     if (main) main.classList.toggle('hidden', !showMain);
     if (right) right.classList.toggle('hidden', !showArtifacts);
@@ -3350,7 +3362,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
 
     // Splitters only make sense when both adjacent panels are visible.
-    if (leftSplit) leftSplit.classList.toggle('hidden', !(showMain || showWelcome));
+    if (leftSplit) leftSplit.classList.toggle('hidden', state.sidebarCollapsed || !(showMain || showWelcome));
     if (rightSplit) rightSplit.classList.toggle('hidden', !showMain || !showArtifacts);
 
     // Keep stable labels and communicate visibility through pressed state.
@@ -3375,28 +3387,13 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     savePref('ursa.ui.showArtifacts', showArtifacts);
   }
 
-  function selectedWelcomeTasks() {
-    return WELCOME_TASK_LIBRARY.map(group => {
-      const tasks = group.tasks || [];
-      if (!tasks.length) return null;
-      if (!Number.isInteger(state._welcomeTaskIndexes[group.agentId])) {
-        state._welcomeTaskIndexes[group.agentId] = Math.floor(Math.random() * tasks.length);
-      }
-      const index = state._welcomeTaskIndexes[group.agentId] % tasks.length;
-      return { ...group, ...tasks[index] };
-    }).filter(Boolean);
-  }
-
-  function rotateWelcomeTasks() {
-    for (const group of WELCOME_TASK_LIBRARY) {
-      const tasks = group.tasks || [];
-      if (tasks.length < 2) continue;
-      const current = Number.isInteger(state._welcomeTaskIndexes[group.agentId])
-        ? state._welcomeTaskIndexes[group.agentId]
-        : 0;
-      state._welcomeTaskIndexes[group.agentId] = (current + 1) % tasks.length;
-    }
-    renderWelcomeTasks();
+  function startWelcomeMode(mode) {
+    const choice = WELCOME_MODES[mode];
+    if (!choice || !state.agentsById.has(choice.agentId)) return;
+    state.behaviorsExpanded = choice.behaviorsExpanded;
+    state.showRunLogs = state.showArtifacts = false;
+    clearActiveSessionForDraft(choice.agentId);
+    openComposerDraft(choice.agentId, '');
   }
 
   function openComposerDraft(agentId, prompt) {
@@ -3414,53 +3411,16 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
   }
 
-  async function useWelcomeTask(task) {
-    if (!task) return;
-    clearActiveSessionForDraft(task.agentId);
-    await startSession(task.agentId, '', { draftPrompt: task.prompt });
-  }
-
-  function renderWelcomeTasks() {
-    const list = $('#welcomeTaskList');
-    if (!list) return;
-    list.innerHTML = '';
-
-    for (const task of selectedWelcomeTasks()) {
-      const agent = state.agentsById.get(task.agentId);
-      if (!agent) continue;
-
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'welcomeTaskCard';
-      btn.title = `Start with ${agent.display_name || task.label}`;
-      btn.onclick = () => useWelcomeTask(task);
-
-      const meta = document.createElement('div');
-      meta.className = 'welcomeTaskMeta';
-      meta.innerHTML = `<span class="welcomeTaskAgent">${escHtml(task.label || agent.display_name)}</span><span>${escHtml(task.purpose)}</span>`;
-
-      const title = document.createElement('div');
-      title.className = 'welcomeTaskTitle';
-      title.textContent = task.title;
-
-      const prompt = document.createElement('div');
-      prompt.className = 'welcomeTaskPrompt';
-      prompt.textContent = task.prompt;
-
-      const action = document.createElement('div');
-      action.className = 'welcomeTaskAction';
-      action.innerHTML = '<span>Use this prompt</span><span aria-hidden="true">→</span>';
-
-      btn.appendChild(meta);
-      btn.appendChild(title);
-      btn.appendChild(prompt);
-      btn.appendChild(action);
-      list.appendChild(btn);
+  function renderWelcomeModes() {
+    const unavailable = [];
+    for (const button of $$('[data-start-mode]')) {
+      const choice = WELCOME_MODES[button.dataset.startMode];
+      const agent = state.agentsById.get(choice.agentId);
+      button.disabled = !agent;
+      button.title = agent ? `Start with ${composerBehaviorLabel(agent)}` : 'This behavior is unavailable in this dashboard.';
+      if (!agent) unavailable.push(button.dataset.startMode);
     }
-
-    if (!list.children.length) {
-      list.innerHTML = '<div class="muted">Suggested tasks will appear when agents are available.</div>';
-    }
+    $('#welcomeModeStatus').textContent = unavailable.length ? 'Some start options are unavailable in this dashboard.' : '';
   }
 
   function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
@@ -4260,15 +4220,6 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     renderWorkspace([]);
   }
 
-  function openBlankComposer() {
-    clearActiveSessionForDraft('chat_agent');
-    state.showChat = true;
-    applyPanelVisibility();
-    renderComposerAgentSelect();
-    renderSessionCreateMenu();
-    requestAnimationFrame(() => $('#messageInput')?.focus());
-  }
-
   function renderSessionCreateMenu() {
     const button = $('#sessionCreateMenuBtn');
     const menu = $('#sessionCreateMenu');
@@ -4496,9 +4447,9 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     const badge = $('#activeSessionStateBadge');
 
     if (!state.activeSession) {
-        if (title) title.textContent = 'No session selected';
+        if (title) title.textContent = 'New conversation';
         if (meta) meta.textContent = '';
-        if (msgs) msgs.innerHTML = '<div class="emptyChatState"><strong>Start a new conversation</strong><span>Type a message below for a non-persistent session, or use + to choose a persistent agent.</span></div>';
+        if (msgs) msgs.innerHTML = '<div class="emptyChatState"><strong>What would you like to work on?</strong><span>Ask a question or describe a task.</span></div>';
         if (wsTitle) wsTitle.textContent = 'Session artifacts';
 
         if (badge) {
@@ -4616,12 +4567,12 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     state.agentNames = namesRes.agent_names || [];
     state.dashboardGroup = namesRes.group || 'default';
     if (!state.selectedComposerAgentId && state.agents.length) {
-      state.selectedComposerAgentId = state.agents[0].agent_id;
+      state.selectedComposerAgentId = state.agentsById.has('chat_agent') ? 'chat_agent' : state.agents[0].agent_id;
     }
     renderSessions();
     renderComposerAgentSelect();
     renderSessionCreateMenu();
-    renderWelcomeTasks();
+    renderWelcomeModes();
     await refreshAgentManagement();
   }
 
@@ -4872,6 +4823,17 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     tooltip.setAttribute('aria-hidden', 'true');
   }
 
+  function setComposerBehaviorsExpanded(expanded) {
+    state.behaviorsExpanded = Boolean(expanded);
+    $('#composerBehaviorOptions').classList.toggle('hidden', !state.behaviorsExpanded);
+    $('#toggleBehaviorsBtn').classList.toggle('hidden', state.behaviorsExpanded);
+    $('#toggleBehaviorsBtn').setAttribute('aria-expanded', String(state.behaviorsExpanded));
+    const selectedLabel = composerBehaviorLabel(state.agentsById.get(state.selectedComposerAgentId)) || state.selectedComposerAgentId;
+    $('#toggleBehaviorsBtn').title = `Current behavior: ${selectedLabel}. Click to show behaviors.`;
+    $('#collapseBehaviorsBtn').title = `Current behavior: ${selectedLabel}. Click to collapse behaviors.`;
+    hideComposerAgentTooltip();
+  }
+
   function renderComposerAgentSelect() {
     const wrap = $('#composerAgentType');
     if (!wrap) return;
@@ -4888,6 +4850,9 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     const activeAgentId = state.activeSession?.session?.agent_id || '';
     const target = state.selectedComposerAgentId || activeAgentId || agents[0]?.agent_id || '';
     if (target) state.selectedComposerAgentId = target;
+    const selectedLabel = composerBehaviorLabel(state.agentsById.get(target)) || target;
+    $('#composerBehaviorStatus').textContent = `Current behavior: ${selectedLabel}`;
+    setComposerBehaviorsExpanded(state.behaviorsExpanded);
     wrap.innerHTML = '';
 
     for (const agent of agents) {
@@ -5907,6 +5872,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     state.showChat = false;
     state.showRunLogs = false;
     state.showArtifacts = false;
+    setSidebarCollapsed(loadPref('ursa.ui.sidebarCollapsed', window.matchMedia('(max-width: 820px)').matches), {persist:false});
 
     applyPanelVisibility();
     setupLogFollowState();
@@ -5920,10 +5886,27 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     const tArt = $('#toggleArtifactsBtn');
     if (tArt) tArt.onclick = () => { state.showArtifacts = !state.showArtifacts; applyPanelVisibility(); };
 
-    const refreshWelcome = $('#refreshWelcomeTasksBtn');
-    if (refreshWelcome) refreshWelcome.onclick = rotateWelcomeTasks;
-    const startBlank = $('#startBlankChatBtn');
-    if (startBlank) startBlank.onclick = openBlankComposer;
+    for (const button of $$('[data-start-mode]')) button.onclick = () => startWelcomeMode(button.dataset.startMode);
+    $('#toggleBehaviorsBtn').onclick = () => {
+      setComposerBehaviorsExpanded(true);
+      renderComposerAgentSelect();
+      $('#collapseBehaviorsBtn').focus();
+    };
+    $('#collapseBehaviorsBtn').onclick = () => {
+      setComposerBehaviorsExpanded(false);
+      $('#toggleBehaviorsBtn').focus();
+    };
+    $('#composerBehaviorOptions').onkeydown = event => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        setComposerBehaviorsExpanded(false);
+        $('#toggleBehaviorsBtn').focus();
+      }
+    };
+    for (const selector of ['#sidebarLogoBtn', '#collapseSidebarBtn']) $(selector).onclick = () => {
+      setSidebarCollapsed(!state.sidebarCollapsed);
+      $('#sidebarLogoBtn').focus();
+    };
 
     $('#refreshSessionsBtn').onclick = async () => { await refreshSessions(); };
     $('#refreshFilesBtn').onclick = async () => { await refreshWorkspace(); };
@@ -6082,7 +6065,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     await refreshSessions();
 
     // Sessions remain available in the sidebar, but none is silently restored:
-    // suggested tasks should never inherit an earlier conversation by accident.
+    // starting a new conversation should never inherit an earlier one by accident.
     renderActiveSession();
     setupOnboarding();
 
@@ -6238,6 +6221,17 @@ body::before {
   background: var(--panel);
 }
 .sidebar.hidden { display:none; }
+.sidebar.collapsed { width:72px !important; min-width:72px; max-width:72px; padding:12px 8px; box-sizing:border-box; overflow:hidden; }
+.sidebarBrand { margin-bottom:20px; }
+.sidebarLogoButton { display:grid; place-items:center; flex:0 0 auto; padding:0; border:0; border-radius:12px; background:transparent; cursor:pointer; }
+.sidebarLogoButton:hover { box-shadow:0 0 0 2px var(--border); }
+.sidebarLogoButton:focus-visible, .sidebarCollapseButton:focus-visible { outline:2px solid #54869e; outline-offset:3px; }
+.sidebarLogoFallback { padding:16px 2px; color:var(--text); font-size:12px; font-weight:750; }
+#sidebarBrandCopy { flex:1; min-width:0; }
+.sidebarCollapseButton { display:grid; place-items:center; flex:0 0 auto; padding:7px; border:0; border-radius:8px; color:var(--muted); background:transparent; cursor:pointer; }
+.sidebarCollapseButton:hover { background:var(--border); color:var(--text); }
+.sidebar.collapsed .sidebarBrand { justify-content:center; }
+.sidebar.collapsed .brandLogo { width:52px; height:52px; box-sizing:border-box; }
 
 .workspace {
   flex: 0 0 auto;
@@ -6296,30 +6290,24 @@ body::before {
     radial-gradient(circle at 50% 16%, rgba(11,87,208,0.08), transparent 38%),
     transparent;
 }
-.welcomeContent { width: min(1040px, 100%); margin: auto; }
-.welcomeEyebrow { color: #0b57d0; font-size: 12px; font-weight: 750; letter-spacing: 0.09em; text-transform: uppercase; }
-.welcomeContent h1 { margin: 10px 0 12px; font-size: clamp(34px, 5vw, 58px); line-height: 1.04; letter-spacing: -0.035em; }
-.welcomeLead { max-width: 720px; margin: 0; color: var(--muted); font-size: clamp(16px, 1.8vw, 20px); line-height: 1.55; }
-.welcomeSectionHead { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin: clamp(28px, 5vh, 52px) 0 14px; }
-.welcomeSectionTitle { font-size: 18px; font-weight: 720; margin-bottom: 3px; }
-.welcomeRefresh { flex: 0 0 auto; }
-.welcomeTaskGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
-.welcomeTaskCard { min-width: 0; min-height: 268px; display: flex; flex-direction: column; gap: 13px; padding: 18px; text-align: left; color: var(--text); background: rgba(255,255,255,0.92); border: 1px solid var(--border); border-radius: 16px; cursor: pointer; font: inherit; box-shadow: 0 4px 18px rgba(29,39,51,0.05); transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease; }
-.welcomeTaskCard:hover, .welcomeTaskCard:focus-visible { transform: translateY(-2px); border-color: rgba(11,87,208,0.55); box-shadow: 0 10px 28px rgba(29,39,51,0.11); outline: none; }
-.welcomeTaskMeta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--muted); font-size: 11px; font-weight: 650; }
-.welcomeTaskAgent { padding: 4px 8px; color: #0b57d0; background: rgba(11,87,208,0.08); border-radius: 999px; }
-.welcomeTaskTitle { font-size: 17px; font-weight: 730; line-height: 1.3; }
-.welcomeTaskPrompt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden; color: var(--muted); font-size: 13px; line-height: 1.55; }
-.welcomeTaskAction { margin-top: auto; display: flex; align-items: center; justify-content: space-between; color: #0b57d0; font-size: 13px; font-weight: 700; }
-.welcomeFooter { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 20px; padding: 20px 0 0; border-top: 1px solid var(--border); color: var(--muted); font-size: 15px; line-height: 1.45; }
-.welcomeFooter > div { display: grid; gap: 3px; }
-.welcomeFooter strong { color: var(--text); font-size: 16px; }
-.welcomeBlankAction { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 10px; padding: 10px 14px; font-weight: 700; }
+.welcomeContent { width:min(960px, 100%); margin:auto; }
+.welcomeContent h1 { margin:0 0 14px; font-size:clamp(34px, 4.8vw, 56px); line-height:1.08; letter-spacing:-.035em; }
+.welcomeLead { margin:0; color:var(--muted); font-size:18px; line-height:1.5; }
+.welcomeModeGrid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:16px; margin-top:32px; }
+.welcomeModeCard { min-width:0; display:flex; flex-direction:column; align-items:flex-start; gap:12px; padding:24px; text-align:left; font:inherit; color:var(--text); background:rgba(255,255,255,.92); border:1px solid var(--border); border-radius:18px; box-shadow:0 5px 20px rgba(29,39,51,.045); cursor:pointer; transition:border-color 140ms, transform 140ms, box-shadow 140ms; }
+.welcomeModeCard:hover:not(:disabled), .welcomeModeCard:focus-visible { transform:translateY(-3px); border-color:#54869e; box-shadow:0 12px 28px rgba(29,39,51,.12); outline:2px solid transparent; }
+.welcomeModeCard:focus-visible { outline-color:#54869e; outline-offset:3px; }
+.welcomeModeCard:disabled { opacity:.5; cursor:not-allowed; }
+.welcomeModeIcon { width:30px; height:30px; margin-bottom:8px; fill:none; stroke:#42748b; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+.welcomeModeTitle { font-size:24px; font-weight:730; letter-spacing:-.025em; }
+.welcomeModeDescription { color:var(--muted); font-size:14px; line-height:1.5; }
+.welcomeModeDetail { display:flex; justify-content:space-between; gap:8px; align-items:center; align-self:stretch; padding-top:12px; margin-top:auto; color:#42748b; font-size:12px; font-weight:650; }
+.welcomeFooter { display:flex; justify-content:flex-start; padding-top:20px; }
+#welcomeModeStatus:empty { display:none; }
 :root[data-theme="dark"] .welcomePanel { background: radial-gradient(circle at 50% 16%, rgba(138,180,255,0.09), transparent 38%), transparent; }
-:root[data-theme="dark"] .welcomeEyebrow, :root[data-theme="dark"] .welcomeTaskAction { color: #8ab4ff; }
-:root[data-theme="dark"] .welcomeTaskCard { background: rgba(28,32,38,0.92); box-shadow: 0 4px 18px rgba(0,0,0,0.18); }
-:root[data-theme="dark"] .welcomeTaskCard:hover, :root[data-theme="dark"] .welcomeTaskCard:focus-visible { border-color: rgba(138,180,255,0.65); box-shadow: 0 10px 28px rgba(0,0,0,0.30); }
-:root[data-theme="dark"] .welcomeTaskAgent { color: #8ab4ff; background: rgba(138,180,255,0.10); }
+:root[data-theme="dark"] .welcomeModeCard { background:rgba(28,32,38,.92); box-shadow:0 5px 20px rgba(0,0,0,.18); }
+:root[data-theme="dark"] .welcomeModeIcon { stroke:#92bed1; }
+:root[data-theme="dark"] .welcomeModeDetail { color:#92bed1; }
 
 .topbar { display:flex; align-items:center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .topbarCol { flex-direction: column; align-items: stretch; justify-content: flex-start; }
@@ -6430,7 +6418,12 @@ body::before {
 
 .composer { margin-top: 10px; }
 .composerBehaviorPicker { flex: 1 1 auto; min-width: 0; }
-.composerAgentLabel { margin-bottom: 4px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 0.035em; text-transform: uppercase; white-space: nowrap; }
+.composerBehaviorToggle { display:inline-flex; align-items:center; gap:8px; font:inherit; font-size:12px; font-weight:650; color:var(--text); }
+.composerBehaviorRow { display:flex; align-items:flex-start; gap:5px; }
+.composerBehaviorCollapse { flex:0 0 26px; width:26px; height:26px; padding:0; justify-content:center; border-radius:999px; }
+.composerBehaviorRow .composerAgentButtons { flex:1 1 auto; min-width:0; }
+.srOnly { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+.composerAgentLabel { margin-bottom:6px; color:var(--muted); font-size:10px; font-weight:650; }
 .composerAgentLabel .muted { font-weight: 500; letter-spacing: 0; text-transform: none; }
 .composerAgentButtons { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .composerAgentButton { border: 1px solid var(--border); background: transparent; color: var(--muted); padding: 5px 8px; border-radius: 999px; cursor: pointer; font: inherit; font-size: 11px; font-weight: 650; line-height: 1.15; transition: color 120ms ease, border-color 120ms ease, background 120ms ease; }
@@ -6607,15 +6600,31 @@ pre.plain { margin:0; white-space: pre; overflow:auto; font-family: var(--mono);
 textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
 @media (max-width: 1100px) {
-  .welcomeTaskGrid { grid-template-columns: 1fr; }
-  .welcomePanel { align-items: flex-start; }
-  .welcomeTaskCard { min-height: 0; }
   .workspace { display:none; }
 }
+@media (max-width: 1000px) {
+  .welcomeModeGrid { grid-template-columns:1fr; gap:12px; margin-top:24px; }
+  .welcomeModeCard { display:grid; grid-template-columns:32px 1fr auto; column-gap:16px; row-gap:5px; padding:20px; }
+  .welcomeModeIcon { grid-row:1 / 3; align-self:center; margin:0; }
+  .welcomeModeTitle { grid-column:2; font-size:22px; }
+  .welcomeModeDescription { grid-column:2; }
+  .welcomeModeDetail { grid-column:3; grid-row:1 / 3; align-self:center; margin:0; padding:0; }
+}
 @media (max-width: 820px) {
-  .sidebar { display:none; }
+  .app { padding-left:72px; box-sizing:border-box; }
+  .sidebar { position:fixed; inset:0 auto 0 0; z-index:25; box-sizing:border-box; }
+  .sidebar:not(.collapsed) { width:min(344px, calc(100vw - 24px)) !important; min-width:0; max-width:none; box-shadow:10px 0 30px rgba(0,0,0,.18); }
+  #leftSplitter { display:none; }
+  .main { min-width:0; }
   .welcomePanel { padding: 28px 18px; }
-  .welcomeSectionHead, .welcomeFooter { align-items: flex-start; flex-direction: column; }
+  .composerBelow { flex-wrap:wrap; gap:6px; }
+}
+@media (max-width: 560px) {
+  .welcomeModeCard { grid-template-columns:24px 1fr; padding:16px; }
+  .welcomeModeIcon { width:24px; height:24px; }
+  .welcomeModeDetail { grid-column:2; grid-row:auto; padding-top:4px; }
+  .welcomeContent h1 { font-size:32px; }
+  .welcomeLead { font-size:16px; }
 }
 """
 
@@ -7075,18 +7084,20 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         body = f"""
 <div class="app">
   <div class="sidebar" id="leftPanel">
-    <div class="topbar topbarCol">
-      <div class="brand">
-        <div class="brandRow">
-          <img class="brandLogo" id="brandLogo" src="{logo_img_src}" style="{logo_img_style}" alt="URSA" onerror="this.style.display='none'" />
-          <div>
-            <div class="title">URSA Dashboard</div>
-            <div class="muted small">Start a new session or continue an existing one.</div>
-          </div>
-        </div>
-      </div>
+    <div class="brand brandRow sidebarBrand">
+      <button class="sidebarLogoButton" id="sidebarLogoBtn" type="button" aria-label="Collapse sidebar" aria-expanded="true" aria-controls="sidebarContent sidebarBrandCopy" title="Collapse sidebar">
+        <img class="brandLogo" id="brandLogo" src="{logo_img_src}" style="{logo_img_style}" alt="URSA" onerror="this.style.display='none'; this.nextElementSibling.style.display='block'" />
+        <span class="sidebarLogoFallback" style="{"display:none" if logo_img_src else ""}" aria-hidden="true">URSA</span>
+      </button>
+      <div id="sidebarBrandCopy"><div class="title">URSA</div><div class="muted small">Your scientific workspace</div></div>
+      <button class="sidebarCollapseButton" id="collapseSidebarBtn" type="button" aria-label="Collapse sidebar" aria-expanded="true" aria-controls="sidebarContent" title="Collapse sidebar">
+        <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>
+      </button>
+    </div>
 
-      <div class="sidebarControls">
+    <div id="sidebarContent">
+      <div class="topbar topbarCol">
+        <div class="sidebarControls">
         <div class="panelControls">
           <div class="controlLabel">Visible panels</div>
           <div class="panelToggleGroup" role="group" aria-label="Visible dashboard panels">
@@ -7121,28 +7132,39 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
       </div>
       <div id="sessionList"></div>
     </div>
+    </div>
   </div>
 
   <div class="splitter" id="leftSplitter" title="Drag to resize"></div>
 
   <main class="welcomePanel" id="welcomePanel">
     <div class="welcomeContent">
-      <div class="welcomeEyebrow">Scientific work, from question to artifact</div>
       <h1>Welcome to URSA</h1>
-      <p class="welcomeLead">Choose an example to see how each agent approaches a different kind of work.</p>
+      <p class="welcomeLead">Choose how you’d like to begin.</p>
 
-      <div class="welcomeSectionHead">
-        <button class="welcomeGuideLink" id="startWalkthroughBtn" type="button">Take a guided tour</button>
-        <button class="btn welcomeRefresh" id="refreshWelcomeTasksBtn" type="button" title="Show different examples">New examples</button>
+      <div class="welcomeModeGrid" id="welcomeModeList" role="group" aria-label="Start a conversation">
+        <button class="welcomeModeCard" type="button" data-start-mode="simple" disabled>
+          <svg class="welcomeModeIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H8l-5 3V8.5A5.5 5.5 0 0 1 8.5 3h4a7.5 7.5 0 0 1 7.5 8.5Z"/><path d="M8 9h7M8 13h4"/></svg>
+          <span class="welcomeModeTitle">Simple</span>
+          <span class="welcomeModeDescription">Quick questions. Everyday tasks.</span>
+          <span class="welcomeModeDetail">Base <span aria-hidden="true">↗</span></span>
+        </button>
+        <button class="welcomeModeCard" type="button" data-start-mode="complex" disabled>
+          <svg class="welcomeModeIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="18" r="3"/><circle cx="19" cy="18" r="3"/><path d="m10.5 8-4 7m7-7 4 7M8 18h8"/></svg>
+          <span class="welcomeModeTitle">Complex</span>
+          <span class="welcomeModeDescription">Explore hypotheses with a team.</span>
+          <span class="welcomeModeDetail">Hypothesize · Symposium <span aria-hidden="true">↗</span></span>
+        </button>
+        <button class="welcomeModeCard" type="button" data-start-mode="custom" disabled>
+          <svg class="welcomeModeIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h6m4 0h6M4 12h10m4 0h2M4 18h2m4 0h10"/><circle cx="12" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/></svg>
+          <span class="welcomeModeTitle">Custom</span>
+          <span class="welcomeModeDescription">Choose your own approach.</span>
+          <span class="welcomeModeDetail">All behaviors <span aria-hidden="true">↗</span></span>
+        </button>
       </div>
-      <div class="welcomeTaskGrid" id="welcomeTaskList"></div>
-
+      <p class="muted small" id="welcomeModeStatus" role="status"></p>
       <div class="welcomeFooter">
-        <div>
-          <strong>Prefer to begin from scratch?</strong>
-          <span>Open a blank chat and start typing. Your first message begins a non-persistent session by default.</span>
-        </div>
-        <button class="btn primary welcomeBlankAction" id="startBlankChatBtn" type="button">Open a blank chat <span aria-hidden="true">→</span></button>
+        <button class="welcomeGuideLink" id="startWalkthroughBtn" type="button">Take a guided tour</button>
       </div>
     </div>
   </main>
@@ -7176,8 +7198,15 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
                 <div class="sessionCreateMenu" id="sessionCreateMenu"></div>
               </div>
               <div class="composerBehaviorPicker">
-                <div class="composerAgentLabel">Choose behavior <span class="muted">· Hover for details</span> · Use (+) to utilize persistent agents</div>
-                <div class="composerAgentButtons" id="composerAgentType" role="radiogroup" aria-label="Behavior for this message"></div>
+                <button class="btn composerBehaviorToggle" id="toggleBehaviorsBtn" type="button" aria-expanded="false" aria-controls="composerBehaviorOptions" aria-describedby="composerBehaviorStatus">Behaviors <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>
+                <span class="srOnly" id="composerBehaviorStatus" role="status"></span>
+                <div class="hidden" id="composerBehaviorOptions">
+                  <div class="composerAgentLabel">Choose a behavior <span class="muted">· Hover for details</span></div>
+                  <div class="composerBehaviorRow">
+                    <button class="btn composerBehaviorToggle composerBehaviorCollapse" id="collapseBehaviorsBtn" type="button" aria-label="Collapse behaviors" aria-expanded="true" aria-controls="composerBehaviorOptions" aria-describedby="composerBehaviorStatus"><svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+                    <div class="composerAgentButtons" id="composerAgentType" role="radiogroup" aria-label="Behavior for this message"></div>
+                  </div>
+                </div>
               </div>
               <button class="btn primary composerSendButton" id="sendMsgBtn" type="button">Send</button>
             </div>
@@ -7440,12 +7469,6 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
         dashboard_js = DASHBOARD_JS.replace(
             "  init().catch", ONBOARDING_JS + "\n  init().catch"
-        )
-        # Swap the welcome-task placeholder for the curated library from
-        # ursa/welcome_tasks.py (see the comment above the placeholder).
-        dashboard_js = dashboard_js.replace(
-            "__WELCOME_TASK_LIBRARY__",
-            json.dumps(dashboard_payload(), separators=(",", ":")),
         )
         html_doc = f"""<!doctype html>
 <html lang=\"en\">

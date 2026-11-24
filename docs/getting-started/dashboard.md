@@ -56,12 +56,28 @@ launch with `--use-web` and disable it for a specific run.
 
 The dashboard offers a guided walkthrough on its first visit. You can close it
 at any point and reopen it with **Take a guided tour** on the welcome page.
-It covers model setup, example prompts, behaviors, persistent agents, workspace
+It covers model setup, start choices, behaviors, persistent agents, workspace
 selection, logs and artifacts, and multi-agent environments. The prime-spacing
-example prepares an editable prompt with Chat selected; it runs only when
+example prepares an editable prompt with Base selected; it runs only when
 you press **Send**. The workspace picker then asks for the folder where URSA
 will start the session's work. You can change it later with **Set workspace**
 in the Artifacts panel.
+
+The welcome page has three starting points:
+
+- **Simple** opens a blank chat with Base selected and the behavior list collapsed.
+- **Complex** opens a blank chat with Hypothesize–Symposium selected and the list collapsed.
+- **Custom** opens a blank chat with Base selected and all behaviors visible.
+
+Click **Behaviors** below the prompt to show or hide the choices. Collapsing the
+list does not change the selected behavior. Starting a conversation does not
+run anything until you send a message and choose its workspace.
+
+Use the sidebar chevron (or the URSA logo) to collapse the sidebar to a logo-only
+rail. Click the logo to restore sessions, panel controls, and settings. The
+sidebar preference is remembered in this browser, and the expanded width is
+preserved. On small screens, the sidebar starts collapsed unless you have saved
+a different preference.
 
 First-time connection setup is split into three short steps: the Base URL,
 the API key source, and the language model. It explains each choice without
