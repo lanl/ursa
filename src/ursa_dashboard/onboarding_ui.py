@@ -491,11 +491,11 @@ ONBOARDING_JS = r"""
   const TOUR_STEPS = [
     {title:'Welcome to URSA', copy:'<p>Turn a question into code, analysis, and useful files—with agents that can plan, execute, and review their work.</p><p>This short walkthrough will connect your models and help you try your first problem. You can reopen it anytime from the welcome page.</p>', next:"Let's begin"},
     {title:'Connect your model', copy:'<p>We’ll start with one connection: its Base URL, API key, and language model.</p>', next:'Continue to API key'},
-    {title:'A starting point for any question', copy:'<p>The welcome page offers examples of what URSA can do. Each one selects a behavior and prepares a prompt you can edit.</p><p>Use <strong>New examples</strong> for more ideas, or open a blank chat to start from your own question.</p>', target:'#welcomeTaskList'},
-    {title:'Choose how URSA works', copy:'<p><strong>Chat</strong> opens a place to ask your question. Choose a behavior below the prompt: explore a topic, execute a task, or plan a larger project.</p><p>Hover over a behavior for an explanation of when it helps. You can choose a different behavior as your work evolves.</p>', target:'#composerAgentType'},
+    {title:'Three ways to begin', copy:'<p><strong>Simple</strong> starts with Base. <strong>Complex</strong> uses the Hypothesize–Symposium workflow. <strong>Custom</strong> shows all behaviors, starting with Base.</p><p>Each opens a blank chat. Use the sidebar chevron to fold the sidebar away; click the URSA logo to bring it back.</p>', target:'#welcomeModeList'},
+    {title:'Choose how URSA works', copy:'<p>The <strong>Behaviors</strong> button shows or hides the choices below your prompt. Expand it whenever you want a different approach.</p><p>Hover over a behavior for details. Your selection stays active when you collapse the list.</p>', target:'#composerBehaviorOptions'},
     {title:'An agent you can return to', copy:'<p>The <strong>+</strong> menu creates a persistent, named agent or reconnects an existing one.</p><p>Persistent agents can retain context and build on work with you. Ordinary sessions are the default; create a named agent when you want continuity across your work.</p>', target:'#sessionCreateMenu'},
     {title:'Follow the work and keep the results', copy:'<p><strong>Logs</strong> shows progress and tool activity. <strong>Artifacts</strong> lets you preview and download generated files. Toggle either panel when you need it.</p><p>Your <strong>workspace</strong> is the folder where URSA starts working in this session and saves its files. To change it later, use <strong>Set workspace</strong> in the Artifacts panel.</p>', target:'.panelToggleGroup'},
-    {title:'Try a little prime-number flair', copy:'<p>Let’s compute 10,000 primes and make a bold plot of their spacings. <strong>Prepare example</strong> selects <strong>Chat</strong> for a quick, straightforward task.</p><p>After you press <strong>Send</strong>, a workspace picker opens. Choose the folder where URSA will start this session’s work, or a temporary workspace. Change it later with <strong>Artifacts → Set workspace</strong>.</p><p>Provider usage charges apply.</p>', next:'Prepare example', target:'#messageInput'},
+    {title:'Try a little prime-number flair', copy:'<p>Let’s compute 10,000 primes and make a bold plot of their spacings. <strong>Prepare example</strong> selects <strong>Base</strong> for a quick, straightforward task.</p><p>After you press <strong>Send</strong>, a workspace picker opens. Choose the folder where URSA will start this session’s work, or a temporary workspace. Change it later with <strong>Artifacts → Set workspace</strong>.</p><p>Provider usage charges apply.</p>', next:'Prepare example', target:'#messageInput'},
     {title:'Bring a team to bigger problems', copy:'<p><strong>Environment runs</strong> supports teams and symposiums: multiple agents contributing, reviewing, and refining complex work.</p><p>Your plotting task can keep running while you explore. New environments are being developed—watch for them in future URSA releases.</p><a class="btn" href="/ui/environment-runs" target="_blank" rel="noopener">Explore environment runs ↗</a><p class="muted small" style="margin-top:8px">Opens in a separate tab so your work stays here.</p>', next:'Finish walkthrough', target:'#environmentRunsLink'},
   ];
   let tourIndex = -1;
@@ -503,6 +503,8 @@ ONBOARDING_JS = r"""
   let tourReturnFocus = null;
   let tourPreviousSession = null;
   let tourPreviousDraft = '';
+  let tourPreviousSidebarCollapsed = false;
+  let tourPreviousBehaviorsExpanded = false;
   let tourPreparedExample = false;
 
   async function markTourSeen() {
@@ -524,6 +526,8 @@ ONBOARDING_JS = r"""
     $('#ursaTour').classList.add('hidden');
     $('.app').inert = false;
     document.body.classList.remove('tourActive', 'tourConfigActive');
+    setSidebarCollapsed(tourPreviousSidebarCollapsed, {persist:false});
+    if (!tourPreparedExample) setComposerBehaviorsExpanded(tourPreviousBehaviorsExpanded);
     $$('.tourHighlight').forEach(el => el.classList.remove('tourHighlight'));
     state._sessionCreateMenuOpen = false;
     renderSessionCreateMenu();
@@ -558,6 +562,7 @@ ONBOARDING_JS = r"""
     }
     if (index >= 3 && index <= 6) {
       if (index === 3 && state.activeSessionId) clearActiveSessionForDraft('chat_agent');
+      if (index === 3) setComposerBehaviorsExpanded(true);
       state.showChat = true;
       if (index === 5 || index === 6) state.showRunLogs = state.showArtifacts = true;
       applyPanelVisibility();
@@ -573,8 +578,11 @@ ONBOARDING_JS = r"""
     tourReturnFocus = document.activeElement;
     tourPreviousSession = state.activeSessionId;
     tourPreviousDraft = $('#messageInput')?.value || '';
+    tourPreviousSidebarCollapsed = state.sidebarCollapsed;
+    tourPreviousBehaviorsExpanded = state.behaviorsExpanded;
     tourPreparedExample = false;
     await markTourSeen();
+    setSidebarCollapsed(false, {persist:false});
     await showTourStep(0);
   }
 
@@ -608,10 +616,11 @@ ONBOARDING_JS = r"""
       }
       if (tourIndex === 6) {
         if (!tourPreparedExample) {
+          setComposerBehaviorsExpanded(false);
           clearActiveSessionForDraft('chat_agent');
           openComposerDraft('chat_agent', FIRST_TASK);
           tourPreparedExample = true;
-          $('#tourCopy').innerHTML = '<p>Your example is ready with <strong>Chat</strong> selected. Press <strong>Send</strong>; URSA will ask where to work.</p><p>Pick a workspace folder for this session, or use a temporary one. Temporary files are removed when the session is deleted or the dashboard stops, so download anything you want to keep.</p><p>Watch Logs, then open <strong>prime_spacings.png</strong> in <strong>Artifacts</strong>. Use <strong>Set workspace</strong> there to change the working folder later.</p>';
+          $('#tourCopy').innerHTML = '<p>Your example is ready with <strong>Base</strong> selected. Press <strong>Send</strong>; URSA will ask where to work.</p><p>Pick a workspace folder for this session, or use a temporary one. Temporary files are removed when the session is deleted or the dashboard stops, so download anything you want to keep.</p><p>Watch Logs, then open <strong>prime_spacings.png</strong> in <strong>Artifacts</strong>. Use <strong>Set workspace</strong> there to change the working folder later.</p>';
           $('#tourNextBtn').textContent = 'Explore environments';
           return;
         }
