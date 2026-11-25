@@ -1,7 +1,12 @@
+import errno
 import json
+import lzma
 import os
+import shutil
+import subprocess
 import tarfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -67,6 +72,7 @@ def test_round_trip_and_repeat(payloads, policy):
     assert actions["trial/artifacts/keep.txt"] == "keep"
     state = apply_retention(planned)
     assert state["status"] == "complete"
+    assert not (payloads / "trial/artifacts/nested").exists()
     assert len(state["removed"]) == 3
     journal = (payloads / "retention.json").read_bytes()
     repeated = retain_artifacts(payloads, policy, roots=["trial/artifacts"])
@@ -109,6 +115,7 @@ def test_archive_failure_preserves_every_source(
 
     error = OSError if failure == "compression" else ValueError
     with monkeypatch.context() as patch:
+        patch.setattr(shutil, "which", lambda name: None)
         patch.setattr(tarfile.TarFile, "add", broken_add)
         with pytest.raises(error):
             apply_retention(planned)
@@ -118,6 +125,121 @@ def test_archive_failure_preserves_every_source(
         == "failed"
     )
     assert apply_retention(planned)["status"] == "complete"
+
+
+@pytest.mark.skipif(
+    not (shutil.which("tar") and shutil.which("xz")), reason="needs tar and xz"
+)
+def test_native_xz_options(payloads, policy, monkeypatch):
+    name = "white space" if os.name == "nt" else "white space\nand newline"
+    artifact = payloads / "trial/artifacts/nested" / name
+    artifact.write_text("payload")
+    mtime = 1_700_000_000.125
+    os.utime(artifact, (mtime, mtime))
+    policy = policy.model_copy(
+        update={"archive": ArchiveConfig(threads=2, remove_originals=False)}
+    )
+    planned = plan(payloads, policy)
+    monkeypatch.setenv("TAR_OPTIONS", "--remove-files")
+    monkeypatch.setenv("XZ_DEFAULTS", "--format=lzma")
+    with patch.object(subprocess, "run", wraps=subprocess.run) as run:
+        state = apply_retention(planned)
+    assert artifact.read_text() == "payload"
+    with tarfile.open(payloads / state["archive"]["path"]) as archive:
+        member = archive.getmember(artifact.relative_to(payloads).as_posix())
+        assert member.mtime == mtime
+        assert archive.extractfile(member).read() == b"payload"
+    call = run.call_args_list[-1]
+    if "cwd" not in call.kwargs:
+        pytest.skip("installed tar lacks native xz support")
+    assert "TAR_OPTIONS" not in call.kwargs["env"]
+    command = call.args[0]
+    assert "-cJf" in command
+    if "--options" in command:
+        assert "xz:threads=2" in command[-1]
+    else:
+        assert "--threads=2" in call.kwargs["env"]["XZ_OPT"]
+
+
+def test_unsupported_tar_and_native_write_error(payloads, policy, monkeypatch):
+    planned = plan(payloads, policy)
+    monkeypatch.setattr(shutil, "which", lambda name: name)
+    help_result = subprocess.CompletedProcess(
+        [],
+        0,
+        stdout=b"GNU tar --xz --format --no-recursion --null --files-from",
+    )
+    with patch.object(
+        subprocess,
+        "run",
+        side_effect=[help_result, subprocess.CalledProcessError(1, "tar")],
+    ):
+        with pytest.raises(subprocess.CalledProcessError):
+            apply_retention(planned)
+    assert all((payloads / e.path).exists() for e in planned.entries)
+    assert not list(payloads.glob("*.partial"))
+    with patch.object(
+        subprocess,
+        "run",
+        return_value=subprocess.CompletedProcess([], 0, stdout=b"BusyBox"),
+    ) as run:
+        assert apply_retention(planned)["status"] == "complete"
+    run.assert_called_once()
+
+
+def test_fallback_extreme_preset(payloads, policy, monkeypatch):
+    policy = policy.model_copy(
+        update={
+            "archive": ArchiveConfig(
+                threads=2, compression_level=1, extreme=True
+            )
+        }
+    )
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    with patch.object(tarfile, "open", wraps=tarfile.open) as opened:
+        assert apply_retention(plan(payloads, policy))["status"] == "complete"
+    assert opened.call_args_list[0].kwargs["preset"] == (
+        1 | lzma.PRESET_EXTREME
+    )
+    with pytest.raises(ValueError):
+        ArchiveConfig(threads=-1)
+
+
+def test_cleanup_leaves_busy_mount_in_place(payloads, policy, monkeypatch):
+    nested = payloads / "trial/artifacts/nested"
+    rmdir = Path.rmdir
+
+    def mounted(path):
+        if path == nested:
+            raise OSError(errno.EBUSY, "Device or resource busy")
+        return rmdir(path)
+
+    monkeypatch.setattr(Path, "rmdir", mounted)
+    assert apply_retention(plan(payloads, policy))["status"] == "complete"
+    assert list(nested.iterdir()) == []
+
+
+def test_reapply_rejects_missing_previously_empty_root(tmp_path, policy):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    retain_artifacts(tmp_path, policy, roots=["empty"])
+    empty.rmdir()
+    with pytest.raises(ValueError, match="real directory: empty"):
+        retain_artifacts(tmp_path, policy, roots=["empty"])
+
+
+def test_reapply_prunes_directories_from_older_manifest(payloads, policy):
+    unrelated = payloads / "trial/artifacts/already-empty"
+    unrelated.mkdir()
+    nested = payloads / "trial/artifacts/nested"
+    planned = plan(payloads, policy)
+    state = apply_retention(planned)
+    nested.mkdir()
+    del state["directories_pruned"]
+    (payloads / "retention.json").write_text(json.dumps(state))
+    assert apply_retention(planned)["status"] == "complete"
+    assert not nested.exists()
+    assert unrelated.is_dir()
 
 
 def test_resume_interrupted_cleanup(payloads, policy, monkeypatch):
@@ -140,6 +262,7 @@ def test_resume_interrupted_cleanup(payloads, policy, monkeypatch):
     assert removed[1].exists()
     assert (payloads / policy.archive.path).is_file()
     assert apply_retention(planned)["status"] == "complete"
+    assert not (payloads / "trial/artifacts/nested").exists()
 
 
 def test_recover_archive_published_before_journal_update(

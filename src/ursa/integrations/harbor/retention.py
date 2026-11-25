@@ -17,6 +17,7 @@ from ursa.artifacts.retention import (
     RetentionPolicy,
     plan_retention,
     retain_artifacts,
+    retention_lock,
 )
 from ursa.util.fileio import atomic_write_text
 
@@ -71,32 +72,40 @@ def _scope(
     removable_results = set()
     whole_trial = "trial" in config.collections
     manifest = root / MANIFEST
-    if whole_trial and (manifest.exists() or manifest.is_symlink()):
+    recorded_roots = set()
+    if (whole_trial or require_finished) and (
+        manifest.exists() or manifest.is_symlink()
+    ):
         if manifest.is_symlink():
             raise ValueError("Retention manifest must not be a symlink")
         state = json.loads(manifest.read_text())
-        previous = RetentionPlan.model_validate(state["plan"])
-        if (
-            previous.root != str(root.resolve())
-            or previous.policy != config.policy
-            or previous.protected
-            or any(
-                Path(name).name != name
-                or name in {".", "..", ""}
-                or "\\" in name
-                for name in previous.roots
-            )
-        ):
-            raise ValueError("Existing retention policy/inventory differs")
-        # Cleanup can already have removed a trial's result. The recorded
-        # roots keep resumed and completed runs discoverable in that case.
-        trials.update(root / name for name in previous.roots)
-        if state["cleanup_started"]:
-            removable_results = {
-                entry.path
-                for entry in previous.entries
-                if previous.policy.removes(entry.action)
-            }
+        recorded_roots = set(state["plan"]["roots"])
+        if whole_trial:
+            previous = RetentionPlan.model_validate(state["plan"])
+            if (
+                previous.root != str(root.resolve())
+                or previous.policy != config.policy
+                or previous.protected
+                or any(
+                    Path(name).name != name
+                    or name in {".", "..", ""}
+                    or "\\" in name
+                    for name in previous.roots
+                )
+            ):
+                raise ValueError("Existing retention policy/inventory differs")
+            # Cleanup can already have removed a trial's result. The recorded
+            # roots keep resumed and completed runs discoverable in that case.
+            for name in previous.roots:
+                trial = root / name
+                if require_finished or trial.is_dir() or trial.is_symlink():
+                    trials.add(trial)
+            if state["cleanup_started"]:
+                removable_results = {
+                    entry.path
+                    for entry in previous.entries
+                    if previous.policy.removes(entry.action)
+                }
     for trial in sorted(trials):
         if trial.is_symlink():
             raise ValueError(f"Trial directory must not be a symlink: {trial}")
@@ -124,8 +133,8 @@ def _scope(
                     raise ValueError(
                         "Artifact collections must not be symlinks"
                     )
-                if directory.is_dir():
-                    relative = directory.relative_to(root).as_posix()
+                relative = directory.relative_to(root).as_posix()
+                if directory.is_dir() or relative in recorded_roots:
                     roots.append(relative)
                     protected.extend(
                         f"{relative}/{name}" for name in _PROTECTED
@@ -149,21 +158,22 @@ def apply_job_retention(
     """Require completed job/trial metadata before applying or resuming cleanup."""
     if root.is_symlink():
         raise ValueError("Run directory must not be a symlink")
-    try:
-        if job_result is not None and job_result.finished_at is None:
-            raise ValueError("Retention requires a finished Harbor job")
-        result = json.loads((root / "result.json").read_text())
-        if not result.get("finished_at"):
-            raise ValueError("Retention requires a finished Harbor job")
-        roots, protected = _scope(root, config, require_finished=True)
-        state = retain_artifacts(
-            root, config.policy, roots=roots, protected=protected
-        )
-        _write_status(root, "complete", duration_sec=state["duration_sec"])
-        return state
-    except Exception as exc:
-        _write_status(root, "failed", error=f"{type(exc).__name__}: {exc}")
-        raise
+    with retention_lock(root):
+        try:
+            if job_result is not None and job_result.finished_at is None:
+                raise ValueError("Retention requires a finished Harbor job")
+            result = json.loads((root / "result.json").read_text())
+            if not result.get("finished_at"):
+                raise ValueError("Retention requires a finished Harbor job")
+            roots, protected = _scope(root, config, require_finished=True)
+            state = retain_artifacts(
+                root, config.policy, roots=roots, protected=protected
+            )
+            _write_status(root, "complete", duration_sec=state["duration_sec"])
+            return state
+        except Exception as exc:
+            _write_status(root, "failed", error=f"{type(exc).__name__}: {exc}")
+            raise
 
 
 def _write_status(root: Path, status: str, **details) -> None:
@@ -186,7 +196,8 @@ class RetentionPlugin(BaseJobPlugin):
 
     async def on_job_start(self, job: Job) -> None:
         self.root = job.job_dir
-        _write_status(self.root, "pending")
+        with retention_lock(self.root):
+            _write_status(self.root, "pending")
 
     async def on_job_end(self, job_result: JobResult) -> None:
         if self.root is None:

@@ -6,15 +6,18 @@ or verifier may still be writing those roots while retention is applied.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
 import posixpath
+import shutil
+import subprocess
 import tarfile
 import tempfile
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal, Self
 
@@ -47,6 +50,10 @@ class ArchiveConfig(BaseModel):
     path: str = "retained-artifacts.tar.xz"
     remove_originals: bool = True
     compression_level: Annotated[int, Field(ge=0, le=9)] = 6
+    threads: int | None = Field(
+        default=None, ge=0, exclude_if=lambda v: v is None
+    )
+    extreme: bool = Field(default=False, exclude_if=lambda v: not v)
 
     @field_validator("path")
     @classmethod
@@ -142,10 +149,17 @@ def _identity(path: Path) -> list[int]:
     ]
 
 
-def _inventory(root: Path, roots: list[str]) -> dict[str, Path]:
+def _inventory(
+    root: Path,
+    roots: list[str],
+    *,
+    prunable: Collection[PurePosixPath] = (),
+) -> dict[str, Path]:
     files: dict[str, Path] = {}
     for name in roots:
         directory = _path(root, name)
+        if PurePosixPath(name) in prunable and not os.path.lexists(directory):
+            continue
         if directory.is_symlink() or not directory.is_dir():
             raise ValueError(f"Artifact root must be a real directory: {name}")
         for parent, directories, names in os.walk(directory, followlinks=False):
@@ -285,7 +299,8 @@ def _verify_archive(path: Path, entries: list[ArtifactEntry]) -> None:
 
 def _check_inputs(plan: RetentionPlan, *, cleanup: bool) -> None:
     root = Path(plan.root)
-    current = _inventory(root, plan.roots)
+    prunable = _prunable_directories(plan) if cleanup else set()
+    current = _inventory(root, plan.roots, prunable=prunable)
     expected = {entry.path for entry in plan.entries}
     if set(current) - expected:
         raise ValueError("New artifacts appeared after retention was planned")
@@ -297,6 +312,102 @@ def _check_inputs(plan: RetentionPlan, *, cleanup: bool) -> None:
             raise ValueError(f"Artifact disappeared: {entry.path}")
         if _identity(path) != entry.identity:
             raise ValueError(f"Artifact changed after planning: {entry.path}")
+
+
+def _native_tar(
+    root: Path,
+    target: Path,
+    entries: list[ArtifactEntry],
+    config: ArchiveConfig,
+) -> bool:
+    tar = shutil.which("tar")
+    if tar is None:
+        return False
+    env = {**os.environ, "COPYFILE_DISABLE": "1"}
+    env.pop("TAR_OPTIONS", None)
+    help_text = subprocess.run(
+        [tar, "--help"], capture_output=True, env=env
+    ).stdout
+    command = [
+        tar,
+        "-cJf",
+        str(target),
+        "--format=pax",
+        "--no-recursion",
+        "--null",
+        "-T",
+        "-",
+    ]
+    if b"GNU tar" in help_text:
+        if not shutil.which("xz") or not all(
+            opt in help_text
+            for opt in (
+                b"--xz",
+                b"--format",
+                b"--no-recursion",
+                b"--null",
+                b"--files-from",
+            )
+        ):
+            return False
+        options = [f"-{config.compression_level}"]
+        if config.threads is not None:
+            options.append(f"--threads={config.threads}")
+        if config.extreme:
+            options.append("--extreme")
+        env.pop("XZ_DEFAULTS", None)
+        env["XZ_OPT"] = " ".join(options)
+    elif b"bsdtar" in help_text:
+        # bsdtar's built-in xz filter has no extreme preset.
+        if config.extreme:
+            return False
+        options = [f"xz:compression-level={config.compression_level}"]
+        if config.threads is not None:
+            options.append(f"xz:threads={config.threads}")
+        command.extend(["--options", ",".join(options)])
+        # libarchive builds differ in their enabled filters and options.
+        probe = command.copy()
+        probe[2] = os.devnull
+        if subprocess.run(
+            probe, input=b"", stderr=subprocess.DEVNULL, env=env
+        ).returncode:
+            return False
+    else:
+        return False
+
+    names = b"".join(os.fsencode(e.path) + b"\0" for e in entries)
+    subprocess.run(command, cwd=root, input=names, env=env, check=True)
+    return True
+
+
+def _write_archive(
+    root: Path,
+    target: Path,
+    entries: list[ArtifactEntry],
+    config: ArchiveConfig,
+) -> None:
+    inodes = {(e.identity[0], e.identity[1]) for e in entries}
+    # Some tar implementations encode repeated inodes as hard-link members.
+    # The retention format stores independently readable contents for each path.
+    if len(inodes) == len(entries) and _native_tar(
+        root, target, entries, config
+    ):
+        return
+
+    preset = config.compression_level
+    if config.extreme:
+        from lzma import PRESET_EXTREME
+
+        preset |= PRESET_EXTREME
+    with tarfile.open(
+        target, "w:xz", preset=preset, dereference=False
+    ) as archive:
+        for entry in entries:
+            path = _path(root, entry.path)
+            if _identity(path) != entry.identity:
+                raise ValueError(f"Artifact changed: {entry.path}")
+            archive.inodes.clear()
+            archive.add(path, arcname=entry.path, recursive=False)
 
 
 def _publish_archive(root: Path, plan: RetentionPlan, state: dict) -> None:
@@ -316,19 +427,7 @@ def _publish_archive(root: Path, plan: RetentionPlan, state: dict) -> None:
         if temporary.is_symlink():
             raise ValueError("Temporary archive must not be a symlink")
         try:
-            with tarfile.open(
-                temporary,
-                "w:xz",
-                preset=config.compression_level,
-                dereference=False,
-            ) as archive:
-                for entry in entries:
-                    path = _path(root, entry.path)
-                    if _identity(path) != entry.identity:
-                        raise ValueError(f"Artifact changed: {entry.path}")
-                    # Preserve contents of hard-linked files independently.
-                    archive.inodes.clear()
-                    archive.add(path, arcname=entry.path, recursive=False)
+            _write_archive(root, temporary, entries, config)
             _verify_archive(temporary, entries)
             _check_inputs(plan, cleanup=False)
             # Windows requires a writable descriptor for fsync.
@@ -368,6 +467,50 @@ def _link_warnings(plan: RetentionPlan) -> list[dict[str, str]]:
     return warnings
 
 
+def _prunable_directories(plan: RetentionPlan) -> set[PurePosixPath]:
+    roots = {PurePosixPath(name) for name in plan.roots}
+    directories = set()
+    for entry in plan.entries:
+        if plan.policy.removes(entry.action):
+            for parent in _relative(entry.path).parents:
+                if parent in directories:
+                    break
+                directories.add(parent)
+                if parent in roots:
+                    break
+            else:
+                raise ValueError(
+                    f"Artifact outside retention roots: {entry.path}"
+                )
+    return directories
+
+
+def _prune_empty_directories(root: Path, plan: RetentionPlan) -> None:
+    for relative in sorted(
+        _prunable_directories(plan), key=lambda p: len(p.parts), reverse=True
+    ):
+        directory = _path(root, relative.as_posix())
+        try:
+            directory.rmdir()
+        except FileNotFoundError:
+            continue  # Already pruned before an interrupted cleanup.
+        except OSError as exc:
+            if exc.errno in (errno.ENOTEMPTY, errno.EEXIST, errno.EBUSY):
+                continue
+            raise
+        _sync_directory(directory.parent)
+
+
+def retention_lock(root: Path) -> FileLock:
+    """Acquire once per job, including nested calls from the Harbor adapter."""
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("Run directory is no longer available")
+    path = root.resolve() / ".retention.lock"
+    if path.is_symlink():
+        raise ValueError("Retention lock must not be a symlink")
+    return FileLock(path, timeout=0, is_singleton=True)
+
+
 def apply_retention(plan: RetentionPlan) -> dict:
     """Apply or resume this exact plan, preserving sources until verification."""
     root = Path(plan.root)
@@ -376,7 +519,7 @@ def apply_retention(plan: RetentionPlan) -> dict:
     manifest = root / MANIFEST
     if manifest.is_symlink() or (root / ".retention.lock").is_symlink():
         raise ValueError("Retention metadata must not be symlinks")
-    with FileLock(str(root / ".retention.lock")):
+    with retention_lock(root):
         state = json.loads(manifest.read_text()) if manifest.exists() else None
         if state is not None:
             if state["plan"] != plan.model_dump(mode="json"):
@@ -425,6 +568,11 @@ def apply_retention(plan: RetentionPlan) -> dict:
                 ):
                     raise ValueError("Published archive changed")
             if state["status"] == "complete":
+                if not state.get("directories_pruned"):
+                    # Apply directory cleanup to manifests from earlier versions.
+                    _prune_empty_directories(root, plan)
+                    state["directories_pruned"] = True
+                    _write(root, state)
                 return state
             if not state["cleanup_started"]:
                 _publish_archive(root, plan, state)
@@ -442,6 +590,8 @@ def apply_retention(plan: RetentionPlan) -> dict:
                 if entry.path not in state["removed"]:
                     state["removed"].append(entry.path)
                     _write(root, state)
+            _prune_empty_directories(root, plan)
+            state["directories_pruned"] = True
             state["status"] = "complete"
             state.pop("error", None)
         except BaseException as exc:
@@ -466,23 +616,26 @@ def retain_artifacts(
     if root.is_symlink():
         raise ValueError("Run directory must not be a symlink")
     root = root.resolve(strict=True)
-    manifest = root / MANIFEST
-    if manifest.is_symlink():
-        raise ValueError("Retention manifest must not be a symlink")
-    if manifest.exists():
-        plan = RetentionPlan.model_validate(
-            json.loads(manifest.read_text())["plan"]
-        )
-        if (
-            plan.root != str(root)
-            or plan.policy != policy
-            or plan.roots != sorted(set(roots))
-            or plan.protected != sorted(set(protected))
-        ):
-            raise ValueError("Existing retention policy/inventory differs")
-    else:
-        plan = plan_retention(root, policy, roots=roots, protected=protected)
-    return apply_retention(plan)
+    with retention_lock(root):
+        manifest = root / MANIFEST
+        if manifest.is_symlink():
+            raise ValueError("Retention manifest must not be a symlink")
+        if manifest.exists():
+            plan = RetentionPlan.model_validate(
+                json.loads(manifest.read_text())["plan"]
+            )
+            if (
+                plan.root != str(root)
+                or plan.policy != policy
+                or plan.roots != sorted(set(roots))
+                or plan.protected != sorted(set(protected))
+            ):
+                raise ValueError("Existing retention policy/inventory differs")
+        else:
+            plan = plan_retention(
+                root, policy, roots=roots, protected=protected
+            )
+        return apply_retention(plan)
 
 
 def restore_artifacts(manifest: Path, destination: Path) -> list[str]:

@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from filelock import FileLock, Timeout
 from typer.testing import CliRunner
 
 pytest.importorskip("harbor")
@@ -40,7 +41,7 @@ def job(tmp_path: Path):
     (tmp_path / "trial/result.json").write_text(json.dumps(result))
     policy = tmp_path / "policy.yaml"
     policy.write_text(
-        "retention:\n  collections: [artifacts, verifier]\n  default_action: archive\n  archive: {}\n"
+        "retention:\n  collections: [artifacts, verifier]\n  default_action: archive\n  archive: {threads: 2, extreme: true}\n"
     )
     return policy
 
@@ -79,6 +80,23 @@ async def test_plugin_records_failure_and_incomplete_job_preserves_files(
     )
 
 
+def test_busy_job_rejects_apply_before_scope_or_status_update(
+    tmp_path, monkeypatch
+):
+    config = load_retention_config(job(tmp_path))
+    status = tmp_path / "retention-status.json"
+    status.write_text('{"status": "pending"}')
+    monkeypatch.setattr(
+        "ursa.integrations.harbor.retention._scope",
+        lambda *args, **kwargs: pytest.fail("discovered scope while busy"),
+    )
+    with FileLock(tmp_path / ".retention.lock"):
+        with pytest.raises(Timeout):
+            apply_job_retention(tmp_path, config)
+    assert status.read_text() == '{"status": "pending"}'
+    assert not (tmp_path / "retention.json").exists()
+
+
 def test_standalone_requires_finished_trial(tmp_path):
     policy = job(tmp_path)
     (tmp_path / "trial/result.json").write_text('{"finished_at": null}')
@@ -95,6 +113,10 @@ def test_cli_preview_apply_restore(tmp_path, whole_trial):
     assert preview.exit_code == 0, preview.output
     assert not (tmp_path / "retention.json").exists()
     assert runner.invoke(app, ["artifacts", "apply", *args]).exit_code == 0
+    assert not (tmp_path / "trial/steps/two/artifacts").exists()
+    assert (tmp_path / "trial").exists() != whole_trial
+    assert runner.invoke(app, ["artifacts", "apply", *args]).exit_code == 0
+    assert runner.invoke(app, ["artifacts", "plan", *args]).exit_code == 0
     assert (
         json.loads((tmp_path / "retention-status.json").read_text())["status"]
         == "complete"
@@ -265,7 +287,7 @@ def test_missing_trial_result_before_cleanup_is_not_treated_as_archived(
         raise OSError("disk full")
 
     with monkeypatch.context() as patch:
-        patch.setattr(tarfile.TarFile, "add", fail)
+        patch.setattr("ursa.artifacts.retention._write_archive", fail)
         with pytest.raises(OSError, match="disk full"):
             apply_job_retention(tmp_path, config)
     (tmp_path / "trial/result.json").unlink()

@@ -422,6 +422,8 @@ retention:
     path: retained-artifacts.tar.xz
     remove_originals: true
     compression_level: 6
+    threads: 2
+    extreme: false
 ```
 
 ```bash
@@ -452,9 +454,20 @@ job-relative trial/step paths to avoid collisions.
 
 Archives are written temporarily, verified against the inventory and content
 hashes, then published without overwriting existing files. Only then are selected
-originals deleted. Allow space for both sources and the archive; compression
-levels range from 0–9. A lock serializes retention writers, but other payload
-writers must have stopped. POSIX directory fsync protects publication and journals.
+originals deleted. Cleanup prunes the directories emptied by those removals,
+up to and including the collection root. Reapplying a policy also prunes
+directories left by earlier versions. Allow space for both sources and the archive.
+
+Retention uses system `tar -cJf` to create a PAX archive. Set `threads: 0` for
+automatic thread selection or omit `threads` for the compressor's default.
+`extreme: true` spends more compression time at the selected level (0–9).
+If a supported tar is unavailable or selected files share an inode, Python's
+`tarfile` writer uses one thread and honors the level and extreme preset.
+BSD tar also uses this fallback for extreme mode.
+
+Apply retention after payload writers have stopped. Only one apply per job can
+run at a time. A second apply exits immediately. POSIX directory fsync protects
+publication and journals.
 With whole-trial retention and `remove_originals: true`, restore the trial before
 using Harbor commands that need its result, configuration, or logs.
 
