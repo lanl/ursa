@@ -298,16 +298,15 @@ wheels = [
 
 [[package]]
 name = "anyio"
-version = "4.11.0"
+version = "4.14.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "idna" },
-    { name = "sniffio" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c6/78/7d432127c41b50bccba979505f272c16cbcadcc33645d5fa3a738110ae75/anyio-4.11.0.tar.gz", hash = "sha256:82a8d0b81e318cc5ce71a5f1f8b5c4e63619620b63141ef8c995fa0db95a57c4", size = 219094, upload-time = "2025-09-23T09:19:12.58Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/61/cc/a381afa6efea9f496eff839d4a6a1aed3bfafc7b3ab4b0d1b243a12573dd/anyio-4.14.2.tar.gz", hash = "sha256:cfa139f3ed1a23ee8f88a145ddb5ac7605b8bbfd8592baacd7ce3d8bb4313c7f", size = 260176, upload-time = "2026-07-12T20:29:07.082Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/15/b3/9b1a8074496371342ec1e796a96f99c82c945a339cd81a8e73de28b4cf9e/anyio-4.11.0-py3-none-any.whl", hash = "sha256:0287e96f4d26d4149305414d4e3bc32f0dcd0862365a4bddea19d7a1ec38c4fc", size = 109097, upload-time = "2025-09-23T09:19:10.601Z" },
+    { url = "https://files.pythonhosted.org/packages/da/35/f2287558c17e29fafc8ef3daf819bb9834061cfa43bff8014f7df7f63bdc/anyio-4.14.2-py3-none-any.whl", hash = "sha256:9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45ea15bc41d1494", size = 125813, upload-time = "2026-07-12T20:29:05.763Z" },
 ]
 
 [[package]]
@@ -2228,6 +2227,26 @@ http2 = [
 ]
 socks = [
     { name = "socksio" },
+]
+
+[[package]]
+name = "httpx-socks"
+version = "0.13.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpcore" },
+    { name = "httpx" },
+    { name = "python-socks" },
+    { name = "sniffio" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2a/8a/1a36f6c3324d19c33e2b8a72222c609a950d271560a8198283c92dd808d5/httpx_socks-0.13.1.tar.gz", hash = "sha256:9114898471eb0b2c1f67749f1d2b1c9d35c9f6c450d2f5c338033fc2d0af2d20", size = 120913, upload-time = "2026-08-14T05:41:01.185Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/64/2f64faa059e5f413de846aefd4e7c1db3273fb49a62e1e1767280f2d1d88/httpx_socks-0.13.1-py3-none-any.whl", hash = "sha256:771b4f3dbc8f62515a6f8a64f3e1dea9a7826a2521032351d3bd5cc008486bb6", size = 13802, upload-time = "2026-08-14T05:40:59.632Z" },
+]
+
+[package.optional-dependencies]
+anyio = [
+    { name = "anyio" },
 ]
 
 [[package]]
@@ -6443,6 +6462,15 @@ wheels = [
 ]
 
 [[package]]
+name = "python-socks"
+version = "3.2.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/95/c6/4036f0b1bbcbd2bb863dbc82bc1b48c304553f070cc067cdeb797268af6c/python_socks-3.2.2.tar.gz", hash = "sha256:307cca18f0b464cdc48341578e521832c4878690a6f87b82dfad7bad7474b78f", size = 42017, upload-time = "2026-11-18T14:27:07.352Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/74/8a/992a5afb92ceec69d29b6b04016e5cad1b119cbe9284b2ffbf42cd4a748d/python_socks-3.2.2-py3-none-any.whl", hash = "sha256:e0d464617bc24fb9511cf668ce67ea87efdcfec19d60ac149ad301065058f443", size = 49613, upload-time = "2026-11-18T14:27:06.069Z" },
+]
+
+[[package]]
 name = "pytz"
 version = "2025.2"
 source = { registry = "https://pypi.org/simple" }
@@ -8582,7 +8610,9 @@ fm = [
 harbor = [
     { name = "archspec" },
     { name = "harbor", marker = "python_full_version >= '3.12'" },
+    { name = "httpx-socks", extra = ["anyio"] },
     { name = "packaging" },
+    { name = "python-socks" },
     { name = "singularity-compose" },
 ]
 image = [
@@ -8646,6 +8676,7 @@ requires-dist = [
     { name = "fastmcp", specifier = "~=3.0" },
     { name = "filelock", specifier = ">=3.20.3,<4.0" },
     { name = "harbor", marker = "python_full_version >= '3.12' and extra == 'harbor'", specifier = ">=0.25.0,<0.26" },
+    { name = "httpx-socks", extras = ["anyio"], marker = "extra == 'harbor'", specifier = ">=0.13.1,<0.14" },
     { name = "jsonargparse", specifier = ">=4.45.0" },
     { name = "justext", specifier = ">=3.0.1,<4.0.0" },
     { name = "keyring", specifier = ">=25.0.0,<26.0.0" },
@@ -8675,6 +8706,7 @@ requires-dist = [
     { name = "pymupdf4llm", specifier = ">=0.3.4,<1.0" },
     { name = "python-docx", marker = "extra == 'office-readers'", specifier = ">=1.2" },
     { name = "python-pptx", marker = "extra == 'office-readers'", specifier = ">=1.0.2" },
+    { name = "python-socks", extras = ["asyncio"], marker = "extra == 'harbor'", specifier = ">=3.2.2,<4" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "randomname", specifier = ">=0.2.1,<0.3" },
     { name = "rich", specifier = ">=14.2.0,<15.0" },

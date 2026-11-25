@@ -16,7 +16,9 @@ import signal
 import ssl
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
+
+CONNECT_TIMEOUT = 10
 
 
 def authority(value: str) -> tuple[str, int]:
@@ -123,16 +125,65 @@ async def relay(reader, writer, peer_reader, peer_writer):
         await close(peer_writer)
 
 
+class SocksProxy:
+    """Host-side SOCKS5 CONNECT, with destination DNS handled by the proxy."""
+
+    def __init__(self, url: str):
+        try:
+            parsed = urlsplit(url)
+            if (
+                parsed.scheme not in {"socks5", "socks5h"}
+                or not parsed.hostname
+                or parsed.path not in {"", "/"}
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError
+            host = parsed.hostname
+            authority(
+                f"[{host}]:{parsed.port}"
+                if ":" in host
+                else f"{host}:{parsed.port}"
+            )
+            if parsed.username is not None or parsed.password is not None:
+                username = unquote(parsed.username or "").encode("ascii")
+                password = unquote(parsed.password or "").encode("ascii")
+                if not (
+                    1 <= len(username) <= 255 and 1 <= len(password) <= 255
+                ):
+                    raise ValueError
+        except ValueError:
+            # A URL can contain credentials; never include it in diagnostics.
+            raise ValueError(
+                "Expected a socks5:// or socks5h:// proxy URL with an explicit port and optional ASCII username:password"
+            ) from None
+        # python-socks uses rdns=True instead of a separate socks5h scheme.
+        self.url = parsed._replace(scheme="socks5").geturl()
+
+    async def connect(self, host: str, port: int):
+        from python_socks.async_.asyncio.v2 import Proxy
+
+        stream = await Proxy.from_url(self.url, rdns=True).connect(
+            host, port, timeout=CONNECT_TIMEOUT
+        )
+        return stream.reader, stream.writer
+
+
 class HostProxy:
-    def __init__(self, transport, allowed_hosts):
+    """Forward HTTP(S); allowed_hosts=None explicitly permits any destination."""
+
+    def __init__(self, transport, allowed_hosts, socks_proxy=None):
         self.transport = transport
         self.allowed_hosts = allowed_hosts
+        self.connect = (
+            socks_proxy.connect if socks_proxy else asyncio.open_connection
+        )
         self.tasks = set()
         self.closing = False
 
     def permits(self, endpoint):
         host, _port = endpoint
-        return any(
+        return self.allowed_hosts is None or any(
             host == entry
             or (entry.startswith("*.") and host.endswith(entry[1:]))
             for entry in self.allowed_hosts
@@ -146,8 +197,10 @@ class HostProxy:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def handle(self, reader, writer):
+        import anyio
         import h11
         import httpx
+        from python_socks import ProxyError
 
         if self.closing:
             await close(writer)
@@ -202,7 +255,7 @@ class HostProxy:
                 return
             if method == "CONNECT":
                 peer_reader, peer_writer = await asyncio.wait_for(
-                    asyncio.open_connection(*endpoint), timeout=10
+                    self.connect(*endpoint), timeout=CONNECT_TIMEOUT
                 )
                 try:
                     writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
@@ -238,7 +291,7 @@ class HostProxy:
                 content=body(),
                 extensions={
                     "timeout": {
-                        "connect": 10,
+                        "connect": CONNECT_TIMEOUT,
                         "read": 300,
                         "write": 300,
                         "pool": 300,
@@ -267,9 +320,12 @@ class HostProxy:
             TimeoutError,
             asyncio.IncompleteReadError,
             asyncio.LimitOverrunError,
+            anyio.BrokenResourceError,
+            anyio.ClosedResourceError,
             h11.ProtocolError,
             httpx.HTTPError,
             httpx.InvalidURL,
+            ProxyError,
         ) as exc:
             if not response_started:
                 # Do not expose upstream URLs, credentials, or response bodies.
@@ -294,7 +350,7 @@ class HostProxy:
 
 
 @contextlib.asynccontextmanager
-async def host_server(socket_path: Path, allowed_hosts):
+async def host_server(socket_path: Path, allowed_hosts, *, upstream_proxy=None):
     import httpx
 
     socket_path = socket_path.absolute()
@@ -304,11 +360,18 @@ async def host_server(socket_path: Path, allowed_hosts):
         raise ValueError("Socket directory must be owned by you and mode 0700")
     if socket_path.exists() or socket_path.is_symlink():
         raise FileExistsError(socket_path)
-    async with httpx.AsyncHTTPTransport(
-        verify=ssl.create_default_context(),
-        trust_env=False,
-    ) as transport:
-        proxy = HostProxy(transport, allowed_hosts)
+    socks_proxy = SocksProxy(upstream_proxy) if upstream_proxy else None
+    options = {"verify": ssl.create_default_context(), "trust_env": False}
+    if socks_proxy:
+        from httpx_socks import AsyncProxyTransport
+
+        transport = AsyncProxyTransport.from_url(
+            socks_proxy.url, rdns=True, **options
+        )
+    else:
+        transport = httpx.AsyncHTTPTransport(**options)
+    async with transport:
+        proxy = HostProxy(transport, allowed_hosts, socks_proxy)
         server = await asyncio.start_unix_server(
             proxy.handle, path=socket_path, limit=65536
         )

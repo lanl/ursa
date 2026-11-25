@@ -314,6 +314,35 @@ unprivileged user/network namespaces. The task image needs Python 3.8+ for the
 stdlib bridge; a cached URSA installation's interpreter is also supported.
 The proxy socket lives in a private directory and is removed on cleanup.
 
+To route the host-side proxy through SOCKS5, set this on the host:
+
+```bash
+export URSA_HARBOR_UPSTREAM_PROXY=socks5h://127.0.0.1:1080
+```
+
+Alternatively, pass `--ek singularity_upstream_proxy=socks5h://127.0.0.1:1080`.
+The explicit setting overrides the environment variable; an empty value disables
+it. Both `socks5://` and `socks5h://` resolve destination names at the SOCKS server.
+An explicit port is required. Optional username/password authentication uses
+`socks5h://user:password@host:1080`, with URL-encoded ASCII credentials
+(1–255 bytes each).
+
+With SOCKS configured, both `public` and `allowlist` phases use the socket proxy,
+including agent installation. Public phases permit any destination; allowlist
+phases check each destination before connecting. Both run in an isolated network
+namespace, so clients must use the HTTP proxy or a dedicated model forward;
+arbitrary direct TCP/UDP access is unavailable. A `no-network` phase stays offline
+unless Harbor adds an LLM exception. Public phases without SOCKS retain direct
+network access. Image pulls and builds are unaffected. Compose sidecars are not
+supported with SOCKS configured.
+
+SOCKS configuration and credentials stay on the host. HTTP requests, HTTPS
+tunnels, and dedicated model forwards all use SOCKS, with no direct fallback on
+failure. Loopback destinations therefore refer to the SOCKS server's host.
+The `harbor` extra supplies the host-side SOCKS dependencies. Connection setup,
+including SOCKS negotiation, has a 10-second deadline; streaming responses can
+continue beyond it.
+
 Set `[environment].workdir` when a Dockerfile has a variable or inherited
 non-root `WORKDIR`, or when Compose uses an image for its `main` service; the
 adapter rejects unresolved workdirs before launch.
@@ -329,6 +358,8 @@ The smoke test checks privilege isolation, JSON and streaming model responses,
 HTTP and certificate-verified HTTPS, local services, denied hosts, phase changes,
 and cleanup with stalled clients.
 It uses local test servers and requires no model credentials.
+With `URSA_HARBOR_UPSTREAM_PROXY` set to a local SOCKS5 server, it also checks
+public-phase proxying before switching to restricted phases.
 
 ## Configure other agents
 

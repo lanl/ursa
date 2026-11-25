@@ -5,7 +5,7 @@
 - Added Harbor 0.25 support with reusable agent/provider configuration.
 - Added artifact and whole-trial retention, archive, and restore to Harbor.
 - Cached Harbor agent installations, including URSA, for Apptainer/Singularity.
-- Added automatic HTTP/HTTPS allowlist proxying for isolated Apptainer/Singularity runs.
+- Added automatic HTTP/HTTPS allowlist proxying with optional host-side SOCKS5 for isolated Apptainer/Singularity runs.
 - Fixed proxy shutdown stalls, local service routing, and shared HTTP client state.
 - Made invalid experience filenames and other tool inputs recoverable by agents.
 

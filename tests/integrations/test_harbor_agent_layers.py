@@ -431,3 +431,9 @@ async def test_ursa_remaps_native_provider_urls_and_refreshes_each_proxy_phase(
             config["mcp_servers"]["local"]["url"] == "http://localhost:9000/mcp"
         )
     assert upload.await_count == 3
+
+
+async def test_install_layer_inherits_explicit_host_proxy(template, builder):
+    template._upstream_proxy = "socks5h://127.0.0.1:1080"
+    await agent_layers.build_agent_layer(template, "goose")
+    assert builder[0][0]._upstream_proxy == template._upstream_proxy

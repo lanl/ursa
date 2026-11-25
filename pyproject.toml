@@ -121,6 +121,8 @@ harbor = [
     "singularity-compose>=0.1.19,<0.2",
     "archspec>=0.2.6,<0.3",
     "packaging>=25,<27",
+    "httpx-socks[anyio]>=0.13.1,<0.14",
+    "python-socks[asyncio]>=3.2.2,<4",
 ]
 
 [tool.uv]

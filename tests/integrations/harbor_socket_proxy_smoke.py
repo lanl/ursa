@@ -38,6 +38,7 @@ async def inside(args):
 
     assert "127.0.0.1" in os.environ["NO_PROXY"] == os.environ["no_proxy"]
     assert os.environ["HTTP_PROXY"] == os.environ["http_proxy"]
+    assert "URSA_HARBOR_UPSTREAM_PROXY" not in os.environ
     port = urlsplit(os.environ["HTTP_PROXY"]).port
     origin = f"http://127.0.0.1:{args.http_port}"
 
@@ -129,10 +130,15 @@ async def inside(args):
             flush=True,
         )
 
-        assert request("GET", "http://blocked.invalid/")[0] == 403
-        assert request("GET", "http://127.0.0.2:1/")[0] == 403
-        assert request("CONNECT", "blocked.invalid:443")[0] == 403
-        print("PASS: denied HTTP/CONNECT hosts", flush=True)
+        if args.public:
+            print(
+                "PASS: public HTTP/HTTPS without allowlist entries", flush=True
+            )
+        else:
+            assert request("GET", "http://blocked.invalid/")[0] == 403
+            assert request("GET", "http://127.0.0.2:1/")[0] == 403
+            assert request("CONNECT", "blocked.invalid:443")[0] == 403
+            print("PASS: denied HTTP/CONNECT hosts", flush=True)
 
     async def local_service(reader, writer):
         await reader.readuntil(b"\r\n\r\n")
@@ -319,8 +325,10 @@ async def outside(args):
                 task_env_config=EnvironmentConfig(
                     workdir="/workspace", storage_mb=64
                 ),
-                network_policy=offline,
-                phase_network_policies=[inferred, explicit],
+                network_policy=NetworkPolicy(network_mode=NetworkMode.PUBLIC)
+                if os.environ.get("URSA_HARBOR_UPSTREAM_PROXY")
+                else offline,
+                phase_network_policies=[offline, inferred, explicit],
                 mounts=[
                     dict(
                         type="bind",
@@ -349,17 +357,7 @@ async def outside(args):
                     print(result.stdout, end="", flush=True)
                 return result
 
-            proxy_directory = None
-            stalled_client = None
-            try:
-                await environment.start(False)
-                await checked(
-                    'test -z "$HTTP_PROXY" && echo preserved > /workspace/marker'
-                )
-                assert environment._proxy_process is None
-                await environment.set_network_policy(inferred)
-                proxy_directory = Path(environment._proxy_temp.name)
-                process = environment._proxy_process
+            async def check_proxy(*, public=False):
                 model_url = await environment._forward_model_url(
                     f"http://127.0.0.1:{http_port}"
                 )
@@ -374,6 +372,7 @@ async def outside(args):
                         "python3",
                         "/proxy-smoke.py",
                         "--inside",
+                        *(["--public"] if public else []),
                         "--http-port",
                         str(http_port),
                         "--https-port",
@@ -388,6 +387,22 @@ async def outside(args):
                         embedding_url,
                     ])
                 )
+
+            proxy_directory = None
+            stalled_client = None
+            try:
+                await environment.start(False)
+                if environment._upstream_proxy:
+                    await check_proxy(public=True)
+                    await environment.set_network_policy(offline)
+                await checked(
+                    'test -z "$HTTP_PROXY" && echo preserved > /workspace/marker'
+                )
+                assert environment._proxy_process is None
+                await environment.set_network_policy(inferred)
+                proxy_directory = Path(environment._proxy_temp.name)
+                process = environment._proxy_process
+                await check_proxy()
                 await environment.set_network_policy(offline)
                 assert process.returncode is not None
                 assert not (proxy_directory / "host.sock").exists()
@@ -444,6 +459,7 @@ def main():
     parser.add_argument("--image", type=Path)
     parser.add_argument("--runtime", default="apptainer")
     parser.add_argument("--inside", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--public", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--http-port", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--https-port", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--host-namespace", help=argparse.SUPPRESS)

@@ -809,6 +809,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         singularity_overlay: bool = True,
         singularity_no_mount: str | None = None,
         singularity_startup_timeout_sec: float = 300,
+        singularity_upstream_proxy: str | None = None,
         **kwargs,
     ) -> None:
         if (
@@ -861,6 +862,13 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
                 "An agent install layer requires a writable trial overlay"
             )
         self._fakeroot = singularity_fakeroot
+        self._upstream_proxy = (
+            os.environ.get("URSA_HARBOR_UPSTREAM_PROXY")
+            if singularity_upstream_proxy is None
+            else singularity_upstream_proxy
+        )
+        if self._upstream_proxy:
+            network_proxy.SocksProxy(self._upstream_proxy)
         self._overlay_enabled = singularity_overlay
         self._runtime_path: str | None = None
         super().__init__(*args, **kwargs)
@@ -1028,7 +1036,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             config = self._load_compose_config()
             sidecars = set(config["services"]) - {"main"}
             if sidecars and any(
-                policy.network_mode != NetworkMode.PUBLIC
+                self._isolates_network(policy)
                 for policy in (
                     self._network_policy,
                     *self._phase_network_policies,
@@ -1036,7 +1044,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             ):
                 raise ValueError(
                     "singularity-compose cannot provide sidecar networking "
-                    "during a restricted Harbor network phase"
+                    "during a restricted Harbor network phase or SOCKS proxying"
                 )
         if not self._overlay_enabled and any(
             policy != self._network_policy
@@ -1785,7 +1793,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             compose.get("instances"), dict
         ):
             raise RuntimeError("Invalid generated singularity-compose file")
-        isolated = network_policy.network_mode != NetworkMode.PUBLIC
+        isolated = self._isolates_network(network_policy)
         for instance in compose["instances"].values():
             network = instance.setdefault("network", {})
             network.update(allocate_ip=not isolated, enable=True)
@@ -1805,7 +1813,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             ]
             if isolated and not self._fakeroot:
                 options.append("userns")
-            if network_policy.network_mode == NetworkMode.ALLOWLIST:
+            if self._uses_network_proxy(network_policy):
                 options.append(f"bind={self._proxy_bind()}")
         self._compose_file.write_text(yaml.safe_dump(compose, sort_keys=False))
 
@@ -1914,9 +1922,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             if mount.get("read_only"):
                 bind += ":ro"
             command.extend(["-B", bind])
-        if (
-            network_policy or self._network_policy
-        ).network_mode == NetworkMode.ALLOWLIST:
+        if self._uses_network_proxy(network_policy or self._network_policy):
             command.extend(["-B", self._proxy_bind()])
         command.extend([str(self._sif_path), self._instance_name])
         return command
@@ -1939,9 +1945,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             args.extend(["--overlay", f"{self._agent_layer_path}:ro"])
         if include_overlay and self._overlay_path is not None:
             args.extend(["--overlay", str(self._overlay_path)])
-        if (
-            network_policy or self._network_policy
-        ).network_mode != NetworkMode.PUBLIC:
+        if self._isolates_network(network_policy or self._network_policy):
             if not self._fakeroot:
                 args.append("--userns")
             args.extend(["--net", "--network", "none"])
@@ -2291,15 +2295,32 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
                     compose_arguments.append("--read_only")
                 self._instance_start_attempted = True
                 await self._run_compose(*compose_arguments)
-            if network_policy.network_mode == NetworkMode.PUBLIC:
+            if not self._isolates_network(network_policy):
                 self._add_compose_service_aliases()
         else:
             self._instance_start_attempted = True
             await self._run(*self._instance_start_command(network_policy))
         self._instance_started = True
         await self._run(*self._instance_exec_prefix(), "true")
-        if network_policy.network_mode == NetworkMode.ALLOWLIST:
+        if self._uses_network_proxy(network_policy):
             await self._start_proxy_bridge()
+
+    def _isolates_network(self, policy: NetworkPolicy) -> bool:
+        return policy.network_mode != NetworkMode.PUBLIC or bool(
+            self._upstream_proxy
+        )
+
+    def _uses_network_proxy(self, policy: NetworkPolicy) -> bool:
+        return policy.network_mode == NetworkMode.ALLOWLIST or (
+            policy.network_mode == NetworkMode.PUBLIC
+            and bool(self._upstream_proxy)
+        )
+
+    @staticmethod
+    def _proxy_allowed_hosts(policy: NetworkPolicy) -> list[str] | None:
+        if policy.network_mode == NetworkMode.PUBLIC:
+            return None
+        return normalize_allowed_hosts(policy.allowed_hosts)
 
     def _proxy_bind(self) -> str:
         if self._proxy_temp is None:
@@ -2308,7 +2329,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
 
     async def _prepare_network_proxy(self, policy: NetworkPolicy) -> None:
         await self._stop_network_proxy()
-        if policy.network_mode != NetworkMode.ALLOWLIST:
+        if not self._uses_network_proxy(policy):
             return
         if self._proxy_temp is None:
             # Short paths work with AF_UNIX even when the job lives on a long
@@ -2324,7 +2345,8 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
         await self._proxy_stack.enter_async_context(
             network_proxy.host_server(
                 Path(self._proxy_temp.name) / "host.sock",
-                allowed_hosts=normalize_allowed_hosts(policy.allowed_hosts),
+                allowed_hosts=self._proxy_allowed_hosts(policy),
+                upstream_proxy=self._upstream_proxy,
             )
         )
 
@@ -2347,7 +2369,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             "if command -v python3 >/dev/null 2>&1; then python=$(command -v python3); "
             "elif test -x /installed-agent/tools/ursa-ai/bin/python; then "
             "python=/installed-agent/tools/ursa-ai/bin/python; else "
-            "echo 'Allowlisted networking requires Python 3.8+ in the task image' >&2; exit 1; fi; "
+            "echo 'Proxied networking requires Python 3.8+ in the task image' >&2; exit 1; fi; "
             f'exec "$python" {_PROXY_CONTAINER_DIR}/bridge.py '
             f"--socket {_PROXY_CONTAINER_DIR}/host.sock --port 0"
         )
@@ -2410,7 +2432,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
                 )
             if not network_proxy.HostProxy(
                 None,
-                normalize_allowed_hosts(self._network_policy.allowed_hosts),
+                self._proxy_allowed_hosts(self._network_policy),
             ).permits((host, port)):
                 raise ValueError(f"Model host {host!r} is not allowlisted")
             key = (host, port)
@@ -2472,13 +2494,13 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
                 "Singularity network policy changes require a writable overlay"
             )
         if (
-            network_policy.network_mode != NetworkMode.PUBLIC
+            self._isolates_network(network_policy)
             and self._uses_compose
             and set(self._load_compose_config()["services"]) - {"main"}
         ):
             raise ValueError(
                 "singularity-compose cannot provide sidecar networking "
-                "during a restricted Harbor network phase"
+                "during a restricted Harbor network phase or SOCKS proxying"
             )
         async with self._lifecycle_lock:
             if not self._instance_started:
@@ -2670,6 +2692,7 @@ class DockerfileSingularityEnvironment(ComposeServiceOpsMixin, BaseEnvironment):
             key: value
             for key, value in os.environ.items()
             if not key.startswith(("SINGULARITYENV_", "APPTAINERENV_"))
+            and key != "URSA_HARBOR_UPSTREAM_PROXY"
         }
 
     def _exec_shell_command(

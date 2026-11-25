@@ -314,6 +314,7 @@ async def build_agent_layer(
                 network_policy=template.network_policy,
                 singularity_image_cache_dir=template._image_cache_dir,
                 singularity_fakeroot=template._fakeroot,
+                singularity_upstream_proxy=template._upstream_proxy,
             )
             environment._runtime_path = template._instance_runtime()
             try:

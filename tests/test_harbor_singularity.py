@@ -38,6 +38,7 @@ def _environment(
     fakeroot: bool | None = False,
     agent: str | None = None,
     separate_verifier: bool = False,
+    upstream_proxy: str | None = None,
 ) -> DockerfileSingularityEnvironment:
     environment_dir = tmp_path / "environment"
     environment_dir.mkdir()
@@ -90,6 +91,7 @@ def _environment(
         singularity_agent=agent,
         singularity_fakeroot=fakeroot,
         singularity_overlay=overlay,
+        singularity_upstream_proxy=upstream_proxy,
     )
     environment._runtime_path = str(tmp_path / "fake-singularity")
     return environment
@@ -1103,10 +1105,10 @@ def test_instance_list_parser(output: bytes, expected: set[str] | None):
         )
 
 
-@pytest.mark.parametrize("inferred", [False, True])
+@pytest.mark.parametrize("mode", ["allowlist", "inferred", "public"])
 @pytest.mark.parametrize("fail_bridge", [False, True])
-async def test_allowlist_automatically_proxies_and_revokes_phase_access(
-    tmp_path, monkeypatch, inferred, fail_bridge
+async def test_proxy_automatically_routes_and_revokes_phase_access(
+    tmp_path, monkeypatch, mode, fail_bridge
 ):
     from harbor.trial.network_policy import (
         add_inference_hosts,
@@ -1118,13 +1120,18 @@ async def test_allowlist_automatically_proxies_and_revokes_phase_access(
         add_inference_hosts(
             offline, [inference_endpoint_host("http://localhost:11434/v1")]
         )
-        if inferred
+        if mode == "inferred"
         else NetworkPolicy(
             network_mode=NetworkMode.ALLOWLIST, allowed_hosts=["localhost"]
         )
     )
+    if mode == "public":
+        policy = NetworkPolicy(network_mode=NetworkMode.PUBLIC)
     environment = _environment(
-        tmp_path, network_mode=NetworkMode.NO_NETWORK, overlay=True
+        tmp_path,
+        network_mode=NetworkMode.NO_NETWORK,
+        overlay=True,
+        upstream_proxy="socks5h://localhost:1080" if mode == "public" else "",
     )
     _prepare_started_environment(environment, tmp_path)
     starts = []
@@ -1238,15 +1245,29 @@ def test_allowlist_rejects_compose_sidecars(tmp_path):
         _environment(tmp_path, compose=True, network_mode=NetworkMode.ALLOWLIST)
 
 
-async def test_compose_proxy_mount_is_removed_when_policy_changes(tmp_path):
-    environment = _environment(tmp_path)
+def test_public_socks_rejects_compose_sidecars(tmp_path):
+    with pytest.raises(ValueError, match="sidecar networking.*SOCKS"):
+        _environment(
+            tmp_path, compose=True, upstream_proxy="socks5h://localhost:1080"
+        )
+
+
+@pytest.mark.parametrize("public", [False, True])
+async def test_compose_proxy_mount_is_removed_when_policy_changes(
+    tmp_path, public
+):
+    environment = _environment(
+        tmp_path,
+        upstream_proxy="socks5h://localhost:1080" if public else "",
+    )
     compose = tmp_path / "compose.yml"
     compose.write_text(
         "instances:\n  main:\n    start:\n      options: [containall]\n"
     )
     environment._compose_file = compose
     policy = NetworkPolicy(
-        network_mode=NetworkMode.ALLOWLIST, allowed_hosts=["localhost"]
+        network_mode=NetworkMode.PUBLIC if public else NetworkMode.ALLOWLIST,
+        allowed_hosts=[] if public else ["localhost"],
     )
     try:
         await environment._prepare_network_proxy(policy)
@@ -1258,21 +1279,35 @@ async def test_compose_proxy_mount_is_removed_when_policy_changes(tmp_path):
             ":/run/ursa-proxy:ro" in option
             for option in instance["start"]["options"]
         )
-        environment._set_compose_network_policy(NetworkPolicy())
+        environment._set_compose_network_policy(
+            NetworkPolicy(
+                network_mode=NetworkMode.NO_NETWORK
+                if public
+                else NetworkMode.PUBLIC
+            )
+        )
         instance = yaml.safe_load(compose.read_text())["instances"]["main"]
-        assert instance["start"]["options"] == ["containall"]
-        assert instance["network"] == {"allocate_ip": True, "enable": True}
+        assert instance["start"]["options"] == (
+            ["containall", "userns"] if public else ["containall"]
+        )
+        assert instance["network"] == (
+            {"allocate_ip": False, "enable": True, "type": "none"}
+            if public
+            else {"allocate_ip": True, "enable": True}
+        )
     finally:
         await environment._cleanup_runtime_resources()
 
 
+@pytest.mark.parametrize("public", [False, True])
 async def test_model_forwards_are_scoped_to_policy_and_preserve_url_identity(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, public
 ):
     environment = _environment(
         tmp_path,
-        network_mode=NetworkMode.ALLOWLIST,
-        allowed_hosts=("localhost", "127.0.0.1", "::1"),
+        network_mode=NetworkMode.PUBLIC if public else NetworkMode.ALLOWLIST,
+        allowed_hosts=() if public else ("localhost", "127.0.0.1", "::1"),
+        upstream_proxy="socks5h://localhost:1080" if public else "",
     )
     policy = environment.network_policy
     launch = AsyncMock(
@@ -1308,10 +1343,58 @@ async def test_model_forwards_are_scoped_to_policy_and_preserve_url_identity(
             "target": "[::1]:8443",
             "host": "::1",
         }
-        with pytest.raises(ValueError, match="not allowlisted"):
-            await environment._forward_model_url("http://127.0.0.2:8080/v1")
+        if not public:
+            with pytest.raises(ValueError, match="not allowlisted"):
+                await environment._forward_model_url("http://127.0.0.2:8080/v1")
         await environment._stop_network_proxy()
         assert not environment._model_forwards
         assert await environment._forward_model_url(url) == url
+    finally:
+        await environment._cleanup_runtime_resources()
+
+
+@pytest.mark.parametrize(
+    "override",
+    [None, "socks5h://flag:secret@127.0.0.1:1081", ""],
+    ids=["environment", "explicit", "disabled"],
+)
+@pytest.mark.parametrize("mode", list(NetworkMode))
+async def test_upstream_socks_stays_on_host_and_explicit_setting_wins(
+    tmp_path, monkeypatch, override, mode
+):
+    upstream = "socks5h://environment:secret@127.0.0.1:1080"
+    monkeypatch.setenv("URSA_HARBOR_UPSTREAM_PROXY", upstream)
+    environment = _environment(
+        tmp_path,
+        upstream_proxy=override,
+        network_mode=mode,
+        allowed_hosts=("example.com",) if mode == NetworkMode.ALLOWLIST else (),
+    )
+    expected = upstream if override is None else override
+    host_server = Mock(wraps=harbor_singularity.network_proxy.host_server)
+    monkeypatch.setattr(
+        harbor_singularity.network_proxy, "host_server", host_server
+    )
+    try:
+        await environment._prepare_network_proxy(environment.network_policy)
+        if mode == NetworkMode.ALLOWLIST or (
+            mode == NetworkMode.PUBLIC and expected
+        ):
+            assert host_server.call_args.kwargs == {
+                "upstream_proxy": expected,
+                "allowed_hosts": None
+                if mode == NetworkMode.PUBLIC
+                else ["example.com"],
+            }
+        else:
+            host_server.assert_not_called()
+            assert environment._proxy_stack is None
+        args = environment._isolated_runtime_args(tmp_path)
+        assert ("--network" in args) == (
+            mode != NetworkMode.PUBLIC or bool(expected)
+        )
+        runtime_env = environment._runtime_environment(None)
+        assert "URSA_HARBOR_UPSTREAM_PROXY" not in runtime_env
+        assert not any("secret@" in value for value in runtime_env.values())
     finally:
         await environment._cleanup_runtime_resources()
