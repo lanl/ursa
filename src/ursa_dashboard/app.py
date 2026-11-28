@@ -3616,10 +3616,74 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     return '#';
   }
 
+  // Pipe tables and line-per-item lists, as agents such as the Foundation
+  // Model Advisor write them. Cell and item text is already escaped.
+  const MD_TABLE_RULE = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+  const MD_LIST_ITEM = /^(\s*)([-*]|\d+\.)\s+(.*)$/;
+
+  function mdTableCells(line) {
+    let s = line.trim();
+    if (s.startsWith('|')) s = s.slice(1);
+    if (s.endsWith('|')) s = s.slice(0, -1);
+    return s.split('|').map(c => c.trim());
+  }
+
+  function mdTable(lines) {
+    const head = mdTableCells(lines[0]).map(c => `<th>${c}</th>`).join('');
+    const body = lines.slice(2).map(line =>
+      `<tr>${mdTableCells(line).map(c => `<td>${c}</td>`).join('')}</tr>`
+    ).join('');
+    return `<div class="mdTableWrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+
+  function mdList(lines) {
+    // Nest items by indentation; each item is one line.
+    let html = '';
+    const open = [];
+    for (const line of lines) {
+      const m = MD_LIST_ITEM.exec(line);
+      const indent = m[1].length;
+      const tag = /\d/.test(m[2]) ? 'ol' : 'ul';
+      while (open.length && indent < open[open.length - 1].indent) {
+        html += `</li></${open.pop().tag}>`;
+      }
+      const top = open[open.length - 1];
+      if (!top || indent > top.indent) {
+        const start = tag === 'ol' && parseInt(m[2], 10) > 1 ? ` start="${parseInt(m[2], 10)}"` : '';
+        html += `<${tag}${start}>`;
+        open.push({indent, tag});
+      } else {
+        html += '</li>';
+      }
+      html += `<li>${m[3]}`;
+    }
+    while (open.length) html += `</li></${open.pop().tag}>`;
+    return html;
+  }
+
+  function mdBlock(block) {
+    const heading = /^(<h[1-3]>.*?<\/h[1-3]>)\n?([\s\S]*)$/.exec(block);
+    if (heading) {
+      return heading[1] + (heading[2].trim() ? mdBlock(heading[2]) : '');
+    }
+    const lines = block.split('\n');
+    if (lines.length >= 2 && lines[0].includes('|') && MD_TABLE_RULE.test(lines[1])) {
+      return mdTable(lines);
+    }
+    // A paragraph line may run straight into a list, as in "Your data".
+    const first = lines.findIndex(l => MD_LIST_ITEM.test(l));
+    if (first >= 0 && lines.slice(first).every(l => MD_LIST_ITEM.test(l))) {
+      const lead = lines.slice(0, first).map(l => l.trim()).join('<br>');
+      return (lead ? `<p>${lead}</p>` : '') + mdList(lines.slice(first));
+    }
+    return `<p>${lines.map(l => l.trim()).join('<br>')}</p>`;
+  }
+
   function mdToHtml(md) {
     // Minimal, safe markdown renderer:
     // - escapes HTML
-    // - supports fenced code blocks, inline code, basic emphasis, links
+    // - supports fenced code blocks, inline code, basic emphasis, links,
+    //   pipe tables, and lists
     md = String(md ?? '').replace(/\r\n/g, '\n');
     const src = escHtml(md);
 
@@ -3651,15 +3715,11 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
       t = t.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
       t = t.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
 
-      // paragraphs: split on blank lines
-      const blocks = t.split(/\n{2,}/).map(b => b.trim()).filter(Boolean);
-      return blocks.map(b => {
-        // preserve single newlines
-        b = b.replace(/\n/g, '<br>');
-        // if already a heading tag, don't wrap
-        if (/^<h[1-3]>/.test(b)) return b;
-        return `<p>${b}</p>`;
-      }).join('\n');
+      // blocks: split on blank lines, keeping list indentation
+      const blocks = t.split(/\n{2,}/)
+        .map(b => b.replace(/^\n+|\s+$/g, ''))
+        .filter(b => b.trim());
+      return blocks.map(mdBlock).join('\n');
     }
 
     const html = out.map(part => {
@@ -6508,6 +6568,12 @@ pre.plain { margin:0; white-space: pre; overflow:auto; font-family: var(--mono);
 .md code { font-family: var(--mono); background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 6px; }
 .md pre.codeblock { margin: 10px 0; padding: 10px; border-radius: 10px; background: #0b0f14; color: #eaeef3; overflow:auto; }
 .md pre.codeblock code { background: none; padding: 0; }
+.md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
+.md li { margin: 2px 0; }
+.md .mdTableWrap { overflow-x: auto; margin: 0 0 10px; }
+.md table { border-collapse: collapse; font-size: 0.92em; }
+.md th, .md td { border: 1px solid rgba(0,0,0,0.25); padding: 4px 8px; text-align: left; vertical-align: top; overflow-wrap: normal; }
+.md th { background: rgba(0,0,0,0.05); white-space: nowrap; }
 .md a { color: #0b57d0; text-decoration: none; }
 .md a:hover { text-decoration: underline; }
 

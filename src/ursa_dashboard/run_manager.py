@@ -221,6 +221,39 @@ class RunManager:
                     },
                     level="warn",
                 )
+        self._release_finished_sessions()
+
+    def _release_finished_sessions(self) -> None:
+        """Clear a session's active run once that run has finished.
+
+        The restart recovery above marks interrupted runs failed but used to
+        leave the session pointing at them. The page then kept reattaching
+        to the finished run, replaying its log, and offering a "Cancel run"
+        that could do nothing; the session could not be used or deleted.
+        """
+        for meta_path in (self.dashboard_root / "sessions").glob(
+            "*/session.json"
+        ):
+            try:
+                sess = read_json(meta_path)
+                run_id = sess.get("active_run_id")
+                if not run_id:
+                    continue
+                run_meta = (
+                    self.dashboard_root / "_meta" / "runs" / f"{run_id}.json"
+                )
+                status = (
+                    read_json(run_meta).get("status")
+                    if run_meta.exists()
+                    else None
+                )
+                if status is None or status in TERMINAL_STATUSES:
+                    sess["active_run_id"] = None
+                    sess["last_run_id"] = run_id
+                    sess["updated_at"] = utc_now()
+                    write_json(meta_path, sess)
+            except Exception:  # noqa: BLE001 - one bad session must not stop startup
+                continue
 
     async def create_run(
         self,
