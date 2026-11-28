@@ -1,4 +1,5 @@
 import logging
+import warnings
 from collections.abc import Iterable, Sequence
 from itertools import islice
 from typing import Generic, TypeVar, final
@@ -23,9 +24,11 @@ def batched(iterable, n):
         yield batch
 
 
-# Type definitions for the various stages of TorchModuleTool
-Input = TypeVar("In", bound=BaseModel)
-Output = TypeVar("Out", bound=BaseModel)
+# Type definitions for the various stages of TorchModuleTool. The TypeVar
+# names now match their variables ("In"/"Out" previously did not), which type
+# checkers require.
+Input = TypeVar("Input", bound=BaseModel)
+Output = TypeVar("Output", bound=BaseModel)
 ModelInput = TypeVar("ModelInput")
 ModelOutput = TypeVar("ModelOutput")
 
@@ -53,7 +56,7 @@ class TorchModuleTool(
     fm: torch.nn.Module
     """ The underlying PyTorch model used for inference """
 
-    name: str = None
+    name: str | None = None
     """ A short name for the foundation model """
 
     description: str
@@ -115,9 +118,19 @@ class TorchModuleTool(
     def batch_as_completed(
         self,
         inputs: list[Input],
+        max_concurrency: int | None = None,
+        *,
         max_concurency: int | None = None,
     ) -> Iterable[Output]:
-        n = max_concurency or self.batch_size
+        if max_concurency is not None:
+            # Keep the original misspelled keyword working for callers.
+            warnings.warn(
+                "max_concurency is deprecated; use max_concurrency",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            max_concurrency = max_concurrency or max_concurency
+        n = max_concurrency or self.batch_size
         for batch in batched(inputs, n=n):
             from torch import inference_mode
 

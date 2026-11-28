@@ -95,6 +95,14 @@ def test_batch_as_completed(xor_tool):
     assert len(list(out)) == len(batch)
 
 
+def test_batch_as_completed_accepts_legacy_keyword(xor_tool):
+    batch = [xor_tool.args_schema(thing1=True, thing2=False) for _ in range(5)]
+    assert len(list(xor_tool.batch_as_completed(batch, max_concurrency=2))) == 5
+    with pytest.warns(DeprecationWarning):
+        out = list(xor_tool.batch_as_completed(batch, max_concurency=2))
+    assert len(out) == 5
+
+
 async def test_add_to_fastmcp(xor_tool: "TorchModuleTool"):
     server = FastMCP()
     tools = await server.list_tools()
@@ -103,8 +111,8 @@ async def test_add_to_fastmcp(xor_tool: "TorchModuleTool"):
     tools = await server.list_tools()
     assert len(tools) == 1
 
-    # Check metadata
-    tool.fn_metadata.arg_model is not None
+    # Check metadata (this line previously lacked its assert)
+    assert tool.fn_metadata.arg_model is not None
     input_args = tool.fn_metadata.arg_model.model_fields
 
     # Check arg_model matches

@@ -286,7 +286,7 @@ class HITL:
         # Apply agent-specific configuration overrides
         for agent, agent_config in self.config.agent_config.items():
             assert agent in self.agents, (
-                f"Unknown agent {agent}, Know agents: {','.join(self.agents.keys())}"
+                f"Unknown agent {agent}, known agents: {','.join(self.agents.keys())}"
             )
             self.agents[agent].config.update(agent_config)
             logging.debug(

@@ -1,4 +1,6 @@
-from __future__ import annotations
+# Graph nodes take `config: RunnableConfig | None`; LangGraph injects the
+# config only when that annotation is a real type, so this module must not
+# use `from __future__ import annotations` (it silenced progress events).
 
 import re
 from datetime import UTC, datetime
