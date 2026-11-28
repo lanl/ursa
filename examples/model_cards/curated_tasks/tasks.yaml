@@ -1,0 +1,94 @@
+# Curated inference tasks for URSA's ModelCardAgent.
+#
+# Each task is a question a scientist asks, the data file it names, and the
+# answer that the model cards support. The expected answers hold for the
+# models of Nomad's demo server (container/demo/nomad.yml): five MIST
+# molecular property models and the Janus HEAT-PLI field model.
+#
+# Expectation keys:
+#   catalog_size   models in the catalog
+#   matches        models that match every filter of an inventory question
+#   might_match    models whose cards leave a filtered fact unstated
+#   usable         models that take the data as is or after a conversion
+#   best           substring of the id of the model the answer should name
+#   pathway        that model's pathway: inference, inference_after_conversion,
+#                  fine_tune, not_suitable, or unknown
+#   caution        whether the answer warns that some items lie outside
+#                  the range of the model's training data
+#   base_model     the base model a fine-tuning answer should start from
+#   runs           whether the agent should call a model
+#   calls          number of model calls a run should make
+# A reference names a data column of measured values to score a run against.
+
+models:
+  # Short display names for figures, keyed by a substring of the model id.
+  qm9: MIST QM9
+  odour: MIST odour
+  _dn: MIST BF$_3$ affinity
+  _mp: MIST melting point
+  _bp: MIST boiling point
+  diffunet2_heat: Janus HEAT-PLI
+
+tasks:
+  - id: count
+    label: Model count
+    question: How many models do I have?
+    expect: {catalog_size: 6, runs: false}
+
+  - id: filter
+    label: Model filter
+    question: How many models accept SMILES and run on a CPU?
+    expect: {matches: 0, might_match: 5, runs: false}
+
+  - id: choices
+    label: Choices for molecules
+    question: I have molecules.smi. Which models are my choices?
+    data: molecules.smi
+    expect: {usable: 5, runs: false}
+
+  - id: gap
+    label: HOMO-LUMO gap
+    question: >-
+      I have molecules.smi. Can I just run inference to get the HOMO-LUMO gap,
+      or do I need fine-tuning?
+    data: molecules.smi
+    expect: {best: qm9, pathway: inference, caution: true, runs: false}
+
+  - id: boiling
+    label: Boiling point
+    question: I have boiling_points.csv. Can I run inference directly to get the boiling point?
+    data: boiling_points.csv
+    expect: {best: _bp, pathway: inference, runs: false}
+
+  - id: refractive
+    label: Refractive index
+    question: I have refractive_index.csv. Can I just run inference, or do I need fine-tuning?
+    data: refractive_index.csv
+    expect: {pathway: fine_tune, base_model: mist-28M-ti624ev1, runs: false}
+
+  - id: heat
+    label: HEAT-PLI field
+    question: >-
+      I have heat_ic.h5 from a HEAT-PLI simulation. Can I run inference on it
+      directly, or do I need fine-tuning?
+    data: heat_ic.h5
+    expect: {best: diffunet2_heat, pathway: inference_after_conversion, runs: false}
+
+  - id: proteins
+    label: Protein sequences
+    question: I have proteins.fasta. Which models can I use?
+    data: proteins.fasta
+    expect: {usable: 0, runs: false}
+
+  - id: run_bp
+    label: Boiling point run
+    question: Predict the boiling points of the molecules in boiling_points.csv.
+    data: boiling_points.csv
+    expect: {best: _bp, runs: true, calls: 8}
+    reference: {column: boiling_point_c, output: bp, quantity: Boiling point, units: °C}
+
+  - id: run_qm9
+    label: QM9 run
+    question: Run the QM9 model on molecules.smi.
+    data: molecules.smi
+    expect: {best: qm9, runs: true, calls: 10}

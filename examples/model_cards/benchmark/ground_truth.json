@@ -1,0 +1,726 @@
+{
+  "_about": "Facts stated by 24 public model cards, written by reading each card before scoring. Empty lists or null mean the card does not state the fact. domains_primary/tasks_primary: at least one must be extracted; *_acceptable bound what may be extracted. Set A (12 cards) was scored before and after fixes; set B (12 cards) was first scored once, unseen.",
+  "_corrections": [
+    "PDEFormer1d: card states 'the PDEformer can be directly applied to solving inverse problems', so 'inversion' is acceptable (annotation error found in audit)."
+  ],
+  "mace-foundations/mace-mp-0": {
+    "set": "A",
+    "license": "mit",
+    "commercial_use": true,
+    "parameter_count": null,
+    "domains_primary": [],
+    "domains_acceptable": [
+      "materials_atomistic",
+      "materials"
+    ],
+    "tasks_primary": [],
+    "tasks_acceptable": [
+      "interatomic_potential"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": false,
+    "issues_expect": [
+      "minimal_card"
+    ]
+  },
+  "materialyze/CHGNet-PES-MatPES-PBE-2025.2.10": {
+    "set": "A",
+    "license": "bsd-3-clause",
+    "commercial_use": true,
+    "parameter_count": null,
+    "domains_primary": [
+      "materials_atomistic",
+      "materials"
+    ],
+    "domains_acceptable": [
+      "materials_atomistic",
+      "materials",
+      "molecular_chemistry"
+    ],
+    "tasks_primary": [
+      "interatomic_potential"
+    ],
+    "tasks_acceptable": [
+      "interatomic_potential",
+      "property_prediction"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": true,
+    "issues_expect": []
+  },
+  "facebook/esm2_t33_650M_UR50D": {
+    "set": "A",
+    "license": "mit",
+    "commercial_use": true,
+    "parameter_count": 652358616,
+    "domains_primary": [
+      "biomolecular",
+      "life_science"
+    ],
+    "domains_acceptable": [
+      "biomolecular",
+      "life_science"
+    ],
+    "tasks_primary": [
+      "embedding"
+    ],
+    "tasks_acceptable": [
+      "embedding",
+      "generation",
+      "property_prediction",
+      "classification"
+    ],
+    "input_expect": [
+      "sequence"
+    ],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": false,
+    "issues_expect": []
+  },
+  "polymathic-ai/astroclip": {
+    "set": "A",
+    "license": "mit",
+    "commercial_use": true,
+    "parameter_count": null,
+    "domains_primary": [
+      "astrophysics"
+    ],
+    "domains_acceptable": [
+      "astrophysics"
+    ],
+    "tasks_primary": [],
+    "tasks_acceptable": [
+      "embedding"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": false,
+    "issues_expect": [
+      "minimal_card"
+    ]
+  },
+  "ibm-esa-geospatial/TerraMind-1.0-base": {
+    "set": "A",
+    "license": "apache-2.0",
+    "commercial_use": true,
+    "parameter_count": null,
+    "domains_primary": [
+      "earth_observation"
+    ],
+    "domains_acceptable": [
+      "earth_observation",
+      "earth_system"
+    ],
+    "tasks_primary": [
+      "embedding",
+      "generation"
+    ],
+    "tasks_acceptable": [
+      "embedding",
+      "generation",
+      "segmentation",
+      "classification"
+    ],
+    "input_expect": [
+      "s2l2a"
+    ],
+    "output_expect": [
+      "embedding"
+    ],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": true,
+    "issues_expect": []
+  },
+  "microsoft/ClimaX": {
+    "set": "A",
+    "license": "mit",
+    "commercial_use": true,
+    "parameter_count": null,
+    "domains_primary": [],
+    "domains_acceptable": [
+      "weather",
+      "climate",
+      "earth_system"
+    ],
+    "tasks_primary": [],
+    "tasks_acceptable": [
+      "forecasting"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": false,
+    "issues_expect": [
+      "minimal_card"
+    ]
+  },
+  "ibm-granite/granite-geospatial-wxc-downscaling": {
+    "set": "A",
+    "license": "cdla-permissive-2.0",
+    "commercial_use": true,
+    "parameter_count": null,
+    "domains_primary": [
+      "weather",
+      "climate"
+    ],
+    "domains_acceptable": [
+      "weather",
+      "climate",
+      "earth_system",
+      "earth_observation"
+    ],
+    "tasks_primary": [
+      "super_resolution"
+    ],
+    "tasks_acceptable": [
+      "super_resolution",
+      "forecasting"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": false,
+    "issues_expect": []
+  },
+  "ibm-granite/granite-geospatial-land-surface-temperature": {
+    "set": "A",
+    "license": "apache-2.0",
+    "commercial_use": true,
+    "parameter_count": null,
+    "domains_primary": [
+      "earth_observation"
+    ],
+    "domains_acceptable": [
+      "earth_observation",
+      "climate",
+      "weather",
+      "earth_system"
+    ],
+    "tasks_primary": [
+      "super_resolution",
+      "interpolation",
+      "property_prediction",
+      "embedding"
+    ],
+    "tasks_acceptable": [
+      "super_resolution",
+      "interpolation",
+      "property_prediction",
+      "embedding",
+      "forecasting"
+    ],
+    "input_expect": [
+      "224"
+    ],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [
+      "30"
+    ],
+    "n_spatial_dims": null,
+    "has_code": true,
+    "issues_expect": []
+  },
+  "mindspore-ai/PDEFormer1d": {
+    "set": "A",
+    "license": null,
+    "commercial_use": null,
+    "parameter_count": null,
+    "domains_primary": [
+      "pde_general"
+    ],
+    "domains_acceptable": [
+      "pde_general",
+      "continuum_physics"
+    ],
+    "tasks_primary": [
+      "surrogate_simulation"
+    ],
+    "tasks_acceptable": [
+      "surrogate_simulation",
+      "inversion"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": 1,
+    "has_code": false,
+    "issues_expect": [
+      "license_missing",
+      "template_residue"
+    ]
+  },
+  "ibm-research/materials.smi-ted": {
+    "set": "A",
+    "license": "apache-2.0",
+    "commercial_use": true,
+    "parameter_count": 289000000,
+    "domains_primary": [
+      "molecular_chemistry",
+      "chemistry"
+    ],
+    "domains_acceptable": [
+      "molecular_chemistry",
+      "chemistry",
+      "materials",
+      "materials_atomistic"
+    ],
+    "tasks_primary": [
+      "embedding"
+    ],
+    "tasks_acceptable": [
+      "embedding",
+      "property_prediction",
+      "generation",
+      "classification"
+    ],
+    "input_expect": [
+      "smiles"
+    ],
+    "output_expect": [
+      "embedding"
+    ],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": true,
+    "issues_expect": []
+  },
+  "DeepChem/ChemBERTa-77M-MTR": {
+    "set": "A",
+    "license": null,
+    "commercial_use": null,
+    "parameter_count": null,
+    "domains_primary": [],
+    "domains_acceptable": [
+      "molecular_chemistry",
+      "chemistry"
+    ],
+    "tasks_primary": [],
+    "tasks_acceptable": [
+      "property_prediction"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "output_forbid": [
+      "class labels",
+      "label_0"
+    ],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": false,
+    "issues_expect": [
+      "card_missing"
+    ]
+  },
+  "nasa-ibm-ai4science/Surya-1.0": {
+    "set": "A",
+    "license": "apache-2.0",
+    "commercial_use": true,
+    "parameter_count": 366000000,
+    "domains_primary": [
+      "astrophysics",
+      "heliophysics"
+    ],
+    "domains_acceptable": [
+      "astrophysics",
+      "heliophysics",
+      "plasma_physics"
+    ],
+    "tasks_primary": [
+      "forecasting"
+    ],
+    "tasks_acceptable": [
+      "forecasting",
+      "classification",
+      "segmentation",
+      "surrogate_simulation",
+      "embedding"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": "1 hours",
+    "horizon": "12 hours",
+    "spatial_expect": [
+      "4096"
+    ],
+    "n_spatial_dims": null,
+    "has_code": false,
+    "issues_expect": []
+  },
+  "InstaDeepAI/nequip-organics": {
+    "set": "B",
+    "license": null,
+    "commercial_use": false,
+    "parameter_count": null,
+    "domains_primary": [
+      "materials_atomistic"
+    ],
+    "domains_acceptable": [
+      "materials_atomistic",
+      "molecular_chemistry",
+      "materials",
+      "chemistry"
+    ],
+    "tasks_primary": [
+      "interatomic_potential"
+    ],
+    "tasks_acceptable": [
+      "interatomic_potential"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": false,
+    "issues_expect": []
+  },
+  "xpanceo-team/mattergen-base": {
+    "set": "B",
+    "license": null,
+    "commercial_use": null,
+    "parameter_count": null,
+    "domains_primary": [],
+    "domains_acceptable": [
+      "materials_atomistic",
+      "materials"
+    ],
+    "tasks_primary": [
+      "generation"
+    ],
+    "tasks_acceptable": [
+      "generation"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": true,
+    "issues_expect": [
+      "minimal_card",
+      "license_missing"
+    ]
+  },
+  "c-bone/CrystaLLM-pi_base": {
+    "set": "B",
+    "license": "mit",
+    "commercial_use": true,
+    "parameter_count": 25937408,
+    "domains_primary": [
+      "materials_atomistic",
+      "materials"
+    ],
+    "domains_acceptable": [
+      "materials_atomistic",
+      "materials",
+      "chemistry"
+    ],
+    "tasks_primary": [
+      "generation"
+    ],
+    "tasks_acceptable": [
+      "generation"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": false,
+    "issues_expect": []
+  },
+  "nasa-ibm-ai4science/solar_flares_surya": {
+    "set": "B",
+    "license": "apache-2.0",
+    "commercial_use": true,
+    "parameter_count": null,
+    "domains_primary": [],
+    "domains_acceptable": [
+      "space_physics"
+    ],
+    "tasks_primary": [],
+    "tasks_acceptable": [
+      "forecasting",
+      "classification"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": false,
+    "issues_expect": [
+      "minimal_card"
+    ]
+  },
+  "AlayaLab/FloodDiffusionTiny": {
+    "set": "B",
+    "license": "apache-2.0",
+    "commercial_use": true,
+    "parameter_count": 9182468,
+    "domains_primary": [],
+    "domains_acceptable": [],
+    "tasks_primary": [
+      "generation"
+    ],
+    "tasks_acceptable": [
+      "generation"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": true,
+    "issues_expect": [
+      "remote_code"
+    ]
+  },
+  "kdahal/vitg-streamflow-arizona": {
+    "set": "B",
+    "license": "mit",
+    "commercial_use": true,
+    "parameter_count": 5359809,
+    "domains_primary": [
+      "hydrology"
+    ],
+    "domains_acceptable": [
+      "hydrology",
+      "earth_observation",
+      "weather",
+      "earth_system"
+    ],
+    "tasks_primary": [
+      "forecasting"
+    ],
+    "tasks_acceptable": [
+      "forecasting"
+    ],
+    "input_expect": [
+      "x_enc",
+      "365",
+      "634"
+    ],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": true,
+    "issues_expect": []
+  },
+  "huilinsigehigh/precipitation-nowcasting-sevir": {
+    "set": "B",
+    "license": "mit",
+    "commercial_use": true,
+    "parameter_count": null,
+    "domains_primary": [
+      "weather"
+    ],
+    "domains_acceptable": [
+      "weather",
+      "hydrology",
+      "earth_system"
+    ],
+    "tasks_primary": [
+      "forecasting"
+    ],
+    "tasks_acceptable": [
+      "forecasting",
+      "generation"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": true,
+    "issues_expect": []
+  },
+  "KenLee1130/NSF-HDR-A3D3-Detecting-Anomalous-Gravitational-Wave-Signals": {
+    "set": "B",
+    "license": "mit",
+    "commercial_use": true,
+    "parameter_count": null,
+    "domains_primary": [],
+    "domains_acceptable": [
+      "astrophysics"
+    ],
+    "tasks_primary": [],
+    "tasks_acceptable": [
+      "detection",
+      "classification"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": false,
+    "issues_expect": [
+      "minimal_card"
+    ]
+  },
+  "andrexandrex322/ideam-nowcasting-earthformer-cascast": {
+    "set": "B",
+    "license": null,
+    "commercial_use": null,
+    "parameter_count": null,
+    "domains_primary": [],
+    "domains_acceptable": [
+      "weather"
+    ],
+    "tasks_primary": [],
+    "tasks_acceptable": [
+      "forecasting"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": false,
+    "issues_expect": [
+      "card_missing"
+    ]
+  },
+  "MrBigoudi/DDPM_CosmologicalField": {
+    "set": "B",
+    "license": "apache-2.0",
+    "commercial_use": true,
+    "parameter_count": null,
+    "domains_primary": [],
+    "domains_acceptable": [
+      "astrophysics"
+    ],
+    "tasks_primary": [],
+    "tasks_acceptable": [
+      "generation"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": null,
+    "has_code": false,
+    "issues_expect": [
+      "minimal_card"
+    ]
+  },
+  "linchensen/FuXi-CFD-model": {
+    "set": "B",
+    "license": "cc-by-nc-4.0",
+    "commercial_use": false,
+    "parameter_count": null,
+    "domains_primary": [
+      "fluid_dynamics"
+    ],
+    "domains_acceptable": [
+      "fluid_dynamics",
+      "weather",
+      "earth_system",
+      "pde_general",
+      "continuum_physics"
+    ],
+    "tasks_primary": [
+      "super_resolution",
+      "surrogate_simulation"
+    ],
+    "tasks_acceptable": [
+      "super_resolution",
+      "surrogate_simulation",
+      "interpolation",
+      "imaging"
+    ],
+    "input_expect": [
+      "dem",
+      "roughness",
+      "u_100m",
+      "v_100m"
+    ],
+    "output_expect": [
+      "27",
+      "300"
+    ],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [],
+    "n_spatial_dims": 3,
+    "has_code": true,
+    "issues_expect": []
+  },
+  "shermansiu/dm_graphcast": {
+    "set": "B",
+    "license": "cc-by-nc-sa-4.0",
+    "commercial_use": false,
+    "parameter_count": null,
+    "domains_primary": [
+      "weather"
+    ],
+    "domains_acceptable": [
+      "weather",
+      "climate",
+      "earth_system"
+    ],
+    "tasks_primary": [
+      "forecasting"
+    ],
+    "tasks_acceptable": [
+      "forecasting"
+    ],
+    "input_expect": [],
+    "output_expect": [],
+    "time_step": null,
+    "horizon": null,
+    "spatial_expect": [
+      "0.25"
+    ],
+    "n_spatial_dims": null,
+    "has_code": true,
+    "issues_expect": []
+  }
+}

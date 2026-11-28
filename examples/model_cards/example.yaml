@@ -1,0 +1,7 @@
+title: Recognize, recommend, and run foundation models
+summary: Read scientific foundation-model cards from Hugging Face and MCP servers, recommend a model for a physics need, and run it through MCP with ModelCardAgent.
+tags:
+  - guided
+  - mcp
+  - python-api
+  - foundation-models

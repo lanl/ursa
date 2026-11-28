@@ -1,0 +1,12 @@
+# Start URSA with `uv run ursa --config ursa.yaml` from this folder.
+mcp_servers:
+  toy:
+    transport: stdio
+    command: python
+    args:
+      - toy_heat_server.py
+agent_config:
+  fm:
+    # Folders or files with model cards to load into the catalog at start.
+    catalog_paths:
+      - model_card_template.yaml
