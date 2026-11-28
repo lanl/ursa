@@ -28,11 +28,13 @@ AGENT_LABELS = {
     "DeepReviewAgent": ("🔎", "Deep Review"),
     "HypothesizerAgent": ("💡", "Hypothesize"),
     "LammpsAgent": ("⚛️", "LAMMPS"),
+    "ModelCardAgent": ("🧭", "Foundation Models"),
     "PlanningAgent": ("🗺️", "Plan"),
     "executor": ("⚙️", "Execute"),
     "deep_review": ("🔎", "Deep Review"),
     "hypothesizer": ("💡", "Hypothesize"),
     "lammps": ("⚛️", "LAMMPS"),
+    "model_cards": ("🧭", "Foundation Models"),
     "planner": ("🗺️", "Plan"),
 }
 

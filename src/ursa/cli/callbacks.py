@@ -64,11 +64,13 @@ class CallbackRenderingMixin:
         "DeepReviewAgent": "deep_review",
         "HypothesizerAgent": "hypothesizer",
         "LammpsAgent": "lammps",
+        "ModelCardAgent": "model_cards",
         "PlanningAgent": "planner",
         "executor": "executor",
         "deep_review": "deep_review",
         "hypothesizer": "hypothesizer",
         "lammps": "lammps",
+        "model_cards": "model_cards",
         "planner": "planner",
     }
     AGENT_RULE_TITLES: ClassVar[dict[str, str]] = {
@@ -76,6 +78,7 @@ class CallbackRenderingMixin:
         "deep_review": "🔎 Deep Review",
         "hypothesizer": "💡 Hypothesize",
         "lammps": "⚛️ LAMMPS",
+        "model_cards": "🧭 Foundation Models",
         "planner": "🗺️ Plan",
     }
 

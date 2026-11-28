@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Iterable, Sequence
 from itertools import islice
-from typing import Generic, TypeVar, final
+from typing import Annotated, Generic, TypeVar, final
 
 import torch
 from mcp.server.fastmcp import FastMCP
@@ -28,6 +28,9 @@ Input = TypeVar("In", bound=BaseModel)
 Output = TypeVar("Out", bound=BaseModel)
 ModelInput = TypeVar("ModelInput")
 ModelOutput = TypeVar("ModelOutput")
+
+#: Name of the Nomad-compatible tool that serves model cards.
+MODEL_CARD_TOOL_NAME = "get_model_card"
 
 
 def default_device():
@@ -70,6 +73,9 @@ class TorchModuleTool(
 
     device: torch.device = Field(default_factory=default_device)
     """ The accelerator on which the model is placed """
+
+    model_card: str | None = None
+    """ Markdown model card (README text) served by ``get_model_card`` """
 
     def preprocess(self, input: Sequence[Input]) -> ModelInput:
         """
@@ -174,4 +180,42 @@ class TorchModuleTool(
         elif server._tool_manager.warn_on_duplicate_tools:
             logging.warning(f"Tool already exists: {fasttool.name}")
 
+        if self.model_card:
+            register_model_card(server, fasttool.name, self.model_card)
+
         return fasttool
+
+
+def register_model_card(server: FastMCP, tool_name: str, card: str) -> None:
+    """Serve ``card`` for ``tool_name`` through a shared ``get_model_card`` tool.
+
+    The tool matches Nomad's model-card interface, so URSA's ModelCardAgent
+    discovers models served here exactly as it discovers Nomad SciFMs.
+    """
+    cards: dict[str, str] | None = getattr(server, "_ursa_model_cards", None)
+    if cards is None:
+        cards = {}
+        server._ursa_model_cards = cards
+
+        def get_model_card(
+            tool_name: Annotated[
+                str,
+                Field(
+                    description="Name of the model tool to fetch the card for"
+                ),
+            ],
+        ) -> str:
+            if tool_name not in cards:
+                known = ", ".join(sorted(cards)) or "none"
+                raise KeyError(
+                    f"No model registered with the name '{tool_name}'. "
+                    f"Known models: {known}."
+                )
+            return cards[tool_name]
+
+        server.add_tool(
+            get_model_card,
+            name=MODEL_CARD_TOOL_NAME,
+            description="Return the Markdown model card for a model tool.",
+        )
+    cards[tool_name] = card

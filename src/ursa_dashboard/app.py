@@ -285,6 +285,8 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         "deep_review_agent",
         "hypothesis_symposium_agent",
         "hypothesis_orchestrator_agent",
+        # --use-web enables Hugging Face model search, as `ursa --use-web` does.
+        "model_card_agent",
     }
     rag_tool_agent_ids = {
         "chat_agent",

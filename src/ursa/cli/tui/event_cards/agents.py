@@ -34,6 +34,24 @@ class AgentEventCard(EventCard):
                 "summarize": "📝",
                 "summarize_result": "📚",
             }.get(stage, "💡")
+        if agent in {"ModelCardAgent", "model_cards"}:
+            return {
+                "route": "🧭",
+                "route_result": "🗂️",
+                "discover": "🛰️",
+                "ingest": "📄",
+                "ingest_result": "✅",
+                "ingest_error": "✖",
+                "requirements": "🎯",
+                "requirements_result": "🎯",
+                "recommend": "⚖️",
+                "recommend_result": "🏅",
+                "plan_run": "🛠️",
+                "run": "▶",
+                "run_result": "✅",
+                "run_error": "✖",
+                "report": "📝",
+            }.get(stage, "🧭")
         if agent in {"LammpsAgent", "lammps"}:
             return {
                 "author_input": "📝",

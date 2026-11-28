@@ -812,4 +812,6 @@ def test_ursa_user_config_resolves_by_default(tmp_path, monkeypatch):
         "execute": {"use_web": True},
         "deep_review": {"use_web": True},
         "prompt": {"use_web": True},
+        # use_web also lets #fm search the Hugging Face Hub.
+        "fm": {"use_web": True},
     }

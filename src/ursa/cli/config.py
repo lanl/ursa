@@ -998,7 +998,7 @@ def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
             resolved.workspace = Path(resolved._temp_workspace.name)
 
     if resolved.use_web:
-        for agent_name in ["chat", "execute", "deep_review", "prompt"]:
+        for agent_name in ["chat", "execute", "deep_review", "prompt", "fm"]:
             resolved.agent_config.setdefault(agent_name, {}).setdefault(
                 "use_web", True
             )
