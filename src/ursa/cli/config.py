@@ -457,6 +457,11 @@ class ChatModelConfig(ModelConfig):
         match self.model_provider:
             case "openai" | "azure_openai":
                 kwargs.setdefault("use_responses_api", True)
+            case "anthropic":
+                # ChatAnthropic names this limit max_tokens. Under the OpenAI
+                # name, it would reach the Anthropic API as an unknown field.
+                if "max_completion_tokens" in kwargs:
+                    kwargs["max_tokens"] = kwargs.pop("max_completion_tokens")
         return kwargs
 
     def init_chat_model(self) -> "BaseChatModel":

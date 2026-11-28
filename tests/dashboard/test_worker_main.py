@@ -98,6 +98,28 @@ def test_dashboard_worker_passes_configured_base_url(monkeypatch):
     assert "OPENAI_API_BASE" not in os.environ
 
 
+def test_dashboard_worker_passes_max_tokens_to_anthropic(monkeypatch):
+    captured: dict = {}
+
+    def fake_init_chat_model(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        "langchain.chat_models.init_chat_model", fake_init_chat_model
+    )
+
+    _init_llm({
+        "model": "anthropic:claude-haiku-5-5",
+        "model_kwargs": {"max_completion_tokens": 16000},
+        "api_key_env": None,
+    })
+
+    # ChatAnthropic takes max_tokens; the OpenAI name raises a TypeError.
+    assert captured["max_tokens"] == 16000
+    assert "max_completion_tokens" not in captured
+
+
 def test_dashboard_worker_prepends_openai_for_bare_model_without_provider(
     monkeypatch,
 ):

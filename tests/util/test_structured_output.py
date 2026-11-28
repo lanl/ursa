@@ -121,3 +121,49 @@ def test_invoke_structured_accepts_integer_repair_attempts():
     assert isinstance(result, ExampleSchema)
     assert result.reason == "second repair worked"
     assert len(llm.calls) == 3
+
+
+class FakeAnthropicLLM(FakeLLM):
+    """Stands in for ChatAnthropic, which reports this LLM type."""
+
+    _llm_type = "anthropic-chat"
+
+
+def test_anthropic_models_try_native_json_schema_first():
+    llm = FakeAnthropicLLM([{"ok": True, "reason": "json schema worked"}])
+
+    result = invoke_structured(llm, ExampleSchema, "prompt", repair=False)
+
+    assert result.reason == "json schema worked"
+    assert llm.calls == [(ExampleSchema, {"method": "json_schema"})]
+
+
+def test_anthropic_models_fall_back_when_json_schema_fails():
+    llm = FakeAnthropicLLM([
+        ValueError("output_config is not supported for this model"),
+        {"ok": True, "reason": "default method worked"},
+    ])
+
+    result = invoke_structured(llm, ExampleSchema, "prompt", repair=False)
+
+    assert result.reason == "default method worked"
+    assert [kwargs for _, kwargs in llm.calls] == [
+        {"method": "json_schema"},
+        {},
+    ]
+
+
+class OptionalFieldSchema(BaseModel):
+    ok: bool = Field(description="Whether the example succeeded.")
+    note: str | None = Field(default=None, description="An optional note.")
+
+
+def test_anthropic_models_keep_the_default_for_schemas_with_unions():
+    # The API can take minutes to reject a complex schema, so a schema with
+    # nullable fields skips native output.
+    llm = FakeAnthropicLLM([{"ok": True}])
+
+    result = invoke_structured(llm, OptionalFieldSchema, "prompt", repair=False)
+
+    assert result.ok is True
+    assert llm.calls == [(OptionalFieldSchema, {})]

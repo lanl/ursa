@@ -1525,6 +1525,7 @@ class BaseAgent(Generic[TState], ABC):
             if storage_marker not in seen_resources:
                 seen_resources.add(storage_marker)
                 await self._async_storage.__aexit__(None, None, None)
+                await _stop_store_worker(self._async_storage)
                 await self._async_storage.conn.close()
 
                 # aiosqlite.Connection owns a non-daemon worker thread.
@@ -2009,6 +2010,20 @@ class BaseAgent(Generic[TState], ABC):
                 "ursa_agent": self.name,
             },
         )
+
+
+async def _stop_store_worker(store: Any) -> None:
+    """Stop a LangGraph batched store's worker task while the loop runs.
+
+    ``AsyncBatchedBaseStore`` only cancels its worker in ``__del__``. When the
+    store is dropped right before the event loop closes, that cancelled task
+    never finishes and Python logs "Task was destroyed but it is pending".
+    """
+    task = getattr(store, "_task", None)
+    if task is None or task.done():
+        return
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
 
 
 def _default_tool_error_handler(e: Exception):

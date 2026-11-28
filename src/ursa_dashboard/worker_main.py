@@ -156,6 +156,15 @@ def _init_llm(
 
     kwargs: dict[str, Any] = {**model_kwargs, "model": model}
 
+    provider = str(model_kwargs.get("model_provider") or "").strip()
+    if not provider and ":" in model:
+        provider = model.split(":", 1)[0]
+    if provider.lower() == "anthropic" and "max_completion_tokens" in kwargs:
+        # ChatAnthropic names this limit max_tokens, as ChatModelConfig does
+        # for the terminal interface; under the OpenAI name, the Anthropic
+        # SDK rejects the call with an unexpected-keyword TypeError.
+        kwargs["max_tokens"] = kwargs.pop("max_completion_tokens")
+
     if api_key is not None:
         kwargs["api_key"] = api_key
     if base_url:

@@ -766,6 +766,9 @@ def test_user_supplied_checkpointer_is_not_automatically_pruned(
     agent = Agent(
         llm=TinyCountingModel(),
         checkpointer=checkpointer,
+        # Without a workspace the agent's store landed in the current
+        # directory as graph_store.sqlite.
+        workspace=tmp_path / "workspace",
         enable_metrics=False,
     )
 

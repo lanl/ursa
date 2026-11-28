@@ -761,6 +761,17 @@ def test_chat_model_initialization_returns_factory_result(monkeypatch):
     assert calls == [{"model": "model", "model_provider": "custom"}]
 
 
+def test_anthropic_chat_model_gets_max_tokens_not_max_completion_tokens():
+    kwargs = config_mod.ChatModelConfig(
+        model="anthropic:claude-opus-5-5", max_completion_tokens=16000
+    ).kwargs
+
+    # ChatAnthropic would forward an unknown max_completion_tokens field to
+    # the Anthropic API, which rejects it.
+    assert kwargs["max_tokens"] == 16000
+    assert "max_completion_tokens" not in kwargs
+
+
 def test_ursa_config_from_file(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text("group: science\n", encoding="utf-8")
