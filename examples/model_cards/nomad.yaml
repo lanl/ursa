@@ -1,0 +1,9 @@
+# Connect the #fm agent to Nomad's demo server for the live demo.
+# From this folder, with the Nomad container running:
+#   mkdir -p demo && cp curated_tasks/data/* demo/
+#   ursa --config nomad.yaml --workspace demo
+# The LLM comes from your user config or OPENAI_API_KEY.
+mcp_servers:
+  nomad:
+    transport: streamable-http
+    url: http://localhost:38217/mcp

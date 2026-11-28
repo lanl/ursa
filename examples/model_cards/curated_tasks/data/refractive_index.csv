@@ -1,0 +1,9 @@
+name,smiles,refractive_index
+water,O,1.3330
+methanol,CO,1.3288
+ethanol,CCO,1.3611
+acetone,CC(C)=O,1.3588
+acetic acid,CC(=O)O,1.3716
+n-hexane,CCCCCC,1.3749
+benzene,c1ccccc1,1.5011
+toluene,Cc1ccccc1,1.4961

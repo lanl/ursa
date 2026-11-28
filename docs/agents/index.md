@@ -12,6 +12,7 @@ The TUI exposes common agents by short names, including:
 - `web`
 - `deep_review`
 - `hypothesize`
+- `fm`
 
 Additional agents may be available depending on optional dependencies and configuration, such as DSI, LAMMPS, and recall/RAG-related workflows.
 
@@ -27,6 +28,7 @@ Additional agents may be available depending on optional dependencies and config
   - **Web Search Agent**: searches the open web, retrieves HTML/PDF content, and summarizes or indexes acquired pages.
 - **Deep Review Agent**: runs an iterative adversarial review with solution, critique, and competitor/stakeholder phases, then synthesizes a final answer/report.
 - **Hypothesizer Agent**: maintains a persistent Markdown hypothesis-space artifact that other agents can read from the experiences store.
+- **Model Card Agent**: recognizes scientific foundation-model cards, recommends models for a request with explained scores, and runs the chosen model through MCP or the Execution Agent. See [Model Card Agent](model-cards.md).
 
 ## Simulation agent
 
@@ -66,7 +68,10 @@ With `--use-web`, tool-capable agents that support web access, such as
 [`PromptingAgent`][ursa.agents.prompting_agent.PromptingAgent], receive
 web/search tools according to their implementation. Without it, they should
 rely on local workspace, experience, RAG, MCP, or other explicitly configured
-tools.
+tools. With the flag,
+[`ModelCardAgent`][ursa.agents.model_card_agent.ModelCardAgent] may also
+search Hugging Face for models when no cataloged model fits; without it, the
+agent reads only the model cards that you name.
 
 ## Composing agents
 

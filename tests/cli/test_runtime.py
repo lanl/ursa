@@ -928,6 +928,7 @@ async def test_reconfigure_models_reports_validation_failure_without_change(
         "chat",
         "arxiv",
         "execute",
+        "fm",
         "hypothesize",
         "plan",
         "web",

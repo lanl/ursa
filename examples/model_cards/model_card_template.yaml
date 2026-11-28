@@ -1,0 +1,69 @@
+# URSA-native model card.
+#
+# ModelCardAgent reads Markdown cards (Hugging Face, DOE Genesis, NVIDIA, or
+# free-form), but a structured card like this one states parameter formats
+# exactly. Fields left out are reported as gaps, never guessed. Place the file
+# in a folder listed under `catalog_paths`, or pass its path in a request.
+
+name: ReactFlow-2D
+id: local:reactflow-2d
+version: "1.0"
+summary: >-
+  Fourier neural operator surrogate for 2D reacting channel flow; predicts the
+  flow state 0.01 s ahead from the current state.
+license: apache-2.0
+developers: [Example Combustion Lab]
+domains: [fluid_dynamics, reaction_diffusion]   # ids from the taxonomy, or new labels
+tasks: [surrogate_simulation]
+parameters: 48M
+architecture:
+  family: neural operator
+  name: FNO
+inputs:
+  - name: state
+    kind: field
+    representation: NumPy array
+    shape: (C, H, W)                # channel-first
+    dtype: float32
+    channels:
+      - {name: u, units: m/s, description: streamwise velocity}
+      - {name: v, units: m/s, description: transverse velocity}
+      - {name: T, units: K, description: temperature}
+      - {name: Y_fuel, units: "1", description: fuel mass fraction}
+    normalization: per-channel z-score with statistics in stats.json
+    file_formats: [npz]
+outputs:
+  - name: next_state
+    kind: field
+    shape: (C, H, W)
+    semantics: absolute state       # or delta, regression, logits, embedding
+    channels:
+      - {name: u, units: m/s}
+      - {name: v, units: m/s}
+      - {name: T, units: K}
+      - {name: Y_fuel, units: "1"}
+spatial:
+  n_dims: 2
+  grid: uniform Cartesian
+  resolution: [256 x 128]
+  boundary_conditions: periodic in x, no-slip walls in y
+temporal:
+  time_step: 0.01 s
+  context_steps: 1
+compute:
+  min_gpu_memory_gb: 8
+  cpu_supported: true
+interfaces:
+  - kind: python
+    entry_point: reactflow.inference:load_model
+    install: [pip install reactflow]
+    snippet: |
+      from reactflow.inference import load_model
+      model = load_model("checkpoints/reactflow-2d")
+      next_state = model.predict(state)
+intended_uses:
+  - Fast parameter sweeps of inlet velocity and equivalence ratio.
+out_of_scope:
+  - Three-dimensional or turbulent combustion.
+limitations:
+  - Trained for Reynolds numbers from 100 to 2000.

@@ -1,0 +1,9 @@
+name,smiles,boiling_point_c
+water,O,100.0
+methanol,CO,64.7
+ethanol,CCO,78.4
+acetone,CC(C)=O,56.1
+acetic acid,CC(=O)O,118.1
+n-hexane,CCCCCC,68.7
+benzene,c1ccccc1,80.1
+toluene,Cc1ccccc1,110.6

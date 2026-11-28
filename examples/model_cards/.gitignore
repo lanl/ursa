@@ -1,0 +1,9 @@
+# Outputs of the tutorial and of the curated task runner.
+fm_reports/
+fm_runs/
+curated_tasks/results/
+# The live demo workspace (see nomad.yaml).
+demo/
+
+# The curated tasks ship their data, which the root rule for *.csv would hide.
+!curated_tasks/data/*.csv

@@ -130,3 +130,22 @@ async def test_client(xor_mcp_client: Client[FastMCPTransport]):
         "XOrTool", arguments={"thing1": True, "thing2": False}
     )
     assert result.data is not None
+
+
+async def test_model_card_tool_is_nomad_compatible(xor_tool: "TorchModuleTool"):
+    xor_tool.model_card = "# XOrTool\n\nComputes XOR of two booleans."
+    server = FastMCP()
+    xor_tool.add_to_fastmcp(server)
+    names = {tool.name for tool in await server.list_tools()}
+    assert names == {"XOrTool", "get_model_card"}
+    async with Client(transport=server) as client:
+        result = await client.call_tool(
+            "get_model_card", arguments={"tool_name": "XOrTool"}
+        )
+        assert "Computes XOR" in result.content[0].text
+        missing = await client.call_tool(
+            "get_model_card",
+            arguments={"tool_name": "nope"},
+            raise_on_error=False,
+        )
+        assert missing.is_error

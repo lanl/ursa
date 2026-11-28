@@ -116,13 +116,18 @@ class UrsaMCPClient(MultiServerMCPClient):
         super().__init__(wrapped)
 
 
-async def load_mcp_tools_with_sources(
+async def load_mcp_tools_by_server(
     client: MultiServerMCPClient,
-) -> tuple[list[BaseTool], dict[str, str]]:
-    """Load MCP tools and retain their configured server names separately."""
+) -> list[tuple[str | None, list[BaseTool]]]:
+    """Load MCP tools grouped by configured server name.
+
+    Tool names carry no server prefix, so callers that must tell same-named
+    tools apart, such as each server's ``get_model_card``, need the grouping.
+    A client without named connections yields one group named ``None``.
+    """
     connections = getattr(client, "connections", None)
     if not isinstance(connections, Mapping):
-        return await client.get_tools(), {}
+        return [(None, await client.get_tools())]
 
     server_names = list(connections)
     tools_by_server = await asyncio.gather(
@@ -131,13 +136,19 @@ async def load_mcp_tools_with_sources(
             for server_name in server_names
         )
     )
+    return list(zip(server_names, tools_by_server, strict=True))
+
+
+async def load_mcp_tools_with_sources(
+    client: MultiServerMCPClient,
+) -> tuple[list[BaseTool], dict[str, str]]:
+    """Load MCP tools and retain their configured server names separately."""
     tools: list[BaseTool] = []
     sources: dict[str, str] = {}
-    for server_name, server_tools in zip(
-        server_names, tools_by_server, strict=True
-    ):
+    for server_name, server_tools in await load_mcp_tools_by_server(client):
         tools.extend(server_tools)
-        sources.update({tool.name: server_name for tool in server_tools})
+        if server_name is not None:
+            sources.update({tool.name: server_name for tool in server_tools})
     return tools, sources
 
 
