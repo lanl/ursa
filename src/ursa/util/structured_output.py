@@ -86,7 +86,9 @@ def invoke_structured(
         Parsed value when ``include_raw`` is false, otherwise ``StructuredOutputResult``.
     """
 
-    normalized_methods = tuple(methods) or (None,)
+    normalized_methods = _preferred_methods(
+        llm, tuple(methods) or (None,), schema
+    )
     repair_attempts = _repair_count(repair)
     attempts: list[StructuredOutputAttempt] = []
 
@@ -159,6 +161,66 @@ def invoke_structured(
 
     message = _format_error_message(context, attempts)
     raise StructuredOutputError(message, context=context, attempts=attempts)
+
+
+def _preferred_methods(
+    llm: Any, methods: tuple[str | None, ...], schema: Any
+) -> tuple[str | None, ...]:
+    """Try native JSON-schema output first on Anthropic chat models.
+
+    LangChain's default structured output for Claude is a forced tool call.
+    Claude Opus 5.5 and Sonnet 5.5 reject forced tool calls, so
+    ``langchain-anthropic`` turns the call optional, and the model may answer
+    without it; each miss then costs a retry. ``method="json_schema"`` uses
+    Claude's structured outputs, which constrain the answer to the schema.
+    Only small schemas get it: the API can take minutes to reject a complex
+    one as "Schema is too complex", which stalls every call that uses it.
+    """
+    model = getattr(llm, "bound", llm)  # unwrap a RunnableBinding
+    llm_type = str(getattr(model, "_llm_type", "") or "")
+    if (
+        llm_type.startswith("anthropic")
+        and "json_schema" not in methods
+        and _is_small_schema(schema)
+    ):
+        return ("json_schema", *methods)
+    return methods
+
+
+_NATIVE_MAX_FIELDS = 12
+
+
+def _is_small_schema(schema: Any) -> bool:
+    """Whether a schema has no unions and at most ``_NATIVE_MAX_FIELDS`` fields.
+
+    Nullable fields (``X | None``) become ``anyOf`` unions, which drive the
+    complexity of the grammar the API compiles for structured outputs. The
+    routing schema (three fields, no unions) answers in seconds; the
+    requirements schema (about 25 fields, many nullable) took three minutes
+    to be rejected.
+    """
+    try:
+        json_schema = (
+            schema.model_json_schema()
+            if hasattr(schema, "model_json_schema")
+            else schema
+        )
+    except Exception:  # noqa: BLE001 - an unusual schema keeps the default method
+        return False
+    if not isinstance(json_schema, dict):
+        return False
+    fields = 0
+    stack: list[Any] = [json_schema]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if "anyOf" in node or "oneOf" in node:
+                return False
+            fields += len(node.get("properties") or {})
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return fields <= _NATIVE_MAX_FIELDS
 
 
 def _try_methods(
